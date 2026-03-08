@@ -44,6 +44,17 @@ function main(): void {
       break;
     }
 
+    case "refine": {
+      const instruction = args[1];
+      if (!instruction || instruction.startsWith("--")) {
+        console.error('Error: instruction required. Usage: sisyphus refine "add more papers about X"');
+        process.exit(1);
+      }
+      const conductor = createConductor(flags);
+      conductor.run(undefined, instruction).catch(fatal);
+      break;
+    }
+
     case "status": {
       showStatus(flags["project-dir"] ?? ".");
       break;
@@ -64,6 +75,7 @@ Il faut imaginer Sisyphe heureux.
 Usage:
   sisyphus run <topic>       Start a new research survey
   sisyphus resume            Resume from last saved state
+  sisyphus refine <instr>    Refine/expand existing research with instruction
   sisyphus status            Show current state
 
 Options:

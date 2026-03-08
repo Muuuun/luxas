@@ -14,7 +14,8 @@ import { Brain } from "./brain.js";
 import { SessionPool } from "./terminal.js";
 import { loadState, saveState, ensureDataDirs } from "./state.js";
 import { KnowledgeStore } from "./knowledge/store.js";
-import type { ToolName, ResearchState, TaskSpec } from "./types.js";
+import { AgentStore } from "./agents.js";
+import type { ToolName, AgentDefinition, ResearchState, TaskSpec } from "./types.js";
 
 /** Safety limits */
 const MAX_STEPS = 50;            // max decision steps per run
@@ -26,6 +27,7 @@ export class Conductor {
   private defaultTool: ToolName;
   private defaultTimeout: number;
   private brain: Brain;
+  private userDirective?: string;
 
   constructor(opts: {
     projectDir?: string;
@@ -40,8 +42,10 @@ export class Conductor {
 
   /**
    * Run the autonomous research loop.
+   * @param topic — new topic to start (omit to resume)
+   * @param directive — user instruction for refining/expanding existing research
    */
-  async run(topic?: string): Promise<void> {
+  async run(topic?: string, directive?: string): Promise<void> {
     const state = loadState(this.projectDir);
 
     if (topic) {
@@ -52,6 +56,9 @@ export class Conductor {
     if (!state.topic) {
       throw new Error("No topic specified.");
     }
+
+    // Store directive for the first brain call
+    this.userDirective = directive;
 
     saveState(state, this.projectDir);
     ensureDataDirs(this.projectDir);
@@ -83,16 +90,19 @@ export class Conductor {
     state: ResearchState,
   ): Promise<void> {
     let consecutiveFails = 0;
+    const startStep = state.actions_taken.length;
 
     for (let step = 0; step < MAX_STEPS; step++) {
+      const globalStep = startStep + step + 1;
       console.log("\n" + "=".repeat(60));
-      console.log(`STEP ${step + 1}/${MAX_STEPS}`);
+      console.log(`STEP ${globalStep} (${step + 1}/${MAX_STEPS} this session)`);
       console.log("=".repeat(60));
 
       // 1. Brain decides
       state.total_brain_calls++;
       saveState(state, this.projectDir); // save before brain reads
-      const decision = await this.brain.decideNextAction();
+      // Pass user directive on every step until goal is achieved
+      const decision = await this.brain.decideNextAction(this.userDirective);
 
       // 2. Done?
       if (decision.done) {
@@ -130,33 +140,88 @@ export class Conductor {
         continue;
       }
 
-      // 5. Execute tasks (parallel if multiple)
-      const taskCount = decision.tasks.length;
+      // 5. Handle define_agent actions locally (no executor needed)
+      const agentStore = new AgentStore(this.projectDir);
+      const agentDefs = decision.tasks.filter((t) => t.action === "define_agent");
+      const execTasks = decision.tasks.filter((t) => t.action !== "define_agent");
+
+      for (const ad of agentDefs) {
+        try {
+          const parsed = JSON.parse(ad.executor_prompt);
+
+          if (parsed.delete && parsed.id) {
+            // Delete agent
+            const deleted = agentStore.delete(parsed.id);
+            console.log(`[conductor] ${deleted ? "Deleted" : "Not found"} agent: "${parsed.id}"`);
+            state.actions_taken.push({
+              action: "define_agent",
+              reason: decision.reason,
+              result: deleted ? "success" : "failed",
+              details: `Delete agent "${parsed.id}": ${deleted ? "done" : "not found"}`,
+              timestamp: Date.now(),
+            });
+          } else {
+            // Create or update agent
+            const def = parsed as AgentDefinition;
+            def.created_at = agentStore.get(def.id)?.created_at ?? Date.now();
+            agentStore.save(def);
+            const isUpdate = agentStore.get(def.id) !== null;
+            console.log(`[conductor] ${isUpdate ? "Updated" : "Defined"} agent: "${def.id}" — ${def.name}`);
+            state.actions_taken.push({
+              action: "define_agent",
+              reason: decision.reason,
+              result: "success",
+              details: `Agent "${def.id}": ${def.description}`,
+              timestamp: Date.now(),
+            });
+          }
+        } catch (err: any) {
+          console.warn(`[conductor] Failed to parse agent definition: ${err.message}`);
+          state.actions_taken.push({
+            action: "define_agent",
+            reason: decision.reason,
+            result: "failed",
+            details: err.message,
+            timestamp: Date.now(),
+          });
+        }
+      }
+
+      if (execTasks.length === 0) {
+        // Only define_agent tasks this step
+        saveState(state, this.projectDir);
+        consecutiveFails = 0;
+        continue;
+      }
+
+      // Execute remaining tasks (parallel if multiple)
+      const taskCount = execTasks.length;
       console.log(
         `[conductor] Executing ${taskCount} task(s)` +
         (taskCount > 1 ? " IN PARALLEL" : "") +
         `: ${decision.reason}`,
       );
 
-      for (const t of decision.tasks) {
-        console.log(`  [${t.tool}/${t.model}] ${t.action} (timeout: ${t.timeout}s)`);
+      for (const t of execTasks) {
+        const agentTag = t.agent_id ? ` @${t.agent_id}` : "";
+        console.log(`  [${t.tool}/${t.model}] ${t.action}${agentTag} (timeout: ${t.timeout}s)`);
       }
 
       state.total_executor_calls += taskCount;
       const artifactsBefore = { ...state.artifacts };
 
       const results = await pool.runParallel(
-        decision.tasks.map((t) => ({
+        execTasks.map((t) => ({
           tool: t.tool,
-          prompt: t.executor_prompt,
-          action: t.action,
+          prompt: agentStore.buildPrompt(t.executor_prompt, t.agent_id),
+          action: t.action + (t.agent_id ? `@${t.agent_id}` : ""),
           model: t.model,
           timeout: Math.min(t.timeout * 1000, this.defaultTimeout),
         })),
         // Save each task result incrementally (survives kill)
         (idx, task, result) => {
           state.actions_taken.push({
-            action: decision.tasks[idx].action,
+            action: execTasks[idx].action + (execTasks[idx].agent_id ? `@${execTasks[idx].agent_id}` : ""),
             reason: decision.reason,
             result: result.success ? "success" : "failed",
             details: (result.output || "").slice(0, 300),
@@ -187,7 +252,7 @@ export class Conductor {
 
       // 6. Brain evaluates all results
       state.total_brain_calls++;
-      const actions = decision.tasks.map((t) => t.action);
+      const actions = execTasks.map((t) => t.action);
       const outputs = results.map((r) => r.output);
       const evaluation = await this.brain.evaluateResult(actions, outputs);
       console.log(`[brain] Evaluation: ${evaluation}`);

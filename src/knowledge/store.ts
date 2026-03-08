@@ -413,9 +413,11 @@ export class KnowledgeStore {
       for (const p of corePapers) {
         const hasExtraction = existsSync(join(this.paperDir(p.paper_id), "extraction.json"));
         const hasSource = this.hasDownloadedContent(p.paper_id);
+        const hasFigures = existsSync(join(this.paperDir(p.paper_id), "figures", "manifest.json"));
         const flags = [
           hasSource ? "DL" : "no-dl",
           hasExtraction ? "EXT" : "no-ext",
+          hasFigures ? "FIG" : "no-fig",
         ].join(",");
         lines.push(
           `  [${flags}] [${p.year || "?"}] ${p.title} (${p.citation_count} cites)`,

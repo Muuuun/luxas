@@ -103,7 +103,7 @@ export function execTask(
     if (tool === "claude") {
       const modelId = CLAUDE_MODELS[model];
       cmd = "claude";
-      args = ["-p", "--output-format", "text", "--model", modelId, "--dangerously-skip-permissions"];
+      args = ["-p", "--output-format", "stream-json", "--verbose", "--model", modelId, "--dangerously-skip-permissions"];
     } else {
       cmd = "codex";
       args = ["exec", "--full-auto", "-"];
@@ -118,11 +118,29 @@ export function execTask(
 
     let stdout = "";
     let stderr = "";
+    let resultText = "";
 
     child.stdout.on("data", (data) => {
       const chunk = data.toString();
       stdout += chunk;
-      if (opts.onProgress) {
+
+      if (tool === "claude" && opts.onProgress) {
+        // Parse stream-json events for live status
+        for (const line of chunk.split("\n")) {
+          if (!line.trim()) continue;
+          try {
+            const evt = JSON.parse(line);
+            const status = parseStreamEvent(evt);
+            if (status) opts.onProgress(status, stdout.length);
+            // Capture final result text
+            if (evt.type === "result" && evt.result) {
+              resultText = evt.result;
+            }
+          } catch {
+            // partial JSON line, ignore
+          }
+        }
+      } else if (opts.onProgress) {
         const lines = chunk.trimEnd().split("\n");
         const last = lines[lines.length - 1].slice(0, 100);
         if (last) opts.onProgress(last, stdout.length);
@@ -132,11 +150,6 @@ export function execTask(
     child.stderr.on("data", (data) => {
       const chunk = data.toString();
       stderr += chunk;
-      if (opts.onProgress) {
-        const lines = chunk.trimEnd().split("\n");
-        const last = lines[lines.length - 1].slice(0, 100);
-        if (last) opts.onProgress(last, stdout.length);
-      }
     });
 
     // Write prompt to stdin
@@ -145,10 +158,11 @@ export function execTask(
 
     child.on("close", (code) => {
       const el = Date.now() - t0;
-      const output = stdout || stderr;
+      // For claude stream-json, use parsed result; for codex, use raw stdout
+      const output = (tool === "claude" && resultText) ? resultText : (stdout || stderr);
       resolve({
         output,
-        success: code === 0 && stdout.length > 0,
+        success: code === 0 && output.length > 0,
         elapsed: el,
       });
     });
@@ -167,6 +181,66 @@ export function execTask(
       try { child.kill("SIGTERM"); } catch { /* ignore */ }
     }, timeout);
   });
+}
+
+// ============================================================
+// Stream event parser — extract status from claude stream-json
+// ============================================================
+
+function parseStreamEvent(evt: any): string | null {
+  if (!evt || !evt.type) return null;
+
+  // Tool use: show what tool is being called
+  if (evt.type === "assistant" && evt.message?.content) {
+    for (const part of evt.message.content) {
+      if (part.type === "tool_use") {
+        const name = part.name || "unknown";
+        const input = part.input || {};
+        // Extract meaningful info from tool input
+        if (name === "Read" && input.file_path) {
+          const file = input.file_path.split("/").slice(-2).join("/");
+          return `✻ Reading ${file}`;
+        }
+        if (name === "Write" && input.file_path) {
+          const file = input.file_path.split("/").slice(-2).join("/");
+          return `✻ Writing ${file}`;
+        }
+        if (name === "Edit" && input.file_path) {
+          const file = input.file_path.split("/").slice(-2).join("/");
+          return `✻ Editing ${file}`;
+        }
+        if (name === "Bash" && input.command) {
+          return `✻ Running: ${input.command.slice(0, 60)}`;
+        }
+        if (name === "Grep" && input.pattern) {
+          return `✻ Searching: ${input.pattern.slice(0, 40)}`;
+        }
+        if (name === "Glob" && input.pattern) {
+          return `✻ Finding: ${input.pattern}`;
+        }
+        if (name === "WebFetch" && input.url) {
+          return `✻ Fetching: ${input.url.slice(0, 60)}`;
+        }
+        return `✻ ${name}`;
+      }
+      if (part.type === "text" && part.text) {
+        // Show first meaningful line of assistant text
+        const line = part.text.trim().split("\n")[0].slice(0, 80);
+        if (line) return `💬 ${line}`;
+      }
+      if (part.type === "thinking" && part.thinking) {
+        const line = part.thinking.trim().split("\n")[0].slice(0, 80);
+        if (line) return `🧠 ${line}`;
+      }
+    }
+  }
+
+  // Rate limit
+  if (evt.type === "rate_limit_event") {
+    return "⚠ Rate limit check...";
+  }
+
+  return null;
 }
 
 // ============================================================
@@ -223,7 +297,7 @@ class LivePanel {
       `${DIM} · ${done}/${this.tasks.length} done${RESET}`,
     );
 
-    // Task rows
+    // Task rows — fixed 2 lines per task (action + status)
     for (const task of this.tasks) {
       const tag = `${DIM}${task.tool}/${task.model}${RESET}`;
       const el = task.status === "running"
@@ -251,11 +325,11 @@ class LivePanel {
         `${CLEAR_LINE}${DIM}│${RESET} ${icon} ${tag} ${statusColor}${actionStr}${RESET} ${elStr} ${sizeStr}`,
       );
 
-      // Show last output line for running tasks
-      if (task.status === "running" && task.lastLine) {
-        const truncated = task.lastLine.slice(0, width - 10);
-        lines.push(`${CLEAR_LINE}${DIM}│   ↳ ${truncated}${RESET}`);
-      }
+      // Always render status line (fixed height prevents cursor drift)
+      const statusLine = task.status === "running" && task.lastLine
+        ? task.lastLine.slice(0, width - 10)
+        : "";
+      lines.push(`${CLEAR_LINE}${DIM}│   ↳ ${statusLine}${RESET}`);
     }
 
     // Footer

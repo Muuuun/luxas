@@ -16,6 +16,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { KnowledgeStore } from "./knowledge/store.js";
+import { AgentStore } from "./agents.js";
 import type { ResearchState } from "./types.js";
 
 const STATE_FILE = "research-state.json";
@@ -48,6 +49,7 @@ export function loadState(projectDir = "."): ResearchState {
 }
 
 export function saveState(state: ResearchState, projectDir = "."): void {
+  mkdirSync(projectDir, { recursive: true });
   state.updated_at = Date.now();
   // Sync artifact counts from knowledge store
   const store = new KnowledgeStore(projectDir);
@@ -94,6 +96,11 @@ export function buildBrainContext(projectDir = "."): string {
   }
 
   lines.push("", "=== Knowledge Store ===", knowledgeSummary);
+
+  // Custom agents
+  const agentStore = new AgentStore(projectDir);
+  const agentSummary = agentStore.summarizeForBrain();
+  lines.push("", "=== Custom Agents ===", agentSummary);
 
   return lines.join("\n");
 }

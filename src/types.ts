@@ -55,6 +55,24 @@ export interface TaskSpec {
   /** Model tier: "fast" = sonnet (simple tasks), "think" = opus (complex reasoning) */
   model: ModelTier;
   timeout: number;
+  /** Optional: use a custom agent (prepend its system_prompt) */
+  agent_id?: string;
+}
+
+/** Project-specific custom agent definition */
+export interface AgentDefinition {
+  /** Unique identifier (e.g., "latex_expert", "quantum_reviewer") */
+  id: string;
+  /** Human-readable name */
+  name: string;
+  /** What this agent specializes in */
+  description: string;
+  /** System prompt prepended to every task using this agent */
+  system_prompt: string;
+  /** Preferred model tier */
+  default_model: ModelTier;
+  /** When this agent was created */
+  created_at: number;
 }
 
 /** All possible actions the agent can take */
@@ -63,10 +81,12 @@ export type ActionName =
   | "search_papers"
   | "search_more_papers"
   | "expand_citations"
+  | "evaluate_papers"
   | "judge_relevance"
   | "download_papers"
   | "extract_paper"
   | "extract_more_papers"
+  | "extract_figures"
   | "cross_validate"
   | "write_report"
   | "refine_report"
@@ -74,6 +94,8 @@ export type ActionName =
   | "fix_compilation"
   | "assess_quality"
   | "fill_gaps"
+  | "define_agent"
+  | "custom"
   | "done";
 
 export type ToolName = "claude" | "codex";
