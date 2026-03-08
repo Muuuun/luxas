@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["title", "core_method", "key_results", "limitations", "open_problems"],
+  "properties": {
+    "title": {
+      "type": "string",
+      "description": "Paper title"
+    },
+    "core_method": {
+      "type": "string",
+      "description": "Core methodology or approach, 2-5 sentences"
+    },
+    "key_results": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Key experimental results and findings"
+    },
+    "benchmarks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "metric": { "type": "string" },
+          "score": { "type": "string" },
+          "comparison": { "type": "string", "description": "vs prior SOTA" }
+        }
+      },
+      "description": "Benchmark results with specific numbers"
+    },
+    "limitations": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Limitations stated by the authors"
+    },
+    "open_problems": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Open problems or future work mentioned"
+    },
+    "compared_methods": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Methods this paper compares against"
+    },
+    "improvements_over_prior": {
+      "type": "string",
+      "description": "What this paper improves over prior work"
+    },
+    "dependencies": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Key prerequisite techniques or frameworks used"
+    }
+  }
+}

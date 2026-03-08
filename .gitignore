@@ -1,0 +1,16 @@
+# Dependencies
+node_modules/
+
+# Research data (generated, not source code)
+data/
+research-state.json
+
+# Build output
+dist/
+
+# OS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
