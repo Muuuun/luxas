@@ -60,6 +60,12 @@ function main(): void {
       break;
     }
 
+    case "tui": {
+      // Dynamic import to avoid loading React/Ink for non-TUI commands
+      import("./tui.js").catch(fatal);
+      break;
+    }
+
     default:
       console.error(`Unknown command: ${command}`);
       printUsage();
@@ -77,6 +83,7 @@ Usage:
   sisyphus resume            Resume from last saved state
   sisyphus refine <instr>    Refine/expand existing research with instruction
   sisyphus status            Show current state
+  sisyphus tui               Launch interactive TUI dashboard
 
 Options:
   --tool <claude|codex>      Default executor tool (default: claude)

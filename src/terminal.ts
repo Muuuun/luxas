@@ -7,6 +7,7 @@
 
 import { spawn } from "node:child_process";
 import type { ToolName, ModelTier } from "./types.js";
+import { bus, tuiActive } from "./events.js";
 
 /** Map model tier to actual model IDs */
 const CLAUDE_MODELS: Record<ModelTier, string> = {
@@ -84,6 +85,7 @@ export function execTask(
     cwd?: string;
     timeout?: number;
     model?: ModelTier;
+    maxTurns?: number;
     onProgress?: (lastLine: string, outputLen: number) => void;
   } = {},
 ): Promise<ExecResult> {
@@ -104,6 +106,9 @@ export function execTask(
       const modelId = CLAUDE_MODELS[model];
       cmd = "claude";
       args = ["-p", "--output-format", "stream-json", "--verbose", "--model", modelId, "--dangerously-skip-permissions"];
+      if (opts.maxTurns) {
+        args.push("--max-turns", String(opts.maxTurns));
+      }
     } else {
       cmd = "codex";
       args = ["exec", "--full-auto", "-"];
@@ -119,25 +124,50 @@ export function execTask(
     let stdout = "";
     let stderr = "";
     let resultText = "";
+    let lineBuffer = "";
 
     child.stdout.on("data", (data) => {
       const chunk = data.toString();
       stdout += chunk;
 
-      if (tool === "claude" && opts.onProgress) {
-        // Parse stream-json events for live status
-        for (const line of chunk.split("\n")) {
+      if (tool === "claude") {
+        // Buffer partial lines across chunks
+        lineBuffer += chunk;
+        const lines = lineBuffer.split("\n");
+        lineBuffer = lines.pop() || ""; // keep incomplete last line
+
+        // Parse stream-json events
+        for (const line of lines) {
           if (!line.trim()) continue;
           try {
             const evt = JSON.parse(line);
-            const status = parseStreamEvent(evt);
-            if (status) opts.onProgress(status, stdout.length);
-            // Capture final result text
-            if (evt.type === "result" && evt.result) {
-              resultText = evt.result;
+            if (opts.onProgress) {
+              const status = parseStreamEvent(evt);
+              if (status) opts.onProgress(status, stdout.length);
+            }
+            // Capture final result text + usage
+            if (evt.type === "result") {
+              if (evt.result) resultText = evt.result;
+              if (evt.total_cost_usd != null) {
+                const u = evt.usage ?? {};
+                bus.emitUsage({
+                  inputTokens: u.input_tokens ?? 0,
+                  outputTokens: u.output_tokens ?? 0,
+                  cacheReadTokens: u.cache_read_input_tokens ?? 0,
+                  cacheCreationTokens: u.cache_creation_input_tokens ?? 0,
+                  costUsd: evt.total_cost_usd,
+                });
+              }
+            }
+            if (evt.type === "rate_limit_event" && evt.rate_limit_info) {
+              bus.emitRateLimit({
+                utilization: evt.rate_limit_info.utilization ?? 0,
+                resetsAt: evt.rate_limit_info.resetsAt ?? 0,
+                isUsingOverage: evt.rate_limit_info.isUsingOverage ?? false,
+              });
             }
           } catch {
-            // partial JSON line, ignore
+            // malformed JSON line
           }
         }
       } else if (opts.onProgress) {
@@ -157,6 +187,25 @@ export function execTask(
     child.stdin.end();
 
     child.on("close", (code) => {
+      // Flush remaining lineBuffer
+      if (tool === "claude" && lineBuffer.trim()) {
+        try {
+          const evt = JSON.parse(lineBuffer);
+          if (evt.type === "result") {
+            if (evt.result) resultText = evt.result;
+            if (evt.total_cost_usd != null) {
+              const u = evt.usage ?? {};
+              bus.emitUsage({
+                inputTokens: u.input_tokens ?? 0,
+                outputTokens: u.output_tokens ?? 0,
+                cacheReadTokens: u.cache_read_input_tokens ?? 0,
+                cacheCreationTokens: u.cache_creation_input_tokens ?? 0,
+                costUsd: evt.total_cost_usd,
+              });
+            }
+          }
+        } catch { /* ignore */ }
+      }
       const el = Date.now() - t0;
       // For claude stream-json, use parsed result; for codex, use raw stdout
       const output = (tool === "claude" && resultText) ? resultText : (stdout || stderr);
@@ -257,7 +306,9 @@ class LivePanel {
     this.tasks = tasks;
     this.frame = 0;
     this.lastLineCount = 0;
-    process.stderr.write(HIDE_CURSOR);
+    if (!tuiActive) {
+      process.stderr.write(HIDE_CURSOR);
+    }
     this.render();
     this.timer = setInterval(() => {
       this.frame++;
@@ -267,7 +318,20 @@ class LivePanel {
 
   update(id: number, updates: Partial<TaskState>): void {
     const task = this.tasks.find((t) => t.id === id);
-    if (task) Object.assign(task, updates);
+    if (task) {
+      Object.assign(task, updates);
+      // Emit task event for TUI
+      bus.emitTask({
+        id: task.id,
+        action: task.action,
+        tool: task.tool,
+        model: task.model,
+        status: task.status,
+        elapsed: task.status === "running" ? Date.now() - task.startedAt : task.elapsed,
+        lastLine: task.lastLine,
+        outputLen: task.outputLen,
+      });
+    }
   }
 
   stop(): void {
@@ -277,10 +341,14 @@ class LivePanel {
     }
     // Final render
     this.render();
-    process.stderr.write(SHOW_CURSOR);
+    if (!tuiActive) {
+      process.stderr.write(SHOW_CURSOR);
+    }
   }
 
   private render(): void {
+    // In TUI mode, skip stderr rendering (TUI handles display)
+    if (tuiActive) return;
     // Move cursor up to overwrite previous panel
     if (this.lastLineCount > 0) {
       process.stderr.write(CURSOR_UP(this.lastLineCount));
@@ -386,7 +454,7 @@ export class SessionPool {
    * Run multiple tasks in parallel with live status panel.
    */
   async runParallel(
-    tasks: Array<{ tool: ToolName; prompt: string; action: string; timeout?: number; model?: ModelTier }>,
+    tasks: Array<{ tool: ToolName; prompt: string; action: string; timeout?: number; model?: ModelTier; maxTurns?: number }>,
     onTaskComplete?: (index: number, task: { action: string; tool: ToolName }, result: ExecResult) => void,
   ): Promise<ExecResult[]> {
     const results: ExecResult[] = [];
@@ -420,6 +488,7 @@ export class SessionPool {
             cwd: this.workingDir,
             timeout: task.timeout,
             model: task.model,
+            maxTurns: task.maxTurns,
             onProgress: (lastLine, outputLen) => {
               panel.update(taskState.id, { lastLine, outputLen });
             },
@@ -447,10 +516,10 @@ export class SessionPool {
       // Print summary line
       const ok = batchResults.filter((r) => r.success).length;
       const fail = batchResults.length - ok;
-      console.log(
-        `${GREEN}✓ ${ok} succeeded${RESET}` +
-        (fail > 0 ? ` ${RED}✗ ${fail} failed${RESET}` : "") +
-        ` ${DIM}(batch ${Math.floor(i / this.maxConcurrent) + 1})${RESET}`,
+      bus.emitLog("info",
+        `✓ ${ok} succeeded` +
+        (fail > 0 ? ` ✗ ${fail} failed` : "") +
+        ` (batch ${Math.floor(i / this.maxConcurrent) + 1})`,
       );
 
       results.push(...batchResults);
@@ -473,6 +542,6 @@ export class SessionPool {
    * No-op for subprocess mode (no persistent sessions to close).
    */
   closeAll(): void {
-    console.log(`[pool] Done. ${this.completed} tasks completed.`);
+    bus.emitLog("info", `[pool] Done. ${this.completed} tasks completed.`);
   }
 }

@@ -87,6 +87,7 @@ export type ActionName =
   | "extract_paper"
   | "extract_more_papers"
   | "extract_figures"
+  | "verify_figures"
   | "cross_validate"
   | "write_report"
   | "refine_report"

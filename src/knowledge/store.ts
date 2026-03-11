@@ -406,22 +406,81 @@ export class KnowledgeStore {
       `Downloaded: ${index.counts.downloaded}, Extracted: ${index.counts.extracted}`,
     ];
 
-    // Core papers with extraction status
+    // Core papers — compact summary to minimize brain context size
     const corePapers = this.getPapers("core");
     if (corePapers.length > 0) {
-      lines.push("", "=== Core Papers ===");
+      // Categorize papers
+      const fullyProcessed: string[] = [];
+      const needsWork: string[] = [];
+      let totalFigs = 0;
+      let totalKeyFigs = 0;
+
       for (const p of corePapers) {
         const hasExtraction = existsSync(join(this.paperDir(p.paper_id), "extraction.json"));
         const hasSource = this.hasDownloadedContent(p.paper_id);
-        const hasFigures = existsSync(join(this.paperDir(p.paper_id), "figures", "manifest.json"));
-        const flags = [
-          hasSource ? "DL" : "no-dl",
-          hasExtraction ? "EXT" : "no-ext",
-          hasFigures ? "FIG" : "no-fig",
-        ].join(",");
-        lines.push(
-          `  [${flags}] [${p.year || "?"}] ${p.title} (${p.citation_count} cites)`,
-        );
+        const hasFigFiles = existsSync(join(this.paperDir(p.paper_id), "figures"));
+
+        // Count figures
+        let figCount = 0;
+        let keyCount = 0;
+        if (hasExtraction) {
+          try {
+            const ext = JSON.parse(readFileSync(join(this.paperDir(p.paper_id), "extraction.json"), "utf-8"));
+            const figs: any[] = ext.figures || [];
+            figCount = figs.length;
+            keyCount = figs.filter((f: any) => f.relevance === "key").length;
+            totalFigs += figCount;
+            totalKeyFigs += keyCount;
+          } catch { /* ignore */ }
+        }
+
+        if (hasSource && hasExtraction) {
+          const figTag = figCount > 0 ? ` FIG:${figCount}(${keyCount}key)` : "";
+          fullyProcessed.push(`  [${p.year || "?"}] ${p.title}${figTag}`);
+        } else {
+          const flags = [
+            hasSource ? "DL" : "no-dl",
+            hasExtraction ? "EXT" : "no-ext",
+          ].join(",");
+          needsWork.push(`  [${flags}] ${p.paper_id}: ${p.title}`);
+        }
+      }
+
+      lines.push("", `=== Core Papers: ${corePapers.length} total, ${fullyProcessed.length} fully processed, ${totalFigs} figures (${totalKeyFigs} key) ===`);
+
+      // Only show papers that need work (actionable info)
+      if (needsWork.length > 0) {
+        lines.push("", `--- ${needsWork.length} papers needing work ---`);
+        for (const l of needsWork) lines.push(l);
+      }
+
+      // Fully processed: just titles (no figure details — Brain sees those when writing report)
+      if (fullyProcessed.length > 0) {
+        lines.push("", `--- ${fullyProcessed.length} fully processed ---`);
+        // Show first 10, summarize rest
+        for (const l of fullyProcessed.slice(0, 10)) lines.push(l);
+        if (fullyProcessed.length > 10) {
+          lines.push(`  ... and ${fullyProcessed.length - 10} more`);
+        }
+      }
+
+      // Only show figure details when report exists (needed for write/refine)
+      const hasTex = existsSync(join(this.dataDir, "reports", "survey_report.tex"));
+      if (hasTex && totalKeyFigs > 0) {
+        lines.push("", `--- Key figures available for report (${totalKeyFigs} total) ---`);
+        for (const p of corePapers) {
+          const extPath = join(this.paperDir(p.paper_id), "extraction.json");
+          if (!existsSync(extPath)) continue;
+          try {
+            const ext = JSON.parse(readFileSync(extPath, "utf-8"));
+            const keyFigs = (ext.figures || []).filter((f: any) => f.relevance === "key");
+            if (keyFigs.length === 0) continue;
+            lines.push(`  ${p.title}:`);
+            for (const f of keyFigs) {
+              lines.push(`    📊 ${f.filename}: ${(f.description || "").slice(0, 80)}`);
+            }
+          } catch { /* ignore */ }
+        }
       }
     }
 
@@ -466,9 +525,10 @@ export class KnowledgeStore {
     if (claims.length > 0) {
       lines.push("", `=== ${claims.length} Cross-paper claims tracked ===`);
       for (const c of claims.slice(0, 5)) {
+        const claimText = typeof c.claim === "string" ? c.claim.slice(0, 80) : String(c.claim ?? "");
         lines.push(
-          `  "${c.claim.slice(0, 80)}" — ` +
-            `${c.supporting.length} support, ${c.contradicting.length} contradict`,
+          `  "${claimText}" — ` +
+            `${c.supporting?.length ?? 0} support, ${c.contradicting?.length ?? 0} contradict`,
         );
       }
     }
@@ -481,6 +541,129 @@ export class KnowledgeStore {
     lines.push("", `Report: tex=${hasTex}, bib=${hasBib}, pdf=${hasPdf}`);
 
     return lines.join("\n");
+  }
+
+  // ============================================================
+  // Extraction Digest — compact summary for executor prompts
+  // ============================================================
+
+  /**
+   * Build a compact extraction digest for injection into executor prompts.
+   * This replaces 50+ individual file reads with a single pre-built summary,
+   * saving massive token overhead from tool calls.
+   *
+   * Returns null if no extractions exist.
+   */
+  buildExtractionDigest(): string | null {
+    const allExtractions = this.getAllExtractions();
+    if (allExtractions.length === 0) return null;
+
+    /** Safely convert any value to a truncated string */
+    const str = (v: unknown, max = 200): string => {
+      if (v == null) return "";
+      const s = typeof v === "string" ? v : JSON.stringify(v);
+      return s.slice(0, max);
+    };
+
+    const lines: string[] = [
+      `=== EXTRACTION DIGEST (${allExtractions.length} papers) ===`,
+      `NOTE: This data is pre-aggregated. Do NOT read individual extraction.json files.`,
+      "",
+    ];
+
+    for (let i = 0; i < allExtractions.length; i++) {
+      const { paper_id, meta, extraction } = allExtractions[i];
+      const authors = meta.authors?.slice(0, 3).join(", ") || "Unknown";
+      const authorSuffix = (meta.authors?.length || 0) > 3 ? " et al." : "";
+
+      lines.push(`[${i + 1}] "${meta.title}" (${authors}${authorSuffix}, ${meta.year || "?"})`);
+      lines.push(`    ID: ${paper_id}`);
+
+      // Core method — truncate if too long
+      if (extraction.core_method) {
+        lines.push(`    Method: ${str(extraction.core_method, 300)}`);
+      }
+
+      // Key results — compact
+      if (extraction.key_results?.length > 0) {
+        lines.push(`    Results: ${extraction.key_results.map(r => str(r, 120)).join("; ")}`);
+      }
+
+      // Benchmarks — table-ready format
+      if (extraction.benchmarks?.length > 0) {
+        const benchStr = extraction.benchmarks
+          .map(b => `${str(b?.name)} ${str(b?.metric)}=${str(b?.score)}${b?.comparison ? ` (${str(b.comparison)})` : ""}`)
+          .join("; ");
+        lines.push(`    Benchmarks: ${benchStr}`);
+      }
+
+      // Claims — for cross-validation
+      if (extraction.claims?.length > 0) {
+        const claimStr = extraction.claims
+          .map(c => str(typeof c === "object" && c ? (c as any).statement : c, 100))
+          .join("; ");
+        lines.push(`    Claims: ${claimStr}`);
+      }
+
+      // Limitations
+      if (extraction.limitations?.length > 0) {
+        lines.push(`    Limitations: ${extraction.limitations.map(l => str(l, 80)).join("; ")}`);
+      }
+
+      // Compared methods
+      if (extraction.compared_methods?.length > 0) {
+        lines.push(`    Compared: ${extraction.compared_methods.map(m => str(m)).join(", ")}`);
+      }
+
+      // Improvements
+      if (extraction.improvements_over_prior) {
+        lines.push(`    Improvement: ${str(extraction.improvements_over_prior, 200)}`);
+      }
+
+      // Key figures (for report writing)
+      const keyFigs = (extraction.figures || []).filter(f => f.relevance === "key" || f.relevance === "useful");
+      if (keyFigs.length > 0) {
+        const figDir = `data/papers/${paper_id.replace(/[/\\:*?"<>|]/g, "_")}/figures`;
+        const figStr = keyFigs
+          .map(f => `${figDir}/${f.filename} (${f.relevance}): ${(f.description || "").slice(0, 80)}`)
+          .join("; ");
+        lines.push(`    Figures: ${figStr}`);
+      }
+
+      lines.push("");
+    }
+
+    // Also include BibTeX entries if we can build them
+    lines.push("=== BIBTEX ENTRIES ===");
+    lines.push("Use these as the basis for references.bib:");
+    lines.push("");
+    for (const { paper_id, meta } of allExtractions) {
+      const key = this.generateBibKey(meta);
+      const authors = meta.authors?.join(" and ") || "Unknown";
+      const type = meta.venue?.toLowerCase().includes("arxiv") ? "article" : "inproceedings";
+      lines.push(`@${type}{${key},`);
+      lines.push(`  title={${meta.title}},`);
+      lines.push(`  author={${authors}},`);
+      lines.push(`  year={${meta.year || ""}},`);
+      if (meta.venue) lines.push(`  ${type === "article" ? "journal" : "booktitle"}={${meta.venue}},`);
+      if (meta.doi) lines.push(`  doi={${meta.doi}},`);
+      if (meta.arxiv_id) lines.push(`  note={arXiv:${meta.arxiv_id}},`);
+      lines.push(`}`);
+      lines.push("");
+    }
+
+    return lines.join("\n");
+  }
+
+  /**
+   * Generate a BibTeX citation key from paper metadata.
+   * Format: firstAuthorLastName + year (e.g., "vaswani2017")
+   */
+  private generateBibKey(meta: PaperMeta): string {
+    const firstAuthor = meta.authors?.[0] || "unknown";
+    const lastName = firstAuthor.split(/\s+/).pop()?.toLowerCase().replace(/[^a-z]/g, "") || "unknown";
+    const year = meta.year || "0000";
+    return `${lastName}${year}`;
   }
 
   // ============================================================

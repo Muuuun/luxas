@@ -24,7 +24,7 @@ export interface FigureInfo {
   filename: string;
   /** Original source path */
   source: string;
-  /** Caption text (if found) */
+  /** Caption text (if found from LaTeX parsing — may be WRONG) */
   caption: string;
   /** Figure label (if found) */
   label: string;
@@ -36,6 +36,14 @@ export interface FigureInfo {
   width?: number;
   /** Height in pixels (if known) */
   height?: number;
+  /** Has this figure been visually verified by Claude? */
+  verified?: boolean;
+  /** What Claude actually saw in the image */
+  visual_description?: string;
+  /** Corrected caption after visual verification */
+  verified_caption?: string;
+  /** Should this figure be excluded from the report? (junk, too small, irrelevant) */
+  exclude?: boolean;
 }
 
 export interface FigureManifest {

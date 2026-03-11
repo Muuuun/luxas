@@ -9,15 +9,20 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/index.ts",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "tui": "tsx src/tui.tsx"
   },
   "dependencies": {
+    "better-sqlite3": "^11.0.0",
+    "ink": "^6.8.0",
+    "ink-text-input": "^6.0.0",
     "node-pty": "^1.0.0",
-    "better-sqlite3": "^11.0.0"
+    "react": "^19.2.4"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.0",
     "@types/node": "^22.0.0",
+    "@types/react": "^19.2.14",
     "tsx": "^4.0.0",
     "typescript": "^5.5.0"
   }

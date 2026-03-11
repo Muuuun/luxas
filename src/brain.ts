@@ -7,6 +7,8 @@
  */
 
 import { spawn } from "node:child_process";
+import { appendFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 
 // ANSI
 const DIM = "\x1b[2m";
@@ -15,9 +17,10 @@ const CYAN = "\x1b[36m";
 const CLEAR_LINE = "\x1b[2K";
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 import { buildBrainContext } from "./state.js";
+import { bus, tuiActive } from "./events.js";
 import type { BrainDecision, TaskSpec } from "./types.js";
 
-const MAX_BRAIN_TIMEOUT = 300_000; // 5 min
+const MAX_BRAIN_TIMEOUT = 600_000; // 10 min — large contexts (50+ papers) need more thinking time
 
 export class Brain {
   private projectDir: string;
@@ -34,24 +37,27 @@ export class Brain {
     const context = buildBrainContext(this.projectDir);
 
     const directiveBlock = userDirective
-      ? `\n\nUSER DIRECTIVE (HIGHEST PRIORITY — follow this instruction):\n${userDirective}\n`
+      ? `\n<user_directive priority="highest">\n${userDirective}\n</user_directive>`
       : "";
 
-    const prompt = `You are the autonomous research agent brain for "Sisyphus" — a system that produces comprehensive technology survey reports as LaTeX PDFs with proper citations.
+    // === PROMPT STRUCTURE FOR PROMPT CACHING ===
+    // Static instructions FIRST (cached by API across calls), dynamic state LAST.
+    // This ensures the API-level prompt cache hits on the ~8K token static prefix.
+    const prompt = `<system>
+You are the autonomous research agent brain for "Sisyphus" — a system that produces comprehensive technology survey reports as LaTeX PDFs with proper citations.
 
-YOUR CURRENT STATE:
-${context}${directiveBlock}
-
-YOUR GOAL:
+<goal>
 Produce a high-quality LaTeX survey report (compiled to PDF) with proper \\cite{} citations for every claim, benchmark comparison tables, and cross-validation of claims across papers.
+</goal>
 
-PAPER MANAGEMENT:
+<paper_management>
 Papers go through a funnel: discovered → candidate → core → excluded.
 Each paper lives in data/papers/{paper_id}/ with meta.json, status.json, extraction.json, source/.
 Cross-paper data in data/relations/ (citations.json, claims.json).
 Central registry: data/index.json.
+</paper_management>
 
-AVAILABLE ACTIONS:
+<available_actions>
 - "decompose_topic": Break topic into subtopics → data/topics.json
 - "search_papers": Search S2/arXiv, add discovered papers
 - "search_more_papers": Search under-covered areas
@@ -61,6 +67,7 @@ AVAILABLE ACTIONS:
 - "extract_paper": Extract structured info from ONE downloaded core paper
 - "extract_more_papers": Continue extracting unextracted core papers
 - "extract_figures": Extract images from papers (LaTeX source or PDF) → data/papers/{id}/figures/
+- "verify_figures": VISUALLY inspect extracted figures — read each image, fix wrong captions, exclude junk (MANDATORY before report)
 - "cross_validate": Compare claims across papers → data/relations/claims.json
 - "write_report": Generate LaTeX survey + BibTeX (MUST include figures with \\includegraphics)
 - "refine_report": Improve existing report (add figures if missing)
@@ -71,184 +78,121 @@ AVAILABLE ACTIONS:
 - "define_agent": Define a custom sub-agent for this project (see CUSTOM AGENTS below)
 - "custom": Execute a task using a custom agent (must set agent_id)
 - "done": Research complete (only when PDF exists and is good)
+</available_actions>
 
-CUSTOM AGENTS:
+<custom_agents>
 You can define project-specific sub-agents with specialized system prompts.
 Each agent is reusable across tasks and persisted in data/agents.json.
 
 To DEFINE or UPDATE an agent, use action "define_agent". The executor_prompt must be a JSON:
-{
-  "id": "agent_id_snake_case",
-  "name": "Human-readable Name",
-  "description": "What this agent specializes in",
-  "system_prompt": "You are an expert in X. You always Y. When analyzing Z, focus on...",
-  "default_model": "fast"
-}
+{"id": "agent_id_snake_case", "name": "Human-readable Name", "description": "What this agent specializes in", "system_prompt": "You are an expert in X...", "default_model": "fast"}
 To UPDATE: use the same "id" — it overwrites the old definition.
 To DELETE: use action "define_agent" with "delete": true and the agent id.
 
-The current state shows FULL system_prompt of each agent so you can review and adjust.
-If an agent's prompt is producing poor results, UPDATE it with better instructions.
-
-To USE a custom agent, set "agent_id" in the task. The agent's system_prompt
-is automatically prepended to the executor_prompt. Example:
-{
-  "action": "custom",
-  "executor_prompt": "Analyze the performance data in data/papers/xxx/extraction.json...",
-  "agent_id": "quantum_expert",
-  "tool": "claude",
-  "model": "fast",
-  "timeout": 300
-}
-
+To USE a custom agent, set "agent_id" in the task. The agent's system_prompt is automatically prepended to the executor_prompt.
 You can also use agent_id with standard actions like "extract_paper", "write_report", etc.
 
 WHEN TO CREATE AGENTS:
-- When a task requires deep domain knowledge (e.g., "quantum computing gate fidelity expert")
-- When you want consistent behavior across multiple similar tasks (e.g., "latex_figure_composer")
-- When a specialized persona would produce better results than a generic prompt
-- Re-use existing agents instead of creating duplicates — check the Custom Agents section in state
-- ITERATE: after using an agent, review results and update its system_prompt if needed
+- Deep domain knowledge needed, consistent behavior across similar tasks, or specialized persona would help
+- Re-use existing agents — check Custom Agents section in state. ITERATE on prompts if results are poor.
+</custom_agents>
 
-KEY CAPABILITY: PARALLEL TASKS
-You can return MULTIPLE tasks to run simultaneously. Use this when:
-- Downloading multiple papers → each in its own session
-- Extracting multiple papers → each in its own session
-- Searching S2 AND arXiv at the same time
-- One claude does extraction while another codex does downloading
-
-The system has a SessionPool that can run multiple Claude Code and Codex instances in parallel.
+<rules>
+PARALLEL TASKS: Return MULTIPLE tasks to run simultaneously (up to 8 concurrent). Use for: downloading, extracting, searching in parallel.
 
 DECISION RULES:
 - Look at ACTUAL state, not a fixed sequence
 - Be SELECTIVE: 30 well-chosen core papers > 200 tangential ones
 - DO NOT loop: if action failed 3+ times, change strategy
-- PARALLELIZE aggressively: up to 8 concurrent tasks. If 10 papers need work, create 8 parallel tasks.
+- PARALLELIZE aggressively: up to 8 concurrent tasks
 
-QUALITY GUIDELINES (not a fixed pipeline — you decide the order):
-- Generally: download → extract → figures → cross-validate → write → compile → review → improve
+QUALITY GUIDELINES:
+- Generally: download → extract → extract_figures → write → verify_figures → compile → review → improve
 - But you CAN interleave, go back, skip, or reorder based on actual state
 - Don't write report if many core papers are still undownloaded/unextracted
-- Extract figures from papers before or alongside writing — report should include key figures
-- SELF-REVIEW: after compiling a PDF, always do assess_quality (think model) to read the full report and identify:
-  * Weak/shallow sections, missing citations, gaps in coverage
-  * Where figures/tables would help, whether comparisons are thorough
-  * Then act on the review: fill_gaps, refine_report, extract_figures as needed
-- You MUST do at least one self-review cycle before marking done
-- NEVER mark done without having read and assessed the compiled report
-- If review finds issues, go fix them — search more papers, add figures, rewrite sections
+- HARD RULE: After writing a report with figures, ALWAYS run verify_figures to visually confirm every included figure matches its caption.
+- HARD RULE: ANY time the .tex file is modified, you MUST re-run compile_report. The PDF must always reflect the latest .tex. Never assess_quality or mark done on a stale PDF.
+- SELF-REVIEW: after compiling, always assess_quality (think model). You MUST do at least one self-review cycle before marking done.
+- NEVER mark done without having read and assessed the compiled report.
 
-TOOL SELECTION:
-- "claude": Claude Code. Use for ALL tasks. Set tool to "claude" for everything.
-- "codex": OpenAI Codex. CURRENTLY UNAVAILABLE (rate limited). Do NOT use codex. Set tool to "claude" for all tasks.
-- Spread parallel tasks across both "fast" and "think" models to avoid rate limits on one model.
+REPORT COMPLETENESS — HARD RULES (system will BLOCK "done" if violated):
+- write_report MUST generate BOTH .tex AND references.bib in the SAME directory. Never one without the other.
+- The .tex MUST include: \\documentclass, \\begin{document}, \\end{document}, \\title{}, \\bibliography{references} or \\addbibresource{}, \\bibliographystyle{}.
+- The .tex MUST have \\cite{} commands referencing keys from references.bib.
+- references.bib MUST have @article/@inproceedings entries matching the \\cite keys.
 
-MODEL SELECTION — each task has a "model" field: "cheap", "fast", or "think":
-- "cheap" = Haiku — for trivial mechanical tasks: download_papers, compile_report, fix_compilation, expand_citations
-- "fast" = Sonnet — for most tasks: search_papers, decompose_topic, extract_paper, extract_more_papers, evaluate_papers
-- "think" = Opus — ONLY for deep analysis or creative writing: write_report, refine_report, cross_validate, assess_quality
-- DEFAULT to "fast". Use "cheap" for file operations/downloads, "think" only for writing/analysis
+COMPILATION — CRITICAL (most common failure point):
+- compile_report MUST run EXACTLY this 4-step sequence in the report directory:
+  1. pdflatex -interaction=nonstopmode main.tex
+  2. bibtex main
+  3. pdflatex -interaction=nonstopmode main.tex
+  4. pdflatex -interaction=nonstopmode main.tex
+- ALL 4 STEPS ARE MANDATORY. Running only pdflatex without bibtex produces ? for all citations.
+- Running bibtex without the 2nd+3rd pdflatex also leaves ? markers.
+- The executor prompt for compile_report MUST include the EXACT 4 commands above.
+- The system checks the actual PDF text for ? markers. If ANY unresolved references exist, validation FAILS.
+- If <report_validation> shows UNRESOLVED_REFS_IN_PDF, the ONLY fix is to re-run all 4 compilation steps.
+- If <report_validation> shows FAILED, you MUST fix ALL listed issues before marking done.
+- The system automatically validates the report. If you say "done" but validation fails, you'll be sent back.
 
-FIGURE EXTRACTION RULES:
-- BEFORE writing the report, run "extract_figures" on core papers to get images
-- For LaTeX source papers: figures are in source/ dir as .png/.pdf/.eps files — copy them to data/papers/{id}/figures/
-- For PDF-only papers: use "pdfimages -png paper.pdf fig" to extract embedded images, filter out tiny ones (<10KB)
-- Each paper's figures go in data/papers/{id}/figures/ with a manifest.json listing filename + caption
-- The report MUST include key figures: architecture diagrams, fabrication process photos, performance comparison charts
-- Use \\includegraphics[width=\\columnwidth]{data/papers/{id}/figures/filename.png} in the LaTeX report
-- Copy the most important figures to data/reports/figures/ for easier reference
-- Each extract_figures task can handle 3-5 papers (cheap model)
-- COMPOSITE FIGURES: combine related images from different papers into one figure using LaTeX subcaption:
-  \\begin{figure}[htbp]
-    \\centering
-    \\begin{subfigure}[b]{0.48\\textwidth}
-      \\includegraphics[width=\\textwidth]{path/to/fig1.png}
-      \\caption{Description from Paper A}
-    \\end{subfigure}
-    \\hfill
-    \\begin{subfigure}[b]{0.48\\textwidth}
-      \\includegraphics[width=\\textwidth]{path/to/fig2.png}
-      \\caption{Description from Paper B}
-    \\end{subfigure}
-    \\caption{Comparison of approaches. (a) from \\cite{A}, (b) from \\cite{B}}
-  \\end{figure}
-- Use composite figures to compare: fabrication processes, trap architectures, performance metrics across papers
+TOOL SELECTION: Use "claude" for ALL tasks. "codex" is UNAVAILABLE.
 
-EXTRACTION RULES:
-- Each extract_paper task should handle ONE paper only
-- For large documents (theses, surveys >50 pages), split into MULTIPLE parallel extract tasks:
-  - One task per major section/chapter (e.g., "extract chapters 1-3", "extract chapters 4-6")
-  - Each task writes partial results to data/papers/{id}/extraction_part_N.json
-  - A final merge task combines all parts into extraction.json
-- For normal papers (<30 pages), one extract task is sufficient
-- The executor prompt MUST tell claude to read the paper source from data/papers/{paper_id}/source/
-- After extraction, write extraction.json and update status.json with extracted:true
+MODEL SELECTION — each task has a "model" field:
+- "cheap" = Haiku — trivial mechanical tasks: download_papers, compile_report, fix_compilation, expand_citations
+- "fast" = Sonnet — most tasks: search_papers, decompose_topic, extract_paper, evaluate_papers
+- "think" = Opus — deep analysis/creative writing ONLY: write_report, refine_report, cross_validate, assess_quality
 
-DOWNLOAD RULES (CRITICAL — previous downloads failed due to empty dirs):
-- Papers are stored in data/papers/{paper_id}/source/
-- A paper with an empty source/ dir is NOT downloaded — it MUST be retried
-- For arXiv papers: try LaTeX source first (https://arxiv.org/src/{id}), then PDF (https://arxiv.org/pdf/{id}.pdf)
-- For non-arXiv papers: try DOI link, or search for PDF on the web
-- ALWAYS verify the download succeeded: check that source/ dir has at least one file (*.tex or *.pdf)
-- If download fails, remove the empty source/ dir so the system knows to retry
-- Add a 2-second delay between arXiv downloads to avoid rate limiting
-- Each download task should handle at most 2-3 papers to avoid timeouts
+FIGURE WORKFLOW:
+Phase 1 EXTRACT: extract figure metadata into extraction.json "figures" array during extraction. extract_figures copies actual image files.
+Phase 2 SELECT: during write_report, include only "key"/"useful" figures via \\includegraphics. Use subcaption for composites.
+Phase 3 VERIFY: after writing, verify_figures reads each image (vision), compares with caption, fixes mismatches. Parallelize across tasks.
 
-EXECUTOR PROMPT RULES:
-- Each prompt must be SELF-CONTAINED (file paths, API URLs, schemas)
-- When adding papers: write meta.json + status.json to data/papers/{paper_id}/
-- When extracting: write extraction.json to data/papers/{paper_id}/
-- Paper IDs with / should be replaced with _ in directory names
-- Always tell executor to update data/index.json
+REPORT DIRECTORY: The report MUST be written to data/reports/ (canonical path). If you find report files in data/report/ or report/ (non-standard), move them to data/reports/ and delete the old copies. Only one copy of the report should exist.
 
+EXTRACTION: One paper per task. Large docs (>50 pages): split into parallel tasks per section. Must extract figure metadata.
+DOWNLOAD: Verify source/ dir has files. ArXiv: LaTeX source first, PDF fallback. 2s delay between downloads. Max 2-3 papers per task.
+EXECUTOR PROMPTS: Must be SELF-CONTAINED (file paths, API URLs, schemas). Paper IDs with / → _ in dir names.
+
+TOKEN EFFICIENCY — CRITICAL:
+- For write_report, refine_report, cross_validate, assess_quality: the system AUTO-INJECTS all extraction data into the executor prompt. Do NOT tell executors to "read all extraction.json files" or "scan data/papers/*/extraction.json" — the data is already in their prompt.
+- Do NOT tell executors to read paper source files for report writing. All needed info is in the injected extraction digest.
+- Keep executor_prompt concise: describe WHAT to do, not HOW to find data. The conductor handles data injection.
+- Use "cheap" model (Haiku) for mechanical tasks: download_papers, compile_report, fix_compilation, expand_citations.
+- Use "fast" model (Sonnet) for most tasks. Reserve "think" (Opus) ONLY for write_report and refine_report.
+</rules>
+
+<output_format>
 Return ONLY a JSON object (no markdown fences):
-{
-  "reason": "why these actions based on current state",
-  "done": false,
-  "tasks": [
-    {
-      "action": "action_name",
-      "executor_prompt": "complete prompt for executor",
-      "tool": "claude",
-      "model": "fast",
-      "timeout": 600,
-      "agent_id": "optional_agent_id"
-    }
-  ]
-}
+{"reason": "why these actions", "done": false, "tasks": [{"action": "action_name", "executor_prompt": "complete prompt", "tool": "claude", "model": "fast", "timeout": 600, "agent_id": "optional"}]}
+For done: {"reason": "PDF report exists with good quality", "done": true, "tasks": []}
+</output_format>
+</system>
 
-For parallel work, include multiple tasks:
-{
-  "reason": "downloading + extracting in parallel",
-  "done": false,
-  "tasks": [
-    {"action": "download_papers", "executor_prompt": "download papers...", "tool": "claude", "model": "cheap", "timeout": 300},
-    {"action": "extract_paper", "executor_prompt": "extract paper X...", "tool": "claude", "model": "fast", "timeout": 600, "agent_id": "domain_expert"},
-    {"action": "extract_paper", "executor_prompt": "extract paper Y...", "tool": "claude", "model": "fast", "timeout": 600, "agent_id": "domain_expert"}
-  ]
-}
+<current_state>
+${context}
+</current_state>${directiveBlock}`;
 
-If research is complete:
-{
-  "reason": "PDF report exists with good quality",
-  "done": true,
-  "tasks": []
-}`;
-
-    console.log("[brain] Deciding next action...");
+    bus.emitLog("info", "[brain] Deciding next action...");
+    bus.emitBrain({ status: "thinking", elapsed: 0 });
     const result = await this.callClaude(prompt);
     const decision = this.parseDecision(result);
 
     if (decision.tasks.length > 1) {
-      console.log(`[brain] Decision: ${decision.tasks.length} parallel tasks — ${decision.reason}`);
+      bus.emitLog("info", `[brain] Decision: ${decision.tasks.length} parallel tasks — ${decision.reason}`);
       for (const t of decision.tasks) {
-        console.log(`  [${t.tool}] ${t.action}`);
+        bus.emitLog("info", `  [${t.tool}] ${t.action}`);
       }
     } else if (decision.tasks.length === 1) {
-      console.log(`[brain] Decision: ${decision.tasks[0].action} — ${decision.reason}`);
+      bus.emitLog("info", `[brain] Decision: ${decision.tasks[0].action} — ${decision.reason}`);
     } else if (decision.done) {
-      console.log(`[brain] Decision: DONE — ${decision.reason}`);
+      bus.emitLog("info", `[brain] Decision: DONE — ${decision.reason}`);
     }
+    bus.emitBrain({
+      status: decision.done ? "decided" : "decided",
+      elapsed: 0,
+      reason: decision.reason,
+      taskCount: decision.tasks.length,
+    });
 
     return decision;
   }
@@ -286,55 +230,76 @@ Return plain text, not JSON.`;
       const t0 = Date.now();
       const child = spawn(
         "claude",
-        ["-p", "--output-format", "stream-json", "--verbose", "--model", "claude-sonnet-4-6"],
+        ["-p", "--output-format", "stream-json", "--verbose", "--model", "claude-sonnet-4-6", "--tools", ""],
         {
           cwd: this.projectDir,
           env,
           stdio: ["pipe", "pipe", "pipe"],
-          timeout: MAX_BRAIN_TIMEOUT,
         },
       );
+
+      // Manual timeout — spawn() does NOT support the timeout option (only exec/execFile do)
+      const killTimer = setTimeout(() => {
+        bus.emitLog("warn", `[brain] Timeout after ${MAX_BRAIN_TIMEOUT / 1000}s — killing brain process`);
+        child.kill("SIGTERM");
+        setTimeout(() => child.kill("SIGKILL"), 5000); // force kill if SIGTERM didn't work
+      }, MAX_BRAIN_TIMEOUT);
 
       let stdout = "";
       let resultText = "";
       let frame = 0;
+      let lineBuffer = "";
 
       // Spinner timer
       const spinner = setInterval(() => {
         frame++;
         const el = ((Date.now() - t0) / 1000).toFixed(0);
-        const icon = CYAN + SPINNER_FRAMES[frame % SPINNER_FRAMES.length] + RESET;
-        process.stderr.write(`\r${CLEAR_LINE}${icon} ${DIM}[brain] thinking... ${el}s${RESET}`);
+        if (tuiActive) {
+          bus.emitBrain({ status: "thinking", elapsed: parseFloat(el) });
+        } else {
+          const icon = CYAN + SPINNER_FRAMES[frame % SPINNER_FRAMES.length] + RESET;
+          process.stderr.write(`\r${CLEAR_LINE}${icon} ${DIM}[brain] thinking... ${el}s${RESET}`);
+        }
       }, 200);
 
       child.stdout.on("data", (data) => {
         const chunk = data.toString();
         stdout += chunk;
 
+        // Buffer partial lines across chunks
+        lineBuffer += chunk;
+        const lines = lineBuffer.split("\n");
+        lineBuffer = lines.pop() || ""; // keep incomplete last line
+
         // Parse stream-json events for live status
-        for (const line of chunk.split("\n")) {
+        for (const line of lines) {
           if (!line.trim()) continue;
           try {
             const evt = JSON.parse(line);
             const status = this.parseBrainEvent(evt);
             if (status) {
-              const el = ((Date.now() - t0) / 1000).toFixed(0);
-              const icon = CYAN + SPINNER_FRAMES[frame % SPINNER_FRAMES.length] + RESET;
-              process.stderr.write(`\r${CLEAR_LINE}${icon} ${DIM}[brain ${el}s]${RESET} ${status}`);
+              if (tuiActive) {
+                const el = ((Date.now() - t0) / 1000).toFixed(0);
+                bus.emitBrain({ status: "thinking", elapsed: parseFloat(el), thought: status });
+              } else {
+                const el = ((Date.now() - t0) / 1000).toFixed(0);
+                const icon = CYAN + SPINNER_FRAMES[frame % SPINNER_FRAMES.length] + RESET;
+                process.stderr.write(`\r${CLEAR_LINE}${icon} ${DIM}[brain ${el}s]${RESET} ${status}`);
+              }
             }
             // Capture result
             if (evt.type === "result" && evt.result) {
               resultText = evt.result;
             }
           } catch {
-            // partial JSON line
+            // malformed JSON line
           }
         }
       });
 
       child.stderr.on("data", (data) => {
         const line = data.toString().trim();
-        if (line) {
+        if (line && !tuiActive) {
           process.stderr.write(`\r${CLEAR_LINE}${DIM}[brain] ${line.slice(0, 120)}${RESET}`);
         }
       });
@@ -343,12 +308,26 @@ Return plain text, not JSON.`;
       child.stdin.end();
 
       child.on("close", (code) => {
+        clearTimeout(killTimer);
         clearInterval(spinner);
-        process.stderr.write(`\r${CLEAR_LINE}`);
-        process.stderr.write("\n");
+        // Flush remaining lineBuffer
+        if (lineBuffer.trim()) {
+          try {
+            const evt = JSON.parse(lineBuffer);
+            if (evt.type === "result" && evt.result) {
+              resultText = evt.result;
+            }
+          } catch { /* ignore */ }
+        }
+        if (!tuiActive) {
+          process.stderr.write(`\r${CLEAR_LINE}`);
+          process.stderr.write("\n");
+        }
+        const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+        bus.emitLog("info", `[brain] Finished in ${elapsed}s. resultText: ${resultText.length} chars, stdout: ${stdout.length} chars`);
         const output = resultText || stdout.trim();
         if (code !== 0 && !output) {
-          console.warn(`[brain] Claude exited with code ${code}`);
+          bus.emitLog("warn", `[brain] Claude exited with code ${code}`);
           resolve("");
         } else {
           resolve(output);
@@ -356,9 +335,10 @@ Return plain text, not JSON.`;
       });
 
       child.on("error", (err: any) => {
+        clearTimeout(killTimer);
         clearInterval(spinner);
-        process.stderr.write(`\r${CLEAR_LINE}\n`);
-        console.warn(`[brain] Claude call failed: ${err.message?.slice(0, 300)}`);
+        if (!tuiActive) process.stderr.write(`\r${CLEAR_LINE}\n`);
+        bus.emitLog("warn", `[brain] Claude call failed: ${err.message?.slice(0, 300)}`);
         resolve("");
       });
     });
@@ -397,6 +377,17 @@ Return plain text, not JSON.`;
   }
 
   private parseDecision(text: string): BrainDecision {
+    // Debug: log brain output to file for diagnosis
+    try {
+      const logDir = join(this.projectDir, "data");
+      mkdirSync(logDir, { recursive: true });
+      const ts = new Date().toISOString();
+      appendFileSync(
+        join(logDir, "brain_debug.log"),
+        `\n=== ${ts} ===\nresultText length: ${text.length}\nFirst 1000 chars:\n${text.slice(0, 1000)}\n`,
+      );
+    } catch { /* ignore log errors */ }
+
     try {
       const trimmed = text.trim();
       const start = trimmed.indexOf("{");
@@ -437,11 +428,11 @@ Return plain text, not JSON.`;
         }
       }
     } catch (parseErr: any) {
-      console.warn(`[brain] JSON parse error: ${parseErr.message}`);
-      console.warn(`[brain] Raw text (first 500): ${text.slice(0, 500)}`);
+      bus.emitLog("warn", `[brain] JSON parse error: ${parseErr.message}`);
+      bus.emitLog("warn", `[brain] Raw text (first 500): ${text.slice(0, 500)}`);
     }
 
-    console.warn("[brain] Could not parse decision, defaulting to assess_quality");
+    bus.emitLog("warn", "[brain] Could not parse decision, defaulting to assess_quality");
     return {
       reason: "Failed to parse brain decision",
       done: false,

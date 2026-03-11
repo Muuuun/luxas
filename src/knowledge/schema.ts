@@ -102,9 +102,25 @@ export interface PaperExtraction {
   dependencies: string[];
   /** Key claims we want to cross-validate */
   claims: Claim[];
+  /** Figures available in this paper (extracted alongside content) */
+  figures: FigureMeta[];
   /** Extraction quality self-assessment */
   confidence: "high" | "medium" | "low";
   extracted_at: number;
+}
+
+/** Metadata about a figure, extracted alongside paper content */
+export interface FigureMeta {
+  /** Filename in data/papers/{id}/figures/ */
+  filename: string;
+  /** Original figure number/label in the paper (e.g., "Figure 3", "fig:architecture") */
+  label: string;
+  /** What this figure actually shows (written by the extractor who READ the paper) */
+  description: string;
+  /** Which section of the paper this figure belongs to */
+  section: string;
+  /** How useful for a survey report: "key" = must include, "useful" = nice to have, "skip" = not worth it */
+  relevance: "key" | "useful" | "skip";
 }
 
 export interface Benchmark {

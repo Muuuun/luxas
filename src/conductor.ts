@@ -12,10 +12,59 @@
 
 import { Brain } from "./brain.js";
 import { SessionPool } from "./terminal.js";
-import { loadState, saveState, ensureDataDirs } from "./state.js";
+import { loadState, saveState, ensureDataDirs, validateReport, consolidateReportFiles } from "./state.js";
 import { KnowledgeStore } from "./knowledge/store.js";
 import { AgentStore } from "./agents.js";
+import { bus } from "./events.js";
 import type { ToolName, AgentDefinition, ResearchState, TaskSpec } from "./types.js";
+
+/**
+ * Max agentic turns per action type.
+ * Prevents executor from making unlimited tool calls (the #1 cause of token bloat).
+ * Actions that get extraction digest injected need fewer turns since they don't need to read files.
+ */
+const MAX_TURNS: Record<string, number> = {
+  decompose_topic: 5,
+  search_papers: 10,
+  search_more_papers: 10,
+  evaluate_papers: 10,
+  expand_citations: 10,
+  download_papers: 15,
+  extract_paper: 15,
+  extract_more_papers: 15,
+  extract_figures: 15,
+  verify_figures: 15,
+  write_report: 15,      // data injected → just needs to write .tex + .bib
+  refine_report: 15,     // data injected → read existing report + write edits
+  compile_report: 8,     // just 4 pdflatex/bibtex commands
+  fix_compilation: 10,
+  cross_validate: 10,    // data injected
+  assess_quality: 10,    // data injected
+  fill_gaps: 10,
+  custom: 20,
+};
+
+/**
+ * Actions that benefit from extraction digest injection.
+ * These tasks need paper data but shouldn't read 50+ individual files.
+ */
+const INJECT_DIGEST_ACTIONS = new Set([
+  "write_report",
+  "refine_report",
+  "cross_validate",
+  "assess_quality",
+]);
+
+/**
+ * Actions that touch report files (.tex, .bib, .pdf).
+ * These get a hard-injected canonical report directory path to prevent file scatter.
+ */
+const REPORT_ACTIONS = new Set([
+  "write_report",
+  "refine_report",
+  "compile_report",
+  "fix_compilation",
+]);
 
 /** Safety limits */
 const MAX_STEPS = 50;            // max decision steps per run
@@ -28,6 +77,7 @@ export class Conductor {
   private defaultTimeout: number;
   private brain: Brain;
   private userDirective?: string;
+  private _aborted = false;
 
   constructor(opts: {
     projectDir?: string;
@@ -36,8 +86,14 @@ export class Conductor {
   } = {}) {
     this.projectDir = opts.projectDir ?? ".";
     this.defaultTool = opts.tool ?? "claude";
-    this.defaultTimeout = opts.timeout ?? 600_000;
+    this.defaultTimeout = opts.timeout ?? 1_800_000; // 30 min — brain sets per-task timeouts, this is just the safety cap
     this.brain = new Brain(this.projectDir);
+  }
+
+  /** Signal the conductor to stop after the current task completes. */
+  abort(): void {
+    this._aborted = true;
+    bus.emitLog("warn", "[conductor] Abort requested — stopping after current task...");
   }
 
   /**
@@ -63,6 +119,9 @@ export class Conductor {
     saveState(state, this.projectDir);
     ensureDataDirs(this.projectDir);
 
+    // Consolidate scattered report files before Brain reads state
+    consolidateReportFiles(this.projectDir);
+
     // Initialize knowledge store
     const store = new KnowledgeStore(this.projectDir);
     store.initIndex(state.topic, state.goal);
@@ -73,7 +132,7 @@ export class Conductor {
     try {
       await this.agentLoop(pool, state);
     } catch (err) {
-      console.error("Agent loop error:", err);
+      bus.emitLog("error", `Agent loop error: ${err}`);
       state.status = "failed";
       throw err;
     } finally {
@@ -93,10 +152,20 @@ export class Conductor {
     const startStep = state.actions_taken.length;
 
     for (let step = 0; step < MAX_STEPS; step++) {
+      // Check abort before each step
+      if (this._aborted) {
+        state.status = "paused";
+        saveState(state, this.projectDir);
+        bus.emitLog("info", "[conductor] Aborted by user.");
+        bus.emit("paused", { reason: "Aborted by user" });
+        return;
+      }
+
       const globalStep = startStep + step + 1;
-      console.log("\n" + "=".repeat(60));
-      console.log(`STEP ${globalStep} (${step + 1}/${MAX_STEPS} this session)`);
-      console.log("=".repeat(60));
+      bus.emitLog("info", `\n${"=".repeat(60)}`);
+      bus.emitLog("info", `STEP ${globalStep} (${step + 1}/${MAX_STEPS} this session)`);
+      bus.emitLog("info", "=".repeat(60));
+      bus.emitStep(step + 1, globalStep, MAX_STEPS);
 
       // 1. Brain decides
       state.total_brain_calls++;
@@ -104,12 +173,31 @@ export class Conductor {
       // Pass user directive on every step until goal is achieved
       const decision = await this.brain.decideNextAction(this.userDirective);
 
-      // 2. Done?
+      // 2. Done? — validate report first
       if (decision.done) {
-        console.log(`\n${"=".repeat(60)}`);
-        console.log("RESEARCH COMPLETE");
-        console.log(`Reason: ${decision.reason}`);
-        console.log("=".repeat(60));
+        const reportIssues = validateReport(this.projectDir);
+        if (reportIssues.length > 0) {
+          bus.emitLog("warn", `\n[conductor] Brain says DONE but report validation FAILED:`);
+          for (const issue of reportIssues) {
+            bus.emitLog("warn", `  ⚠ ${issue}`);
+          }
+          bus.emitLog("warn", "[conductor] Overriding: NOT done. Brain will see issues in next state.\n");
+          state.actions_taken.push({
+            action: "done",
+            reason: decision.reason,
+            result: "failed",
+            details: `Report validation blocked completion: ${reportIssues.join("; ")}`,
+            timestamp: Date.now(),
+          });
+          saveState(state, this.projectDir);
+          continue; // let the brain see the validation errors and fix them
+        }
+
+        bus.emitLog("info", `\n${"=".repeat(60)}`);
+        bus.emitLog("info", "RESEARCH COMPLETE");
+        bus.emitLog("info", `Reason: ${decision.reason}`);
+        bus.emitLog("info", "=".repeat(60));
+        bus.emit("done", { reason: decision.reason });
         state.status = "done";
         saveState(state, this.projectDir);
         return;
@@ -117,7 +205,7 @@ export class Conductor {
 
       // 3. No tasks?
       if (decision.tasks.length === 0) {
-        console.warn("[conductor] Brain returned no tasks. Retrying...");
+        bus.emitLog("warn", "[conductor] Brain returned no tasks. Retrying...");
         consecutiveFails++;
         if (consecutiveFails >= MAX_CONSECUTIVE_FAILS) break;
         continue;
@@ -126,7 +214,7 @@ export class Conductor {
       // 4. Loop detection
       const actionPattern = decision.tasks.map((t) => t.action).sort().join(",");
       if (this.isStuck(state, actionPattern)) {
-        console.warn(`[conductor] Pattern "${actionPattern}" repeated ${MAX_SAME_ACTION}+ times.`);
+        bus.emitLog("warn", `[conductor] Pattern "${actionPattern}" repeated ${MAX_SAME_ACTION}+ times.`);
         state.actions_taken.push({
           action: actionPattern,
           reason: "SKIPPED — loop detected",
@@ -152,7 +240,7 @@ export class Conductor {
           if (parsed.delete && parsed.id) {
             // Delete agent
             const deleted = agentStore.delete(parsed.id);
-            console.log(`[conductor] ${deleted ? "Deleted" : "Not found"} agent: "${parsed.id}"`);
+            bus.emitLog("info", `[conductor] ${deleted ? "Deleted" : "Not found"} agent: "${parsed.id}"`);
             state.actions_taken.push({
               action: "define_agent",
               reason: decision.reason,
@@ -166,7 +254,7 @@ export class Conductor {
             def.created_at = agentStore.get(def.id)?.created_at ?? Date.now();
             agentStore.save(def);
             const isUpdate = agentStore.get(def.id) !== null;
-            console.log(`[conductor] ${isUpdate ? "Updated" : "Defined"} agent: "${def.id}" — ${def.name}`);
+            bus.emitLog("info", `[conductor] ${isUpdate ? "Updated" : "Defined"} agent: "${def.id}" — ${def.name}`);
             state.actions_taken.push({
               action: "define_agent",
               reason: decision.reason,
@@ -176,7 +264,7 @@ export class Conductor {
             });
           }
         } catch (err: any) {
-          console.warn(`[conductor] Failed to parse agent definition: ${err.message}`);
+          bus.emitLog("warn", `[conductor] Failed to parse agent definition: ${err.message}`);
           state.actions_taken.push({
             action: "define_agent",
             reason: decision.reason,
@@ -194,9 +282,35 @@ export class Conductor {
         continue;
       }
 
+      // Check abort before executing
+      if (this._aborted) {
+        state.status = "paused";
+        saveState(state, this.projectDir);
+        bus.emitLog("info", "[conductor] Aborted by user.");
+        bus.emit("paused", { reason: "Aborted by user" });
+        return;
+      }
+
       // Execute remaining tasks (parallel if multiple)
       const taskCount = execTasks.length;
-      console.log(
+
+      // Build extraction digest once (shared across all tasks that need it)
+      const store = new KnowledgeStore(this.projectDir);
+      let extractionDigest: string | null = null;
+      const needsDigest = execTasks.some((t) => INJECT_DIGEST_ACTIONS.has(t.action));
+      if (needsDigest) {
+        try {
+          extractionDigest = store.buildExtractionDigest();
+        } catch (digestErr) {
+          bus.emitLog("warn", `[conductor] Failed to build extraction digest: ${digestErr}`);
+          extractionDigest = null;
+        }
+        if (extractionDigest) {
+          bus.emitLog("info", `[conductor] Injecting extraction digest (${(extractionDigest.length / 1024).toFixed(1)}KB) into ${execTasks.filter(t => INJECT_DIGEST_ACTIONS.has(t.action)).length} task(s)`);
+        }
+      }
+
+      bus.emitLog("info",
         `[conductor] Executing ${taskCount} task(s)` +
         (taskCount > 1 ? " IN PARALLEL" : "") +
         `: ${decision.reason}`,
@@ -204,20 +318,45 @@ export class Conductor {
 
       for (const t of execTasks) {
         const agentTag = t.agent_id ? ` @${t.agent_id}` : "";
-        console.log(`  [${t.tool}/${t.model}] ${t.action}${agentTag} (timeout: ${t.timeout}s)`);
+        const maxTurns = MAX_TURNS[t.action] ?? 15;
+        bus.emitLog("info", `  [${t.tool}/${t.model}] ${t.action}${agentTag} (timeout: ${t.timeout}s, max-turns: ${maxTurns})`);
       }
 
       state.total_executor_calls += taskCount;
       const artifactsBefore = { ...state.artifacts };
 
+      // Resolve absolute canonical report directory for injection
+      const { resolve } = await import("node:path");
+      const canonicalReportDir = resolve(this.projectDir, "data", "reports");
+
       const results = await pool.runParallel(
-        execTasks.map((t) => ({
-          tool: t.tool,
-          prompt: agentStore.buildPrompt(t.executor_prompt, t.agent_id),
-          action: t.action + (t.agent_id ? `@${t.agent_id}` : ""),
-          model: t.model,
-          timeout: Math.min(t.timeout * 1000, this.defaultTimeout),
-        })),
+        execTasks.map((t) => {
+          // Build prompt with optional digest injection
+          let prompt = agentStore.buildPrompt(t.executor_prompt, t.agent_id);
+
+          // Inject extraction digest for data-heavy tasks
+          if (extractionDigest && INJECT_DIGEST_ACTIONS.has(t.action)) {
+            prompt += `\n\n<extraction_digest>\n${extractionDigest}\n</extraction_digest>\n\nIMPORTANT: All paper extraction data is provided above in <extraction_digest>. Do NOT read individual extraction.json files — the data is already here. Use it directly.`;
+          }
+
+          // Inject canonical report directory for report-touching tasks
+          // Also inject for custom actions with report-related agents
+          const isReportTask = REPORT_ACTIONS.has(t.action) ||
+            (t.action === "custom" && t.agent_id && /report|latex|compile|bib/i.test(t.agent_id));
+          if (isReportTask) {
+            prompt += `\n\n<report_directory_rule>\nMANDATORY: ALL report files (.tex, .bib, .pdf, and all LaTeX auxiliary files) MUST be written to this EXACT directory:\n  ${canonicalReportDir}\nDo NOT create or write report files in any other directory (not report/, not data/report/, not reports/). This is enforced by the system.\nIf you find existing report files in other directories, IGNORE them — the system has already consolidated them.\n</report_directory_rule>`;
+          }
+
+          const maxTurns = MAX_TURNS[t.action] ?? 15;
+          return {
+            tool: t.tool,
+            prompt,
+            action: t.action + (t.agent_id ? `@${t.agent_id}` : ""),
+            model: t.model,
+            timeout: Math.min(t.timeout * 1000, this.defaultTimeout),
+            maxTurns,
+          };
+        }),
         // Save each task result incrementally (survives kill)
         (idx, task, result) => {
           state.actions_taken.push({
@@ -228,7 +367,14 @@ export class Conductor {
             timestamp: Date.now(),
           });
           saveState(state, this.projectDir);
-          console.log(`[conductor] Saved checkpoint after ${task.action}`);
+          bus.emitLog("info", `[conductor] Saved checkpoint after ${task.action}`);
+          bus.emitAction({
+            action: execTasks[idx].action,
+            result: result.success ? "success" : "failed",
+            details: (result.output || "").slice(0, 200),
+            timestamp: Date.now(),
+          });
+          bus.emitStateChange();
         },
       );
 
@@ -237,7 +383,7 @@ export class Conductor {
         r.output.includes("hit your limit") || r.output.includes("rate limit"),
       );
       if (rateLimited) {
-        console.warn("[conductor] Rate limited on all tasks. Pausing to avoid wasting steps.");
+        bus.emitLog("warn", "[conductor] Rate limited on all tasks. Pausing to avoid wasting steps.");
         state.status = "paused";
         state.actions_taken.push({
           action: actionPattern,
@@ -250,14 +396,10 @@ export class Conductor {
         return;
       }
 
-      // 6. Brain evaluates all results
-      state.total_brain_calls++;
-      const actions = execTasks.map((t) => t.action);
-      const outputs = results.map((r) => r.output);
-      const evaluation = await this.brain.evaluateResult(actions, outputs);
-      console.log(`[brain] Evaluation: ${evaluation}`);
+      // 6. Consolidate any report files executors may have scattered
+      consolidateReportFiles(this.projectDir);
 
-      // 7. Check improvement
+      // 7. Check improvement (skip separate evaluateResult — Brain sees state in next decideNextAction)
       saveState(state, this.projectDir); // triggers artifact rescan
       const improved = didImprove(artifactsBefore, state.artifacts);
       const anySuccess = results.some((r) => r.success);
@@ -274,11 +416,11 @@ export class Conductor {
 
       // 9. Pool stats
       const stats = pool.stats();
-      console.log(`[pool] ${stats.completed} tasks completed (max concurrent: ${stats.maxConcurrent})`);
+      bus.emitLog("info", `[pool] ${stats.completed} tasks completed (max concurrent: ${stats.maxConcurrent})`);
 
       // 10. Safety
       if (consecutiveFails >= MAX_CONSECUTIVE_FAILS) {
-        console.error("[conductor] Too many consecutive failures. Pausing.");
+        bus.emitLog("error", "[conductor] Too many consecutive failures. Pausing.");
         break;
       }
     }
@@ -286,7 +428,8 @@ export class Conductor {
     if (state.status !== "done") {
       state.status = "paused";
       saveState(state, this.projectDir);
-      console.warn("[conductor] Paused. Run 'sisyphus resume' to continue.");
+      bus.emitLog("warn", "[conductor] Paused. Run 'sisyphus resume' to continue.");
+      bus.emit("paused", { reason: "Step limit or consecutive failures" });
     }
   }
 
