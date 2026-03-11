@@ -82,12 +82,13 @@ export class Conductor {
   constructor(opts: {
     projectDir?: string;
     tool?: ToolName;
+    brainTool?: "claude" | "codex";
     timeout?: number;
   } = {}) {
     this.projectDir = opts.projectDir ?? ".";
     this.defaultTool = opts.tool ?? "claude";
     this.defaultTimeout = opts.timeout ?? 1_800_000; // 30 min — brain sets per-task timeouts, this is just the safety cap
-    this.brain = new Brain(this.projectDir);
+    this.brain = new Brain(this.projectDir, opts.brainTool ?? "claude");
   }
 
   /** Signal the conductor to stop after the current task completes. */

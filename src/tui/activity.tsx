@@ -2,18 +2,31 @@
  * Activity panel — real-time agent activity display.
  *
  * Shows: brain status, running tasks, recent action log.
+ * Uses Claude Code-style spinner, shimmer animations, and semantic icons.
  */
 
 import React, { useState, useEffect } from "react";
 import { Box, Text } from "ink";
+import { dark, icons, spinnerFrames, formatElapsed } from "./theme.js";
 
-function Spinner({ color = "cyan" }: { color?: string }) {
-  const [visible, setVisible] = useState(true);
+/** Claude Code-style spinner: ·|· ·/· ·—· ·\· */
+function Spinner({ color = dark.brand }: { color?: string }) {
+  const [frame, setFrame] = useState(0);
   useEffect(() => {
-    const timer = setInterval(() => setVisible((v) => !v), 400);
+    const timer = setInterval(() => setFrame((f) => (f + 1) % spinnerFrames.length), 150);
     return () => clearInterval(timer);
   }, []);
-  return <Text color={color}>{visible ? "\u2736" : " "}</Text>;
+  return <Text color={color}>{spinnerFrames[frame]}</Text>;
+}
+
+/** Shimmer text — oscillates between two colors */
+function Shimmer({ children, color, shimmer }: { children: string; color: string; shimmer: string }) {
+  const [phase, setPhase] = useState(false);
+  useEffect(() => {
+    const timer = setInterval(() => setPhase((p) => !p), 600);
+    return () => clearInterval(timer);
+  }, []);
+  return <Text color={phase ? shimmer : color}>{children}</Text>;
 }
 
 export function Activity({
@@ -35,9 +48,9 @@ export function Activity({
   const runningCount = taskArr.filter((t) => t.status === "running").length;
   const doneCount = taskArr.filter((t) => t.status !== "running").length;
 
-  // Calculate space: brain(2) + taskHeader(1) + tasks(2*n) + taskFooter(1) + logHeader(1) = rest for logs
+  // Calculate space
   const taskLines = taskArr.length * 2 + (taskArr.length > 0 ? 2 : 0);
-  const headerLines = 4; // step + divider + brain + spacing
+  const headerLines = 4;
   const logHeaderLines = 1;
   const availableLogLines = Math.max(3, maxLines - headerLines - taskLines - logHeaderLines);
   const visibleLogs = logs.slice(-availableLogLines);
@@ -46,22 +59,40 @@ export function Activity({
     <Box flexDirection="column" paddingX={1}>
       {/* Step header */}
       <Box>
-        <Text bold color="white">
-          {stepInfo.globalStep > 0
-            ? `STEP ${stepInfo.globalStep} (${stepInfo.step}/${stepInfo.maxSteps})`
-            : "Waiting..."}
-        </Text>
-        {running && (
-          <Text dimColor> {"\u2502"} </Text>
+        {running ? (
+          <Shimmer color={dark.brand} shimmer={dark.brandShimmer}>
+            {stepInfo.globalStep > 0
+              ? `STEP ${stepInfo.globalStep} (${stepInfo.step}/${stepInfo.maxSteps})`
+              : "Starting..."}
+          </Shimmer>
+        ) : (
+          <Text bold color={dark.inactive}>
+            {stepInfo.globalStep > 0
+              ? `STEP ${stepInfo.globalStep} (${stepInfo.step}/${stepInfo.maxSteps})`
+              : "Waiting..."}
+          </Text>
         )}
-        {running && <Spinner />}
+        {running && (
+          <>
+            <Text color={dark.subtle}> {"\u2502"} </Text>
+            <Spinner />
+          </>
+        )}
       </Box>
-      <Text dimColor>{"─".repeat(50)}</Text>
+      <Text color={dark.subtle}>{"─".repeat(50)}</Text>
 
       {/* Brain status */}
       <Box>
-        <Text dimColor>{"\uD83E\uDDE0"} </Text>
-        <Text color={brainStatus.startsWith("Error") ? "red" : "cyan"} wrap="truncate">
+        <Text color={dark.subtle}>{icons.active} </Text>
+        <Text
+          color={
+            brainStatus.startsWith("Error") ? dark.error
+            : brainStatus.startsWith("Done") ? dark.success
+            : running ? dark.suggestion
+            : dark.inactive
+          }
+          wrap="truncate"
+        >
           {brainStatus || "Idle"}
         </Text>
       </Box>
@@ -69,48 +100,48 @@ export function Activity({
       {/* Task panel */}
       {taskArr.length > 0 && (
         <Box flexDirection="column" marginTop={1}>
-          <Text dimColor>
-            {"\u250C"} {runningCount} running {"\u00B7"} {doneCount}/{taskArr.length} done
+          <Text color={dark.subtle}>
+            {"\u250C"} {runningCount} running {icons.dot} {doneCount}/{taskArr.length} done
           </Text>
           {taskArr.map((task, idx) => {
             const isRunning = task.status === "running";
             const isDone = task.status === "done";
-            const elapsed = formatElapsed(task.elapsed);
+            const el = formatElapsed(task.elapsed);
 
             return (
               <Box key={idx} flexDirection="column">
                 <Box>
-                  <Text dimColor>{"\u2502"} </Text>
+                  <Text color={dark.subtle}>{"\u2502"} </Text>
                   {isRunning ? (
-                    <Spinner />
+                    <Spinner color={dark.suggestion} />
                   ) : isDone ? (
-                    <Text color="green">{"\u2714"}</Text>
+                    <Text color={dark.success}>{icons.full}</Text>
                   ) : (
-                    <Text color="red">{"\u2718"}</Text>
+                    <Text color={dark.error}>{icons.fail}</Text>
                   )}
-                  <Text dimColor> {task.tool}/{task.model} </Text>
-                  <Text color={isRunning ? "cyan" : isDone ? "green" : "red"}>
+                  <Text color={dark.inactive}> {task.tool}/{task.model} </Text>
+                  <Text color={isRunning ? dark.suggestion : isDone ? dark.success : dark.error}>
                     {task.action.padEnd(18)}
                   </Text>
-                  <Text dimColor> {elapsed}</Text>
+                  <Text color={dark.subtle}> {el}</Text>
                 </Box>
                 {task.lastLine && (
                   <Box>
-                    <Text dimColor>{"\u2502"}   {"\u21B3"} {task.lastLine.slice(0, 60)}</Text>
+                    <Text color={dark.subtle}>{"\u2502"}   {icons.toolUse} {task.lastLine.slice(0, 60)}</Text>
                   </Box>
                 )}
               </Box>
             );
           })}
-          <Text dimColor>{"\u2514"}{"─".repeat(40)}</Text>
+          <Text color={dark.subtle}>{"\u2514"}{"─".repeat(40)}</Text>
         </Box>
       )}
 
       {/* Log section */}
       <Box flexDirection="column" marginTop={1}>
-        <Text dimColor bold>Recent</Text>
+        <Text color={dark.subtle} bold>Recent</Text>
         {visibleLogs.length === 0 ? (
-          <Text dimColor italic>No activity yet</Text>
+          <Text color={dark.inactive} italic>No activity yet</Text>
         ) : (
           visibleLogs.map((log, idx) => (
             <Text key={`log-${logs.length - visibleLogs.length + idx}`} color={log.color} wrap="truncate">
@@ -121,10 +152,4 @@ export function Activity({
       </Box>
     </Box>
   );
-}
-
-function formatElapsed(ms: number): string {
-  const s = Math.floor(ms / 1000);
-  if (s < 60) return `${s}s`;
-  return `${Math.floor(s / 60)}m${s % 60}s`;
 }

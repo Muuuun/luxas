@@ -20,13 +20,16 @@ import { enableTUI } from "./events.js";
 // Activate TUI mode — suppresses console output, routes to event bus
 enableTUI();
 
-// Determine base directory for projects
+// Determine base directory for projects and options
 const args = process.argv.slice(2);
 let baseDir = join(homedir(), "Documents");
+let brainTool: "claude" | "codex" = "claude";
 
 for (let i = 0; i < args.length; i++) {
   if (args[i] === "--projects-dir" && args[i + 1]) {
     baseDir = args[++i];
+  } else if (args[i] === "--brain" && args[i + 1]) {
+    brainTool = args[++i] as "claude" | "codex";
   } else if (!args[i].startsWith("--")) {
     baseDir = args[i];
   }
@@ -37,7 +40,7 @@ if (!existsSync(baseDir)) {
 }
 
 // Render the TUI
-const { waitUntilExit } = render(<App baseDir={baseDir} />, {
+const { waitUntilExit } = render(<App baseDir={baseDir} brainTool={brainTool} />, {
   exitOnCtrlC: true,
 });
 

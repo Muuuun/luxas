@@ -9,12 +9,13 @@
  *   ├─────────────┴──────────────────────────────────┤
  *   │  Input bar                                     │
  *   ├────────────────────────────────────────────────┤
- *   │  Status bar (keybindings)                      │
+ *   │  Status bar (keybindings + usage + rate bar)   │
  *   └────────────────────────────────────────────────┘
  */
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Box, Text, useApp, useInput, useStdout } from "ink";
+import { execSync } from "child_process";
 import { Sidebar } from "./sidebar.js";
 import { Activity } from "./activity.js";
 import { InputBar } from "./input-bar.js";
@@ -22,9 +23,23 @@ import { bus } from "../events.js";
 import { discoverProjects, createProject, type ProjectInfo } from "./projects.js";
 import { Conductor } from "../conductor.js";
 import { loadState } from "../state.js";
+import { dark, icons, formatTokens, formatCost } from "./theme.js";
 import type { ResearchState } from "../types.js";
 
-export default function App({ baseDir }: { baseDir: string }) {
+/** Rate limit progress bar — Claude Code style fill/empty blocks */
+function RateBar({ utilization, width = 10 }: { utilization: number; width?: number }) {
+  const filled = Math.round(utilization * width);
+  const empty = width - filled;
+  const color = utilization > 0.8 ? dark.error : utilization > 0.5 ? dark.warning : dark.rateFill;
+  return (
+    <Text>
+      <Text color={color}>{"█".repeat(filled)}</Text>
+      <Text color={dark.rateEmpty}>{"░".repeat(empty)}</Text>
+    </Text>
+  );
+}
+
+export default function App({ baseDir, brainTool = "claude" }: { baseDir: string; brainTool?: "claude" | "codex" }) {
   const { exit } = useApp();
   const { stdout } = useStdout();
   const rows = stdout?.rows ?? 40;
@@ -34,6 +49,7 @@ export default function App({ baseDir }: { baseDir: string }) {
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [focus, setFocus] = useState<"sidebar" | "input">("input");
+  const [activeBrainTool, setActiveBrainTool] = useState<"claude" | "codex">(brainTool);
   const [running, setRunning] = useState(false);
   const [projectState, setProjectState] = useState<ResearchState | null>(null);
   const conductorRef = useRef<Conductor | null>(null);
@@ -55,6 +71,14 @@ export default function App({ baseDir }: { baseDir: string }) {
   // Usage tracking
   const [usage, setUsage] = useState({ inputTokens: 0, outputTokens: 0, costUsd: 0 });
   const [rateLimit, setRateLimit] = useState<{ utilization: number } | null>(null);
+
+  // Shimmer state for active border
+  const [shimmer, setShimmer] = useState(false);
+  useEffect(() => {
+    if (!running) return;
+    const timer = setInterval(() => setShimmer((s) => !s), 600);
+    return () => clearInterval(timer);
+  }, [running]);
 
   // ── Project discovery ────────────────────────────
   const refreshProjects = useCallback(() => {
@@ -100,12 +124,12 @@ export default function App({ baseDir }: { baseDir: string }) {
   // ── Event subscriptions ──────────────────────────
   useEffect(() => {
     const onLog = (e: { level: string; message: string }) => {
-      const color = e.level === "error" ? "red" : e.level === "warn" ? "yellow" : "white";
+      const color = e.level === "error" ? dark.error : e.level === "warn" ? dark.warning : dark.text;
       setLogs((prev) => [...prev.slice(-200), { text: e.message, color }]);
     };
     const onBrain = (e: { status: string; elapsed: number; thought?: string; reason?: string; taskCount?: number }) => {
       if (e.status === "thinking") {
-        setBrainStatus(`Thinking... ${e.elapsed}s${e.thought ? ` - ${e.thought.slice(0, 60)}` : ""}`);
+        setBrainStatus(`Thinking... ${e.elapsed}s${e.thought ? ` ${icons.dot} ${e.thought.slice(0, 60)}` : ""}`);
       } else if (e.status === "decided") {
         setBrainStatus(`Decided: ${e.reason?.slice(0, 80) ?? ""} (${e.taskCount ?? 0} tasks)`);
       } else {
@@ -116,7 +140,6 @@ export default function App({ baseDir }: { baseDir: string }) {
       setTasks((prev) => {
         const next = new Map(prev);
         next.set(e.id, e);
-        // Remove completed tasks after 10 seconds
         if (e.status !== "running") {
           setTimeout(() => {
             setTasks((p) => {
@@ -133,11 +156,11 @@ export default function App({ baseDir }: { baseDir: string }) {
       setStepInfo(e);
     };
     const onAction = (e: { action: string; result: string; details: string }) => {
-      const icon = e.result === "success" ? "+" : e.result === "failed" ? "!" : "~";
-      const color = e.result === "success" ? "green" : e.result === "failed" ? "red" : "yellow";
+      const icon = e.result === "success" ? icons.full : e.result === "failed" ? icons.fail : icons.half;
+      const color = e.result === "success" ? dark.success : e.result === "failed" ? dark.error : dark.warning;
       setLogs((prev) => [
         ...prev.slice(-200),
-        { text: `[${icon}] ${e.action}: ${e.details.slice(0, 100)}`, color },
+        { text: `${icon} ${e.action}: ${e.details.slice(0, 100)}`, color },
       ]);
     };
     const onUsage = (e: { inputTokens: number; outputTokens: number; costUsd: number }) => {
@@ -191,20 +214,19 @@ export default function App({ baseDir }: { baseDir: string }) {
       if (!trimmed) return;
 
       const [rawCommand, ...rest] = trimmed.split(/\s+/);
-      const command = rawCommand.replace(/^\//, ""); // strip leading /
+      const command = rawCommand.replace(/^\//, "");
       const arg = rest.join(" ");
 
       switch (command) {
         case "new": {
           if (!arg) {
-            setLogs((p) => [...p, { text: 'Usage: /new "Research Topic"', color: "yellow" }]);
+            setLogs((p) => [...p, { text: 'Usage: /new "Research Topic"', color: dark.warning }]);
             return;
           }
           const topic = arg.replace(/^["']|["']$/g, "");
           const dir = createProject(baseDir, topic);
-          setLogs((p) => [...p, { text: `Created project: ${dir}`, color: "green" }]);
+          setLogs((p) => [...p, { text: `Created project: ${dir}`, color: dark.success }]);
           refreshProjects();
-          // Select the new project
           const found = discoverProjects(baseDir);
           const idx = found.findIndex((p) => p.dir === dir);
           if (idx >= 0) setSelectedIdx(idx);
@@ -213,20 +235,20 @@ export default function App({ baseDir }: { baseDir: string }) {
         case "run": {
           const project = projects[selectedIdx];
           if (!project) {
-            setLogs((p) => [...p, { text: "No project selected", color: "red" }]);
+            setLogs((p) => [...p, { text: "No project selected", color: dark.error }]);
             return;
           }
           if (running) {
-            setLogs((p) => [...p, { text: "Already running", color: "yellow" }]);
+            setLogs((p) => [...p, { text: "Already running", color: dark.warning }]);
             return;
           }
           setRunning(true);
-          setLogs((p) => [...p, { text: `Starting: ${project.topic}`, color: "cyan" }]);
+          setLogs((p) => [...p, { text: `${icons.record} Starting: ${project.topic}`, color: dark.suggestion }]);
           const topic = arg || undefined;
-          const c1 = new Conductor({ projectDir: project.dir });
+          const c1 = new Conductor({ projectDir: project.dir, brainTool: activeBrainTool });
           conductorRef.current = c1;
           c1.run(topic).catch((err: Error) => {
-            setLogs((p) => [...p, { text: `Error: ${err.message}`, color: "red" }]);
+            setLogs((p) => [...p, { text: `${icons.fail} Error: ${err.message}`, color: dark.error }]);
           }).finally(() => {
             conductorRef.current = null;
             setRunning(false);
@@ -238,15 +260,15 @@ export default function App({ baseDir }: { baseDir: string }) {
           const project = projects[selectedIdx];
           if (!project) return;
           if (running) {
-            setLogs((p) => [...p, { text: "Already running", color: "yellow" }]);
+            setLogs((p) => [...p, { text: "Already running", color: dark.warning }]);
             return;
           }
           setRunning(true);
-          setLogs((p) => [...p, { text: `Resuming: ${project.topic}`, color: "cyan" }]);
-          const c2 = new Conductor({ projectDir: project.dir });
+          setLogs((p) => [...p, { text: `${icons.retry} Resuming: ${project.topic}`, color: dark.suggestion }]);
+          const c2 = new Conductor({ projectDir: project.dir, brainTool: activeBrainTool });
           conductorRef.current = c2;
           c2.run().catch((err: Error) => {
-            setLogs((p) => [...p, { text: `Error: ${err.message}`, color: "red" }]);
+            setLogs((p) => [...p, { text: `${icons.fail} Error: ${err.message}`, color: dark.error }]);
           }).finally(() => {
             conductorRef.current = null;
             setRunning(false);
@@ -258,20 +280,30 @@ export default function App({ baseDir }: { baseDir: string }) {
           const project = projects[selectedIdx];
           if (!project || !arg) return;
           if (running) {
-            setLogs((p) => [...p, { text: "Already running", color: "yellow" }]);
+            setLogs((p) => [...p, { text: "Already running", color: dark.warning }]);
             return;
           }
           setRunning(true);
-          setLogs((p) => [...p, { text: `Refining: ${arg.slice(0, 60)}`, color: "cyan" }]);
-          const c3 = new Conductor({ projectDir: project.dir });
+          setLogs((p) => [...p, { text: `${icons.toolUse} Refining: ${arg.slice(0, 60)}`, color: dark.suggestion }]);
+          const c3 = new Conductor({ projectDir: project.dir, brainTool: activeBrainTool });
           conductorRef.current = c3;
           c3.run(undefined, arg).catch((err: Error) => {
-            setLogs((p) => [...p, { text: `Error: ${err.message}`, color: "red" }]);
+            setLogs((p) => [...p, { text: `${icons.fail} Error: ${err.message}`, color: dark.error }]);
           }).finally(() => {
             conductorRef.current = null;
             setRunning(false);
             refreshProjects();
           });
+          break;
+        }
+        case "brain": {
+          const tool = arg.toLowerCase();
+          if (tool === "claude" || tool === "codex") {
+            setActiveBrainTool(tool);
+            setLogs((p) => [...p, { text: `${icons.full} Brain switched to: ${tool}`, color: dark.success }]);
+          } else {
+            setLogs((p) => [...p, { text: `Current brain: ${activeBrainTool}. Usage: /brain claude or /brain codex`, color: dark.warning }]);
+          }
           break;
         }
         case "quit":
@@ -280,18 +312,19 @@ export default function App({ baseDir }: { baseDir: string }) {
           break;
         case "help":
           setLogs((p) => [...p,
-            { text: "/new <topic>     Create a new research project", color: "white" },
-            { text: "/run             Start research on selected project", color: "white" },
-            { text: "/resume          Resume from last saved state", color: "white" },
-            { text: "/refine <text>   Refine/expand existing research", color: "white" },
-            { text: "/quit            Exit", color: "white" },
+            { text: "/new <topic>     Create a new research project", color: dark.text },
+            { text: "/run             Start research on selected project", color: dark.text },
+            { text: "/resume          Resume from last saved state", color: dark.text },
+            { text: "/refine <text>   Refine/expand existing research", color: dark.text },
+            { text: `/brain <tool>    Switch brain (current: ${activeBrainTool})`, color: dark.text },
+            { text: "/quit            Exit", color: dark.text },
           ]);
           break;
         default:
-          setLogs((p) => [...p, { text: `Unknown: /${command}. Type /help for commands`, color: "yellow" }]);
+          setLogs((p) => [...p, { text: `Unknown: /${command}. Type /help for commands`, color: dark.warning }]);
       }
     },
-    [projects, selectedIdx, running, baseDir, exit, refreshProjects],
+    [projects, selectedIdx, running, baseDir, exit, refreshProjects, activeBrainTool],
   );
 
   // ── Keyboard shortcuts ───────────────────────────
@@ -308,7 +341,6 @@ export default function App({ baseDir }: { baseDir: string }) {
       setFocus((f) => (f === "sidebar" ? "input" : "sidebar"));
       return;
     }
-    // Global project switching: Ctrl+J (next) / Ctrl+K (prev)
     if (key.ctrl && input === "j") {
       setSelectedIdx((i) => Math.min(projects.length - 1, i + 1));
       return;
@@ -317,28 +349,53 @@ export default function App({ baseDir }: { baseDir: string }) {
       setSelectedIdx((i) => Math.max(0, i - 1));
       return;
     }
+    if (key.ctrl && input === "o") {
+      openPdf();
+      return;
+    }
     if (focus === "sidebar") {
       if (key.upArrow) {
         setSelectedIdx((i) => Math.max(0, i - 1));
       } else if (key.downArrow) {
         setSelectedIdx((i) => Math.min(projects.length - 1, i + 1));
+      } else if (key.return) {
+        openPdf();
       }
     }
   });
 
+  const openPdf = useCallback(() => {
+    const pdf = projects[selectedIdx]?.pdfPath;
+    if (!pdf) {
+      setLogs((p) => [...p, { text: "No PDF available for this project", color: dark.warning }]);
+      return;
+    }
+    try {
+      execSync(`open "${pdf}"`);
+      setLogs((p) => [...p, { text: `${icons.full} Opened: ${pdf.split("/").pop()}`, color: dark.success }]);
+    } catch {
+      setLogs((p) => [...p, { text: `${icons.fail} Failed to open PDF`, color: dark.error }]);
+    }
+  }, [projects, selectedIdx]);
+
   // ── Layout ───────────────────────────────────────
   const sidebarWidth = Math.min(28, Math.floor(cols * 0.25));
-  const mainHeight = rows - 6; // header(1) + input(3) + status(1) + borders
+  const mainHeight = rows - 6;
+
+  // Shimmer border color when running
+  const activeBorder = running
+    ? (shimmer ? dark.borderShimmer : dark.borderActive)
+    : dark.border;
 
   return (
     <Box flexDirection="column" width={cols} height={rows}>
       {/* Header */}
       <Box justifyContent="center" paddingX={1}>
-        <Text bold color="cyan">
+        <Text bold color={dark.brand}>
           {" "}Sisyphus{" "}
         </Text>
-        <Text dimColor> Il faut imaginer Sisyphe heureux </Text>
-        {running && <Text color="green"> {"\u25CF"} running</Text>}
+        <Text color={dark.subtle}> Il faut imaginer Sisyphe heureux </Text>
+        {running && <Text color={dark.success}> {icons.record} running</Text>}
       </Box>
 
       {/* Main: sidebar + activity */}
@@ -347,7 +404,7 @@ export default function App({ baseDir }: { baseDir: string }) {
           width={sidebarWidth}
           flexDirection="column"
           borderStyle="round"
-          borderColor={focus === "sidebar" ? "cyan" : "gray"}
+          borderColor={focus === "sidebar" ? activeBorder : dark.border}
         >
           <Sidebar
             projects={projects}
@@ -358,7 +415,7 @@ export default function App({ baseDir }: { baseDir: string }) {
           />
         </Box>
 
-        <Box flexGrow={1} flexDirection="column" borderStyle="round" borderColor="gray">
+        <Box flexGrow={1} flexDirection="column" borderStyle="round" borderColor={running ? activeBorder : dark.border}>
           <Activity
             brainStatus={brainStatus}
             tasks={tasks}
@@ -371,7 +428,7 @@ export default function App({ baseDir }: { baseDir: string }) {
       </Box>
 
       {/* Input */}
-      <Box borderStyle="round" borderColor={focus === "input" ? "cyan" : "gray"} paddingX={1}>
+      <Box borderStyle="round" borderColor={focus === "input" ? activeBorder : dark.border} paddingX={1}>
         <InputBar
           focused={focus === "input"}
           onSubmit={handleCommand}
@@ -390,41 +447,41 @@ export default function App({ baseDir }: { baseDir: string }) {
 
       {/* Status bar */}
       <Box paddingX={1} justifyContent="space-between">
-        <Text dimColor>
-          {running && <><Text color="yellow">Esc</Text> stop{" "}</>}
-          <Text color="cyan">Tab</Text> focus{" "}
-          <Text color="cyan">^J/^K</Text> project{" "}
-          <Text color="cyan">^N</Text> new{" "}
-          <Text color="cyan">^Q</Text> quit
+        <Text color={dark.inactive}>
+          {running && <><Text color={dark.warning}>Esc</Text> stop{" "}</>}
+          <Text color={dark.suggestion}>Tab</Text> focus{" "}
+          <Text color={dark.suggestion}>^J/^K</Text> project{" "}
+          <Text color={dark.suggestion}>^O</Text> pdf{" "}
+          <Text color={dark.suggestion}>^N</Text> new{" "}
+          <Text color={dark.suggestion}>^Q</Text> quit
         </Text>
-        <Text dimColor>
+        <Box>
           {usage.costUsd > 0 && (
             <Text>
-              <Text color={rateLimit && rateLimit.utilization > 0.8 ? "red" : "yellow"}>
-                ${usage.costUsd.toFixed(2)}
+              <Text color={rateLimit && rateLimit.utilization > 0.8 ? dark.error : dark.warning}>
+                {formatCost(usage.costUsd)}
               </Text>
-              {" "}
-              <Text dimColor>
-                {formatTokens(usage.inputTokens)}in/{formatTokens(usage.outputTokens)}out
+              <Text color={dark.inactive}>
+                {" "}{formatTokens(usage.inputTokens)}in/{formatTokens(usage.outputTokens)}out
               </Text>
               {rateLimit && (
-                <Text color={rateLimit.utilization > 0.8 ? "red" : rateLimit.utilization > 0.5 ? "yellow" : "green"}>
-                  {" "}{Math.round(rateLimit.utilization * 100)}%
-                </Text>
+                <>
+                  <Text> </Text>
+                  <RateBar utilization={rateLimit.utilization} width={8} />
+                </>
               )}
-              {"  "}
+              <Text>{"  "}</Text>
             </Text>
           )}
-          {projects[selectedIdx]?.displayName.slice(0, 25) ?? "no project"}
-          {stepInfo.globalStep > 0 && ` step ${stepInfo.globalStep}`}
-        </Text>
+          <Text color={activeBrainTool === "codex" ? dark.brainCodex : dark.brainClaude}>
+            {activeBrainTool}
+          </Text>
+          <Text color={dark.inactive}>
+            {" "}{projects[selectedIdx]?.displayName.slice(0, 25) ?? "no project"}
+            {stepInfo.globalStep > 0 && ` step ${stepInfo.globalStep}`}
+          </Text>
+        </Box>
       </Box>
     </Box>
   );
-}
-
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}k`;
-  return String(n);
 }

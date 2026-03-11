@@ -87,6 +87,7 @@ Usage:
 
 Options:
   --tool <claude|codex>      Default executor tool (default: claude)
+  --brain <claude|codex>     Brain decision-making tool (default: claude)
   --timeout <seconds>        Max timeout per action in seconds (default: 600)
   --project-dir <path>       Project directory (default: .)
 `);
@@ -159,6 +160,7 @@ function createConductor(flags: Record<string, string>): Conductor {
   return new Conductor({
     projectDir: flags["project-dir"] ?? ".",
     tool: (flags["tool"] as ToolName) ?? "claude",
+    brainTool: (flags["brain"] as "claude" | "codex") ?? "claude",
     timeout: flags["timeout"] ? parseInt(flags["timeout"], 10) * 1000 : 600_000,
   });
 }

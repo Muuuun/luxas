@@ -24,9 +24,11 @@ const MAX_BRAIN_TIMEOUT = 600_000; // 10 min — large contexts (50+ papers) nee
 
 export class Brain {
   private projectDir: string;
+  private tool: "claude" | "codex";
 
-  constructor(projectDir = ".") {
+  constructor(projectDir = ".", tool: "claude" | "codex" = "claude") {
     this.projectDir = projectDir;
+    this.tool = tool;
   }
 
   /**
@@ -135,7 +137,10 @@ COMPILATION — CRITICAL (most common failure point):
 - If <report_validation> shows FAILED, you MUST fix ALL listed issues before marking done.
 - The system automatically validates the report. If you say "done" but validation fails, you'll be sent back.
 
-TOOL SELECTION: Use "claude" for ALL tasks. "codex" is UNAVAILABLE.
+TOOL SELECTION:
+- "claude" = Claude Code (claude -p) — supports all tools, file read/write, web fetch, streaming
+- "codex" = OpenAI Codex (codex exec) — supports file read/write, bash execution
+- Both tools can execute any action. Use "claude" by default; use "codex" for tasks that benefit from OpenAI models (e.g., alternative perspective, diversity of analysis).
 
 MODEL SELECTION — each task has a "model" field:
 - "cheap" = Haiku — trivial mechanical tasks: download_papers, compile_report, fix_compilation, expand_citations
@@ -172,9 +177,11 @@ For done: {"reason": "PDF report exists with good quality", "done": true, "tasks
 ${context}
 </current_state>${directiveBlock}`;
 
-    bus.emitLog("info", "[brain] Deciding next action...");
+    bus.emitLog("info", `[brain] Deciding next action... (${this.tool})`);
     bus.emitBrain({ status: "thinking", elapsed: 0 });
-    const result = await this.callClaude(prompt);
+    const result = this.tool === "codex"
+      ? await this.callCodex(prompt)
+      : await this.callClaude(prompt);
     const decision = this.parseDecision(result);
 
     if (decision.tasks.length > 1) {
@@ -218,7 +225,8 @@ ${taskSummary}
 In 2-3 sentences, assess: what succeeded? What failed? What changed?
 Return plain text, not JSON.`;
 
-    return (await this.callClaude(prompt)) || "Could not evaluate result.";
+    const callFn = this.tool === "codex" ? this.callCodex.bind(this) : this.callClaude.bind(this);
+    return (await callFn(prompt)) || "Could not evaluate result.";
   }
 
   private callClaude(prompt: string): Promise<string> {
@@ -339,6 +347,84 @@ Return plain text, not JSON.`;
         clearInterval(spinner);
         if (!tuiActive) process.stderr.write(`\r${CLEAR_LINE}\n`);
         bus.emitLog("warn", `[brain] Claude call failed: ${err.message?.slice(0, 300)}`);
+        resolve("");
+      });
+    });
+  }
+
+  /**
+   * Call codex as brain (for OpenAI-backed decision making).
+   */
+  private callCodex(prompt: string): Promise<string> {
+    const env = { ...process.env };
+
+    return new Promise((resolve) => {
+      const t0 = Date.now();
+      const child = spawn(
+        "codex",
+        ["exec", "--full-auto", "-"],
+        {
+          cwd: this.projectDir,
+          env,
+          stdio: ["pipe", "pipe", "pipe"],
+        },
+      );
+
+      const killTimer = setTimeout(() => {
+        bus.emitLog("warn", `[brain/codex] Timeout after ${MAX_BRAIN_TIMEOUT / 1000}s`);
+        child.kill("SIGTERM");
+        setTimeout(() => child.kill("SIGKILL"), 5000);
+      }, MAX_BRAIN_TIMEOUT);
+
+      let stdout = "";
+      let frame = 0;
+
+      const spinner = setInterval(() => {
+        frame++;
+        const el = ((Date.now() - t0) / 1000).toFixed(0);
+        if (tuiActive) {
+          bus.emitBrain({ status: "thinking", elapsed: parseFloat(el), thought: "codex thinking..." });
+        } else {
+          const icon = CYAN + SPINNER_FRAMES[frame % SPINNER_FRAMES.length] + RESET;
+          process.stderr.write(`\r${CLEAR_LINE}${icon} ${DIM}[brain/codex] thinking... ${el}s${RESET}`);
+        }
+      }, 200);
+
+      child.stdout.on("data", (data) => {
+        stdout += data.toString();
+      });
+
+      child.stderr.on("data", (data) => {
+        const line = data.toString().trim();
+        if (line && !tuiActive) {
+          process.stderr.write(`\r${CLEAR_LINE}${DIM}[brain/codex] ${line.slice(0, 120)}${RESET}`);
+        }
+      });
+
+      child.stdin.write(prompt);
+      child.stdin.end();
+
+      child.on("close", (code) => {
+        clearTimeout(killTimer);
+        clearInterval(spinner);
+        if (!tuiActive) {
+          process.stderr.write(`\r${CLEAR_LINE}\n`);
+        }
+        const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+        bus.emitLog("info", `[brain/codex] Finished in ${elapsed}s. stdout: ${stdout.length} chars`);
+        if (code !== 0 && !stdout.trim()) {
+          bus.emitLog("warn", `[brain/codex] Codex exited with code ${code}`);
+          resolve("");
+        } else {
+          resolve(stdout.trim());
+        }
+      });
+
+      child.on("error", (err: any) => {
+        clearTimeout(killTimer);
+        clearInterval(spinner);
+        if (!tuiActive) process.stderr.write(`\r${CLEAR_LINE}\n`);
+        bus.emitLog("warn", `[brain/codex] Codex call failed: ${err.message?.slice(0, 300)}`);
         resolve("");
       });
     });

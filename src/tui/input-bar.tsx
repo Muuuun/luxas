@@ -4,6 +4,7 @@
 
 import React, { useState, useMemo } from "react";
 import { Box, Text, useInput } from "ink";
+import { dark } from "./theme.js";
 
 export interface SlashCommand {
   name: string;
@@ -16,6 +17,7 @@ export const COMMANDS: SlashCommand[] = [
   { name: "run", description: "Start research on selected project" },
   { name: "resume", description: "Resume from last saved state" },
   { name: "refine", description: "Refine/expand existing research", hasArg: true },
+  { name: "brain", description: "Switch brain tool: /brain codex or /brain claude", hasArg: true },
   { name: "help", description: "Show all commands" },
   { name: "quit", description: "Exit Sisyphus" },
 ];
@@ -235,13 +237,13 @@ export function InputBar({
             const selected = idx === menuIdx;
             return (
               <Box key={cmd.name}>
-                <Text color={selected ? "cyan" : "white"} bold={selected}>
+                <Text color={selected ? dark.suggestion : dark.text} bold={selected}>
                   {selected ? "\u25B8 " : "  "}
                 </Text>
-                <Text color={selected ? "cyan" : "white"} bold={selected}>
+                <Text color={selected ? dark.suggestion : dark.text} bold={selected}>
                   {"/" + cmd.name.padEnd(10)}
                 </Text>
-                <Text dimColor> {cmd.description}</Text>
+                <Text color={dark.inactive}> {cmd.description}</Text>
               </Box>
             );
           })}
@@ -250,7 +252,7 @@ export function InputBar({
 
       {/* Input line */}
       <Box>
-        <Text color={focused ? "cyan" : "gray"} bold>
+        <Text color={focused ? dark.suggestion : dark.inactive} bold>
           {">"}{" "}
         </Text>
         {value ? (

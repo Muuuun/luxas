@@ -1,28 +1,28 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/sisyphus-autonomous%20research-blue?style=flat-square" />
+  <img src="https://img.shields.io/badge/sisyphus-meta--agent-blue?style=flat-square" />
   <img src="https://img.shields.io/badge/typescript-5.5+-blue?style=flat-square&logo=typescript&logoColor=white" />
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" />
 </p>
 
 <h1 align="center">Sisyphus</h1>
 <p align="center"><i>Il faut imaginer Sisyphe heureux.</i></p>
-<p align="center">An autonomous research agent that produces LaTeX survey reports with proper citations, compiled to PDF.</p>
+<p align="center">Orchestrates coding agents (Claude Code, Codex) to do autonomous research.</p>
 
 ---
 
-### What is Sisyphus?
+### The Idea
 
-Sisyphus is a fully autonomous research agent. Give it a topic and it will:
+Coding agents like Claude Code and Codex are great at executing tasks — but research requires something more: planning what to read, deciding what matters, coordinating dozens of parallel efforts, and iterating on quality across sessions.
 
-1. **Discover** papers via Semantic Scholar and arXiv
-2. **Evaluate** relevance, promote the best to core
-3. **Download** LaTeX source (PDF fallback)
-4. **Extract** structured data — methods, results, benchmarks, figures
-5. **Write** a LaTeX survey report with `\cite{}` references
-6. **Compile** to PDF via `pdflatex` + `bibtex`
-7. **Self-review** and iterate until quality is satisfactory
+Sisyphus turns coding agents into **research agents**. It wraps them with an orchestration layer that handles the parts they weren't built for:
 
-No fixed pipeline. The Brain decides what to do next based on actual state — it can go back, retry, change strategy, or parallelize up to 8 tasks.
+- **Autonomous planning** — a Brain reads state and decides what to do next, adapting strategy as it learns
+- **Parallel execution** — up to 8 agent sessions running simultaneously (searching, downloading, extracting)
+- **Cross-session persistence** — interrupt anytime, resume where you left off
+- **Multi-agent mixing** — use Claude and Codex on the same project, each where it's strongest
+- **Self-review loops** — the system evaluates its own output and iterates until quality is satisfactory
+
+Give it a topic. It discovers, reads, and synthesizes 30+ papers, then produces a LaTeX PDF survey with proper citations — no human intervention required.
 
 ---
 
@@ -34,106 +34,113 @@ git clone https://github.com/Muuuun/Sisyphus.git
 cd Sisyphus
 npm install
 
-# Run on a topic
+# Run a research survey
 npx tsx src/index.ts run "Large Language Model Reasoning"
 
-# Resume interrupted research
+# Use Codex as the brain
+npx tsx src/index.ts run "Diffusion Models" --brain codex
+
+# Resume interrupted work
 npx tsx src/index.ts resume
 
 # Refine existing research
 npx tsx src/index.ts refine "add more papers about chain-of-thought"
-
-# Check status
-npx tsx src/index.ts status
 
 # Interactive TUI dashboard
 npx tsx src/index.ts tui
 ```
 
 > [!TIP]
-> Sisyphus requires `claude` CLI installed and authenticated. It also needs `pdflatex`, `bibtex`, and `pdftotext` (poppler) for report compilation.
+> Requires `claude` CLI (authenticated). Optionally `codex` CLI for OpenAI models. For PDF compilation: `pdflatex`, `bibtex`, `pdftotext` (poppler).
+
+---
+
+### How It Works
+
+```
+                        ┌──────────────────────────┐
+                        │  Brain (Claude or Codex)  │
+                        │  Reads state → decides    │
+                        │  next action(s)           │
+                        └────────────┬─────────────┘
+                                     │ 1–8 parallel tasks
+                        ┌────────────▼─────────────┐
+                        │  Conductor (TypeScript)   │
+                        │  Dispatches, tracks,      │
+                        │  saves state, enforces    │
+                        │  safety limits            │
+                        └────────────┬─────────────┘
+                ┌────────────┬───────┴───────┬────────────┐
+                ▼            ▼               ▼            ▼
+          ┌──────────┐ ┌──────────┐   ┌──────────┐ ┌──────────┐
+          │ Claude   │ │ Claude   │   │ Codex    │ │ Claude   │
+          │ Session  │ │ Session  │   │ Session  │ │ Session  │
+          │ search   │ │ extract  │   │ download │ │ write    │
+          └──────────┘ └──────────┘   └──────────┘ └──────────┘
+```
+
+**The Brain** doesn't follow a fixed pipeline. It looks at what exists (papers found, papers downloaded, extractions done, report quality) and decides what to do next. It can go backwards, skip steps, change strategy, or parallelize aggressively.
+
+**The Conductor** dispatches tasks, saves state after each completion (crash-safe), detects loops, enforces rate limits, and keeps the Brain honest (validates reports before accepting "done").
+
+**The Executors** are vanilla coding agent sessions (`claude -p` or `codex exec`). They get a prompt, do their work, return output. Sisyphus adds the research orchestration on top.
+
+---
+
+### Multi-Agent Support
+
+Sisyphus can use different coding agents for different roles:
+
+| Role | Claude | Codex |
+|------|--------|-------|
+| **Brain** (planner) | `--brain claude` (default) | `--brain codex` |
+| **Executor** (worker) | Most tasks | Alternative perspective |
+
+Switch at runtime in the TUI with `/brain codex` or `/brain claude`.
+
+The Brain also selects **model tiers** per task:
+
+| Tier | Claude Model | Codex Model | Use Case |
+|------|-------------|-------------|----------|
+| `cheap` | Haiku | o4-mini | Download, compile, mechanical tasks |
+| `fast` | Sonnet | o4-mini | Search, extract, evaluate |
+| `think` | Opus | o3 | Write report, deep analysis |
 
 ---
 
 ### TUI Dashboard
 
-Launch with `npx tsx src/tui.tsx` or the `tui` command.
+Launch with `npx tsx src/tui.tsx` or `npx tsx src/index.ts tui`.
 
 - **Project management** — create, list, switch between research projects
-- **Real-time activity** — see Brain thinking, executor tasks running, live progress
-- **Slash commands** — `/new`, `/run`, `/resume`, `/refine`, `/help`
+- **Real-time activity** — Brain thinking, executor tasks, live progress
+- **Slash commands** — `/new`, `/run`, `/resume`, `/refine`, `/brain`, `/help`
 - **Usage tracking** — token counts, cost, rate limit utilization
-- **Keyboard shortcuts** — `Ctrl+J/K` switch projects, `Tab` focus, `Esc` interrupt
+- **Keyboard shortcuts** — `Ctrl+J/K` projects, `Ctrl+O` open PDF, `Tab` focus, `Esc` interrupt
 
 ---
 
-### Architecture
+### Research Pipeline
 
-```
-Brain (claude -p, Sonnet)
-    │
-    ├── Reads current state (papers, extractions, report)
-    ├── Decides next action(s) — not a fixed sequence
-    ├── Can issue 1-8 parallel tasks
-    │
-    ▼
-Conductor (TypeScript orchestrator)
-    │
-    ├── Dispatches tasks to SessionPool
-    ├── Each task runs as a claude -p subprocess
-    ├── Saves state after each task (crash-safe)
-    ├── Checks safety limits (loops, failures, rate limits)
-    └── Repeats until Brain says "done"
-```
-
-**Key design decisions:**
-
-- **Agentic, not pipelined** — Brain can go backwards, skip steps, change strategy
-- **Parallel-first** — up to 8 concurrent tasks (download, extract, search in parallel)
-- **State = filesystem** — `research-state.json` + `data/` directory is the source of truth
-- **Resumable** — interrupt anytime, `resume` picks up where it left off
-- **Model tiering** — Haiku for mechanical tasks, Sonnet for most work, Opus for deep analysis
-
----
-
-### Paper Funnel
+The Brain autonomously manages this paper funnel:
 
 ```
 discovered → candidate → core → excluded
                           │
-                    download source
+                    download source (LaTeX preferred, PDF fallback)
                           │
-                    extract structured data
+                    extract structured data (methods, results, figures)
                           │
-                    include in report
+                    cross-validate claims across papers
+                          │
+                    write LaTeX survey with \cite{} references
+                          │
+                    compile to PDF → self-review → iterate
 ```
 
-Each paper lives in `data/papers/{id}/` with:
+Each paper lives in `data/papers/{id}/` with metadata, extraction, source files, and figures.
 
-| File | Purpose |
-|------|---------|
-| `meta.json` | Title, authors, year, IDs (immutable) |
-| `status.json` | Funnel stage + reason |
-| `extraction.json` | Methods, results, benchmarks, claims |
-| `source/` | Downloaded LaTeX or PDF |
-| `figures/` | Extracted images + manifest |
-
----
-
-### Custom Agents
-
-The Brain can define project-specific sub-agents for specialized tasks:
-
-```json
-{
-  "id": "quantum_reviewer",
-  "name": "Quantum Computing Reviewer",
-  "system_prompt": "You are an expert in quantum error correction...",
-  "default_model": "think"
-}
-```
-
-Agents persist in `data/agents.json` and are reusable across tasks.
+The Brain can also define **custom sub-agents** with specialized system prompts (e.g., a domain expert reviewer) that persist across tasks.
 
 ---
 
@@ -145,7 +152,7 @@ Agents persist in `data/agents.json` and are reusable across tasks.
 | Max consecutive failures | 5 (auto-pause) |
 | Same action repeat | 4 (loop detection) |
 | Max concurrent tasks | 8 |
-| Daemon retries | 10 |
+| Report validation | Blocks "done" until PDF passes checks |
 
 ---
 
@@ -154,15 +161,15 @@ Agents persist in `data/agents.json` and are reusable across tasks.
 ```
 src/
   index.ts          CLI entry point
-  conductor.ts      Agentic loop orchestrator
-  brain.ts          Autonomous decision-making (claude -p)
-  terminal.ts       Subprocess execution + live status
+  conductor.ts      Agentic loop — Brain → Execute → Evaluate → Repeat
+  brain.ts          Autonomous decision-making (claude -p / codex exec)
+  terminal.ts       Subprocess execution + parallel session pool
   state.ts          State management + report validation
-  events.ts         Event bus (decouples rendering)
+  events.ts         Event bus (decouples orchestration from rendering)
   agents.ts         Custom agent store
   types.ts          Core type definitions
   knowledge/
-    store.ts        Paper repository API
+    store.ts        Paper repository + extraction digest
     schema.ts       Paper funnel schemas
   tools/
     semantic-scholar.ts   S2 API (search + citations)
@@ -185,19 +192,10 @@ src/
 ### Requirements
 
 - **Node.js** 22+
-- **claude** CLI (authenticated)
+- **claude** CLI (authenticated) — primary agent
+- **codex** CLI (optional) — for OpenAI-backed brain/executor
 - **pdflatex** + **bibtex** (TeX Live or similar)
 - **pdftotext** + **pdfimages** (poppler)
-
----
-
-### Scripts
-
-```bash
-./run.sh "topic"      # Single run
-./run.sh              # Resume
-./daemon.sh "topic"   # Auto-retry daemon mode
-```
 
 ---
 
