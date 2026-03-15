@@ -20,7 +20,7 @@ import { Sidebar } from "./sidebar.js";
 import { Activity } from "./activity.js";
 import { InputBar } from "./input-bar.js";
 import { bus } from "../events.js";
-import { discoverProjects, createProject, type ProjectInfo } from "./projects.js";
+import { discoverProjects, createProject, autoRenameProject, type ProjectInfo } from "./projects.js";
 import { Conductor } from "../conductor.js";
 import { loadState } from "../state.js";
 import { dark, icons, formatTokens, formatCost } from "./theme.js";
@@ -296,6 +296,31 @@ export default function App({ baseDir, brainTool = "claude" }: { baseDir: string
           });
           break;
         }
+        case "open":
+        case "pdf": {
+          openPdf();
+          break;
+        }
+        case "autoname": {
+          const project = projects[selectedIdx];
+          if (!project) {
+            setLogs((p) => [...p, { text: "No project selected", color: dark.error }]);
+            break;
+          }
+          if (running) {
+            setLogs((p) => [...p, { text: "Cannot rename while running", color: dark.warning }]);
+            break;
+          }
+          setLogs((p) => [...p, { text: `${icons.toolUse} Generating name for "${project.topic}"...`, color: dark.suggestion }]);
+          try {
+            const { newName } = autoRenameProject(project);
+            setLogs((p) => [...p, { text: `${icons.full} Renamed → ${newName}`, color: dark.success }]);
+            refreshProjects();
+          } catch (err: any) {
+            setLogs((p) => [...p, { text: `${icons.fail} Rename failed: ${err.message}`, color: dark.error }]);
+          }
+          break;
+        }
         case "brain": {
           const tool = arg.toLowerCase();
           if (tool === "claude" || tool === "codex") {
@@ -316,6 +341,8 @@ export default function App({ baseDir, brainTool = "claude" }: { baseDir: string
             { text: "/run             Start research on selected project", color: dark.text },
             { text: "/resume          Resume from last saved state", color: dark.text },
             { text: "/refine <text>   Refine/expand existing research", color: dark.text },
+            { text: "/autoname        Rename project with creative codename", color: dark.text },
+            { text: "/open            Open PDF report", color: dark.text },
             { text: `/brain <tool>    Switch brain (current: ${activeBrainTool})`, color: dark.text },
             { text: "/quit            Exit", color: dark.text },
           ]);

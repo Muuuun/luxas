@@ -6,7 +6,6 @@
 
 import React from "react";
 import { Box, Text } from "ink";
-import Link from "ink-link";
 import type { ProjectInfo } from "./projects.js";
 import type { ResearchState } from "../types.js";
 import { dark, icons } from "./theme.js";
@@ -24,12 +23,14 @@ export function Sidebar({
   projectState,
   focused,
   pdfPath,
+  onOpenPdf,
 }: {
   projects: ProjectInfo[];
   selectedIdx: number;
   projectState: ResearchState | null;
   focused: boolean;
   pdfPath: string | null;
+  onOpenPdf?: () => void;
 }) {
   return (
     <Box flexDirection="column" paddingX={1}>
@@ -78,9 +79,8 @@ export function Sidebar({
             <Box>
               <Text color={dark.inactive}>{"Report".padEnd(11)}</Text>
               <Text color={dark.success}>{icons.full} </Text>
-              <Link url={`file://${pdfPath}`} fallback={false}>
-                <Text color={dark.suggestion} bold underline>PDF</Text>
-              </Link>
+              <Text color={dark.suggestion} bold>PDF</Text>
+              <Text color={dark.inactive}> ^O open</Text>
             </Box>
           ) : (
             <StatLine

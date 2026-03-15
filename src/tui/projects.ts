@@ -8,8 +8,10 @@ import {
   writeFileSync,
   readdirSync,
   mkdirSync,
+  renameSync,
 } from "node:fs";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
+import { execFileSync } from "node:child_process";
 import { ensureDataDirs } from "../state.js";
 
 export interface ProjectInfo {
@@ -83,7 +85,7 @@ export function discoverProjects(baseDir: string): ProjectInfo[] {
 /** Convert directory name to clean display name */
 function cleanDirName(name: string): string {
   return name
-    .replace(/^(agentic_)?research_/, "")
+    .replace(/^(agentic_)?research_/, "") // strip legacy prefix if any
     .replace(/_/g, " ")
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
@@ -105,18 +107,60 @@ function findPdf(dir: string): string | null {
 }
 
 /**
+ * Generate a creative short project name using Claude Haiku.
+ * Falls back to simple slugification if the API call fails.
+ */
+function generateProjectName(topic: string): string {
+  try {
+    const prompt = `Give me a single creative, short (1-3 words) project codename for a research project about: "${topic}".
+Rules: lowercase, no spaces (use underscores), no quotes, no explanation, just the name. Examples: "quantum_maze", "neural_tide", "fold_oracle".`;
+
+    const env = { ...process.env };
+    delete env.CLAUDECODE;
+    delete env.CLAUDE_CODE_ENTRYPOINT;
+
+    const stdout = execFileSync(
+      "claude",
+      ["-p", "--model", "claude-haiku-4-5-20251001", "--max-turns", "1"],
+      {
+        input: prompt,
+        timeout: 15000,
+        encoding: "utf-8",
+        env,
+        maxBuffer: 1024 * 1024,
+      },
+    ).trim();
+
+    // Parse JSON output if present
+    let raw = stdout;
+    try {
+      const data = JSON.parse(stdout);
+      raw = data.result ?? stdout;
+    } catch { /* plain text */ }
+
+    // Sanitize: keep only alphanumeric and underscores
+    const clean = raw
+      .replace(/[^a-z0-9_]/gi, "")
+      .toLowerCase()
+      .slice(0, 30);
+    if (clean.length >= 2) return clean;
+  } catch {
+    // Haiku unavailable, fall through to fallback
+  }
+  // Fallback: simple slugify
+  return topic
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_|_$/g, "")
+    .slice(0, 30);
+}
+
+/**
  * Create a new research project directory with initialized state.
  * Returns the absolute path to the created directory.
  */
 export function createProject(baseDir: string, topic: string): string {
-  // Slugify topic for directory name
-  const slug = topic
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_|_$/g, "")
-    .slice(0, 60);
-
-  const dirName = `research_${slug}`;
+  const dirName = generateProjectName(topic);
   const dir = join(baseDir, dirName);
 
   mkdirSync(dir, { recursive: true });
@@ -147,4 +191,24 @@ export function createProject(baseDir: string, topic: string): string {
   ensureDataDirs(dir);
 
   return dir;
+}
+
+/**
+ * Rename a project directory using a Haiku-generated codename.
+ * Returns { oldDir, newDir, newName } on success, or throws on failure.
+ */
+export function autoRenameProject(project: ProjectInfo): { oldDir: string; newDir: string; newName: string } {
+  const newSlug = generateProjectName(project.topic);
+  const parent = dirname(project.dir);
+  const newDir = join(parent, newSlug);
+
+  if (newDir === project.dir) {
+    throw new Error("Generated name is the same as current name");
+  }
+  if (existsSync(newDir)) {
+    throw new Error(`Directory already exists: ${newSlug}`);
+  }
+
+  renameSync(project.dir, newDir);
+  return { oldDir: project.dir, newDir, newName: cleanDirName(newSlug) };
 }

@@ -18,6 +18,8 @@ export const COMMANDS: SlashCommand[] = [
   { name: "resume", description: "Resume from last saved state" },
   { name: "refine", description: "Refine/expand existing research", hasArg: true },
   { name: "brain", description: "Switch brain tool: /brain codex or /brain claude", hasArg: true },
+  { name: "autoname", description: "Rename selected project with a creative codename" },
+  { name: "open", description: "Open PDF report of selected project" },
   { name: "help", description: "Show all commands" },
   { name: "quit", description: "Exit Sisyphus" },
 ];
