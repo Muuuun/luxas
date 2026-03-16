@@ -15,14 +15,12 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { existsSync, mkdirSync } from "node:fs";
 import App from "./tui/app.js";
-import { enableTUI } from "./events.js";
 
-// Activate TUI mode — suppresses console output, routes to event bus
-enableTUI();
+// TODO: TUI needs migration to agent-core event model
 
 // Determine base directory for projects and options
 const args = process.argv.slice(2);
-let baseDir = join(homedir(), "Documents");
+let baseDir = join(homedir(), "Documents", "agent_research_reports");
 let brainTool: "claude" | "codex" = "claude";
 
 for (let i = 0; i < args.length; i++) {

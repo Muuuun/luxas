@@ -1,5 +1,7 @@
 /**
  * Project discovery and creation — finds research projects on disk.
+ *
+ * A project is a directory containing RESEARCH.md.
  */
 
 import {
@@ -9,35 +11,29 @@ import {
   readdirSync,
   mkdirSync,
   renameSync,
+  statSync,
 } from "node:fs";
 import { join, dirname } from "node:path";
-import { execFileSync } from "node:child_process";
-import { ensureDataDirs } from "../state.js";
+import { Session } from "../session.js";
 
 export interface ProjectInfo {
-  /** Clean display name derived from directory */
   displayName: string;
-  /** Raw directory name */
   name: string;
-  /** Absolute path to project directory */
   dir: string;
-  /** Research topic (full prompt text) */
   topic: string;
-  /** Current status */
-  status: "running" | "paused" | "done" | "failed";
-  /** Last update timestamp */
+  status: "running" | "paused" | "done" | "idle";
   updatedAt: number;
-  /** Paper counts */
-  corePapers: number;
+  /** Session stats */
+  totalActions: number;
+  decisions: number;
   /** Has PDF report */
   hasPdf: boolean;
-  /** Absolute path to PDF report (if exists) */
   pdfPath: string | null;
 }
 
 /**
  * Discover research projects in a base directory.
- * Scans 1 level deep for directories containing research-state.json.
+ * Scans 1 level deep for directories containing RESEARCH.md.
  */
 export function discoverProjects(baseDir: string): ProjectInfo[] {
   const projects: ProjectInfo[] = [];
@@ -53,52 +49,68 @@ export function discoverProjects(baseDir: string): ProjectInfo[] {
 
   for (const name of entries) {
     const dir = join(baseDir, name);
-    const stateFile = join(dir, "research-state.json");
+    const researchMd = join(dir, "RESEARCH.md");
 
-    if (!existsSync(stateFile)) continue;
+    if (!existsSync(researchMd)) continue;
 
     try {
-      const state = JSON.parse(readFileSync(stateFile, "utf-8"));
-      const hasPdf = state.artifacts?.has_report_pdf ?? false;
+      const topic = readFileSync(researchMd, "utf-8").trim().split("\n")[0]
+        .replace(/^#\s*/, "").slice(0, 100) || name;
+
+      // Get session stats
+      const logFile = join(dir, "log.jsonl");
+      let totalActions = 0;
+      let decisions = 0;
+      let status: ProjectInfo["status"] = "idle";
+      let updatedAt = 0;
+
+      if (existsSync(logFile)) {
+        try {
+          const session = Session.open(logFile, dir);
+          const stats = session.stats();
+          totalActions = stats.totalActions;
+          decisions = stats.decisions;
+          updatedAt = statSync(logFile).mtimeMs;
+          // Infer status from session
+          if (stats.lastAction?.includes("(success)")) status = "paused";
+          if (stats.lastAction?.includes("(failed)")) status = "paused";
+          if (totalActions > 0) status = "paused";
+        } catch { /* ignore corrupted log */ }
+      }
+
       const pdfPath = findPdf(dir);
+
       projects.push({
         displayName: cleanDirName(name),
         name,
         dir,
-        topic: state.topic || name,
-        status: state.status || "paused",
-        updatedAt: state.updated_at || 0,
-        corePapers: state.artifacts?.core_papers_count ?? 0,
-        hasPdf: hasPdf || pdfPath !== null,
+        topic,
+        status,
+        updatedAt,
+        totalActions,
+        decisions,
+        hasPdf: pdfPath !== null,
         pdfPath,
       });
     } catch {
-      // Corrupted state file, skip
+      // Skip corrupted projects
     }
   }
 
-  // Sort by most recently updated
   projects.sort((a, b) => b.updatedAt - a.updatedAt);
   return projects;
 }
 
-/** Convert directory name to clean display name */
 function cleanDirName(name: string): string {
   return name
-    .replace(/^(agentic_)?research_/, "") // strip legacy prefix if any
     .replace(/_/g, " ")
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-/** Search common locations for the report PDF */
 function findPdf(dir: string): string | null {
   const candidates = [
-    join(dir, "data", "reports", "survey_report.pdf"),
-    join(dir, "data", "reports", "main.pdf"),
-    join(dir, "data", "report", "survey_report.pdf"),
-    join(dir, "data", "report", "main.pdf"),
+    join(dir, "report", "report.pdf"),
     join(dir, "report", "main.pdf"),
-    join(dir, "report", "survey_report.pdf"),
   ];
   for (const p of candidates) {
     if (existsSync(p)) return p;
@@ -106,99 +118,52 @@ function findPdf(dir: string): string | null {
   return null;
 }
 
-/**
- * Generate a creative short project name using Claude Haiku.
- * Falls back to simple slugification if the API call fails.
- */
-function generateProjectName(topic: string): string {
-  try {
-    const prompt = `Give me a single creative, short (1-3 words) project codename for a research project about: "${topic}".
-Rules: lowercase, no spaces (use underscores), no quotes, no explanation, just the name. Examples: "quantum_maze", "neural_tide", "fold_oracle".`;
-
-    const env = { ...process.env };
-    delete env.CLAUDECODE;
-    delete env.CLAUDE_CODE_ENTRYPOINT;
-
-    const stdout = execFileSync(
-      "claude",
-      ["-p", "--model", "claude-haiku-4-5-20251001", "--max-turns", "1"],
-      {
-        input: prompt,
-        timeout: 15000,
-        encoding: "utf-8",
-        env,
-        maxBuffer: 1024 * 1024,
-      },
-    ).trim();
-
-    // Parse JSON output if present
-    let raw = stdout;
-    try {
-      const data = JSON.parse(stdout);
-      raw = data.result ?? stdout;
-    } catch { /* plain text */ }
-
-    // Sanitize: keep only alphanumeric and underscores
-    const clean = raw
-      .replace(/[^a-z0-9_]/gi, "")
-      .toLowerCase()
-      .slice(0, 30);
-    if (clean.length >= 2) return clean;
-  } catch {
-    // Haiku unavailable, fall through to fallback
-  }
-  // Fallback: simple slugify
-  return topic
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_|_$/g, "")
-    .slice(0, 30);
+async function generateProjectName(topic: string): Promise<string> {
+  // Simple slug generation (no LLM call)
+  return topic.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 30);
 }
 
 /**
- * Create a new research project directory with initialized state.
- * Returns the absolute path to the created directory.
+ * Create a new research project with RESEARCH.md.
+ * Used by CLI `sisyphus init` — writes a simple template.
  */
-export function createProject(baseDir: string, topic: string): string {
-  const dirName = generateProjectName(topic);
+export async function createProject(baseDir: string, topic: string): Promise<string> {
+  const dirName = await generateProjectName(topic);
   const dir = join(baseDir, dirName);
 
   mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "RESEARCH.md"), `# ${topic}\n\nProduce a comprehensive LaTeX survey report on "${topic}" with proper citations, compiled to PDF.\n`);
+  writeFileSync(join(dir, "literature.md"), "# Literature Notes\n\n");
+  writeFileSync(join(dir, "experiments.md"), "# Experiment Notes\n\n");
 
-  // Initialize state
-  const state = {
-    topic,
-    goal: `Produce a comprehensive LaTeX survey report on "${topic}" with proper citations, compiled to PDF.`,
-    status: "paused",
-    actions_taken: [],
-    artifacts: {
-      subtopics_count: 0,
-      seed_papers_count: 0,
-      core_papers_count: 0,
-      downloaded_count: 0,
-      extracted_count: 0,
-      has_report_tex: false,
-      has_report_bib: false,
-      has_report_pdf: false,
-    },
-    started_at: Date.now(),
-    updated_at: Date.now(),
-    total_brain_calls: 0,
-    total_executor_calls: 0,
-  };
-
-  writeFileSync(join(dir, "research-state.json"), JSON.stringify(state, null, 2));
-  ensureDataDirs(dir);
+  for (const d of ["data/papers", "data/scripts", "report"]) {
+    mkdirSync(join(dir, d), { recursive: true });
+  }
 
   return dir;
 }
 
 /**
- * Rename a project directory using a Haiku-generated codename.
- * Returns { oldDir, newDir, newName } on success, or throws on failure.
+ * Create project directory shell without RESEARCH.md.
+ * Used by the brainstorm flow — the brainstorm agent writes RESEARCH.md.
  */
-export function autoRenameProject(project: ProjectInfo): { oldDir: string; newDir: string; newName: string } {
-  const newSlug = generateProjectName(project.topic);
+export async function createProjectShell(baseDir: string, topic: string): Promise<string> {
+  const dirName = await generateProjectName(topic);
+  const dir = join(baseDir, dirName);
+
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "literature.md"), "# Literature Notes\n\n");
+  writeFileSync(join(dir, "experiments.md"), "# Experiment Notes\n\n");
+
+  for (const d of ["data/papers", "data/scripts", "report"]) {
+    mkdirSync(join(dir, d), { recursive: true });
+  }
+
+  return dir;
+}
+
+export async function autoRenameProject(project: ProjectInfo): Promise<{ oldDir: string; newDir: string; newName: string }> {
+  const newSlug = await generateProjectName(project.topic);
   const parent = dirname(project.dir);
   const newDir = join(parent, newSlug);
 

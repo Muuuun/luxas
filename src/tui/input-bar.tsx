@@ -13,15 +13,11 @@ export interface SlashCommand {
 }
 
 export const COMMANDS: SlashCommand[] = [
-  { name: "new", description: "Create a new research project", hasArg: true },
-  { name: "run", description: "Start research on selected project" },
-  { name: "resume", description: "Resume from last saved state" },
-  { name: "refine", description: "Refine/expand existing research", hasArg: true },
-  { name: "brain", description: "Switch brain tool: /brain codex or /brain claude", hasArg: true },
-  { name: "autoname", description: "Rename selected project with a creative codename" },
-  { name: "open", description: "Open PDF report of selected project" },
+  { name: "new", description: "Create project or re-brainstorm selected", hasArg: true },
+  { name: "run", description: "Run research (optional directive)", hasArg: true },
+  { name: "open", description: "Open PDF report" },
   { name: "help", description: "Show all commands" },
-  { name: "quit", description: "Exit Sisyphus" },
+  { name: "exit", description: "Exit Sisyphus" },
 ];
 
 export function InputBar({

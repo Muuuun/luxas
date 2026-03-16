@@ -16,17 +16,17 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Box, Text, useApp, useInput, useStdout } from "ink";
 import { execSync } from "child_process";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { Sidebar } from "./sidebar.js";
 import { Activity } from "./activity.js";
 import { InputBar } from "./input-bar.js";
-import { bus } from "../events.js";
-import { discoverProjects, createProject, autoRenameProject, type ProjectInfo } from "./projects.js";
-import { Conductor } from "../conductor.js";
-import { loadState } from "../state.js";
+import { discoverProjects, createProjectShell, type ProjectInfo } from "./projects.js";
 import { dark, icons, formatTokens, formatCost } from "./theme.js";
-import type { ResearchState } from "../types.js";
+import { createResearchAgent } from "../agent.js";
+import { createBrainstormAgent } from "./brainstorm.js";
+import type { Agent } from "@mariozechner/pi-agent-core/dist/agent.js";
 
-/** Rate limit progress bar — Claude Code style fill/empty blocks */
 function RateBar({ utilization, width = 10 }: { utilization: number; width?: number }) {
   const filled = Math.round(utilization * width);
   const empty = width - filled;
@@ -49,10 +49,13 @@ export default function App({ baseDir, brainTool = "claude" }: { baseDir: string
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [focus, setFocus] = useState<"sidebar" | "input">("input");
-  const [activeBrainTool, setActiveBrainTool] = useState<"claude" | "codex">(brainTool);
   const [running, setRunning] = useState(false);
-  const [projectState, setProjectState] = useState<ResearchState | null>(null);
-  const conductorRef = useRef<Conductor | null>(null);
+  const agentRef = useRef<Agent | null>(null);
+
+  // Brainstorm mode
+  const [mode, setMode] = useState<"command" | "brainstorm">("command");
+  const brainstormAgentRef = useRef<Agent | null>(null);
+  const brainstormDirRef = useRef<string | null>(null);
 
   // Activity log
   const [logs, setLogs] = useState<Array<{ text: string; color: string }>>([]);
@@ -95,123 +98,260 @@ export default function App({ baseDir, brainTool = "claude" }: { baseDir: string
     return () => clearInterval(timer);
   }, [refreshProjects]);
 
-  // Load project state when selection changes
-  useEffect(() => {
-    if (projects.length === 0) return;
-    const project = projects[selectedIdx];
-    if (!project) return;
+  // ── Run agent on a project ──────────────────────
+  const runAgent = useCallback(async (project: ProjectInfo, directive?: string) => {
+    if (running) return;
+    setRunning(true);
+    setLogs((p) => [...p, { text: `${icons.record} Starting: ${project.topic}`, color: dark.suggestion }]);
+    setBrainStatus("Starting...");
+    setStepInfo({ step: 0, globalStep: 0, maxSteps: 0 });
+
+    let turnCount = 0;
+    let toolCallCounter = 0;
+
     try {
-      const state = loadState(project.dir);
-      setProjectState(state);
-    } catch {
-      setProjectState(null);
-    }
-  }, [projects, selectedIdx]);
-
-  // Refresh project state periodically when running
-  useEffect(() => {
-    if (!running) return;
-    const timer = setInterval(() => {
-      const project = projects[selectedIdx];
-      if (!project) return;
-      try {
-        setProjectState(loadState(project.dir));
-      } catch { /* ignore */ }
-    }, 3000);
-    return () => clearInterval(timer);
-  }, [running, projects, selectedIdx]);
-
-  // ── Event subscriptions ──────────────────────────
-  useEffect(() => {
-    const onLog = (e: { level: string; message: string }) => {
-      const color = e.level === "error" ? dark.error : e.level === "warn" ? dark.warning : dark.text;
-      setLogs((prev) => [...prev.slice(-200), { text: e.message, color }]);
-    };
-    const onBrain = (e: { status: string; elapsed: number; thought?: string; reason?: string; taskCount?: number }) => {
-      if (e.status === "thinking") {
-        setBrainStatus(`Thinking... ${e.elapsed}s${e.thought ? ` ${icons.dot} ${e.thought.slice(0, 60)}` : ""}`);
-      } else if (e.status === "decided") {
-        setBrainStatus(`Decided: ${e.reason?.slice(0, 80) ?? ""} (${e.taskCount ?? 0} tasks)`);
-      } else {
-        setBrainStatus(`Error: ${e.reason ?? "unknown"}`);
-      }
-    };
-    const onTask = (e: { id: number; action: string; tool: string; model: string; status: string; elapsed: number; lastLine: string }) => {
-      setTasks((prev) => {
-        const next = new Map(prev);
-        next.set(e.id, e);
-        if (e.status !== "running") {
-          setTimeout(() => {
-            setTasks((p) => {
-              const n = new Map(p);
-              n.delete(e.id);
-              return n;
-            });
-          }, 10000);
-        }
-        return next;
+      const { agent, hooks } = createResearchAgent({
+        projectDir: project.dir,
+        model: "sonnet",
       });
-    };
-    const onStep = (e: { step: number; globalStep: number; maxSteps: number }) => {
-      setStepInfo(e);
-    };
-    const onAction = (e: { action: string; result: string; details: string }) => {
-      const icon = e.result === "success" ? icons.full : e.result === "failed" ? icons.fail : icons.half;
-      const color = e.result === "success" ? dark.success : e.result === "failed" ? dark.error : dark.warning;
-      setLogs((prev) => [
-        ...prev.slice(-200),
-        { text: `${icon} ${e.action}: ${e.details.slice(0, 100)}`, color },
-      ]);
-    };
-    const onUsage = (e: { inputTokens: number; outputTokens: number; costUsd: number }) => {
-      setUsage((prev) => ({
-        inputTokens: prev.inputTokens + e.inputTokens,
-        outputTokens: prev.outputTokens + e.outputTokens,
-        costUsd: prev.costUsd + e.costUsd,
-      }));
-    };
-    const onRateLimit = (e: { utilization: number }) => {
-      setRateLimit({ utilization: e.utilization });
-    };
-    const onDone = (e: { reason: string }) => {
-      setRunning(false);
-      setBrainStatus(`Done: ${e.reason}`);
-      refreshProjects();
-    };
-    const onPaused = (e: { reason: string }) => {
-      setRunning(false);
-      setBrainStatus(`Paused: ${e.reason}`);
-      refreshProjects();
-    };
+      agentRef.current = agent;
 
-    bus.on("log", onLog);
-    bus.on("brain", onBrain);
-    bus.on("task", onTask);
-    bus.on("step", onStep);
-    bus.on("action", onAction);
-    bus.on("usage", onUsage);
-    bus.on("rate-limit", onRateLimit);
-    bus.on("done", onDone);
-    bus.on("paused", onPaused);
+      // Subscribe to agent events → TUI state
+      agent.subscribe((event: any) => {
+        if (event.type === "tool_execution_start") {
+          const id = ++toolCallCounter;
+          const argsPreview = event.args ? JSON.stringify(event.args).slice(0, 60) : "";
+          setTasks((prev) => {
+            const next = new Map(prev);
+            next.set(id, {
+              action: event.toolName,
+              tool: event.toolName,
+              model: "sonnet",
+              status: "running",
+              elapsed: 0,
+              lastLine: argsPreview,
+            });
+            return next;
+          });
+          setLogs((p) => [...p.slice(-200), {
+            text: `${icons.toolUse} ${event.toolName} ${argsPreview}`,
+            color: dark.suggestion,
+          }]);
+          // Store mapping from toolCallId to our counter
+          (event as any)._tuiId = id;
+        }
+        if (event.type === "tool_execution_end") {
+          const icon = event.isError ? icons.fail : icons.full;
+          const color = event.isError ? dark.error : dark.success;
+          setLogs((p) => [...p.slice(-200), {
+            text: `${icon} ${event.toolName}`,
+            color,
+          }]);
+          // Remove from active tasks after delay
+          setTasks((prev) => {
+            const next = new Map(prev);
+            // Find the task for this tool (latest running one with matching name)
+            for (const [id, t] of next) {
+              if (t.tool === event.toolName && t.status === "running") {
+                next.set(id, { ...t, status: event.isError ? "failed" : "done" });
+                setTimeout(() => {
+                  setTasks((p) => { const n = new Map(p); n.delete(id); return n; });
+                }, 5000);
+                break;
+              }
+            }
+            return next;
+          });
+        }
+        if (event.type === "turn_end") {
+          turnCount++;
+          setStepInfo({ step: turnCount, globalStep: turnCount, maxSteps: 0 });
+        }
+        if (event.type === "message_update") {
+          const msg = event.assistantMessageEvent;
+          if (msg?.usage) {
+            setUsage((prev) => ({
+              inputTokens: prev.inputTokens + (msg.usage.inputTokens ?? 0),
+              outputTokens: prev.outputTokens + (msg.usage.outputTokens ?? 0),
+              costUsd: prev.costUsd + (msg.usage.totalCost ?? 0),
+            }));
+          }
+          // Show thinking/text snippets as brain status
+          const content = event.message?.content;
+          if (Array.isArray(content)) {
+            const textBlock = content.filter((c: any) => c.type === "text").pop();
+            if (textBlock?.text) {
+              setBrainStatus(textBlock.text.slice(-80));
+            }
+          }
+        }
+      });
 
-    return () => {
-      bus.off("log", onLog);
-      bus.off("brain", onBrain);
-      bus.off("task", onTask);
-      bus.off("step", onStep);
-      bus.off("action", onAction);
-      bus.off("usage", onUsage);
-      bus.off("rate-limit", onRateLimit);
-      bus.off("done", onDone);
-      bus.off("paused", onPaused);
-    };
-  }, [refreshProjects]);
+      // Build prompt
+      const researchFile = join(project.dir, "RESEARCH.md");
+      const researchGoal = readFileSync(researchFile, "utf-8").trim();
+      const prompt = directive
+        ? `Research goal (from RESEARCH.md):\n${researchGoal}\n\nAdditional directive: ${directive}`
+        : `Research goal (from RESEARCH.md):\n${researchGoal}\n\nStart by reading RESEARCH.md for the full goal, then check literature.md and experiments.md for any existing progress. Proceed with the research.`;
+
+      await agent.prompt(prompt);
+
+      const cost = hooks.tracker.totalCost.toFixed(4);
+      setBrainStatus(`Done | $${cost}`);
+      setLogs((p) => [...p, { text: `${icons.full} Completed`, color: dark.success }]);
+    } catch (err: any) {
+      setBrainStatus(`Error: ${err.message}`);
+      setLogs((p) => [...p, { text: `${icons.fail} ${err.message}`, color: dark.error }]);
+    } finally {
+      setRunning(false);
+      agentRef.current = null;
+      refreshProjects();
+    }
+  }, [running, refreshProjects]);
+
+  // ── Brainstorm flow ─────────────────────────────
+  const startBrainstorm = useCallback(async (topic: string, existingDir?: string) => {
+    setLogs((p) => [...p, { text: `${icons.toolUse} Starting brainstorm for: ${topic}`, color: dark.suggestion }]);
+    setBrainStatus("Brainstorming...");
+
+    try {
+      const dir = existingDir ?? await createProjectShell(baseDir, topic);
+      brainstormDirRef.current = dir;
+
+      const agent = createBrainstormAgent(dir, {
+        onText: (text) => {
+          // Show agent's response as log lines
+          for (const line of text.split("\n")) {
+            if (line.trim()) {
+              setLogs((p) => [...p.slice(-200), { text: line, color: dark.text }]);
+            }
+          }
+          setBrainStatus("Waiting for your answer...");
+        },
+        onFinalized: (content) => {
+          setLogs((p) => [...p,
+            { text: `${icons.full} RESEARCH.md finalized`, color: dark.success },
+          ]);
+          // Show first few lines of the brief
+          const preview = content.split("\n").slice(0, 3).join(" ").slice(0, 100);
+          setLogs((p) => [...p, { text: `  ${preview}...`, color: dark.inactive }]);
+        },
+        onError: (error) => {
+          setLogs((p) => [...p, { text: `${icons.fail} ${error}`, color: dark.error }]);
+        },
+        onDone: () => {},
+      });
+
+      brainstormAgentRef.current = agent;
+      setMode("brainstorm");
+      setRunning(true);
+
+      // Initial prompt — include existing RESEARCH.md if re-brainstorming
+      let initialPrompt = `The user wants to research: "${topic}"`;
+      if (existingDir) {
+        try {
+          const existing = readFileSync(join(dir, "RESEARCH.md"), "utf-8").trim();
+          if (existing && existing.length > 20) {
+            initialPrompt += `\n\nThere is an existing RESEARCH.md — refine and improve it based on the conversation:\n\n${existing}`;
+          }
+        } catch {}
+      }
+      await agent.prompt(initialPrompt);
+
+      // Agent finished first turn — now waiting for user input
+      // (don't exit brainstorm mode yet, user needs to answer questions)
+    } catch (err: any) {
+      setLogs((p) => [...p, { text: `${icons.fail} Brainstorm failed: ${err.message}`, color: dark.error }]);
+      setBrainStatus("");
+      setMode("command");
+      setRunning(false);
+      brainstormAgentRef.current = null;
+      brainstormDirRef.current = null;
+    }
+  }, [baseDir]);
+
+  const handleBrainstormInput = useCallback(async (input: string) => {
+    const agent = brainstormAgentRef.current;
+    if (!agent) return;
+
+    // Show user's message
+    setLogs((p) => [...p, { text: `> ${input}`, color: dark.suggestion }]);
+    setBrainStatus("Thinking...");
+
+    try {
+      agent.followUp({
+        role: "user",
+        content: [{ type: "text", text: input }],
+        timestamp: Date.now(),
+      } as any);
+      await agent.continue();
+    } catch (err: any) {
+      setLogs((p) => [...p, { text: `${icons.fail} ${err.message}`, color: dark.error }]);
+    }
+
+    // Check if RESEARCH.md was finalized (agent called finalize_brief)
+    const dir = brainstormDirRef.current;
+    if (dir) {
+      try {
+        const { existsSync } = await import("node:fs");
+        const { join } = await import("node:path");
+        if (existsSync(join(dir, "RESEARCH.md"))) {
+          // Brainstorm complete
+          setMode("command");
+          setRunning(false);
+          setBrainStatus("Research brief ready — /run to start");
+          brainstormAgentRef.current = null;
+          brainstormDirRef.current = null;
+          refreshProjects();
+          // Select the new project
+          const found = discoverProjects(baseDir);
+          const idx = found.findIndex((p) => p.dir === dir);
+          if (idx >= 0) setSelectedIdx(idx);
+          return;
+        }
+      } catch {}
+    }
+  }, [baseDir, refreshProjects]);
 
   // ── Commands ─────────────────────────────────────
   const handleCommand = useCallback(
     async (cmd: string) => {
       const trimmed = cmd.trim();
       if (!trimmed) return;
+
+      // In brainstorm mode, route input to brainstorm agent
+      if (mode === "brainstorm") {
+        // Allow escape commands
+        if (trimmed === "/cancel") {
+          brainstormAgentRef.current?.abort();
+          brainstormAgentRef.current = null;
+          brainstormDirRef.current = null;
+          setMode("command");
+          setRunning(false);
+          setBrainStatus("Brainstorm cancelled");
+          setLogs((p) => [...p, { text: "Brainstorm cancelled", color: dark.warning }]);
+          return;
+        }
+        if (trimmed === "/done") {
+          // Force finalize with what we have
+          const agent = brainstormAgentRef.current;
+          if (agent) {
+            setLogs((p) => [...p, { text: `> /done — finalizing...`, color: dark.suggestion }]);
+            setBrainStatus("Finalizing...");
+            agent.followUp({
+              role: "user",
+              content: [{ type: "text", text: "That's enough information. Please finalize the research brief now by calling finalize_brief." }],
+              timestamp: Date.now(),
+            } as any);
+            try {
+              await agent.continue();
+            } catch {}
+          }
+          return;
+        }
+        await handleBrainstormInput(trimmed);
+        return;
+      }
 
       const [rawCommand, ...rest] = trimmed.split(/\s+/);
       const command = rawCommand.replace(/^\//, "");
@@ -220,16 +360,22 @@ export default function App({ baseDir, brainTool = "claude" }: { baseDir: string
       switch (command) {
         case "new": {
           if (!arg) {
-            setLogs((p) => [...p, { text: 'Usage: /new "Research Topic"', color: dark.warning }]);
-            return;
+            // No topic — brainstorm selected project
+            const project = projects[selectedIdx];
+            if (!project) {
+              setLogs((p) => [...p, { text: 'Usage: /new "Research Topic" or select a project first', color: dark.warning }]);
+              return;
+            }
+            if (running) {
+              setLogs((p) => [...p, { text: "Already running", color: dark.warning }]);
+              return;
+            }
+            startBrainstorm(project.topic, project.dir);
+          } else {
+            // Topic given — create new project + brainstorm
+            const topic = arg.replace(/^["']|["']$/g, "");
+            startBrainstorm(topic);
           }
-          const topic = arg.replace(/^["']|["']$/g, "");
-          const dir = createProject(baseDir, topic);
-          setLogs((p) => [...p, { text: `Created project: ${dir}`, color: dark.success }]);
-          refreshProjects();
-          const found = discoverProjects(baseDir);
-          const idx = found.findIndex((p) => p.dir === dir);
-          if (idx >= 0) setSelectedIdx(idx);
           break;
         }
         case "run": {
@@ -242,116 +388,30 @@ export default function App({ baseDir, brainTool = "claude" }: { baseDir: string
             setLogs((p) => [...p, { text: "Already running", color: dark.warning }]);
             return;
           }
-          setRunning(true);
-          setLogs((p) => [...p, { text: `${icons.record} Starting: ${project.topic}`, color: dark.suggestion }]);
-          const topic = arg || undefined;
-          const c1 = new Conductor({ projectDir: project.dir, brainTool: activeBrainTool });
-          conductorRef.current = c1;
-          c1.run(topic).catch((err: Error) => {
-            setLogs((p) => [...p, { text: `${icons.fail} Error: ${err.message}`, color: dark.error }]);
-          }).finally(() => {
-            conductorRef.current = null;
-            setRunning(false);
-            refreshProjects();
-          });
+          runAgent(project, arg || undefined);
           break;
         }
-        case "resume": {
-          const project = projects[selectedIdx];
-          if (!project) return;
-          if (running) {
-            setLogs((p) => [...p, { text: "Already running", color: dark.warning }]);
-            return;
-          }
-          setRunning(true);
-          setLogs((p) => [...p, { text: `${icons.retry} Resuming: ${project.topic}`, color: dark.suggestion }]);
-          const c2 = new Conductor({ projectDir: project.dir, brainTool: activeBrainTool });
-          conductorRef.current = c2;
-          c2.run().catch((err: Error) => {
-            setLogs((p) => [...p, { text: `${icons.fail} Error: ${err.message}`, color: dark.error }]);
-          }).finally(() => {
-            conductorRef.current = null;
-            setRunning(false);
-            refreshProjects();
-          });
-          break;
-        }
-        case "refine": {
-          const project = projects[selectedIdx];
-          if (!project || !arg) return;
-          if (running) {
-            setLogs((p) => [...p, { text: "Already running", color: dark.warning }]);
-            return;
-          }
-          setRunning(true);
-          setLogs((p) => [...p, { text: `${icons.toolUse} Refining: ${arg.slice(0, 60)}`, color: dark.suggestion }]);
-          const c3 = new Conductor({ projectDir: project.dir, brainTool: activeBrainTool });
-          conductorRef.current = c3;
-          c3.run(undefined, arg).catch((err: Error) => {
-            setLogs((p) => [...p, { text: `${icons.fail} Error: ${err.message}`, color: dark.error }]);
-          }).finally(() => {
-            conductorRef.current = null;
-            setRunning(false);
-            refreshProjects();
-          });
-          break;
-        }
-        case "open":
-        case "pdf": {
+        case "open": {
           openPdf();
           break;
         }
-        case "autoname": {
-          const project = projects[selectedIdx];
-          if (!project) {
-            setLogs((p) => [...p, { text: "No project selected", color: dark.error }]);
-            break;
-          }
-          if (running) {
-            setLogs((p) => [...p, { text: "Cannot rename while running", color: dark.warning }]);
-            break;
-          }
-          setLogs((p) => [...p, { text: `${icons.toolUse} Generating name for "${project.topic}"...`, color: dark.suggestion }]);
-          try {
-            const { newName } = autoRenameProject(project);
-            setLogs((p) => [...p, { text: `${icons.full} Renamed → ${newName}`, color: dark.success }]);
-            refreshProjects();
-          } catch (err: any) {
-            setLogs((p) => [...p, { text: `${icons.fail} Rename failed: ${err.message}`, color: dark.error }]);
-          }
-          break;
-        }
-        case "brain": {
-          const tool = arg.toLowerCase();
-          if (tool === "claude" || tool === "codex") {
-            setActiveBrainTool(tool);
-            setLogs((p) => [...p, { text: `${icons.full} Brain switched to: ${tool}`, color: dark.success }]);
-          } else {
-            setLogs((p) => [...p, { text: `Current brain: ${activeBrainTool}. Usage: /brain claude or /brain codex`, color: dark.warning }]);
-          }
-          break;
-        }
-        case "quit":
         case "exit":
           exit();
           break;
         case "help":
           setLogs((p) => [...p,
-            { text: "/new <topic>     Create a new research project", color: dark.text },
-            { text: "/run             Start research on selected project", color: dark.text },
-            { text: "/resume          Resume from last saved state", color: dark.text },
-            { text: "/refine <text>   Refine/expand existing research", color: dark.text },
-            { text: "/autoname        Rename project with creative codename", color: dark.text },
-            { text: "/open            Open PDF report", color: dark.text },
-            { text: `/brain <tool>    Switch brain (current: ${activeBrainTool})`, color: dark.text },
-            { text: "/quit            Exit", color: dark.text },
+            { text: "/new <topic>  Create project via brainstorm Q&A", color: dark.text },
+            { text: "/new          Re-brainstorm selected project", color: dark.text },
+            { text: "/run [text]   Run research (optional directive)", color: dark.text },
+            { text: "/open         Open PDF report", color: dark.text },
+            { text: "/exit         Exit", color: dark.text },
           ]);
           break;
         default:
           setLogs((p) => [...p, { text: `Unknown: /${command}. Type /help for commands`, color: dark.warning }]);
       }
     },
-    [projects, selectedIdx, running, baseDir, exit, refreshProjects, activeBrainTool],
+    [projects, selectedIdx, running, baseDir, exit, refreshProjects, runAgent, mode, handleBrainstormInput, startBrainstorm],
   );
 
   // ── Keyboard shortcuts ───────────────────────────
@@ -409,10 +469,11 @@ export default function App({ baseDir, brainTool = "claude" }: { baseDir: string
   const sidebarWidth = Math.min(28, Math.floor(cols * 0.25));
   const mainHeight = rows - 6;
 
-  // Shimmer border color when running
   const activeBorder = running
     ? (shimmer ? dark.borderShimmer : dark.borderActive)
     : dark.border;
+
+  const selectedProject = projects[selectedIdx] ?? null;
 
   return (
     <Box flexDirection="column" width={cols} height={rows}>
@@ -422,7 +483,8 @@ export default function App({ baseDir, brainTool = "claude" }: { baseDir: string
           {" "}Sisyphus{" "}
         </Text>
         <Text color={dark.subtle}> Il faut imaginer Sisyphe heureux </Text>
-        {running && <Text color={dark.success}> {icons.record} running</Text>}
+        {mode === "brainstorm" && <Text color={dark.warning}> {icons.record} brainstorming</Text>}
+        {running && mode !== "brainstorm" && <Text color={dark.success}> {icons.record} running</Text>}
       </Box>
 
       {/* Main: sidebar + activity */}
@@ -436,9 +498,9 @@ export default function App({ baseDir, brainTool = "claude" }: { baseDir: string
           <Sidebar
             projects={projects}
             selectedIdx={selectedIdx}
-            projectState={projectState}
+            selectedProject={selectedProject}
             focused={focus === "sidebar"}
-            pdfPath={projects[selectedIdx]?.pdfPath ?? null}
+            pdfPath={selectedProject?.pdfPath ?? null}
           />
         </Box>
 
@@ -460,14 +522,23 @@ export default function App({ baseDir, brainTool = "claude" }: { baseDir: string
           focused={focus === "input"}
           onSubmit={handleCommand}
           onEscape={() => {
-            if (running && conductorRef.current) {
-              conductorRef.current.abort();
+            if (mode === "brainstorm" && brainstormAgentRef.current) {
+              brainstormAgentRef.current.abort();
+              brainstormAgentRef.current = null;
+              brainstormDirRef.current = null;
+              setMode("command");
+              setRunning(false);
+              setBrainStatus("Brainstorm cancelled");
+            } else if (running && agentRef.current) {
+              agentRef.current.abort();
             }
           }}
           placeholder={
-            projects.length === 0
-              ? '/new "Your Research Topic"'
-              : running ? "Esc to interrupt" : "Type / for commands"
+            mode === "brainstorm"
+              ? "Answer the question... (/done to finalize, /cancel to abort)"
+              : projects.length === 0
+                ? '/new "Your Research Topic"'
+                : running ? "Esc to interrupt" : "Type / for commands"
           }
         />
       </Box>
@@ -480,7 +551,7 @@ export default function App({ baseDir, brainTool = "claude" }: { baseDir: string
           <Text color={dark.suggestion}>^J/^K</Text> project{" "}
           <Text color={dark.suggestion}>^O</Text> pdf{" "}
           <Text color={dark.suggestion}>^N</Text> new{" "}
-          <Text color={dark.suggestion}>^Q</Text> quit
+          <Text color={dark.suggestion}>^Q</Text> exit
         </Text>
         <Box>
           {usage.costUsd > 0 && (
@@ -500,11 +571,11 @@ export default function App({ baseDir, brainTool = "claude" }: { baseDir: string
               <Text>{"  "}</Text>
             </Text>
           )}
-          <Text color={activeBrainTool === "codex" ? dark.brainCodex : dark.brainClaude}>
-            {activeBrainTool}
+          <Text color={dark.brainClaude}>
+            claude
           </Text>
           <Text color={dark.inactive}>
-            {" "}{projects[selectedIdx]?.displayName.slice(0, 25) ?? "no project"}
+            {" "}{selectedProject?.displayName.slice(0, 25) ?? "no project"}
             {stepInfo.globalStep > 0 && ` step ${stepInfo.globalStep}`}
           </Text>
         </Box>

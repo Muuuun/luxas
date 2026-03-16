@@ -3,171 +3,182 @@
  * Sisyphus CLI — autonomous research agent.
  *
  * Usage:
- *   sisyphus run "Large Language Model Reasoning"
- *   sisyphus resume
- *   sisyphus status
+ *   sisyphus run [project-dir]              Run research on a project
+ *   sisyphus run [project-dir] --model opus Use a specific model
+ *   sisyphus status [project-dir]           Show project status
+ *   sisyphus init [project-dir]             Initialize a new project
+ *   sisyphus login                          Authenticate with Anthropic OAuth
  */
 
-import { existsSync, statSync } from "node:fs";
-import { join } from "node:path";
-import { Conductor } from "./conductor.js";
-import { loadState } from "./state.js";
-import { KnowledgeStore } from "./knowledge/store.js";
-import type { ToolName } from "./types.js";
+import { existsSync, readFileSync, readdirSync, mkdirSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { createResearchAgent } from "./agent.js";
+import { loginAnthropicOAuth } from "./auth.js";
+import * as tmux from "./tmux.js";
 
-function main(): void {
-  const args = process.argv.slice(2);
-  const command = args[0];
+const args = process.argv.slice(2);
+const command = args[0] ?? "run";
 
-  if (!command || command === "--help" || command === "-h") {
-    printUsage();
-    process.exit(0);
-  }
+// Parse flags
+let projectDir = ".";
+let model = "sonnet";
+let directive: string | undefined;
 
-  const flags = parseFlags(args.slice(1));
-
-  switch (command) {
-    case "run": {
-      const topic = args[1];
-      if (!topic || topic.startsWith("--")) {
-        console.error('Error: topic required. Usage: sisyphus run "your topic"');
-        process.exit(1);
-      }
-      const conductor = createConductor(flags);
-      conductor.run(topic).catch(fatal);
-      break;
-    }
-
-    case "resume": {
-      const conductor = createConductor(flags);
-      conductor.run().catch(fatal);
-      break;
-    }
-
-    case "refine": {
-      const instruction = args[1];
-      if (!instruction || instruction.startsWith("--")) {
-        console.error('Error: instruction required. Usage: sisyphus refine "add more papers about X"');
-        process.exit(1);
-      }
-      const conductor = createConductor(flags);
-      conductor.run(undefined, instruction).catch(fatal);
-      break;
-    }
-
-    case "status": {
-      showStatus(flags["project-dir"] ?? ".");
-      break;
-    }
-
-    case "tui": {
-      // Dynamic import to avoid loading React/Ink for non-TUI commands
-      import("./tui.js").catch(fatal);
-      break;
-    }
-
-    default:
-      console.error(`Unknown command: ${command}`);
-      printUsage();
-      process.exit(1);
+for (let i = 1; i < args.length; i++) {
+  if (args[i] === "--model" && args[i + 1]) {
+    model = args[++i];
+  } else if (args[i] === "--directive" && args[i + 1]) {
+    directive = args[++i];
+  } else if (!args[i].startsWith("--")) {
+    projectDir = args[i];
   }
 }
 
-function printUsage(): void {
-  console.log(`
-Sisyphus — Autonomous Research Agent
-Il faut imaginer Sisyphe heureux.
+projectDir = resolve(projectDir);
 
-Usage:
-  sisyphus run <topic>       Start a new research survey
-  sisyphus resume            Resume from last saved state
-  sisyphus refine <instr>    Refine/expand existing research with instruction
-  sisyphus status            Show current state
-  sisyphus tui               Launch interactive TUI dashboard
-
-Options:
-  --tool <claude|codex>      Default executor tool (default: claude)
-  --brain <claude|codex>     Brain decision-making tool (default: claude)
-  --timeout <seconds>        Max timeout per action in seconds (default: 600)
-  --project-dir <path>       Project directory (default: .)
-`);
+if (command === "login") {
+  await loginAnthropicOAuth();
+  process.exit(0);
 }
 
-function showStatus(projectDir: string): void {
-  const stateFile = join(projectDir, "research-state.json");
-  if (!existsSync(stateFile)) {
-    console.log('No research in progress. Run: sisyphus run "your topic"');
+if (command === "status") {
+  showStatus(projectDir);
+  process.exit(0);
+}
+
+if (command === "init") {
+  initProject(projectDir);
+  process.exit(0);
+}
+
+if (command === "run") {
+  await run(projectDir, model, directive);
+  process.exit(0);
+}
+
+console.error(`Unknown command: ${command}`);
+console.error("Usage: sisyphus <run|status|init|login> [project-dir] [--model sonnet|opus|haiku]");
+process.exit(1);
+
+// ─── Commands ────────────────────────────────────────────
+
+async function run(dir: string, modelName: string, userDirective?: string) {
+  // Validate project
+  const researchFile = join(dir, "RESEARCH.md");
+  if (!existsSync(researchFile)) {
+    console.error(`No RESEARCH.md found in ${dir}`);
+    console.error("Create one with your research goal, or run: sisyphus init <dir>");
+    process.exit(1);
+  }
+
+  const researchGoal = readFileSync(researchFile, "utf-8").trim();
+  console.log(`\n📚 Sisyphus — Autonomous Research Agent`);
+  console.log(`   Project: ${dir}`);
+  console.log(`   Model: ${modelName}`);
+  console.log(`   Goal: ${researchGoal.split("\n")[0].slice(0, 80)}`);
+  console.log();
+
+  // Create agent
+  const { agent, hooks } = createResearchAgent({
+    projectDir: dir,
+    model: modelName,
+  });
+
+  // Tmux observability
+  const logFile = tmux.openWindow("sisyphus-main");
+  agent.subscribe(tmux.createAgentObserver(logFile));
+
+  // Console progress
+  agent.subscribe((event: any) => {
+    if (event.type === "tool_execution_start") {
+      const argsPreview = event.args ? JSON.stringify(event.args).slice(0, 60) : "";
+      process.stderr.write(`  ✻ ${event.toolName} ${argsPreview}\n`);
+    }
+    if (event.type === "tool_execution_end") {
+      const icon = event.isError ? "✗" : "→";
+      process.stderr.write(`  ${icon} ${event.toolName}\n`);
+    }
+  });
+
+  // Build prompt
+  const prompt = userDirective
+    ? `Research goal (from RESEARCH.md):\n${researchGoal}\n\nAdditional directive: ${userDirective}`
+    : `Research goal (from RESEARCH.md):\n${researchGoal}\n\nStart by reading RESEARCH.md for the full goal, then check literature.md and experiments.md for any existing progress. Proceed with the research.`;
+
+  // Run
+  const t0 = Date.now();
+  try {
+    await agent.prompt(prompt);
+  } catch (err: any) {
+    console.error(`\n✗ Agent error: ${err.message}`);
+  }
+
+  const elapsed = Math.floor((Date.now() - t0) / 1000);
+  const cost = hooks.tracker.totalCost.toFixed(4);
+  console.log(`\n✓ Done in ${elapsed}s | $${cost} | ${hooks.tracker.totalInputTokens + hooks.tracker.totalOutputTokens} tokens`);
+
+  tmux.closeWindow(logFile, "sisyphus-main", true, Date.now() - t0);
+}
+
+function showStatus(dir: string) {
+  const researchFile = join(dir, "RESEARCH.md");
+  if (!existsSync(researchFile)) {
+    console.log("No RESEARCH.md found. Not a Sisyphus project.");
     return;
   }
 
-  const state = loadState(projectDir);
-  const store = new KnowledgeStore(projectDir);
-  const index = store.getIndex();
+  const research = readFileSync(researchFile, "utf-8").trim();
+  console.log(`\n📚 Research Goal:\n${research.split("\n").slice(0, 5).join("\n")}\n`);
 
-  console.log(`Topic:        ${state.topic || "N/A"}`);
-  console.log(`Status:       ${state.status}`);
-  console.log(`Actions:      ${state.actions_taken.length} taken`);
-  console.log(`Brain calls:  ${state.total_brain_calls}`);
-  console.log(`Exec calls:   ${state.total_executor_calls}`);
-  console.log();
-  console.log("Paper Funnel:");
-  console.log(`  Discovered:   ${index.counts.discovered}`);
-  console.log(`  Candidate:    ${index.counts.candidate}`);
-  console.log(`  Core:         ${index.counts.core}`);
-  console.log(`  Excluded:     ${index.counts.excluded}`);
-  console.log(`  Downloaded:   ${index.counts.downloaded}`);
-  console.log(`  Extracted:    ${index.counts.extracted}`);
-  console.log();
-  console.log("Report:");
-  const reportsDir = join(projectDir, "data", "reports");
-  const hasTex = existsSync(join(reportsDir, "survey_report.tex"));
-  const hasBib = existsSync(join(reportsDir, "references.bib"));
-  const hasPdf = existsSync(join(reportsDir, "survey_report.pdf"));
-  console.log(`  .tex:  ${hasTex ? "YES" : "NO"}`);
-  console.log(`  .bib:  ${hasBib ? "YES" : "NO"}`);
-  console.log(`  .pdf:  ${hasPdf ? "YES" : "NO"}`);
+  const files: [string, string][] = [
+    ["literature.md", "Literature notes"],
+    ["experiments.md", "Experiment notes"],
+    ["report/report.tex", "Report source"],
+    ["report/report.pdf", "Compiled report"],
+  ];
 
-  if (hasPdf) {
-    const pdf = join(reportsDir, "survey_report.pdf");
-    console.log(`  Size:  ${statSync(pdf).size.toLocaleString()} bytes`);
-  }
-
-  // Show last 5 actions
-  if (state.actions_taken.length > 0) {
-    console.log();
-    console.log("Recent actions:");
-    for (const act of state.actions_taken.slice(-5)) {
-      const time = new Date(act.timestamp).toLocaleTimeString();
-      console.log(`  [${time}] ${act.result.padEnd(7)} ${act.action}: ${act.reason.slice(0, 60)}`);
+  for (const [file, label] of files) {
+    const path = join(dir, file);
+    if (existsSync(path)) {
+      const content = readFileSync(path, "utf-8");
+      const lines = content.split("\n").length;
+      console.log(`  ✓ ${label}: ${lines} lines`);
+    } else {
+      console.log(`  · ${label}: not yet`);
     }
   }
+
+  // Count papers
+  const papersDir = join(dir, "data", "papers");
+  try {
+    const count = readdirSync(papersDir).length;
+    console.log(`  📄 Downloaded papers: ${count}`);
+  } catch {
+    console.log(`  📄 Downloaded papers: 0`);
+  }
+
+  console.log();
 }
 
-function parseFlags(args: string[]): Record<string, string> {
-  const flags: Record<string, string> = {};
-  for (let i = 0; i < args.length; i++) {
-    if (args[i].startsWith("--")) {
-      const key = args[i].slice(2);
-      if (i + 1 < args.length && !args[i + 1].startsWith("--")) {
-        flags[key] = args[++i];
-      }
+function initProject(dir: string) {
+  mkdirSync(dir, { recursive: true });
+  mkdirSync(join(dir, "report"), { recursive: true });
+  mkdirSync(join(dir, "data", "papers"), { recursive: true });
+  mkdirSync(join(dir, "data", "scripts"), { recursive: true });
+
+  const researchFile = join(dir, "RESEARCH.md");
+  if (!existsSync(researchFile)) {
+    writeFileSync(researchFile, "# Research Goal\n\nDescribe your research goal here.\n");
+    console.log(`Created ${researchFile}`);
+  }
+
+  for (const f of ["literature.md", "experiments.md"]) {
+    const path = join(dir, f);
+    if (!existsSync(path)) {
+      const title = f.replace(".md", "").charAt(0).toUpperCase() + f.replace(".md", "").slice(1);
+      writeFileSync(path, `# ${title}\n`);
     }
   }
-  return flags;
-}
 
-function createConductor(flags: Record<string, string>): Conductor {
-  return new Conductor({
-    projectDir: flags["project-dir"] ?? ".",
-    tool: (flags["tool"] as ToolName) ?? "claude",
-    brainTool: (flags["brain"] as "claude" | "codex") ?? "claude",
-    timeout: flags["timeout"] ? parseInt(flags["timeout"], 10) * 1000 : 600_000,
-  });
+  console.log(`Initialized Sisyphus project at ${dir}`);
 }
-
-function fatal(err: unknown): void {
-  console.error("Fatal error:", err);
-  process.exit(1);
-}
-
-main();

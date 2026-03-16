@@ -1,46 +1,39 @@
 /**
  * Sidebar — project list + selected project stats.
- *
- * Uses Claude Code-style padded labels and semantic colors.
  */
 
 import React from "react";
 import { Box, Text } from "ink";
 import type { ProjectInfo } from "./projects.js";
-import type { ResearchState } from "../types.js";
 import { dark, icons } from "./theme.js";
 
 const STATUS_ICON: Record<string, { icon: string; color: string }> = {
   running: { icon: icons.record, color: dark.success },
   paused: { icon: icons.half, color: dark.warning },
   done: { icon: icons.full, color: dark.success },
-  failed: { icon: icons.fail, color: dark.error },
+  idle: { icon: icons.empty, color: dark.inactive },
 };
 
 export function Sidebar({
   projects,
   selectedIdx,
-  projectState,
+  selectedProject,
   focused,
   pdfPath,
-  onOpenPdf,
 }: {
   projects: ProjectInfo[];
   selectedIdx: number;
-  projectState: ResearchState | null;
+  selectedProject: ProjectInfo | null;
   focused: boolean;
   pdfPath: string | null;
-  onOpenPdf?: () => void;
 }) {
   return (
     <Box flexDirection="column" paddingX={1}>
-      {/* Title */}
       <Text bold color={focused ? dark.borderActive : dark.text}>
         Projects
       </Text>
       <Text color={dark.subtle}>{"─".repeat(20)}</Text>
 
-      {/* Project list */}
       {projects.length === 0 ? (
         <Text color={dark.inactive} italic>
           No projects yet.{"\n"}Type: /new "topic"
@@ -67,14 +60,12 @@ export function Sidebar({
         })
       )}
 
-      {/* Stats for selected project — padded label alignment */}
-      {projectState && (
+      {selectedProject && (
         <Box flexDirection="column" marginTop={1}>
           <Text color={dark.subtle}>{"─".repeat(20)}</Text>
           <Text color={dark.inactive} bold>Stats</Text>
-          <StatLine label="Papers" value={`${projectState.artifacts.core_papers_count} core`} />
-          <StatLine label="Downloaded" value={`${projectState.artifacts.downloaded_count}`} />
-          <StatLine label="Extracted" value={`${projectState.artifacts.extracted_count}`} />
+          <StatLine label="Actions" value={`${selectedProject.totalActions}`} />
+          <StatLine label="Decisions" value={`${selectedProject.decisions}`} />
           {pdfPath ? (
             <Box>
               <Text color={dark.inactive}>{"Report".padEnd(11)}</Text>
@@ -85,24 +76,10 @@ export function Sidebar({
           ) : (
             <StatLine
               label="Report"
-              value={
-                projectState.artifacts.has_report_pdf
-                  ? `${icons.full} PDF`
-                  : projectState.artifacts.has_report_tex
-                    ? `${icons.half} tex only`
-                    : `${icons.empty} none`
-              }
-              color={
-                projectState.artifacts.has_report_pdf
-                  ? dark.success
-                  : projectState.artifacts.has_report_tex
-                    ? dark.warning
-                    : dark.error
-              }
+              value={`${icons.empty} none`}
+              color={dark.inactive}
             />
           )}
-          <StatLine label="Actions" value={`${projectState.actions_taken.length}`} />
-          <StatLine label="Brain" value={`${projectState.total_brain_calls} calls`} />
         </Box>
       )}
     </Box>
