@@ -192,7 +192,7 @@ export default function App({ baseDir, brainTool = "claude" }: { baseDir: string
       const researchGoal = readFileSync(researchFile, "utf-8").trim();
       const prompt = directive
         ? `Research goal (from RESEARCH.md):\n${researchGoal}\n\nAdditional directive: ${directive}`
-        : `Research goal (from RESEARCH.md):\n${researchGoal}\n\nStart by reading RESEARCH.md for the full goal, then check literature.md and experiments.md for any existing progress. Proceed with the research.`;
+        : `Research goal (from RESEARCH.md):\n${researchGoal}\n\nStart by reading RESEARCH.md for the full goal, then check notes/literature.md and notes/experiments.md for any existing progress. Proceed with the research.`;
 
       await agent.prompt(prompt);
 

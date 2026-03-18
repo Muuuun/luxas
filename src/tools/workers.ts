@@ -24,7 +24,7 @@ export function createDispatchWorkersTool(
   return {
     name: "dispatch_workers",
     label: "Dispatch Workers",
-    description: "Run multiple independent tasks in parallel using lightweight worker agents. Use for: reading multiple papers simultaneously, searching multiple subtopics, or any batch of independent tasks. Workers return results; you should then update literature.md/experiments.md yourself.",
+    description: "Run multiple independent tasks in parallel using lightweight worker agents. Use for: reading multiple papers simultaneously, searching multiple subtopics, or any batch of independent tasks. Workers return results; you should then update notes/literature.md and notes/experiments.md yourself.",
     parameters: DispatchParams,
     async execute(
       _toolCallId: string,

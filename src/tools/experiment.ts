@@ -5,7 +5,8 @@
 import { Type } from "@sinclair/typebox";
 import { createAgentSession, createCodingTools } from "@mariozechner/pi-coding-agent";
 import { join } from "node:path";
-import { mkdirSync, readdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
+import { listFilesRecursive } from "../utils.js";
 import * as tmux from "../tmux.js";
 
 const ExperimentParams = Type.Object({
@@ -18,7 +19,7 @@ export function createExperimentTool(projectDir: string) {
   return {
     name: "run_experiment",
     label: "Run Experiment",
-    description: "Spawn a full coding agent to write code, run simulations, and analyze results. Describe the hypothesis and the task. The coding agent works in data/scripts/ and has bash, read, write, edit tools. It returns results for you to analyze and record in experiments.md.",
+    description: "Spawn a full coding agent to write code, run simulations, and analyze results. Describe the hypothesis and the task. The coding agent works in data/scripts/ and has bash, read, write, edit tools. It returns results for you to analyze and record in notes/experiments.md.",
     parameters: ExperimentParams,
     async execute(
       _toolCallId: string,
@@ -88,20 +89,3 @@ export function createExperimentTool(projectDir: string) {
   };
 }
 
-function listFilesRecursive(dir: string): string[] {
-  try {
-    const entries = readdirSync(dir, { withFileTypes: true });
-    const files: string[] = [];
-    for (const entry of entries) {
-      const path = join(dir, entry.name);
-      if (entry.isDirectory()) {
-        files.push(...listFilesRecursive(path));
-      } else {
-        files.push(path);
-      }
-    }
-    return files;
-  } catch {
-    return [];
-  }
-}

@@ -58,7 +58,7 @@ export function discoverProjects(baseDir: string): ProjectInfo[] {
         .replace(/^#\s*/, "").slice(0, 100) || name;
 
       // Get session stats
-      const logFile = join(dir, "log.jsonl");
+      const logFile = join(dir, ".agent", "log.jsonl");
       let totalActions = 0;
       let decisions = 0;
       let status: ProjectInfo["status"] = "idle";
@@ -133,10 +133,11 @@ export async function createProject(baseDir: string, topic: string): Promise<str
 
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "RESEARCH.md"), `# ${topic}\n\nProduce a comprehensive LaTeX survey report on "${topic}" with proper citations, compiled to PDF.\n`);
-  writeFileSync(join(dir, "literature.md"), "# Literature Notes\n\n");
-  writeFileSync(join(dir, "experiments.md"), "# Experiment Notes\n\n");
+  mkdirSync(join(dir, "notes"), { recursive: true });
+  writeFileSync(join(dir, "notes", "literature.md"), "# Literature Notes\n\n");
+  writeFileSync(join(dir, "notes", "experiments.md"), "# Experiment Notes\n\n");
 
-  for (const d of ["data/papers", "data/scripts", "report"]) {
+  for (const d of ["data/papers", "data/scripts", "data/runs", "report", "reviews", ".agent"]) {
     mkdirSync(join(dir, d), { recursive: true });
   }
 
@@ -152,10 +153,11 @@ export async function createProjectShell(baseDir: string, topic: string): Promis
   const dir = join(baseDir, dirName);
 
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "literature.md"), "# Literature Notes\n\n");
-  writeFileSync(join(dir, "experiments.md"), "# Experiment Notes\n\n");
+  mkdirSync(join(dir, "notes"), { recursive: true });
+  writeFileSync(join(dir, "notes", "literature.md"), "# Literature Notes\n\n");
+  writeFileSync(join(dir, "notes", "experiments.md"), "# Experiment Notes\n\n");
 
-  for (const d of ["data/papers", "data/scripts", "report"]) {
+  for (const d of ["data/papers", "data/scripts", "data/runs", "report", "reviews", ".agent"]) {
     mkdirSync(join(dir, d), { recursive: true });
   }
 

@@ -7,7 +7,8 @@
  *   2. Compact old messages when token count is high (working memory management)
  */
 
-import { readFileSync, existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
+import { readFileSafe } from "./utils.js";
 import { join } from "node:path";
 
 const COMPACTION_THRESHOLD = 80_000; // characters (~20K tokens)
@@ -36,22 +37,23 @@ export function buildContextTransformer(projectDir: string) {
 
       return [
         // Research snapshot (ground truth from files)
-        { role: "user", content: snapshot },
-        { role: "assistant", content: "I've reviewed the current research state. Let me continue from where I left off." },
+        { role: "user", content: snapshot, timestamp: Date.now() },
+        { role: "assistant", content: [{ type: "text", text: "I've reviewed the current research state. Let me continue from where I left off." }], timestamp: Date.now() },
         // Compacted history
-        { role: "user", content: `<compacted_history>\n${oldSummary}\n</compacted_history>\n\nContinue your research based on the current state above and recent context below.` },
-        { role: "assistant", content: "Understood. I'll continue based on the current research state and recent actions." },
+        { role: "user", content: `<compacted_history>\n${oldSummary}\n</compacted_history>\n\nContinue your research based on the current state above and recent context below.`, timestamp: Date.now() },
+        { role: "assistant", content: [{ type: "text", text: "Understood. I'll continue based on the current research state and recent actions." }], timestamp: Date.now() },
         // Recent messages preserved as-is
         ...recentMessages,
       ];
     }
 
-    // No compaction needed — just inject snapshot at the beginning
-    // Only inject if there are enough messages (avoid injecting before first prompt)
-    if (messages.length > 4) {
+    // No compaction needed — inject snapshot into the first user message
+    // (inserting new messages would break tool_use_id → tool_result references)
+    if (messages.length > 2) {
+      const first = messages[0];
+      const firstContent = typeof first.content === "string" ? first.content : JSON.stringify(first.content);
       return [
-        messages[0], // Keep the original first user message (the directive)
-        { role: "assistant", content: `<research_snapshot>\n${snapshot}\n</research_snapshot>\n\nI'll continue based on this current state.` },
+        { ...first, content: `${firstContent}\n\n<research_snapshot>\n${snapshot}\n</research_snapshot>` },
         ...messages.slice(1),
       ];
     }
@@ -71,7 +73,7 @@ function buildResearchSnapshot(projectDir: string): string {
   parts.push(`## Research Goal\n${goal || "(no RESEARCH.md found)"}`);
 
   // Literature state
-  const lit = readFileSafe(join(projectDir, "literature.md"));
+  const lit = readFileSafe(join(projectDir, "notes", "literature.md"));
   if (lit) {
     const lineCount = lit.split("\n").length;
     const preview = lit.length > 2000 ? lit.slice(0, 2000) + "\n...(truncated)" : lit;
@@ -81,13 +83,19 @@ function buildResearchSnapshot(projectDir: string): string {
   }
 
   // Experiment state
-  const exp = readFileSafe(join(projectDir, "experiments.md"));
+  const exp = readFileSafe(join(projectDir, "notes", "experiments.md"));
   if (exp) {
     const lineCount = exp.split("\n").length;
     const preview = exp.length > 2000 ? exp.slice(0, 2000) + "\n...(truncated)" : exp;
     parts.push(`## Experiment Notes (${lineCount} lines)\n${preview}`);
   } else {
     parts.push("## Experiment Notes\n(empty — no experiments yet)");
+  }
+
+  // PI feedback (injected by PI monitor)
+  const piFeedback = readFileSafe(join(projectDir, "reviews", "pi_feedback.md"));
+  if (piFeedback) {
+    parts.push(`## PI Feedback (Latest)\n${piFeedback}`);
   }
 
   // Report status
@@ -132,10 +140,6 @@ function summarizeMessages(messages: any[]): string {
   return items.length > 0
     ? `Summary of ${messages.length} earlier messages:\n${items.slice(0, 30).join("\n")}`
     : `(${messages.length} earlier messages compacted)`;
-}
-
-function readFileSafe(path: string): string {
-  try { return readFileSync(path, "utf-8"); } catch { return ""; }
 }
 
 function countFiles(dir: string): number {

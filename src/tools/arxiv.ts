@@ -4,14 +4,11 @@
  * Uses the arXiv Atom XML API. Rate limit: 1 req / 3s.
  */
 
-import type { Paper } from "./semantic-scholar.js";
+import type { Paper } from "./openalex.js";
+import { sleep } from "../utils.js";
 
 const ARXIV_API = "http://export.arxiv.org/api/query";
 const RATE_LIMIT_DELAY = 3_000; // 3s
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 export class ArxivClient {
   /**

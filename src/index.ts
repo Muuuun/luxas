@@ -79,7 +79,7 @@ async function run(dir: string, modelName: string, userDirective?: string) {
   console.log();
 
   // Create agent
-  const { agent, hooks } = createResearchAgent({
+  const { agent, hooks, restore } = createResearchAgent({
     projectDir: dir,
     model: modelName,
   });
@@ -98,17 +98,38 @@ async function run(dir: string, modelName: string, userDirective?: string) {
       const icon = event.isError ? "✗" : "→";
       process.stderr.write(`  ${icon} ${event.toolName}\n`);
     }
+    if (event.type === "message_end" && event.message?.stopReason === "error") {
+      const errContent = event.message?.content?.find((c: any) => c.type === "text");
+      process.stderr.write(`  ❌ ERROR: ${JSON.stringify(errContent?.text ?? event.message).slice(0, 500)}\n`);
+    }
   });
 
-  // Build prompt
-  const prompt = userDirective
-    ? `Research goal (from RESEARCH.md):\n${researchGoal}\n\nAdditional directive: ${userDirective}`
-    : `Research goal (from RESEARCH.md):\n${researchGoal}\n\nStart by reading RESEARCH.md for the full goal, then check literature.md and experiments.md for any existing progress. Proceed with the research.`;
-
-  // Run
+  // Check for checkpoint to resume from
   const t0 = Date.now();
   try {
-    await agent.prompt(prompt);
+    if (restore) {
+      const msgCount = restore();
+      if (msgCount > 0) {
+        console.log(`  ⟳ Resuming from checkpoint (${msgCount} messages)`);
+        const resumePrompt = userDirective
+          ? `Continue your research. Additional directive: ${userDirective}`
+          : `Continue your research from where you left off. Check notes/literature.md and notes/experiments.md for your current progress.`;
+        await agent.followUp({
+          role: "user",
+          content: resumePrompt,
+          timestamp: Date.now(),
+        });
+        await agent.continue();
+      } else {
+        // Checkpoint exists but empty/corrupted — fresh start
+        const prompt = buildPrompt(researchGoal, userDirective);
+        await agent.prompt(prompt);
+      }
+    } else {
+      // No checkpoint — fresh start
+      const prompt = buildPrompt(researchGoal, userDirective);
+      await agent.prompt(prompt);
+    }
   } catch (err: any) {
     console.error(`\n✗ Agent error: ${err.message}`);
   }
@@ -118,6 +139,12 @@ async function run(dir: string, modelName: string, userDirective?: string) {
   console.log(`\n✓ Done in ${elapsed}s | $${cost} | ${hooks.tracker.totalInputTokens + hooks.tracker.totalOutputTokens} tokens`);
 
   tmux.closeWindow(logFile, "sisyphus-main", true, Date.now() - t0);
+}
+
+function buildPrompt(researchGoal: string, userDirective?: string): string {
+  return userDirective
+    ? `Research goal (from RESEARCH.md):\n${researchGoal}\n\nAdditional directive: ${userDirective}`
+    : `Research goal (from RESEARCH.md):\n${researchGoal}\n\nStart by reading RESEARCH.md for the full goal, then check notes/literature.md and notes/experiments.md for any existing progress. Proceed with the research.`;
 }
 
 function showStatus(dir: string) {
@@ -131,8 +158,8 @@ function showStatus(dir: string) {
   console.log(`\n📚 Research Goal:\n${research.split("\n").slice(0, 5).join("\n")}\n`);
 
   const files: [string, string][] = [
-    ["literature.md", "Literature notes"],
-    ["experiments.md", "Experiment notes"],
+    ["notes/literature.md", "Literature notes"],
+    ["notes/experiments.md", "Experiment notes"],
     ["report/report.tex", "Report source"],
     ["report/report.pdf", "Compiled report"],
   ];
@@ -162,9 +189,13 @@ function showStatus(dir: string) {
 
 function initProject(dir: string) {
   mkdirSync(dir, { recursive: true });
+  mkdirSync(join(dir, "notes"), { recursive: true });
   mkdirSync(join(dir, "report"), { recursive: true });
   mkdirSync(join(dir, "data", "papers"), { recursive: true });
   mkdirSync(join(dir, "data", "scripts"), { recursive: true });
+  mkdirSync(join(dir, "data", "runs"), { recursive: true });
+  mkdirSync(join(dir, "reviews"), { recursive: true });
+  mkdirSync(join(dir, ".agent"), { recursive: true });
 
   const researchFile = join(dir, "RESEARCH.md");
   if (!existsSync(researchFile)) {
@@ -172,10 +203,12 @@ function initProject(dir: string) {
     console.log(`Created ${researchFile}`);
   }
 
-  for (const f of ["literature.md", "experiments.md"]) {
-    const path = join(dir, f);
+  for (const [file, title] of [
+    ["notes/literature.md", "Literature Notes"],
+    ["notes/experiments.md", "Experiment Notes"],
+  ] as const) {
+    const path = join(dir, file);
     if (!existsSync(path)) {
-      const title = f.replace(".md", "").charAt(0).toUpperCase() + f.replace(".md", "").slice(1);
       writeFileSync(path, `# ${title}\n`);
     }
   }

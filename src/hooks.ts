@@ -24,7 +24,7 @@ export function buildResearchHooks(opts: ResearchOptions) {
   const startTime = Date.now();
   const maxCost = opts.maxCostUsd ?? 50;
   const maxDuration = opts.maxDurationMs ?? 8 * 60 * 60 * 1000;
-  const logFile = join(opts.projectDir, "log.jsonl");
+  const logFile = join(opts.projectDir, ".agent", "log.jsonl");
 
   // Ensure log directory exists
   mkdirSync(dirname(logFile), { recursive: true });
