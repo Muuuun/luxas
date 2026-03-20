@@ -20,6 +20,7 @@ import { buildResearchPrompt } from "./prompt.js";
 import { buildResearchTools } from "./tools/index.js";
 import { buildContextTransformer } from "./context.js";
 import { buildResearchHooks } from "./hooks.js";
+import { ReminderRegistry, builtinProviders } from "./reminders.js";
 import { createPIReviewTool, setupPIFallbackMonitor } from "./pi-agent.js";
 import { getApiKey } from "./auth.js";
 import { convertToLlm } from "./messages.js";                    // #7: custom message types
@@ -60,11 +61,16 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
   // Layer 2: Tools (research tools + PI review tool)
   const tools = buildResearchTools(projectDir, model, getApiKey);
 
+  // Reminder system — event-driven, per-turn quality nudges
+  const reminders = new ReminderRegistry();
+  for (const p of builtinProviders) reminders.register(p);
+
   // Hooks must be created before PI monitor so we can wire setPIStopped
   const hooks = buildResearchHooks({
     projectDir,
     maxCostUsd: opts.maxCostUsd,
     maxDurationMs: opts.maxDurationMs,
+    reminders,
   });
 
   // Check if PI already said STOP in a previous session (persisted in pi_feedback.md)
@@ -107,6 +113,7 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
     getApiKey,
     tracker: hooks.tracker,
     bus,
+    reminders,
   });
 
   // Assemble Agent

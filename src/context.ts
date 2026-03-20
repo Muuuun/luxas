@@ -18,6 +18,7 @@ import { generateResearchSummary, heuristicSummary } from "./compaction.js";
 import type { Model } from "@mariozechner/pi-ai";
 import type { CostTracker } from "./hooks.js";
 import type { ExtensionBus } from "./extensions.js";
+import type { ReminderRegistry } from "./reminders.js";
 
 // Token-based thresholds (#3: precise token estimation)
 const COMPACTION_TOKEN_THRESHOLD = 140_000;  // ~70% of 200K context
@@ -35,6 +36,7 @@ export interface ContextTransformerOptions {
   getApiKey?: (provider: string) => Promise<string | undefined>;
   tracker?: CostTracker;
   bus?: ExtensionBus;
+  reminders?: ReminderRegistry;
 }
 
 /**
@@ -46,7 +48,7 @@ export function buildContextTransformer(opts: ContextTransformerOptions) {
   let previousSummary: string | undefined;
 
   return async (messages: any[]): Promise<any[]> => {
-    const snapshot = buildResearchSnapshot(projectDir);
+    const snapshot = buildResearchSnapshot(opts);
 
     // #3: Use precise token count when available, fall back to char estimate
     const tokenCount = tracker?.lastContextTokens ?? 0;
@@ -162,7 +164,8 @@ function injectSnapshot(messages: any[], snapshot: string): any[] {
 /**
  * Build a snapshot of current research state from files on disk.
  */
-function buildResearchSnapshot(projectDir: string): string {
+function buildResearchSnapshot(opts: ContextTransformerOptions): string {
+  const { projectDir } = opts;
   const parts: string[] = [];
 
   // Project directory (ground truth for path resolution)
@@ -215,49 +218,15 @@ function buildResearchSnapshot(projectDir: string): string {
   const scriptCount = countFiles(scriptsDir);
   if (scriptCount > 0) parts.push(`- Experiment scripts: ${scriptCount} files in data/scripts/`);
 
-  // Artifact quality standards — compact, state-driven reminders
-  // (Like Claude Code's <system-reminder>: injected every turn, kept short)
-  const standards = buildActiveStandards(projectDir);
-  if (standards) parts.push(standards);
+  // Active reminders — event-driven, compact, budget-controlled
+  const remindersSection = opts.reminders?.render(projectDir) ?? null;
+  if (remindersSection) parts.push(remindersSection);
 
   // Skills (Agent Skills spec — progressive disclosure: only name+description here)
   const skillSummary = discoverSkills(projectDir);
   if (skillSummary) parts.push(skillSummary);
 
   return parts.join("\n\n");
-}
-
-/**
- * Build compact, state-driven quality standards.
- * Modeled after Claude Code's <system-reminder>: injected every turn, kept under ~300 chars.
- * Only emits rules when the relevant state exists on disk (e.g., figstyle file present).
- */
-function buildActiveStandards(projectDir: string): string | null {
-  const rules: string[] = [];
-
-  // Figure style: only if figstyle.mplstyle exists
-  const figStyle = join(projectDir, "report", "figstyle.mplstyle");
-  if (existsSync(figStyle)) {
-    rules.push(
-      `- Figures: MUST use plt.style.use('${figStyle}') before plotting. Save as PDF, not PNG.`,
-    );
-  }
-
-  // LaTeX template: remind if report.tex exists
-  const reportTex = join(projectDir, "report", "report.tex");
-  if (existsSync(reportTex)) {
-    // Check for PNG figures that should be PDF
-    const figDir = join(projectDir, "report", "figures");
-    try {
-      const pngFigs = readdirSync(figDir).filter(f => f.endsWith(".png"));
-      if (pngFigs.length > 0) {
-        rules.push(`- ${pngFigs.length} PNG figure(s) in report/figures/ — regenerate as PDF.`);
-      }
-    } catch {}
-  }
-
-  if (rules.length === 0) return null;
-  return `## Active Standards\n${rules.join("\n")}`;
 }
 
 function countFiles(dir: string): number {

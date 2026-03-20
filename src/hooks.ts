@@ -7,11 +7,13 @@
 
 import { appendFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
+import type { ReminderRegistry } from "./reminders.js";
 
 export interface ResearchOptions {
   maxCostUsd?: number;       // Cost limit in USD (default: 50)
   maxDurationMs?: number;    // Time limit in ms (default: 8 hours)
   projectDir: string;
+  reminders?: ReminderRegistry;
 }
 
 export interface CostTracker {
@@ -106,62 +108,27 @@ export function buildResearchHooks(opts: ResearchOptions) {
       appendFileSync(logFile, JSON.stringify(entry) + "\n");
     } catch {}
 
-    // 2. Post-experiment note-writing enforcement
+    // 2. Set reminder flags — providers in reminders.ts render them on next turn
     const toolName = ctx.toolCall?.name ?? "";
-    if (toolName === "run_experiment" && !ctx.isError) {
-      const existingContent: any[] = ctx.result?.content ?? [];
-      return {
-        content: [...existingContent, {
-          type: "text" as const,
-          text: [
-            "",
-            "─".repeat(60),
-            "⚠️ MANDATORY: UPDATE NOTES BEFORE PROCEEDING",
-            "─".repeat(60),
-            "",
-            "You MUST do ALL of the following before ANY other action:",
-            "1. CHECK the 'Consistency Check' section above. If previous scripts had errors:",
-            "   - Record the error and corrected formula in notes/experiments.md",
-            "   - Assess which previous results are affected and whether they need to be re-run",
-            "   - If re-run is needed, plan it as your next experiment",
-            "2. Update notes/experiments.md — Add a full entry (hypothesis, setup, quantitative results, interpretation)",
-            "3. Update report/report.tex — Add new section or update existing comparisons, then compile_latex",
-            "4. If this result reveals a novel method or important negative result, append to ~/.sisyphus/memory.md",
-            "",
-            "Do NOT run another experiment or search until notes + report are updated.",
-          ].join("\n"),
-        }],
-      };
-    }
+    const reminders = opts.reminders;
 
-    // 3. Post-compile_latex memory reminder (record problems & solutions)
-    if (toolName === "compile_latex") {
+    if (toolName === "run_experiment" && !ctx.isError && reminders) {
+      reminders.setFlag("experiment_completed", true);  // self-clears when notes updated
+    }
+    if (toolName === "compile_latex" && reminders) {
       const existingContent: any[] = ctx.result?.content ?? [];
       const hadErrors = ctx.isError || existingContent.some(
         (c: any) => typeof c.text === "string" && (c.text.includes("Error") || c.text.includes("Warning") || c.text.includes("Undefined"))
       );
       if (hadErrors) {
-        return {
-          content: [...existingContent, {
-            type: "text" as const,
-            text: "\n---\n[REMINDER] If you fixed LaTeX compilation issues (missing packages, undefined references, float placement, template incompatibilities), record the problem and solution in notes/memory.md so you don't repeat them. Also record venue-specific formatting gotchas (e.g. revtex quirks, column width constraints, citation style fixes).\n",
-          }],
-        };
+        reminders.setFlag("latex_had_errors", true, 5 * 60 * 1000);  // 5 min TTL
       }
     }
-
-    // 4. Post-dispatch_workers note-writing reminder
-    if (toolName === "dispatch_workers" && !ctx.isError) {
-      const existingContent: any[] = ctx.result?.content ?? [];
-      return {
-        content: [...existingContent, {
-          type: "text" as const,
-          text: "\n---\n[REMINDER] Update notes/literature.md with the findings above before dispatching more workers.\n",
-        }],
-      };
+    if (toolName === "dispatch_workers" && !ctx.isError && reminders) {
+      reminders.setFlag("workers_completed", true);  // self-clears when notes updated
     }
 
-    return undefined; // Don't modify result for other tools
+    return undefined; // Don't modify tool results — reminders appear in snapshot
   };
 
   // Usage tracking (called from agent event subscription)
