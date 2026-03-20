@@ -1,0 +1,41 @@
+# ACS journals (JACS, Nano Lett, Chem Rev, ACS Nano): Arial, compact
+# Single column: 8.3 cm (3.25 in), 1.5 column: 11.7 cm, Double column: 17.1 cm (6.73 in)
+# Min font size: 4.5pt, DPI: 300+, Format: TIFF/EPS/PDF
+
+text.usetex          : False
+font.family          : sans-serif
+font.sans-serif      : Arial, Helvetica, DejaVu Sans
+font.size            : 7
+mathtext.fontset     : stixsans
+
+figure.figsize       : 3.25, 2.5
+figure.dpi           : 150
+savefig.dpi          : 300
+savefig.format       : pdf
+savefig.bbox         : tight
+savefig.pad_inches   : 0.02
+
+axes.labelsize       : 7
+axes.titlesize       : 8
+axes.linewidth       : 0.5
+axes.formatter.use_mathtext : True
+
+xtick.labelsize      : 6
+ytick.labelsize      : 6
+xtick.major.width    : 0.5
+ytick.major.width    : 0.5
+xtick.direction      : in
+ytick.direction      : in
+
+lines.linewidth      : 1.0
+lines.markersize     : 4
+
+legend.fontsize      : 6
+legend.frameon       : False
+legend.handlelength  : 1.2
+
+# Colorblind-friendly cycle
+axes.prop_cycle      : cycler('color', ['0072B2', 'D55E00', '009E73', 'CC79A7', 'F0E442', '56B4E9', 'E69F00'])
+
+grid.linewidth       : 0.3
+grid.alpha           : 0.4

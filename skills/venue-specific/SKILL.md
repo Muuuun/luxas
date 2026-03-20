@@ -165,6 +165,26 @@ cd project/report/ && latexmk -pdf main.tex
 
 **Never modify .sty/.cls files** — only edit .tex content files.
 
+## Figure Styles
+
+Bundled matplotlib `.mplstyle` files for publication-quality figures are in `figstyles/`. See `figstyles/README.md` for the full style map.
+
+### Setting Up Figure Style
+
+When you determine the target venue, copy the matching style to the project:
+```bash
+cp skills/venue-specific/figstyles/physics-aps.mplstyle project/report/figstyle.mplstyle
+```
+
+| Style File | Target Venues |
+|-----------|---------------|
+| `physics-aps.mplstyle` | PRL, PRX, PRA-PRE, Nature Physics |
+| `cs-conferences.mplstyle` | NeurIPS, ICML, ICLR, CVPR, ACL, AAAI |
+| `nature-science.mplstyle` | Nature, Science, Cell, PNAS, eLife |
+| `chemistry-acs.mplstyle` | JACS, Nano Lett, ACS Nano, Chem Rev |
+
+All plotting code must start with `plt.style.use('report/figstyle.mplstyle')`. Save as PDF (vector).
+
 ## Rules for the Agent
 
 1. **Read the venue file before giving any formatting advice** — do not rely on memory

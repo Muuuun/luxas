@@ -89,11 +89,45 @@ When you see a [MEMORY WARNING] message, it means context compaction is imminent
 Downloaded papers have auto-extracted figures in data/papers/{id}/figures/ with a manifest.json. To use them:
 1. Read data/papers/{id}/figures/manifest.json to see available figures with captions.
 2. Copy the relevant figure to report/figures/ (create directory if needed).
-3. Include in LaTeX: \\includegraphics[width=\\linewidth]{figures/fig_name.png} inside a figure environment with \\caption and \\label.
+3. Include in LaTeX: \\includegraphics[width=\\linewidth]{figures/fig_name.pdf} inside a figure environment with \\caption and \\label.
 
-For experiment results, use run_experiment to generate plots (matplotlib/etc) and save to report/figures/.
+For experiment results, generate plots (matplotlib) and save to report/figures/.
 
 A good report includes figures — architecture diagrams, result comparisons, key visualizations from papers. Don't write a text-only report when figures are available.
+
+### Figure Quality Standards (MANDATORY)
+
+All generated figures MUST be publication-quality. Follow this workflow:
+
+**Step 1 — Set up figure style (once per project):**
+When you determine the target venue, copy the matching matplotlib style template to your project:
+\`\`\`bash
+cp skills/venue-specific/figstyles/{style}.mplstyle report/figstyle.mplstyle
+\`\`\`
+Style map:
+- Physics (PRL, PRX, APS journals) → \`physics-aps.mplstyle\` (CM fonts, LaTeX, 600 DPI)
+- CS conferences (NeurIPS, ICML, ICLR) → \`cs-conferences.mplstyle\` (sans-serif, 300 DPI)
+- Nature / Science / Cell / PNAS → \`nature-science.mplstyle\` (Arial, compact, 300 DPI)
+- Chemistry (JACS, ACS journals) → \`chemistry-acs.mplstyle\` (Arial, 300 DPI)
+
+**Step 2 — Use the style in ALL plotting code:**
+\`\`\`python
+import matplotlib.pyplot as plt
+plt.style.use('report/figstyle.mplstyle')
+\`\`\`
+
+**Step 3 — Save as PDF (vector), not PNG:**
+\`\`\`python
+fig.savefig('report/figures/fig_name.pdf')
+\`\`\`
+
+**Key rules:**
+- NEVER use default matplotlib style — always load figstyle.mplstyle
+- Save as PDF (vector) for line plots/diagrams. Use PNG only for raster data (e.g. heatmaps, images)
+- Use single-column width for most figures. Double-column only when needed (override figsize)
+- Use colorblind-friendly colors (the style files include Tol/Wong palettes)
+- Tables should be LaTeX tables, NOT matplotlib table images
+- If text.usetex fails (LaTeX not installed), fall back to mathtext: set text.usetex=False in the style file
 
 ## PI Review (Group Meeting)
 

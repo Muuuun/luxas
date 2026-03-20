@@ -1,0 +1,48 @@
+# APS journals (PRL, PRX, PRA-PRE): Computer Modern, serif, LaTeX rendering
+# Single column: 8.6 cm (3.375 in), Double column: 17.8 cm (7.0 in)
+# Min symbol/lettering height: 2mm, Min line weight: 0.5pt, DPI: 600+
+
+text.usetex          : True
+text.latex.preamble  : \usepackage{amsmath} \usepackage{amssymb}
+font.family          : serif
+font.serif           : Computer Modern Roman, CMU Serif, Times, DejaVu Serif
+font.size            : 8
+mathtext.fontset     : cm
+
+figure.figsize       : 3.375, 2.5
+figure.dpi           : 150
+savefig.dpi          : 600
+savefig.format       : pdf
+savefig.bbox         : tight
+savefig.pad_inches   : 0.02
+
+axes.labelsize       : 8
+axes.titlesize       : 9
+axes.linewidth       : 0.5
+axes.formatter.use_mathtext : True
+
+xtick.labelsize      : 7
+ytick.labelsize      : 7
+xtick.major.width    : 0.5
+ytick.major.width    : 0.5
+xtick.minor.width    : 0.3
+ytick.minor.width    : 0.3
+xtick.major.size     : 3.0
+ytick.major.size     : 3.0
+xtick.minor.size     : 1.5
+ytick.minor.size     : 1.5
+xtick.direction      : in
+ytick.direction      : in
+
+lines.linewidth      : 1.0
+lines.markersize     : 4
+
+legend.fontsize      : 7
+legend.frameon       : False
+legend.handlelength  : 1.5
+
+# Colorblind-friendly cycle (Tol bright)
+axes.prop_cycle      : cycler('color', ['4477AA', 'EE6677', '228833', 'CCBB44', '66CCEE', 'AA3377', 'BBBBBB'])
+
+grid.linewidth       : 0.3
+grid.alpha           : 0.5

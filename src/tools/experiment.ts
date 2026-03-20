@@ -7,7 +7,7 @@ import { Agent } from "@mariozechner/pi-agent-core";
 import { createCodingTools } from "@mariozechner/pi-coding-agent";
 import type { Model } from "@mariozechner/pi-ai";
 import { join } from "node:path";
-import { mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { listFilesRecursive, readFileSafe, smartTruncate } from "../utils.js";
 import * as tmux from "../tmux.js";
 
@@ -103,6 +103,19 @@ export function createExperimentTool(
         const expTools = createCodingTools(cwd);
         const experimentContext = buildExperimentContext(projectDir);
 
+        const hasStyle = existsSync(join(projectDir, "report", "figstyle.mplstyle"));
+        const figStyleLines = hasStyle
+          ? [
+              `Figure style: report/figstyle.mplstyle — ALWAYS load it before plotting:`,
+              `  import matplotlib.pyplot as plt`,
+              `  plt.style.use('${join(projectDir, "report", "figstyle.mplstyle")}')`,
+              `Save figures as PDF (vector): fig.savefig('report/figures/fig_name.pdf')`,
+            ]
+          : [
+              `When plotting: use plt.savefig('report/figures/fig_name.pdf', bbox_inches='tight', dpi=300).`,
+              `Prefer PDF format. Use publication-quality font sizes (≥7pt).`,
+            ];
+
         const systemPrompt = [
           `You are an experiment coding agent. Write code, run simulations, and report results.`,
           ``,
@@ -110,7 +123,7 @@ export function createExperimentTool(
           `Scripts go in: data/scripts/`,
           `Save figures to: report/figures/`,
           `Experiment runs go in: data/runs/run_N/`,
-          `When using matplotlib: use plt.savefig(..., bbox_inches='tight', dpi=150).`,
+          ...figStyleLines,
         ].join("\n");
 
         const expAgent = new Agent({

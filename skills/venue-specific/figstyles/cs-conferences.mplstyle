@@ -1,0 +1,43 @@
+# CS conferences (NeurIPS, ICML, ICLR, CVPR, ACL, AAAI): sans-serif, clean
+# NeurIPS/ICML text width: 5.5 in, Single column figure: ~5.5 in or ~2.65 in (half)
+# DPI: 300+, Format: PDF preferred
+
+text.usetex          : False
+font.family          : sans-serif
+font.sans-serif      : Arial, Helvetica, DejaVu Sans
+font.size            : 9
+mathtext.fontset     : stixsans
+
+figure.figsize       : 5.5, 3.5
+figure.dpi           : 150
+savefig.dpi          : 300
+savefig.format       : pdf
+savefig.bbox         : tight
+savefig.pad_inches   : 0.02
+
+axes.labelsize       : 9
+axes.titlesize       : 10
+axes.linewidth       : 0.6
+axes.formatter.use_mathtext : True
+axes.spines.top      : False
+axes.spines.right    : False
+
+xtick.labelsize      : 8
+ytick.labelsize      : 8
+xtick.major.width    : 0.6
+ytick.major.width    : 0.6
+xtick.direction      : out
+ytick.direction      : out
+
+lines.linewidth      : 1.5
+lines.markersize     : 5
+
+legend.fontsize      : 8
+legend.frameon       : False
+legend.handlelength  : 1.5
+
+# Colorblind-friendly cycle (Tol bright)
+axes.prop_cycle      : cycler('color', ['4477AA', 'EE6677', '228833', 'CCBB44', '66CCEE', 'AA3377', 'BBBBBB'])
+
+grid.linewidth       : 0.3
+grid.alpha           : 0.4
