@@ -74,6 +74,7 @@ export function createExperimentTool(
   projectDir: string,
   model: Model<any>,
   getApiKey: (provider: string) => Promise<string | undefined> | string | undefined,
+  trackUsage?: (usage: any) => void,
 ) {
   return {
     name: "run_experiment",
@@ -94,6 +95,7 @@ export function createExperimentTool(
       const thinkingLevel = (params.thinkingLevel ?? "medium") as any;
       const t0 = Date.now();
       const logFile = tmux.openWindow(`exp: ${params.hypothesis.slice(0, 25)}`);
+      let expAgent: Agent | null = null;
 
       try {
         // Snapshot files before experiment (only track data/ and report/ for new file detection)
@@ -126,7 +128,7 @@ export function createExperimentTool(
           ...figStyleLines,
         ].join("\n");
 
-        const expAgent = new Agent({
+        expAgent = new Agent({
           initialState: {
             systemPrompt,
             model,
@@ -186,6 +188,15 @@ export function createExperimentTool(
           content: [{ type: "text" as const, text: `Experiment failed: ${err.message}` }],
           details: { success: false, elapsed },
         };
+      } finally {
+        // Collect sub-agent costs — add to parent tracker after completion
+        if (trackUsage && expAgent) {
+          for (const m of expAgent.state.messages) {
+            if ((m as any).role === "assistant" && (m as any).usage) {
+              trackUsage((m as any).usage);
+            }
+          }
+        }
       }
     },
   };

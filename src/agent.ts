@@ -14,7 +14,7 @@
 
 import { Agent } from "@mariozechner/pi-agent-core";
 import { getModel } from "@mariozechner/pi-ai";
-import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { join, isAbsolute, resolve } from "node:path";
 import { buildResearchPrompt } from "./prompt.js";
 import { buildResearchTools } from "./tools/index.js";
@@ -26,6 +26,7 @@ import { getApiKey } from "./auth.js";
 import { convertToLlm } from "./messages.js";                    // #7: custom message types
 import { cleanMessagesForModel } from "./transform.js";           // #6: cross-model compatibility
 import { ExtensionBus } from "./extensions.js";                   // #8: extension system
+import { Session, buildSessionContext } from "./session.js";      // #5: session DAG
 
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
 import type { PIVerdict } from "./pi-agent.js";
@@ -58,14 +59,11 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
   // Layer 1: System Prompt — now includes projectDir
   const systemPrompt = buildResearchPrompt(projectDir);
 
-  // Layer 2: Tools (research tools + PI review tool)
-  const tools = buildResearchTools(projectDir, model, getApiKey);
-
   // Reminder system — event-driven, per-turn quality nudges
   const reminders = new ReminderRegistry();
   for (const p of builtinProviders) reminders.register(p);
 
-  // Hooks must be created before PI monitor so we can wire setPIStopped
+  // Hooks must be created before tools so trackUsage can be threaded to sub-agents
   const hooks = buildResearchHooks({
     projectDir,
     maxCostUsd: opts.maxCostUsd,
@@ -80,6 +78,10 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
   if (prevFeedback.includes("## Verdict: STOP")) {
     hooks.setPIStopped();
   }
+
+  // Layer 2: Tools (research tools + PI review tool)
+  // Created after hooks so sub-agents can report costs via trackUsage
+  const tools = buildResearchTools(projectDir, model, getApiKey, hooks.trackUsage);
 
   const piMonitorOpts = {
     projectDir: projectDir,
@@ -133,12 +135,27 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
     getApiKey,
   });
 
-  // Track usage + emit events + auto-checkpoint after each turn
+  // #5: Session DAG — replaces raw appendFileSync checkpoint
   const agentDir = join(projectDir, ".agent");
   mkdirSync(agentDir, { recursive: true });
   const checkpointPath = join(agentDir, "checkpoint.jsonl");
+
+  // Migrate legacy checkpoint format (raw messages without session header)
+  if (existsSync(checkpointPath)) {
+    try {
+      const firstLine = readFileSync(checkpointPath, "utf-8").split("\n")[0];
+      const parsed = JSON.parse(firstLine);
+      if (parsed.type !== "session") {
+        // Legacy format — rename and let Session.open create a fresh file
+        renameSync(checkpointPath, checkpointPath + ".legacy");
+      }
+    } catch { /* corrupted — Session.open will overwrite */ }
+  }
+
+  const session = Session.open(checkpointPath, projectDir);
   let lastCheckpointedMsgCount = 0;
 
+  // Track usage + emit events + persist messages to Session after each turn
   agent.subscribe((event: any) => {
     if (event.type === "message_update") {
       const msg = event.assistantMessageEvent;
@@ -168,7 +185,7 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
         .filter((b: any) => b.type === "toolCall" || b.type === "tool_use").length;
       bus.emit({ type: "turn_end", message: event.message, toolCalls });
     }
-    // Append new messages to checkpoint after each completed turn
+    // Persist new messages to Session DAG after each completed turn
     if (event.type === "turn_end") {
       try {
         const messages = agent.state.messages;
@@ -179,9 +196,8 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
             if (m.role === "assistant" && Array.isArray(m.content) && m.content.length === 0) return false;
             return true;
           });
-        if (newMessages.length > 0) {
-          const lines = newMessages.map((m: any) => JSON.stringify(m)).join("\n") + "\n";
-          appendFileSync(checkpointPath, lines);
+        for (const m of newMessages) {
+          session.appendMessage(m);
         }
         lastCheckpointedMsgCount = messages.length;
       } catch {}
@@ -194,17 +210,12 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
     piFallback = setupPIFallbackMonitor(agent, piReview, piMonitorOpts);
   }
 
-  // #6: Restore from checkpoint with cross-model message cleaning
+  // #6: Restore from Session DAG with cross-model message cleaning
   const currentModel = { provider, id: modelId };
-  const hasCheckpoint = existsSync(checkpointPath);
+  const hasCheckpoint = session.getEntries().length > 0;
   const restore = hasCheckpoint ? () => {
     try {
-      const lines = readFileSync(checkpointPath, "utf-8").trim().split("\n");
-      const messages: any[] = [];
-      for (const line of lines) {
-        if (!line) continue;
-        try { messages.push(JSON.parse(line)); } catch { /* skip corrupted line */ }
-      }
+      const messages = buildSessionContext(session);
       if (messages.length > 0) {
         // #6: Clean messages for cross-model compatibility before restoring
         const cleaned = cleanMessagesForModel(messages, currentModel);
@@ -231,5 +242,5 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
     return 0;
   } : null;
 
-  return { agent, hooks, bus, piFallback, restore, checkpointPath };
+  return { agent, hooks, bus, session, piFallback, restore, checkpointPath };
 }

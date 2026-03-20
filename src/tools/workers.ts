@@ -27,6 +27,7 @@ export function createDispatchWorkersTool(
   model: Model<any>,
   getApiKey: (provider: string) => Promise<string | undefined> | string | undefined,
   projectDir: string,
+  trackUsage?: (usage: any) => void,
 ) {
   return {
     name: "dispatch_workers",
@@ -40,11 +41,12 @@ export function createDispatchWorkersTool(
       const results = await Promise.all(params.tasks.map(async (task) => {
         const t0 = Date.now();
         const logFile = tmux.openWindow(`w: ${task.description.slice(0, 25)}`);
+        let worker: Agent | null = null;
 
         try {
           // Each worker gets its own tools bound to projectDir (like Claude Code's cwd inheritance)
           const workerTools = createCodingToolsForProject(projectDir);
-          const worker = new Agent({
+          worker = new Agent({
             initialState: {
               systemPrompt: buildWorkerPrompt(projectDir),
               model,
@@ -77,6 +79,15 @@ export function createDispatchWorkersTool(
           const elapsed = Date.now() - t0;
           tmux.closeWindow(logFile, task.description, false, elapsed);
           return { description: task.description, success: false, output: `Error: ${err.message}`, elapsed };
+        } finally {
+          // Collect sub-agent costs — add to parent tracker after completion
+          if (trackUsage && worker) {
+            for (const m of worker.state.messages) {
+              if ((m as any).role === "assistant" && (m as any).usage) {
+                trackUsage((m as any).usage);
+              }
+            }
+          }
         }
       }));
 

@@ -25,9 +25,10 @@ export function cleanMessagesForModel(
       const isSameModel =
         msg.provider === currentModel.provider && msg.model === currentModel.id;
 
+      // Create a new object if cross-model cleaning is needed — never mutate the original
+      let processed = msg;
       if (!isSameModel && Array.isArray(msg.content)) {
-        // Clean thinking blocks and thought signatures for cross-model compatibility
-        msg.content = msg.content.flatMap((block: any) => {
+        const cleanedContent = msg.content.flatMap((block: any) => {
           if (block.type === "thinking") {
             if (block.redacted) return []; // Drop cross-model redacted thinking
             if (!block.thinking?.trim()) return [];
@@ -39,16 +40,17 @@ export function cleanMessagesForModel(
           }
           return [block];
         });
+        processed = { ...msg, content: cleanedContent };
       }
 
       // Track tool calls for orphan detection
-      for (const block of msg.content ?? []) {
+      for (const block of processed.content ?? []) {
         if (block.type === "toolCall" || block.type === "tool_use") {
           pendingToolCallIds.add(block.id);
         }
       }
 
-      if (msg.content?.length > 0) result.push(msg);
+      if (processed.content?.length > 0) result.push(processed);
     } else if (msg.role === "toolResult") {
       pendingToolCallIds.delete(msg.toolCallId);
       result.push(msg);

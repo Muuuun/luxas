@@ -12,15 +12,16 @@ export function buildResearchTools(
   projectDir: string,
   model: Model<any>,
   getApiKey: (provider: string) => Promise<string | undefined> | string | undefined,
+  trackUsage?: (usage: any) => void,
 ): any[] {
   const codingTools = createCodingToolsForProject(projectDir);
   const reportTools = createReportTools(projectDir);
 
   // Search, download, citations, web are now a skill — agent uses bash to call scripts/search
   const workerTools = [...codingTools];
-  const dispatchWorkers = createDispatchWorkersTool(workerTools, model, getApiKey, projectDir);
+  const dispatchWorkers = createDispatchWorkersTool(workerTools, model, getApiKey, projectDir, trackUsage);
 
-  const experimentTool = createExperimentTool(projectDir, model, getApiKey);
+  const experimentTool = createExperimentTool(projectDir, model, getApiKey, trackUsage);
 
   return [
     ...reportTools,
