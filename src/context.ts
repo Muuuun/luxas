@@ -215,11 +215,49 @@ function buildResearchSnapshot(projectDir: string): string {
   const scriptCount = countFiles(scriptsDir);
   if (scriptCount > 0) parts.push(`- Experiment scripts: ${scriptCount} files in data/scripts/`);
 
+  // Artifact quality standards — compact, state-driven reminders
+  // (Like Claude Code's <system-reminder>: injected every turn, kept short)
+  const standards = buildActiveStandards(projectDir);
+  if (standards) parts.push(standards);
+
   // Skills (Agent Skills spec — progressive disclosure: only name+description here)
   const skillSummary = discoverSkills(projectDir);
   if (skillSummary) parts.push(skillSummary);
 
   return parts.join("\n\n");
+}
+
+/**
+ * Build compact, state-driven quality standards.
+ * Modeled after Claude Code's <system-reminder>: injected every turn, kept under ~300 chars.
+ * Only emits rules when the relevant state exists on disk (e.g., figstyle file present).
+ */
+function buildActiveStandards(projectDir: string): string | null {
+  const rules: string[] = [];
+
+  // Figure style: only if figstyle.mplstyle exists
+  const figStyle = join(projectDir, "report", "figstyle.mplstyle");
+  if (existsSync(figStyle)) {
+    rules.push(
+      `- Figures: MUST use plt.style.use('${figStyle}') before plotting. Save as PDF, not PNG.`,
+    );
+  }
+
+  // LaTeX template: remind if report.tex exists
+  const reportTex = join(projectDir, "report", "report.tex");
+  if (existsSync(reportTex)) {
+    // Check for PNG figures that should be PDF
+    const figDir = join(projectDir, "report", "figures");
+    try {
+      const pngFigs = readdirSync(figDir).filter(f => f.endsWith(".png"));
+      if (pngFigs.length > 0) {
+        rules.push(`- ${pngFigs.length} PNG figure(s) in report/figures/ — regenerate as PDF.`);
+      }
+    } catch {}
+  }
+
+  if (rules.length === 0) return null;
+  return `## Active Standards\n${rules.join("\n")}`;
 }
 
 function countFiles(dir: string): number {
