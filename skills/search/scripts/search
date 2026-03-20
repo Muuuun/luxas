@@ -324,6 +324,7 @@ async function downloadDoi(doi, outputDir) {
   const html = readFileSync(tmpHtml, "utf-8");
   try { unlinkSync(tmpHtml); } catch {}
   const pdfMatch =
+    html.match(/citation_pdf_url['"]\s+content\s*=\s*["']([^"']+)["']/i) ??
     html.match(/iframe[^>]+src\s*=\s*["']([^"']+\.pdf[^"']*)["']/i) ??
     html.match(/embed[^>]+src\s*=\s*["']([^"']+\.pdf[^"']*)["']/i) ??
     html.match(/src\s*=\s*["'](\/\/[^"']+)["']/i);
