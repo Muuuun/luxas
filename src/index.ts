@@ -14,6 +14,7 @@ import { existsSync, readFileSync, readdirSync, mkdirSync, writeFileSync } from 
 import { join, resolve } from "node:path";
 import { createResearchAgent } from "./agent.js";
 import { loginAnthropicOAuth } from "./auth.js";
+import { registerProject, updateProjectAfterRun, loadProjects } from "./memory.js";
 import * as tmux from "./tmux.js";
 
 const args = process.argv.slice(2);
@@ -51,13 +52,18 @@ if (command === "init") {
   process.exit(0);
 }
 
+if (command === "list") {
+  listProjects();
+  process.exit(0);
+}
+
 if (command === "run") {
   await run(projectDir, model, directive);
   process.exit(0);
 }
 
 console.error(`Unknown command: ${command}`);
-console.error("Usage: sisyphus <run|status|init|login> [project-dir] [--model sonnet|opus|haiku]");
+console.error("Usage: sisyphus <run|status|init|list|login> [project-dir] [--model sonnet|opus|haiku]");
 process.exit(1);
 
 // ─── Commands ────────────────────────────────────────────
@@ -72,10 +78,18 @@ async function run(dir: string, modelName: string, userDirective?: string) {
   }
 
   const researchGoal = readFileSync(researchFile, "utf-8").trim();
+
+  // Register in global project registry
+  registerProject(dir);
+
+  const pastProjects = loadProjects().filter(p => p.path !== dir && p.summary);
   console.log(`\n📚 Sisyphus — Autonomous Research Agent`);
   console.log(`   Project: ${dir}`);
   console.log(`   Model: ${modelName}`);
   console.log(`   Goal: ${researchGoal.split("\n")[0].slice(0, 80)}`);
+  if (pastProjects.length > 0) {
+    console.log(`   Memory: ${pastProjects.length} past project(s) in context`);
+  }
   console.log();
 
   // Create agent
@@ -112,7 +126,7 @@ async function run(dir: string, modelName: string, userDirective?: string) {
       if (msgCount > 0) {
         console.log(`  ⟳ Resuming from checkpoint (${msgCount} messages)`);
         const resumePrompt = userDirective
-          ? `Continue your research. Additional directive: ${userDirective}`
+          ? `Continue your research. Additional directive: ${userDirective}\n\nIMPORTANT: This is a follow-up directive on an existing project. After completing the analysis, you MUST update both notes/experiments.md AND report/report.tex (add new sections, update existing comparisons, recompile with compile_latex). The report should always reflect the latest state of the research.`
           : `Continue your research from where you left off. Check notes/literature.md and notes/experiments.md for your current progress.`;
         await agent.followUp({
           role: "user",
@@ -135,8 +149,12 @@ async function run(dir: string, modelName: string, userDirective?: string) {
   }
 
   const elapsed = Math.floor((Date.now() - t0) / 1000);
+  const totalTokens = hooks.tracker.totalInputTokens + hooks.tracker.totalOutputTokens;
   const cost = hooks.tracker.totalCost.toFixed(4);
-  console.log(`\n✓ Done in ${elapsed}s | $${cost} | ${hooks.tracker.totalInputTokens + hooks.tracker.totalOutputTokens} tokens`);
+  console.log(`\n✓ Done in ${elapsed}s | $${cost} | ${totalTokens} tokens`);
+
+  // Save project summary to global registry
+  updateProjectAfterRun(dir, hooks.tracker.totalCost, totalTokens);
 
   tmux.closeWindow(logFile, "sisyphus-main", true, Date.now() - t0);
 }
@@ -187,6 +205,29 @@ function showStatus(dir: string) {
   console.log();
 }
 
+function listProjects() {
+  const projects = loadProjects();
+  if (projects.length === 0) {
+    console.log("No projects registered. Run: sisyphus init <dir>");
+    return;
+  }
+
+  console.log(`\n📚 Sisyphus — ${projects.length} Research Project(s)\n`);
+  for (const p of projects) {
+    const date = p.lastRun.slice(0, 10);
+    const cost = p.costUsd > 0 ? ` | $${p.costUsd.toFixed(2)}` : "";
+    const tokens = p.tokens > 0 ? ` | ${(p.tokens / 1000).toFixed(0)}K tok` : "";
+    console.log(`  ${p.name}`);
+    console.log(`    ${p.path} [${date}${cost}${tokens}]`);
+    if (p.summary) {
+      for (const line of p.summary.split("\n").slice(0, 3)) {
+        console.log(`    ${line}`);
+      }
+    }
+    console.log();
+  }
+}
+
 function initProject(dir: string) {
   mkdirSync(dir, { recursive: true });
   mkdirSync(join(dir, "notes"), { recursive: true });
@@ -206,12 +247,16 @@ function initProject(dir: string) {
   for (const [file, title] of [
     ["notes/literature.md", "Literature Notes"],
     ["notes/experiments.md", "Experiment Notes"],
+    ["notes/memory.md", "Memory"],
   ] as const) {
     const path = join(dir, file);
     if (!existsSync(path)) {
       writeFileSync(path, `# ${title}\n`);
     }
   }
+
+  // Register in global project registry
+  registerProject(dir);
 
   console.log(`Initialized Sisyphus project at ${dir}`);
 }

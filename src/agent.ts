@@ -1,11 +1,15 @@
 /**
- * Research Agent — assembles the four layers on top of agent-core.
+ * Research Agent — assembles the five layers on top of agent-core.
  *
  * Layer 1: System Prompt (prompt.ts)
  * Layer 2: Tools (tools/index.ts) + PI review tool
  * Layer 3: transformContext (context.ts)
  * Layer 4: Hooks (hooks.ts)
  * Layer 5: PI Monitor — adversarial quality reviewer (pi-agent.ts)
+ *
+ * Cross-cutting:
+ * #1 LLM compaction, #2 API retry, #3 precise tokens, #4 parallel tools,
+ * #5 session DAG, #6 cross-model transform, #7 custom messages, #8 extensions
  */
 
 import { Agent } from "@mariozechner/pi-agent-core";
@@ -18,6 +22,9 @@ import { buildContextTransformer } from "./context.js";
 import { buildResearchHooks } from "./hooks.js";
 import { createPIReviewTool, setupPIFallbackMonitor } from "./pi-agent.js";
 import { getApiKey } from "./auth.js";
+import { convertToLlm } from "./messages.js";                    // #7: custom message types
+import { cleanMessagesForModel } from "./transform.js";           // #6: cross-model compatibility
+import { ExtensionBus } from "./extensions.js";                   // #8: extension system
 
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
 import type { PIVerdict } from "./pi-agent.js";
@@ -66,14 +73,23 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
     tools.push(piReview.tool);
   }
 
-  // Layer 3: transformContext
-  const transformContext = buildContextTransformer(opts.projectDir);
-
-  // Layer 4: Hooks
+  // Layer 4: Hooks (before context transformer — tracker needed for token thresholds)
   const hooks = buildResearchHooks({
     projectDir: opts.projectDir,
     maxCostUsd: opts.maxCostUsd,
     maxDurationMs: opts.maxDurationMs,
+  });
+
+  // #8: Extension bus
+  const bus = new ExtensionBus();
+
+  // Layer 3: transformContext — now with LLM compaction (#1), precise tokens (#3), extensions (#8)
+  const transformContext = buildContextTransformer({
+    projectDir: opts.projectDir,
+    model,
+    getApiKey,
+    tracker: hooks.tracker,
+    bus,
   });
 
   // Wire cost tracker into PI monitor
@@ -89,13 +105,15 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
       tools,
     },
     transformContext,
-    toolExecution: "sequential" as any, // research tools may have side effects
+    convertToLlm,                         // #7: custom message types → LLM format
+    toolExecution: "parallel",            // #4: parallel tool execution
+    maxRetryDelayMs: 120_000,             // #2: API retry — cap at 2 min
     beforeToolCall: hooks.before,
     afterToolCall: hooks.after,
     getApiKey,
   });
 
-  // Track usage + auto-checkpoint after each turn
+  // Track usage + emit events + auto-checkpoint after each turn
   const agentDir = join(opts.projectDir, ".agent");
   mkdirSync(agentDir, { recursive: true });
   const checkpointPath = join(agentDir, "checkpoint.jsonl");
@@ -106,6 +124,13 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
       const msg = event.assistantMessageEvent;
       if (msg?.usage) {
         hooks.trackUsage(msg.usage);
+        // #8: Emit usage_update event
+        bus.emit({
+          type: "usage_update",
+          cost: hooks.tracker.totalCost,
+          inputTokens: hooks.tracker.totalInputTokens,
+          outputTokens: hooks.tracker.totalOutputTokens,
+        });
       }
     }
     if (event.type === "message_end") {
@@ -114,16 +139,31 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
         hooks.trackUsage(msg.usage);
       }
     }
+    // #8: Emit turn events
+    if (event.type === "turn_start") {
+      bus.emit({ type: "turn_start" });
+    }
+    if (event.type === "turn_end") {
+      const toolCalls = (event.message?.content ?? [])
+        .filter((b: any) => b.type === "toolCall" || b.type === "tool_use").length;
+      bus.emit({ type: "turn_end", message: event.message, toolCalls });
+    }
     // Append new messages to checkpoint after each completed turn
     if (event.type === "turn_end") {
       try {
         const messages = agent.state.messages;
-        const newMessages = messages.slice(lastCheckpointedMsgCount);
+        const newMessages = messages.slice(lastCheckpointedMsgCount)
+          .filter((m: any) => {
+            // Skip error responses — empty content with stopReason=error corrupts checkpoint
+            if (m.role === "assistant" && m.stopReason === "error") return false;
+            if (m.role === "assistant" && Array.isArray(m.content) && m.content.length === 0) return false;
+            return true;
+          });
         if (newMessages.length > 0) {
           const lines = newMessages.map((m: any) => JSON.stringify(m)).join("\n") + "\n";
           appendFileSync(checkpointPath, lines);
-          lastCheckpointedMsgCount = messages.length;
         }
+        lastCheckpointedMsgCount = messages.length;
       } catch {}
     }
   });
@@ -134,7 +174,8 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
     piFallback = setupPIFallbackMonitor(agent, piReview, piMonitorOpts);
   }
 
-  // Restore from checkpoint if available
+  // #6: Restore from checkpoint with cross-model message cleaning
+  const currentModel = { provider, id: modelId };
   const hasCheckpoint = existsSync(checkpointPath);
   const restore = hasCheckpoint ? () => {
     try {
@@ -145,13 +186,15 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
         try { messages.push(JSON.parse(line)); } catch { /* skip corrupted line */ }
       }
       if (messages.length > 0) {
-        agent.replaceMessages(messages);
-        lastCheckpointedMsgCount = messages.length;
-        return messages.length;
+        // #6: Clean messages for cross-model compatibility before restoring
+        const cleaned = cleanMessagesForModel(messages, currentModel);
+        agent.replaceMessages(cleaned);
+        lastCheckpointedMsgCount = cleaned.length;
+        return cleaned.length;
       }
     } catch {}
     return 0;
   } : null;
 
-  return { agent, hooks, piFallback, restore, checkpointPath };
+  return { agent, hooks, bus, piFallback, restore, checkpointPath };
 }

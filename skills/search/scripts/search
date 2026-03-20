@@ -1,0 +1,531 @@
+#!/usr/bin/env node
+/**
+ * search — unified CLI for academic paper search, citations, download, web search, and URL fetching.
+ *
+ * Self-contained Node.js script (ESM, no dependencies beyond Node 22+ built-in fetch).
+ *
+ * Usage:
+ *   search papers <query> [--source openalex|arxiv|both] [--count N]
+ *   search citations <id> [--direction references|citations|both] [--limit N]
+ *   search download --arxiv <id> [--output <dir>]
+ *   search download --doi <doi> [--output <dir>]
+ *   search download --url <url> [--output <dir>] [--filename <name>]
+ *   search source <arxivId> [--max-chars N]
+ *   search bib <doi> [--save <references.bib path>]
+ *   search web <query> [--count N]
+ *   search fetch <url>
+ */
+
+// ─── CLI argument parsing ────────────────────────────────────
+
+const args = process.argv.slice(2);
+if (args.length === 0 || args[0] === "--help" || args[0] === "-h") {
+  console.log(`Usage:
+  search papers <query> [--source openalex|arxiv|both] [--count N]
+  search citations <id> [--direction references|citations|both] [--limit N]
+  search download --arxiv <id> [--output <dir>]
+  search download --doi <doi> [--output <dir>]
+  search download --url <url> [--output <dir>] [--filename <name>]
+  search source <arxivId> [--max-chars N]
+  search bib <doi> [--save <references.bib path>]
+  search web <query> [--count N]
+  search fetch <url>`);
+  process.exit(0);
+}
+
+function getFlag(name, fallback) {
+  const idx = args.indexOf("--" + name);
+  if (idx === -1 || idx + 1 >= args.length) return fallback;
+  return args[idx + 1];
+}
+
+const command = args[0];
+
+// ─── OpenAlex ────────────────────────────────────────────────
+
+const OA_BASE = "https://api.openalex.org";
+const OA_MAILTO = "mailto=sisyphus-agent@example.com";
+
+function invertAbstract(inv) {
+  if (!inv) return "";
+  const words = [];
+  for (const [word, positions] of Object.entries(inv)) {
+    for (const pos of positions) words.push([pos, word]);
+  }
+  words.sort((a, b) => a[0] - b[0]);
+  return words.map((w) => w[1]).join(" ");
+}
+
+function normalizeOAWork(raw) {
+  const doi = raw.doi?.replace("https://doi.org/", "") ?? null;
+  const authors = (raw.authorships ?? []).map((a) => a.author?.display_name ?? "");
+  let arxivId = null;
+  if (doi) {
+    const m = doi.match(/10\.48550\/arxiv\.(\d{4}\.\d{4,5})/i);
+    if (m) arxivId = m[1];
+  }
+  if (!arxivId) {
+    for (const loc of raw.locations ?? []) {
+      const m = (loc.landing_page_url ?? "").match(/arxiv\.org\/abs\/(\d{4}\.\d{4,5})/);
+      if (m) { arxivId = m[1]; break; }
+    }
+  }
+  return {
+    id: raw.id?.replace("https://openalex.org/", "") ?? "",
+    title: raw.display_name ?? "",
+    authors: authors.slice(0, 5).join(", ") + (authors.length > 5 ? " et al." : ""),
+    year: raw.publication_year ?? null,
+    cites: raw.cited_by_count ?? 0,
+    arxiv: arxivId,
+    doi,
+    abstract: invertAbstract(raw.abstract_inverted_index),
+  };
+}
+
+function formatPaper(p, prefix, i) {
+  let line = `[${prefix}${i + 1}] ${p.title} (${p.year ?? "?"}, ${p.cites} cites)`;
+  const ids = [];
+  if (p.id) ids.push(`ID: ${p.id}`);
+  if (p.arxiv) ids.push(`arXiv: ${p.arxiv}`);
+  if (p.doi) ids.push(`DOI: ${p.doi}`);
+  if (ids.length) line += `\n  ${ids.join(" | ")}`;
+  if (p.abstract) line += `\n  ${p.abstract.slice(0, 300)}`;
+  return line;
+}
+
+async function oaSearch(query, count) {
+  const params = new URLSearchParams({ search: query, per_page: String(count), mailto: "sisyphus-agent@example.com" });
+  const res = await fetch(`${OA_BASE}/works?${params}`, { signal: AbortSignal.timeout(30000) });
+  if (!res.ok) return [];
+  const data = await res.json();
+  return (data.results ?? []).map(normalizeOAWork);
+}
+
+async function resolveOAId(id) {
+  if (/^W\d+$/.test(id)) return id;
+  if (id.startsWith("https://openalex.org/W")) return id.replace("https://openalex.org/", "");
+  let filter;
+  if (id.startsWith("10.") || id.startsWith("https://doi.org/")) {
+    filter = `doi:${id.replace("https://doi.org/", "")}`;
+  } else {
+    const m = id.match(/(?:arxiv:)?(\d{4}\.\d{4,5})/i);
+    if (m) filter = `doi:10.48550/arxiv.${m[1]}`;
+    else return null;
+  }
+  const res = await fetch(`${OA_BASE}/works/${filter}?${OA_MAILTO}`, { signal: AbortSignal.timeout(15000) });
+  if (!res.ok) return null;
+  const data = await res.json();
+  return data.id?.replace("https://openalex.org/", "") ?? null;
+}
+
+async function oaCitations(paperId, limit) {
+  const oaId = await resolveOAId(paperId);
+  if (!oaId) { console.error(`Cannot resolve ID: ${paperId}`); return []; }
+  const params = new URLSearchParams({ filter: `cites:${oaId}`, per_page: String(limit), sort: "cited_by_count:desc", mailto: "sisyphus-agent@example.com" });
+  const res = await fetch(`${OA_BASE}/works?${params}`, { signal: AbortSignal.timeout(30000) });
+  if (!res.ok) return [];
+  return ((await res.json()).results ?? []).map(normalizeOAWork);
+}
+
+async function oaReferences(paperId, limit) {
+  const oaId = await resolveOAId(paperId);
+  if (!oaId) { console.error(`Cannot resolve ID: ${paperId}`); return []; }
+  const params = new URLSearchParams({ filter: `cited_by:${oaId}`, per_page: String(limit), sort: "cited_by_count:desc", mailto: "sisyphus-agent@example.com" });
+  const res = await fetch(`${OA_BASE}/works?${params}`, { signal: AbortSignal.timeout(30000) });
+  if (!res.ok) return [];
+  return ((await res.json()).results ?? []).map(normalizeOAWork);
+}
+
+// ─── arXiv ───────────────────────────────────────────────────
+
+async function arxivSearch(query, count) {
+  const params = new URLSearchParams({
+    search_query: `all:${query}`, start: "0",
+    max_results: String(count), sortBy: "submittedDate", sortOrder: "descending",
+  });
+  const res = await fetch(`http://export.arxiv.org/api/query?${params}`, { signal: AbortSignal.timeout(30000) });
+  if (!res.ok) return [];
+  const xml = await res.text();
+  const papers = [];
+  const re = /<entry>([\s\S]*?)<\/entry>/g;
+  let m;
+  while ((m = re.exec(xml)) !== null) {
+    const e = m[1];
+    const tag = (t) => { const r = new RegExp(`<${t}[^>]*>([\\s\\S]*?)<\\/${t}>`); const mm = r.exec(e); return mm ? mm[1].trim() : ""; };
+    const idUrl = tag("id");
+    const arxivMatch = /(\d{4}\.\d{4,5})/.exec(idUrl);
+    if (!arxivMatch) continue;
+    const authors = [];
+    const aRe = /<author>\s*<name>(.*?)<\/name>/g;
+    let am;
+    while ((am = aRe.exec(e)) !== null) authors.push(am[1].trim());
+    const pub = tag("published");
+    papers.push({
+      id: `arxiv:${arxivMatch[1]}`,
+      title: tag("title").replace(/\s+/g, " "),
+      authors: authors.slice(0, 5).join(", ") + (authors.length > 5 ? " et al." : ""),
+      year: pub ? parseInt(pub.slice(0, 4)) : null,
+      cites: 0,
+      arxiv: arxivMatch[1],
+      doi: null,
+      abstract: tag("summary").replace(/\s+/g, " "),
+    });
+  }
+  return papers;
+}
+
+// ─── Brave Web Search ────────────────────────────────────────
+
+async function braveSearch(query, count) {
+  const key = process.env.BRAVE_API_KEY;
+  if (!key) { console.error("BRAVE_API_KEY not set"); process.exit(1); }
+  const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${count}`;
+  const res = await fetch(url, {
+    headers: { accept: "application/json", "accept-encoding": "gzip", "x-subscription-token": key },
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!res.ok) { console.error(`Brave API ${res.status}`); return; }
+  const data = await res.json();
+  const results = (data.web?.results ?? []).map((r, i) => `[${i + 1}] ${r.title}\n    ${r.url}\n    ${r.description ?? ""}`);
+  console.log(results.join("\n\n") || "No results");
+}
+
+// ─── Web Fetch ───────────────────────────────────────────────
+
+async function webFetch(url) {
+  const res = await fetch(url, {
+    headers: { "user-agent": "Sisyphus/2.0" },
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!res.ok) { console.error(`HTTP ${res.status}`); process.exit(1); }
+  const ct = res.headers.get("content-type") ?? "";
+  let text;
+  if (ct.includes("html")) {
+    const html = await res.text();
+    text = html
+      .replace(/<script[\s\S]*?<\/script>/gi, "")
+      .replace(/<style[\s\S]*?<\/style>/gi, "")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+      .replace(/\s+/g, " ").trim();
+  } else {
+    text = await res.text();
+  }
+  console.log(text.slice(0, 80000));
+}
+
+// ─── Paper Download (arXiv + Sci-Hub) ────────────────────────
+
+import { execSync } from "node:child_process";
+import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, copyFileSync, statSync, unlinkSync } from "node:fs";
+import { join, extname, basename } from "node:path";
+
+const SCIHUB_CANDIDATES = [
+  "sci-hub.ren", "sci-hub.fr", "sci-hub.st", "sci-hub.se", "sci-hub.ru",
+  "sci-hub.shop", "sci-hub.ee", "sci-hub.wf", "sci-hub.3800808.com", "sci-hub.mksa.top",
+];
+const PROBE_DOI = "10.1002/j.1538-7305.1948.tb01338.x";
+let cachedMirror = null;
+
+async function findScihubMirror() {
+  if (cachedMirror) return cachedMirror;
+  const candidates = [...SCIHUB_CANDIDATES];
+  // Try dynamic discovery
+  try {
+    const html = execSync(`curl -sL --max-time 10 "https://www.sci-hub.pub/"`, { encoding: "utf-8", timeout: 15000 });
+    const domains = html.match(/sci-hub\.[a-z0-9]+(?:\.[a-z]{2,})?/gi) ?? [];
+    for (const d of domains) { if (!candidates.includes(d.toLowerCase())) candidates.push(d.toLowerCase()); }
+  } catch {}
+  for (const domain of candidates) {
+    try {
+      const status = execSync(
+        `curl -s --max-time 8 -o /dev/null -w "%{http_code}" "https://${domain}/${PROBE_DOI}"`,
+        { encoding: "utf-8", timeout: 12000 },
+      ).trim();
+      if (status === "200") { cachedMirror = `https://${domain}`; return cachedMirror; }
+    } catch {}
+  }
+  return null;
+}
+
+async function downloadArxiv(arxivId, outputDir) {
+  const safeName = arxivId.replace(/\//g, "_");
+  const texDir = join(outputDir, safeName);
+  const pdfPath = join(outputDir, `${safeName}.pdf`);
+  // Already downloaded?
+  if (existsSync(texDir) && readdirSync(texDir).some(f => f.endsWith(".tex"))) {
+    console.log(`Already downloaded: ${texDir}`); return texDir;
+  }
+  if (existsSync(pdfPath)) { console.log(`Already downloaded: ${pdfPath}`); return pdfPath; }
+
+  mkdirSync(outputDir, { recursive: true });
+  // Try LaTeX source
+  const tarPath = join(outputDir, `${safeName}.tar.gz`);
+  try {
+    const resp = await fetch(`https://arxiv.org/src/${arxivId}`, { redirect: "follow", signal: AbortSignal.timeout(60000) });
+    if (resp.ok) {
+      const buf = Buffer.from(await resp.arrayBuffer());
+      mkdirSync(texDir, { recursive: true });
+      writeFileSync(tarPath, buf);
+      try {
+        execSync(`tar xzf "${tarPath}" -C "${texDir}"`, { stdio: "ignore" });
+        try { unlinkSync(tarPath); } catch {}
+        console.log(`Downloaded LaTeX source: ${texDir}`);
+        return texDir;
+      } catch {
+        try {
+          execSync(`gunzip -c "${tarPath}" > "${join(texDir, "main.tex")}"`, { stdio: "ignore" });
+          try { unlinkSync(tarPath); } catch {}
+          console.log(`Downloaded single .tex: ${texDir}`);
+          return texDir;
+        } catch {
+          try { execSync(`rm -rf "${texDir}" "${tarPath}"`, { stdio: "ignore" }); } catch {}
+        }
+      }
+    }
+  } catch {}
+  // Fallback: PDF
+  try {
+    const resp = await fetch(`https://arxiv.org/pdf/${arxivId}.pdf`, { redirect: "follow", signal: AbortSignal.timeout(60000) });
+    if (resp.ok) {
+      writeFileSync(pdfPath, Buffer.from(await resp.arrayBuffer()));
+      console.log(`Downloaded PDF: ${pdfPath}`);
+      return pdfPath;
+    }
+  } catch {}
+  console.error(`Failed to download arXiv paper ${arxivId}`);
+  return null;
+}
+
+async function downloadDoi(doi, outputDir) {
+  const safeName = doi.replace(/[\/:.]/g, "_");
+  const pdfPath = join(outputDir, `${safeName}.pdf`);
+  if (existsSync(pdfPath)) { console.log(`Already downloaded: ${pdfPath}`); return pdfPath; }
+
+  mkdirSync(outputDir, { recursive: true });
+  const mirror = await findScihubMirror();
+  if (!mirror) { console.error("No working Sci-Hub mirror found"); return null; }
+
+  const tmpHtml = pdfPath + ".tmp";
+  try {
+    execSync(`curl -sL --max-time 30 -o "${tmpHtml}" "${mirror}/${doi}"`, { timeout: 35000 });
+  } catch { try { unlinkSync(tmpHtml); } catch {} return null; }
+
+  if (!existsSync(tmpHtml) || statSync(tmpHtml).size < 100) {
+    try { unlinkSync(tmpHtml); } catch {} return null;
+  }
+  // Check if direct PDF
+  const head = readFileSync(tmpHtml).subarray(0, 5).toString();
+  if (head === "%PDF-") {
+    copyFileSync(tmpHtml, pdfPath); unlinkSync(tmpHtml);
+    console.log(`Downloaded via Sci-Hub: ${pdfPath}`); return pdfPath;
+  }
+  // Parse HTML for PDF URL
+  const html = readFileSync(tmpHtml, "utf-8");
+  try { unlinkSync(tmpHtml); } catch {}
+  const pdfMatch =
+    html.match(/iframe[^>]+src\s*=\s*["']([^"']+\.pdf[^"']*)["']/i) ??
+    html.match(/embed[^>]+src\s*=\s*["']([^"']+\.pdf[^"']*)["']/i) ??
+    html.match(/src\s*=\s*["'](\/\/[^"']+)["']/i);
+  if (!pdfMatch) { console.error("No PDF URL found in Sci-Hub page"); return null; }
+  let pdfUrl = pdfMatch[1];
+  if (pdfUrl.startsWith("//")) pdfUrl = "https:" + pdfUrl;
+  if (pdfUrl.startsWith("/")) pdfUrl = mirror + pdfUrl;
+  try {
+    execSync(`curl -sL --max-time 60 -o "${pdfPath}" "${pdfUrl}"`, { stdio: "ignore", timeout: 65000 });
+  } catch { try { unlinkSync(pdfPath); } catch {} return null; }
+  if (!existsSync(pdfPath) || statSync(pdfPath).size < 1000) {
+    try { unlinkSync(pdfPath); } catch {} return null;
+  }
+  if (readFileSync(pdfPath).subarray(0, 5).toString() !== "%PDF-") {
+    try { unlinkSync(pdfPath); } catch {} console.error("Downloaded file is not a PDF"); return null;
+  }
+  console.log(`Downloaded via Sci-Hub: ${pdfPath}`);
+  return pdfPath;
+}
+
+async function downloadUrl(url, outputDir, filename) {
+  mkdirSync(outputDir, { recursive: true });
+  const fname = filename ?? url.split("/").pop() ?? "paper.pdf";
+  const outPath = join(outputDir, fname);
+  const resp = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(60000) });
+  if (!resp.ok) { console.error(`HTTP ${resp.status}`); return null; }
+  writeFileSync(outPath, Buffer.from(await resp.arrayBuffer()));
+  console.log(`Downloaded: ${outPath} (${statSync(outPath).size} bytes)`);
+  return outPath;
+}
+
+// ─── LaTeX Source Reader ─────────────────────────────────────
+
+function readTexSource(arxivId, papersDir, maxChars) {
+  const safeName = arxivId.replace(/\//g, "_");
+  const texDir = join(papersDir, safeName);
+  if (!existsSync(texDir)) return null;
+  const files = readdirSync(texDir)
+    .filter(f => f.endsWith(".tex") || f.endsWith(".bib"))
+    .sort((a, b) => {
+      if (a === "main.tex") return -1; if (b === "main.tex") return 1;
+      if (a.endsWith(".tex") && b.endsWith(".bib")) return -1;
+      if (a.endsWith(".bib") && b.endsWith(".tex")) return 1;
+      return a.localeCompare(b);
+    });
+  if (files.length === 0) return null;
+  const parts = []; let total = 0;
+  for (const file of files) {
+    if (total >= maxChars) { parts.push(`\n--- truncated (${maxChars} char limit) ---`); break; }
+    try {
+      let content = readFileSync(join(texDir, file), "utf-8");
+      const remaining = maxChars - total;
+      if (content.length > remaining) content = content.slice(0, remaining) + "\n... [truncated]";
+      parts.push(`=== ${file} ===\n${content}`);
+      total += content.length;
+    } catch {}
+  }
+  return parts.join("\n\n");
+}
+
+// ─── BibTeX Fetcher ──────────────────────────────────────────
+
+function crossrefToBib(work, doi) {
+  const type = work.type === "journal-article" ? "article"
+    : work.type === "proceedings-article" ? "inproceedings"
+    : work.type === "book" ? "book" : "misc";
+  const authors = (work.author ?? []).map(a => `${a.family ?? ""}, ${a.given ?? ""}`.trim()).join(" and ");
+  const title = Array.isArray(work.title) ? work.title[0] : (work.title ?? "");
+  const year = work.published?.["date-parts"]?.[0]?.[0] ?? work.created?.["date-parts"]?.[0]?.[0] ?? "";
+  const journal = Array.isArray(work["container-title"]) ? work["container-title"][0] : (work["container-title"] ?? "");
+  const volume = work.volume ?? "";
+  const pages = work.page ?? "";
+  const firstLast = (work.author?.[0]?.family ?? "unknown").toLowerCase().replace(/[^a-z]/g, "");
+  const fields = [];
+  if (authors) fields.push(`  author = {${authors}}`);
+  if (title) fields.push(`  title = {${title}}`);
+  if (year) fields.push(`  year = {${year}}`);
+  if (journal) fields.push(`  journal = {${journal}}`);
+  if (volume) fields.push(`  volume = {${volume}}`);
+  if (pages) fields.push(`  pages = {${pages}}`);
+  fields.push(`  doi = {${doi}}`);
+  return `@${type}{${firstLast}${year},\n${fields.join(",\n")}\n}`;
+}
+
+async function fetchBib(doi, savePath) {
+  doi = doi.replace(/^https?:\/\/doi\.org\//, "");
+  let bib = null;
+  // doi.org content negotiation
+  try {
+    const resp = await fetch(`https://doi.org/${doi}`, {
+      headers: { Accept: "application/x-bibtex" }, redirect: "follow", signal: AbortSignal.timeout(15000),
+    });
+    if (resp.ok) { const t = await resp.text(); if (t.includes("@")) bib = t.trim(); }
+  } catch {}
+  // CrossRef fallback
+  if (!bib) {
+    try {
+      const resp = await fetch(`https://api.crossref.org/works/${doi}`, {
+        headers: { Accept: "application/json" }, signal: AbortSignal.timeout(15000),
+      });
+      if (resp.ok) { const data = await resp.json(); bib = crossrefToBib(data.message, doi); }
+    } catch {}
+  }
+  if (!bib) { console.error(`Could not fetch BibTeX for DOI: ${doi}`); process.exit(1); }
+  console.log(bib);
+  // Save if requested
+  if (savePath) {
+    mkdirSync(join(savePath, ".."), { recursive: true });
+    const existing = existsSync(savePath) ? readFileSync(savePath, "utf-8") : "";
+    if (!existing.includes(doi)) {
+      writeFileSync(savePath, existing + (existing.endsWith("\n") || !existing ? "" : "\n") + bib + "\n\n");
+      console.error(`(saved to ${savePath})`);
+    }
+  }
+}
+
+// ─── Main dispatch ───────────────────────────────────────────
+
+try {
+  if (command === "papers") {
+    const query = args.slice(1).filter((a) => !a.startsWith("--")).join(" ");
+    if (!query) { console.error("Usage: search papers <query>"); process.exit(1); }
+    const source = getFlag("source", "both");
+    const count = Math.min(parseInt(getFlag("count", "10")), 50);
+    const parts = [];
+    if (source === "openalex" || source === "both") {
+      const papers = await oaSearch(query, count);
+      parts.push(papers.length > 0
+        ? papers.map((p, i) => formatPaper(p, "OA", i)).join("\n\n")
+        : "[OA] No results");
+    }
+    if (source === "arxiv" || source === "both") {
+      const papers = await arxivSearch(query, count);
+      parts.push(papers.length > 0
+        ? papers.map((p, i) => formatPaper(p, "arXiv", i)).join("\n\n")
+        : "[arXiv] No results");
+    }
+    console.log(parts.join("\n\n---\n\n"));
+
+  } else if (command === "citations") {
+    const paperId = args[1];
+    if (!paperId) { console.error("Usage: search citations <id>"); process.exit(1); }
+    const direction = getFlag("direction", "both");
+    const limit = Math.min(parseInt(getFlag("limit", "20")), 100);
+    const parts = [];
+    if (direction === "citations" || direction === "both") {
+      const papers = await oaCitations(paperId, limit);
+      parts.push(`Forward citations (${papers.length} papers citing this):\n` +
+        (papers.length > 0 ? papers.map((p, i) => formatPaper(p, "cite", i)).join("\n\n") : "  None found"));
+    }
+    if (direction === "references" || direction === "both") {
+      const papers = await oaReferences(paperId, limit);
+      parts.push(`Backward references (${papers.length} papers cited by this):\n` +
+        (papers.length > 0 ? papers.map((p, i) => formatPaper(p, "ref", i)).join("\n\n") : "  None found"));
+    }
+    console.log(parts.join("\n\n"));
+
+  } else if (command === "download") {
+    const outputDir = getFlag("output", "data/papers");
+    const arxivId = getFlag("arxiv", null);
+    const doi = getFlag("doi", null);
+    const url = getFlag("url", null);
+    if (arxivId) { await downloadArxiv(arxivId, outputDir); }
+    else if (doi) { await downloadDoi(doi.replace(/^https?:\/\/doi\.org\//, ""), outputDir); }
+    else if (url) { await downloadUrl(url, outputDir, getFlag("filename", null)); }
+    else { console.error("Usage: search download --arxiv <id> | --doi <doi> | --url <url>"); process.exit(1); }
+
+  } else if (command === "source") {
+    const arxivId = args[1];
+    if (!arxivId) { console.error("Usage: search source <arxivId>"); process.exit(1); }
+    const papersDir = getFlag("papers-dir", "data/papers");
+    const maxChars = parseInt(getFlag("max-chars", "100000"));
+    // Download if not present
+    const safeName = arxivId.replace(/\//g, "_");
+    if (!existsSync(join(papersDir, safeName)) || !readdirSync(join(papersDir, safeName)).some(f => f.endsWith(".tex"))) {
+      await downloadArxiv(arxivId, papersDir);
+    }
+    const content = readTexSource(arxivId, papersDir, maxChars);
+    if (content) { console.log(content); }
+    else { console.error(`LaTeX source not available for ${arxivId}`); process.exit(1); }
+
+  } else if (command === "bib") {
+    const doi = args[1];
+    if (!doi) { console.error("Usage: search bib <doi> [--save <path>]"); process.exit(1); }
+    await fetchBib(doi, getFlag("save", null));
+
+  } else if (command === "web") {
+    const query = args.slice(1).filter((a) => !a.startsWith("--")).join(" ");
+    if (!query) { console.error("Usage: search web <query>"); process.exit(1); }
+    const count = Math.min(parseInt(getFlag("count", "5")), 20);
+    await braveSearch(query, count);
+
+  } else if (command === "fetch") {
+    const url = args[1];
+    if (!url) { console.error("Usage: search fetch <url>"); process.exit(1); }
+    await webFetch(url);
+
+  } else {
+    console.error(`Unknown command: ${command}`);
+    process.exit(1);
+  }
+} catch (err) {
+  console.error(`Error: ${err.message}`);
+  process.exit(1);
+}

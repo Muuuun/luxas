@@ -34,6 +34,9 @@ git clone https://github.com/Muuuun/Sisyphus.git
 cd Sisyphus
 npm install
 
+# Optional: enable anti-detect browser (bypasses Cloudflare on PRL, Science, Nature, etc.)
+npm run setup:browser
+
 # Run a research survey
 npx tsx src/index.ts run "Large Language Model Reasoning"
 
@@ -196,6 +199,7 @@ src/
 - **codex** CLI (optional) — for OpenAI-backed brain/executor
 - **pdflatex** + **bibtex** (TeX Live or similar)
 - **pdftotext** + **pdfimages** (poppler)
+- **Python 3.9+** + **seleniumbase** (optional, for anti-detect browser — `npm run setup:browser`)
 
 ---
 

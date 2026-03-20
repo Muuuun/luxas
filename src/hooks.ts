@@ -18,6 +18,7 @@ export interface CostTracker {
   totalCost: number;
   totalInputTokens: number;
   totalOutputTokens: number;
+  lastContextTokens: number;  // #3: precise token count from last LLM response
 }
 
 export function buildResearchHooks(opts: ResearchOptions) {
@@ -33,6 +34,7 @@ export function buildResearchHooks(opts: ResearchOptions) {
     totalCost: 0,
     totalInputTokens: 0,
     totalOutputTokens: 0,
+    lastContextTokens: 0,
   };
 
   // Simple rate limiters
@@ -93,15 +95,77 @@ export function buildResearchHooks(opts: ResearchOptions) {
       appendFileSync(logFile, JSON.stringify(entry) + "\n");
     } catch {}
 
-    return undefined; // Don't modify result
+    // 2. Post-experiment note-writing enforcement
+    const toolName = ctx.toolCall?.name ?? "";
+    if (toolName === "run_experiment" && !ctx.isError) {
+      const existingContent: any[] = ctx.result?.content ?? [];
+      return {
+        content: [...existingContent, {
+          type: "text" as const,
+          text: [
+            "",
+            "─".repeat(60),
+            "⚠️ MANDATORY: UPDATE NOTES BEFORE PROCEEDING",
+            "─".repeat(60),
+            "",
+            "You MUST do ALL of the following before ANY other action:",
+            "1. CHECK the 'Consistency Check' section above. If previous scripts had errors:",
+            "   - Record the error and corrected formula in notes/experiments.md",
+            "   - Assess which previous results are affected and whether they need to be re-run",
+            "   - If re-run is needed, plan it as your next experiment",
+            "2. Update notes/experiments.md — Add a full entry (hypothesis, setup, quantitative results, interpretation)",
+            "3. Update report/report.tex — Add new section or update existing comparisons, then compile_latex",
+            "4. If this result reveals a novel method or important negative result, append to ~/.sisyphus/memory.md",
+            "",
+            "Do NOT run another experiment or search until notes + report are updated.",
+          ].join("\n"),
+        }],
+      };
+    }
+
+    // 3. Post-compile_latex memory reminder (record problems & solutions)
+    if (toolName === "compile_latex") {
+      const existingContent: any[] = ctx.result?.content ?? [];
+      const hadErrors = ctx.isError || existingContent.some(
+        (c: any) => typeof c.text === "string" && (c.text.includes("Error") || c.text.includes("Warning") || c.text.includes("Undefined"))
+      );
+      if (hadErrors) {
+        return {
+          content: [...existingContent, {
+            type: "text" as const,
+            text: "\n---\n[REMINDER] If you fixed LaTeX compilation issues (missing packages, undefined references, float placement, template incompatibilities), record the problem and solution in notes/memory.md so you don't repeat them. Also record venue-specific formatting gotchas (e.g. revtex quirks, column width constraints, citation style fixes).\n",
+          }],
+        };
+      }
+    }
+
+    // 4. Post-dispatch_workers note-writing reminder
+    if (toolName === "dispatch_workers" && !ctx.isError) {
+      const existingContent: any[] = ctx.result?.content ?? [];
+      return {
+        content: [...existingContent, {
+          type: "text" as const,
+          text: "\n---\n[REMINDER] Update notes/literature.md with the findings above before dispatching more workers.\n",
+        }],
+      };
+    }
+
+    return undefined; // Don't modify result for other tools
   };
 
   // Usage tracking (called from agent event subscription)
+  // pi-ai Usage: { input, output, cacheRead, cacheWrite, totalTokens, cost: { total, ... } }
   const trackUsage = (usage: any) => {
     if (usage) {
-      tracker.totalInputTokens += usage.inputTokens ?? 0;
-      tracker.totalOutputTokens += usage.outputTokens ?? 0;
-      tracker.totalCost += usage.totalCost ?? 0;
+      tracker.totalInputTokens += usage.input ?? 0;
+      tracker.totalOutputTokens += usage.output ?? 0;
+      tracker.totalCost += usage.cost?.total ?? 0;
+      // #3: Track context size from last response for precise compaction triggers
+      const contextTokens = usage.totalTokens
+        || ((usage.input ?? 0) + (usage.output ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0));
+      if (contextTokens > 0) {
+        tracker.lastContextTokens = contextTokens;
+      }
     }
   };
 

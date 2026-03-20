@@ -10,7 +10,8 @@
     "build": "tsc",
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js",
-    "tui": "tsx src/tui.tsx"
+    "tui": "tsx src/tui.tsx",
+    "setup:search": "bash skills/search/scripts/setup.sh"
   },
   "dependencies": {
     "@mariozechner/pi-ai": "file:vendor/mariozechner-pi-ai-0.58.1.tgz",

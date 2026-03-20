@@ -5,61 +5,158 @@
  * Two jobs:
  *   1. Inject current research state from .md files (long-term memory)
  *   2. Compact old messages when token count is high (working memory management)
+ *
+ * #1: LLM-based compaction via generateResearchSummary
+ * #3: Token-based thresholds using precise tracker.lastContextTokens
+ * #8: Extension bus events for compaction lifecycle
  */
 
 import { existsSync, readdirSync } from "node:fs";
-import { readFileSafe } from "./utils.js";
-import { join } from "node:path";
+import { readFileSafe, smartTruncate } from "./utils.js";
+import { join, dirname } from "node:path";
+import { generateResearchSummary, heuristicSummary } from "./compaction.js";
+import type { Model } from "@mariozechner/pi-ai";
+import type { CostTracker } from "./hooks.js";
+import type { ExtensionBus } from "./extensions.js";
 
-const COMPACTION_THRESHOLD = 80_000; // characters (~20K tokens)
+// Token-based thresholds (#3: precise token estimation)
+const COMPACTION_TOKEN_THRESHOLD = 140_000;  // ~70% of 200K context
+const WARNING_TOKEN_THRESHOLD = 100_000;     // ~50% of 200K context
+
+// Char-based fallbacks (when token count unavailable)
+const COMPACTION_CHAR_THRESHOLD = 80_000;    // ~20K tokens
+const WARNING_CHAR_THRESHOLD = 60_000;       // ~15K tokens
+
 const KEEP_RECENT = 12; // messages to keep after compaction
+
+export interface ContextTransformerOptions {
+  projectDir: string;
+  model?: Model<any>;
+  getApiKey?: (provider: string) => Promise<string | undefined>;
+  tracker?: CostTracker;
+  bus?: ExtensionBus;
+}
 
 /**
  * Build the transformContext function for a given project directory.
+ * #1: LLM compaction, #3: token thresholds, #8: extension events
  */
-export function buildContextTransformer(projectDir: string) {
+export function buildContextTransformer(opts: ContextTransformerOptions) {
+  const { projectDir, model, getApiKey, tracker, bus } = opts;
+  let previousSummary: string | undefined;
+
   return async (messages: any[]): Promise<any[]> => {
     const snapshot = buildResearchSnapshot(projectDir);
 
-    // Estimate message size
-    const totalChars = messages.reduce((sum, m) => {
+    // #3: Use precise token count when available, fall back to char estimate
+    const tokenCount = tracker?.lastContextTokens ?? 0;
+    const useTokens = tokenCount > 0;
+
+    const totalChars = messages.reduce((sum: number, m: any) => {
       const content = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
       return sum + content.length;
     }, 0);
 
-    if (totalChars > COMPACTION_THRESHOLD && messages.length > KEEP_RECENT + 2) {
-      // Compact: summarize old messages, keep recent ones
-      const oldMessages = messages.slice(0, -KEEP_RECENT);
-      const recentMessages = messages.slice(-KEEP_RECENT);
+    const needsCompaction = useTokens
+      ? tokenCount > COMPACTION_TOKEN_THRESHOLD
+      : totalChars > COMPACTION_CHAR_THRESHOLD;
 
-      // Build a text summary of old messages (without LLM call for now — simple extraction)
-      const oldSummary = summarizeMessages(oldMessages);
+    const needsWarning = useTokens
+      ? tokenCount > WARNING_TOKEN_THRESHOLD
+      : totalChars > WARNING_CHAR_THRESHOLD;
+
+    if (needsCompaction && messages.length > KEEP_RECENT + 2) {
+      // === COMPACTION ===
+      // Find a clean split point: must start at an assistant message
+      let splitIdx = Math.max(1, messages.length - KEEP_RECENT);
+      while (splitIdx < messages.length - 4) {
+        if (messages[splitIdx].role === "assistant") break;
+        splitIdx++;
+      }
+      if (splitIdx >= messages.length - 4) {
+        return injectSnapshot(messages, snapshot);
+      }
+
+      const oldMessages = messages.slice(0, splitIdx);
+      const recentMessages = messages.slice(splitIdx);
+
+      // #8: Emit before_compaction event
+      await bus?.emit({ type: "before_compaction", messages: oldMessages, tokenCount });
+
+      // #1: LLM-based compaction with heuristic fallback
+      let summary: string;
+      try {
+        if (model && getApiKey) {
+          const apiKey = await getApiKey("anthropic");
+          if (!apiKey) throw new Error("No API key");
+          summary = await generateResearchSummary(
+            oldMessages,
+            model,
+            apiKey,
+            previousSummary,
+          );
+        } else {
+          summary = heuristicSummary(oldMessages);
+        }
+      } catch {
+        summary = heuristicSummary(oldMessages);
+      }
+
+      previousSummary = summary;
+
+      // #8: Emit after_compaction event
+      await bus?.emit({ type: "after_compaction", summary, droppedCount: oldMessages.length });
 
       return [
         // Research snapshot (ground truth from files)
         { role: "user", content: snapshot, timestamp: Date.now() },
         { role: "assistant", content: [{ type: "text", text: "I've reviewed the current research state. Let me continue from where I left off." }], timestamp: Date.now() },
-        // Compacted history
-        { role: "user", content: `<compacted_history>\n${oldSummary}\n</compacted_history>\n\nContinue your research based on the current state above and recent context below.`, timestamp: Date.now() },
-        { role: "assistant", content: [{ type: "text", text: "Understood. I'll continue based on the current research state and recent actions." }], timestamp: Date.now() },
-        // Recent messages preserved as-is
+        // LLM-compacted history + post-compaction reminder
+        { role: "user", content: `<compacted_history>\n${summary}\n</compacted_history>\n\n[MEMORY] Context was compacted — ${oldMessages.length} earlier messages were summarized above. Your notes files (notes/literature.md, notes/experiments.md, notes/memory.md) are your ground truth. If you recall working on something not yet saved to notes, save it now before continuing.`, timestamp: Date.now() },
+        { role: "assistant", content: [{ type: "text", text: "Understood. I'll check my notes and continue based on the current research state." }], timestamp: Date.now() },
+        // Recent messages preserved as-is (starts at clean boundary)
         ...recentMessages,
       ];
     }
 
-    // No compaction needed — inject snapshot into the first user message
-    // (inserting new messages would break tool_use_id → tool_result references)
-    if (messages.length > 2) {
-      const first = messages[0];
-      const firstContent = typeof first.content === "string" ? first.content : JSON.stringify(first.content);
-      return [
-        { ...first, content: `${firstContent}\n\n<research_snapshot>\n${snapshot}\n</research_snapshot>` },
-        ...messages.slice(1),
-      ];
+    // === PRE-COMPACTION WARNING ===
+    if (needsWarning && messages.length > KEEP_RECENT) {
+      const lastFew = messages.slice(-4);
+      const alreadyWarned = lastFew.some((m: any) =>
+        typeof m.content === "string" && m.content.includes("[MEMORY WARNING]")
+      );
+      if (!alreadyWarned) {
+        // #8: Emit memory_warning event
+        const threshold = useTokens ? COMPACTION_TOKEN_THRESHOLD : COMPACTION_CHAR_THRESHOLD;
+        await bus?.emit({ type: "memory_warning", tokenCount: useTokens ? tokenCount : totalChars, threshold });
+
+        const sizeLabel = useTokens
+          ? `${Math.round(tokenCount / 1000)}K/${Math.round(COMPACTION_TOKEN_THRESHOLD / 1000)}K tokens`
+          : `${Math.round(totalChars / 1000)}K/${Math.round(COMPACTION_CHAR_THRESHOLD / 1000)}K chars`;
+
+        return [
+          ...injectSnapshot(messages, snapshot),
+          { role: "user", content: `[MEMORY WARNING] Context is approaching compaction threshold (${sizeLabel}). Save any unsaved findings, decisions, or insights to your notes files NOW (notes/memory.md for freeform notes, or the appropriate structured notes file). After compaction, old messages will be summarized and detail will be lost.`, timestamp: Date.now() },
+        ];
+      }
     }
 
-    return messages;
+    // No compaction needed — inject snapshot into the first user message
+    return injectSnapshot(messages, snapshot);
   };
+}
+
+/** Inject research snapshot into messages without breaking tool_use_id references. */
+function injectSnapshot(messages: any[], snapshot: string): any[] {
+  if (messages.length > 2) {
+    const first = messages[0];
+    const firstContent = typeof first.content === "string" ? first.content : JSON.stringify(first.content);
+    return [
+      { ...first, content: `${firstContent}\n\n<research_snapshot>\n${snapshot}\n</research_snapshot>` },
+      ...messages.slice(1),
+    ];
+  }
+  return messages;
 }
 
 /**
@@ -75,9 +172,7 @@ function buildResearchSnapshot(projectDir: string): string {
   // Literature state
   const lit = readFileSafe(join(projectDir, "notes", "literature.md"));
   if (lit) {
-    const lineCount = lit.split("\n").length;
-    const preview = lit.length > 2000 ? lit.slice(0, 2000) + "\n...(truncated)" : lit;
-    parts.push(`## Literature Notes (${lineCount} lines)\n${preview}`);
+    parts.push(`## Literature Notes (${lit.split("\n").length} lines)\n${smartTruncate(lit, 3000)}`);
   } else {
     parts.push("## Literature Notes\n(empty — no literature review yet)");
   }
@@ -85,11 +180,15 @@ function buildResearchSnapshot(projectDir: string): string {
   // Experiment state
   const exp = readFileSafe(join(projectDir, "notes", "experiments.md"));
   if (exp) {
-    const lineCount = exp.split("\n").length;
-    const preview = exp.length > 2000 ? exp.slice(0, 2000) + "\n...(truncated)" : exp;
-    parts.push(`## Experiment Notes (${lineCount} lines)\n${preview}`);
+    parts.push(`## Experiment Notes (${exp.split("\n").length} lines)\n${smartTruncate(exp, 2000)}`);
   } else {
     parts.push("## Experiment Notes\n(empty — no experiments yet)");
+  }
+
+  // Memory scratchpad
+  const mem = readFileSafe(join(projectDir, "notes", "memory.md"));
+  if (mem && mem.trim().length > 20) {
+    parts.push(`## Memory / Scratchpad (${mem.split("\n").length} lines)\n${smartTruncate(mem, 2000)}`);
   }
 
   // PI feedback (injected by PI monitor)
@@ -113,35 +212,71 @@ function buildResearchSnapshot(projectDir: string): string {
   const scriptCount = countFiles(scriptsDir);
   if (scriptCount > 0) parts.push(`- Experiment scripts: ${scriptCount} files in data/scripts/`);
 
-  return parts.join("\n\n");
-}
+  // Skills (Agent Skills spec — progressive disclosure: only name+description here)
+  const skillSummary = discoverSkills(projectDir);
+  if (skillSummary) parts.push(skillSummary);
 
-/**
- * Simple message summarization (no LLM call — extracts key info).
- */
-function summarizeMessages(messages: any[]): string {
-  const items: string[] = [];
-  for (const m of messages) {
-    if (m.role === "assistant" && m.content) {
-      const content = typeof m.content === "string"
-        ? m.content
-        : (m.content as any[]).filter((c: any) => c.type === "text").map((c: any) => c.text).join(" ");
-      // Extract tool uses
-      const toolUses = typeof m.content !== "string"
-        ? (m.content as any[]).filter((c: any) => c.type === "tool_use").map((c: any) => c.name)
-        : [];
-      if (toolUses.length > 0) {
-        items.push(`- Used tools: ${toolUses.join(", ")}`);
-      }
-      const preview = content.slice(0, 200).replace(/\n/g, " ");
-      if (preview.length > 10) items.push(`- ${preview}`);
-    }
-  }
-  return items.length > 0
-    ? `Summary of ${messages.length} earlier messages:\n${items.slice(0, 30).join("\n")}`
-    : `(${messages.length} earlier messages compacted)`;
+  return parts.join("\n\n");
 }
 
 function countFiles(dir: string): number {
   try { return readdirSync(dir).length; } catch { return 0; }
+}
+
+/**
+ * Discover skills from the Sisyphus package's skills/ directory.
+ * Follows Agent Skills spec: parse SKILL.md frontmatter for name + description.
+ * Returns a compact summary for context injection (progressive disclosure).
+ */
+function discoverSkills(projectDir: string): string | null {
+  // Sisyphus package root: skills/ lives next to src/
+  const packageRoot = join(dirname(import.meta.url.replace("file://", "")), "..");
+  const skillsDirs = [
+    join(packageRoot, "skills"),       // package-level skills
+    join(projectDir, ".agents", "skills"), // project-level skills (Agent Skills standard)
+  ];
+
+  const skills: { name: string; description: string; path: string }[] = [];
+
+  for (const dir of skillsDirs) {
+    if (!existsSync(dir)) continue;
+    try {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        const skillMd = join(dir, entry.name, "SKILL.md");
+        const content = readFileSafe(skillMd);
+        if (!content) continue;
+        const parsed = parseSkillFrontmatter(content);
+        if (parsed) {
+          skills.push({ ...parsed, path: skillMd });
+        }
+      }
+    } catch {}
+  }
+
+  if (skills.length === 0) return null;
+
+  const lines = skills.map(
+    (s) => `- **${s.name}**: ${s.description} _(read ${s.path} for full instructions)_`
+  );
+  return `## Available Skills\n${lines.join("\n")}`;
+}
+
+/**
+ * Parse YAML frontmatter from SKILL.md — extracts name and description only.
+ * Minimal parser (no yaml dependency), handles the standard frontmatter format.
+ */
+function parseSkillFrontmatter(content: string): { name: string; description: string } | null {
+  const match = content.match(/^---\s*\n([\s\S]*?)\n---/);
+  if (!match) return null;
+  const fm = match[1];
+
+  const nameMatch = fm.match(/^name:\s*(.+)$/m);
+  const descMatch = fm.match(/^description:\s*(.+)$/m);
+  if (!nameMatch || !descMatch) return null;
+
+  return {
+    name: nameMatch[1].trim().replace(/^["']|["']$/g, ""),
+    description: descMatch[1].trim().replace(/^["']|["']$/g, ""),
+  };
 }

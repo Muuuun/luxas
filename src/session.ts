@@ -52,7 +52,13 @@ export interface BranchSummaryEntry extends EntryBase {
   summary: string;
 }
 
-export type SessionEntry = DecisionEntry | ActionEntry | CompactionEntry | BranchSummaryEntry;
+/** #5: Store full agent messages in the session DAG for checkpoint restore. */
+export interface MessageEntry extends EntryBase {
+  type: "message";
+  message: any; // pi-ai Message (user | assistant | toolResult | custom)
+}
+
+export type SessionEntry = DecisionEntry | ActionEntry | CompactionEntry | BranchSummaryEntry | MessageEntry;
 
 function genId(): string {
   return randomBytes(4).toString("hex");
@@ -234,7 +240,42 @@ export class Session {
     return this.getRecentEntries(1000).length;
   }
 
+  /** #5: Append a raw agent message as a MessageEntry. */
+  appendMessage(message: any): string {
+    return this.append({
+      type: "message" as const,
+      message,
+    } as any);
+  }
+
   getLeafId(): string | null { return this.leafId; }
   getEntries(): SessionEntry[] { return this.entries; }
   getFile(): string { return this.file; }
+}
+
+/**
+ * #5: Reconstruct agent messages from session DAG for checkpoint restore.
+ * Walks the current branch, extracts MessageEntry payloads in order.
+ */
+export function buildSessionContext(session: Session): any[] {
+  const branch = session.getBranch();
+  const messages: any[] = [];
+
+  // Find last compaction — start from there
+  let startIdx = 0;
+  for (let i = branch.length - 1; i >= 0; i--) {
+    if (branch[i].type === "compaction") {
+      startIdx = i + 1;
+      break;
+    }
+  }
+
+  for (let i = startIdx; i < branch.length; i++) {
+    const entry = branch[i];
+    if (entry.type === "message") {
+      messages.push((entry as MessageEntry).message);
+    }
+  }
+
+  return messages;
 }

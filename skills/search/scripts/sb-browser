@@ -1,0 +1,662 @@
+#!/usr/bin/python3
+"""
+sb-browser — CLI headless browser with real fingerprints (SeleniumBase UC Mode).
+
+Architecture: daemon (holds browser) + client (CLI commands) over Unix socket.
+Same UX as agent-browser but passes Cloudflare Turnstile.
+
+Usage:
+    sb-browser open <url>              # Navigate (auto Cloudflare bypass)
+    sb-browser snapshot                # Accessibility tree with @refs
+    sb-browser click <ref|selector>    # Click element
+    sb-browser fill <ref|selector> <text>  # Clear and fill
+    sb-browser type <text>             # Type into focused element
+    sb-browser press <key>             # Press key (Enter, Tab, etc.)
+    sb-browser get text [sel]          # Get text content
+    sb-browser get title               # Get page title
+    sb-browser get url                 # Get current URL
+    sb-browser eval <js>               # Run JavaScript
+    sb-browser screenshot [path]       # Take screenshot
+    sb-browser wait <ms|selector>      # Wait
+    sb-browser scroll <dir> [px]       # Scroll up/down
+    sb-browser close                   # Close browser and daemon
+"""
+
+import json
+import os
+import socket
+import subprocess
+import sys
+import time
+import signal
+import tempfile
+
+SOCKET_DIR = os.path.expanduser("~/.sb-browser")
+SOCKET_PATH = os.path.join(SOCKET_DIR, "daemon.sock")
+PID_PATH = os.path.join(SOCKET_DIR, "daemon.pid")
+MAX_RETRIES = 5
+RETRY_DELAY = 0.3
+IDLE_TIMEOUT = 600  # seconds
+
+
+# ─── Accessibility tree JS (injected to build snapshot with @refs) ────────
+SNAPSHOT_JS = r"""
+(() => {
+  const refs = {};
+  let refCounter = 0;
+
+  function getRole(el) {
+    if (el.getAttribute('role')) return el.getAttribute('role');
+    const tag = el.tagName.toLowerCase();
+    const roleMap = {
+      'a': el.href ? 'link' : 'generic',
+      'button': 'button', 'input': getInputRole(el),
+      'select': 'combobox', 'textarea': 'textbox',
+      'img': 'image', 'h1': 'heading', 'h2': 'heading',
+      'h3': 'heading', 'h4': 'heading', 'h5': 'heading', 'h6': 'heading',
+      'nav': 'navigation', 'main': 'main', 'header': 'banner',
+      'footer': 'contentinfo', 'aside': 'complementary',
+      'form': 'form', 'table': 'table', 'ul': 'list', 'ol': 'list',
+      'li': 'listitem', 'dialog': 'dialog', 'search': 'search',
+    };
+    return roleMap[tag] || null;
+  }
+
+  function getInputRole(el) {
+    const t = (el.type || 'text').toLowerCase();
+    if (t === 'checkbox') return 'checkbox';
+    if (t === 'radio') return 'radio';
+    if (t === 'search') return 'searchbox';
+    if (t === 'submit' || t === 'button') return 'button';
+    return 'textbox';
+  }
+
+  function isInteractive(el) {
+    const tag = el.tagName.toLowerCase();
+    if (['a', 'button', 'input', 'select', 'textarea'].includes(tag)) return true;
+    if (el.getAttribute('role') && ['button', 'link', 'textbox', 'checkbox',
+        'radio', 'combobox', 'searchbox', 'tab', 'menuitem'].includes(el.getAttribute('role')))
+      return true;
+    if (el.onclick || el.getAttribute('tabindex') !== null) return true;
+    return false;
+  }
+
+  function isVisible(el) {
+    if (!el.offsetParent && el.tagName !== 'BODY' && el.tagName !== 'HTML'
+        && getComputedStyle(el).position !== 'fixed') return false;
+    const style = getComputedStyle(el);
+    if (style.display === 'none' || style.visibility === 'hidden') return false;
+    if (parseFloat(style.opacity) === 0) return false;
+    return true;
+  }
+
+  function getName(el) {
+    return el.getAttribute('aria-label') ||
+           el.getAttribute('alt') ||
+           el.getAttribute('title') ||
+           el.getAttribute('placeholder') ||
+           (el.labels && el.labels[0] ? el.labels[0].textContent.trim() : '') ||
+           '';
+  }
+
+  function buildTree(el, depth) {
+    if (!el || el.nodeType === 8) return null; // skip comments
+
+    if (el.nodeType === 3) { // text node
+      const text = el.textContent.trim();
+      if (!text) return null;
+      return { type: 'text', text: text };
+    }
+
+    if (el.nodeType !== 1) return null;
+    if (!isVisible(el)) return null;
+
+    const tag = el.tagName.toLowerCase();
+    if (['script', 'style', 'noscript', 'svg', 'path'].includes(tag)) return null;
+
+    const role = getRole(el);
+    const name = getName(el);
+    const interactive = isInteractive(el);
+    let ref = null;
+
+    if (interactive) {
+      refCounter++;
+      ref = 'e' + refCounter;
+      refs[ref] = el;
+      el.setAttribute('data-sb-ref', ref);
+    }
+
+    const children = [];
+    for (const child of el.childNodes) {
+      const c = buildTree(child, depth + 1);
+      if (c) children.push(c);
+    }
+
+    // Skip non-interactive containers with single text child
+    if (!role && !interactive && children.length === 1 && children[0].type === 'text') {
+      return children[0];
+    }
+
+    // Skip empty non-interactive containers
+    if (!role && !interactive && children.length === 0) return null;
+
+    const node = {};
+    if (role) node.role = role;
+    else node.role = 'generic';
+    if (name) node.name = name;
+    if (ref) node.ref = ref;
+    if (tag === 'a' && el.href) node.href = el.href;
+
+    // Extra attributes for interactive elements
+    if (tag === 'input' || tag === 'textarea') {
+      if (el.value) node.value = el.value;
+      if (el.placeholder) node.placeholder = el.placeholder;
+      if (el.required) node.required = true;
+    }
+    if (el.getAttribute('aria-expanded')) node.expanded = el.getAttribute('aria-expanded') === 'true';
+    if (el.checked !== undefined && el.type === 'checkbox') node.checked = el.checked;
+    if (tag.match(/^h[1-6]$/)) node.level = parseInt(tag[1]);
+
+    if (children.length > 0) node.children = children;
+
+    return node;
+  }
+
+  const tree = buildTree(document.body, 0);
+
+  function renderTree(node, indent) {
+    if (!node) return '';
+    if (node.type === 'text') {
+      return indent + '- StaticText "' + node.text.substring(0, 120) + '"\n';
+    }
+    let line = indent + '- ' + node.role;
+    if (node.name) line += ' "' + node.name.substring(0, 80) + '"';
+    const attrs = [];
+    if (node.level) attrs.push('level=' + node.level);
+    if (node.ref) attrs.push('ref=' + node.ref);
+    if (node.value) attrs.push('value=' + node.value.substring(0, 40));
+    if (node.expanded !== undefined) attrs.push('expanded=' + node.expanded);
+    if (node.checked !== undefined) attrs.push('checked=' + node.checked);
+    if (node.required) attrs.push('required');
+    if (attrs.length) line += ' [' + attrs.join(', ') + ']';
+    line += '\n';
+
+    if (node.children) {
+      for (const c of node.children) {
+        line += renderTree(c, indent + '  ');
+      }
+    }
+    return line;
+  }
+
+  return renderTree(tree, '');
+})()
+"""
+
+
+# ─── Client ───────────────────────────────────────────────────────────────
+
+def send_command(cmd):
+    """Send a command to the daemon and return the response."""
+    # open/close can be slow (browser start, UC reconnect)
+    timeout = 180 if cmd.get("action") in ("open", "close", "quit") else 120
+
+    for attempt in range(MAX_RETRIES):
+        try:
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            sock.settimeout(timeout)
+            sock.connect(SOCKET_PATH)
+            sock.sendall((json.dumps(cmd) + "\n").encode())
+
+            # Read response (may be large for snapshots)
+            data = b""
+            while True:
+                chunk = sock.recv(65536)
+                if not chunk:
+                    break
+                data += chunk
+                if b"\n" in data:
+                    break
+            sock.close()
+
+            line = data.split(b"\n")[0]
+            return json.loads(line)
+        except (ConnectionRefusedError, FileNotFoundError):
+            if attempt == 0:
+                start_daemon()
+            time.sleep(RETRY_DELAY)
+        except socket.timeout:
+            return {"success": False, "error": f"Command timed out after {timeout}s"}
+        except Exception as e:
+            if attempt < MAX_RETRIES - 1:
+                time.sleep(RETRY_DELAY)
+            else:
+                return {"success": False, "error": str(e)}
+
+    return {"success": False, "error": "Could not connect to daemon"}
+
+
+def ensure_daemon():
+    """Make sure the daemon is running."""
+    if os.path.exists(SOCKET_PATH):
+        try:
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            sock.settimeout(2)
+            sock.connect(SOCKET_PATH)
+            sock.sendall(b'{"action":"ping"}\n')
+            resp = sock.recv(4096)
+            sock.close()
+            if resp:
+                return True
+        except:
+            # Stale socket
+            try:
+                os.unlink(SOCKET_PATH)
+            except:
+                pass
+    return False
+
+
+def start_daemon():
+    """Start the daemon as a subprocess (no fd redirect — Chrome needs clean fds)."""
+    os.makedirs(SOCKET_DIR, exist_ok=True)
+    if os.path.exists(SOCKET_PATH):
+        try:
+            os.unlink(SOCKET_PATH)
+        except:
+            pass
+
+    # Launch daemon as a completely independent subprocess
+    # DO NOT redirect stdout/stderr — Chrome/Selenium need them
+    proc = subprocess.Popen(
+        [sys.executable, os.path.abspath(__file__), "_daemon"],
+        stdin=subprocess.DEVNULL,
+        close_fds=False,
+    )
+
+    with open(PID_PATH, "w") as f:
+        f.write(str(proc.pid))
+
+    for _ in range(100):
+        if os.path.exists(SOCKET_PATH):
+            time.sleep(0.3)
+            return
+        time.sleep(0.1)
+
+    print("Warning: daemon may not have started", file=sys.stderr)
+
+
+# ─── Daemon ───────────────────────────────────────────────────────────────
+
+def run_daemon():
+    """Run the daemon — holds browser, listens on socket."""
+    os.makedirs(SOCKET_DIR, exist_ok=True)
+    if os.path.exists(SOCKET_PATH):
+        os.unlink(SOCKET_PATH)
+
+    log_path = os.path.join(SOCKET_DIR, "daemon.log")
+    _log_fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+    def dlog(msg):
+        os.write(_log_fd, f"[{time.strftime('%H:%M:%S')}] {msg}\n".encode())
+
+    dlog("Daemon starting")
+
+    sb = None
+    sb_ctx_holder = [None]  # prevent GC of SB context manager (closing Chrome)
+    last_activity = time.time()
+
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(SOCKET_PATH)
+    server.listen(5)
+    server.settimeout(10)
+
+    def get_browser():
+        nonlocal sb
+        if sb is None:
+            dlog("Starting UC browser...")
+            from seleniumbase import SB
+            sb_ctx = SB(uc=True, headed=True, locale_code="en")
+            sb_ctx_holder[0] = sb_ctx  # prevent GC!
+            sb = sb_ctx.__enter__()
+            dlog("UC browser ready")
+        return sb
+
+    def ref_to_selector(ref_or_sel):
+        """Convert @e5 ref to CSS selector, or pass through."""
+        if ref_or_sel.startswith("@"):
+            ref = ref_or_sel[1:]
+            return f'[data-sb-ref="{ref}"]'
+        return ref_or_sel
+
+    def handle_command(cmd):
+        nonlocal last_activity, sb
+        last_activity = time.time()
+        action = cmd.get("action", "")
+        dlog(f"Command: {action}")
+
+        try:
+            if action == "ping":
+                return {"success": True, "data": "pong"}
+
+            elif action == "open":
+                url = cmd.get("url", "")
+                browser = get_browser()
+                # UC mode's anti-detection is built into the driver —
+                # plain open() passes Cloudflare without the reconnect trick,
+                # which is fragile in daemon contexts.
+                dlog(f"Opening {url}")
+                browser.open(url)
+                dlog("Page loaded, waiting...")
+                wait_sec = cmd.get("wait", 3)
+                time.sleep(wait_sec)
+                dlog("Getting title...")
+                title = browser.get_title()
+                url_now = browser.get_current_url()
+                # Auto-detect Cloudflare and wait longer
+                if "Just a moment" in title:
+                    time.sleep(8)
+                    title = browser.get_title()
+                    url_now = browser.get_current_url()
+                return {"success": True, "data": {"title": title, "url": url_now}}
+
+            elif action == "snapshot":
+                browser = get_browser()
+                tree = browser.execute_script(SNAPSHOT_JS)
+                return {"success": True, "data": tree or "(empty page)"}
+
+            elif action == "click":
+                sel = ref_to_selector(cmd.get("selector", ""))
+                browser = get_browser()
+                browser.click(sel)
+                return {"success": True}
+
+            elif action == "fill":
+                sel = ref_to_selector(cmd.get("selector", ""))
+                text = cmd.get("text", "")
+                browser = get_browser()
+                browser.clear(sel)
+                browser.type(sel, text)
+                return {"success": True}
+
+            elif action == "type":
+                text = cmd.get("text", "")
+                browser = get_browser()
+                browser.execute_script(
+                    "arguments[0].value += arguments[1]",
+                    browser.execute_script("return document.activeElement"),
+                    text
+                )
+                return {"success": True}
+
+            elif action == "press":
+                key = cmd.get("key", "")
+                browser = get_browser()
+                from selenium.webdriver.common.keys import Keys
+                key_map = {
+                    "Enter": Keys.ENTER, "Tab": Keys.TAB,
+                    "Escape": Keys.ESCAPE, "Backspace": Keys.BACKSPACE,
+                    "ArrowUp": Keys.ARROW_UP, "ArrowDown": Keys.ARROW_DOWN,
+                    "ArrowLeft": Keys.ARROW_LEFT, "ArrowRight": Keys.ARROW_RIGHT,
+                }
+                k = key_map.get(key, key)
+                from selenium.webdriver.common.action_chains import ActionChains
+                ActionChains(browser.driver).send_keys(k).perform()
+                return {"success": True}
+
+            elif action == "get":
+                what = cmd.get("what", "")
+                browser = get_browser()
+                if what == "title":
+                    return {"success": True, "data": browser.get_title()}
+                elif what == "url":
+                    return {"success": True, "data": browser.get_current_url()}
+                elif what == "text":
+                    sel = cmd.get("selector")
+                    if sel:
+                        sel = ref_to_selector(sel)
+                        return {"success": True, "data": browser.get_text(sel)}
+                    else:
+                        return {"success": True, "data": browser.get_text("body")}
+                elif what == "html":
+                    sel = ref_to_selector(cmd.get("selector", "body"))
+                    html = browser.execute_script(
+                        f"return document.querySelector('{sel}')?.innerHTML || ''"
+                    )
+                    return {"success": True, "data": html}
+                elif what == "value":
+                    sel = ref_to_selector(cmd.get("selector", ""))
+                    return {"success": True, "data": browser.get_value(sel)}
+                else:
+                    return {"success": False, "error": f"Unknown get target: {what}"}
+
+            elif action == "eval":
+                js = cmd.get("js", "")
+                browser = get_browser()
+                result = browser.execute_script(f"return {js}")
+                if result is None:
+                    result = browser.execute_script(js)
+                return {"success": True, "data": str(result) if result is not None else ""}
+
+            elif action == "screenshot":
+                path = cmd.get("path", os.path.join(tempfile.gettempdir(), "sb-screenshot.png"))
+                browser = get_browser()
+                browser.save_screenshot(path)
+                return {"success": True, "data": path}
+
+            elif action == "wait":
+                target = cmd.get("target", "")
+                browser = get_browser()
+                if target.isdigit():
+                    time.sleep(int(target) / 1000)
+                else:
+                    sel = ref_to_selector(target)
+                    browser.wait_for_element_visible(sel, timeout=15)
+                return {"success": True}
+
+            elif action == "scroll":
+                direction = cmd.get("direction", "down")
+                px = cmd.get("px", 500)
+                browser = get_browser()
+                if direction == "down":
+                    browser.execute_script(f"window.scrollBy(0, {px})")
+                elif direction == "up":
+                    browser.execute_script(f"window.scrollBy(0, -{px})")
+                return {"success": True}
+
+            elif action == "close":
+                if sb:
+                    try:
+                        sb.__exit__(None, None, None)
+                    except:
+                        pass
+                    sb = None
+                return {"success": True, "data": "Browser closed"}
+
+            elif action == "quit":
+                if sb:
+                    try:
+                        sb.__exit__(None, None, None)
+                    except:
+                        pass
+                cleanup()
+
+            else:
+                return {"success": False, "error": f"Unknown action: {action}"}
+
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def cleanup():
+        """Shutdown daemon cleanly."""
+        dlog("Shutting down daemon")
+        try:
+            server.close()
+        except:
+            pass
+        try:
+            os.unlink(SOCKET_PATH)
+        except:
+            pass
+        os._exit(0)
+
+    # Main loop
+    while True:
+        try:
+            conn, _ = server.accept()
+        except socket.timeout:
+            if time.time() - last_activity > IDLE_TIMEOUT:
+                cleanup()
+            continue
+        except:
+            continue
+
+        try:
+            conn.settimeout(300)
+            data = b""
+            while True:
+                chunk = conn.recv(65536)
+                if not chunk:
+                    break
+                data += chunk
+                if b"\n" in data:
+                    break
+
+            line = data.split(b"\n")[0]
+            cmd = json.loads(line)
+            resp = handle_command(cmd)
+            resp_bytes = (json.dumps(resp) + "\n").encode()
+            conn.sendall(resp_bytes)
+        except Exception as e:
+            try:
+                conn.sendall((json.dumps({"success": False, "error": str(e)}) + "\n").encode())
+            except:
+                pass
+        finally:
+            try:
+                conn.close()
+            except:
+                pass
+
+
+# ─── CLI entry point ──────────────────────────────────────────────────────
+
+def print_result(resp):
+    """Pretty-print a response."""
+    if not resp.get("success"):
+        print(f"\033[31m✗\033[0m {resp.get('error', 'Unknown error')}", file=sys.stderr)
+        sys.exit(1)
+
+    data = resp.get("data")
+    if data is None:
+        print("\033[32m✓\033[0m Done")
+    elif isinstance(data, dict):
+        if "title" in data:
+            print(f"\033[32m✓\033[0m \033[1m{data['title']}\033[0m")
+            if "url" in data:
+                print(f"  \033[2m{data['url']}\033[0m")
+        else:
+            print(json.dumps(data, indent=2))
+    else:
+        print(str(data))
+
+
+def main():
+    args = sys.argv[1:]
+
+    if not args or args[0] in ("-h", "--help", "help"):
+        print(__doc__.strip())
+        sys.exit(0)
+
+    if args[0] == "_daemon":
+        # Run daemon inline — Chrome needs clean process state
+        import traceback
+        try:
+            run_daemon()
+        except Exception:
+            with open(os.path.join(SOCKET_DIR, "crash.log"), "w") as f:
+                traceback.print_exc(file=f)
+        sys.exit(0)
+
+    cmd_name = args[0].lower()
+
+    if cmd_name == "open":
+        if len(args) < 2:
+            print("Usage: sb-browser open <url>", file=sys.stderr)
+            sys.exit(1)
+        resp = send_command({"action": "open", "url": args[1]})
+
+    elif cmd_name == "snapshot":
+        resp = send_command({"action": "snapshot"})
+
+    elif cmd_name == "click":
+        if len(args) < 2:
+            print("Usage: sb-browser click <@ref|selector>", file=sys.stderr)
+            sys.exit(1)
+        resp = send_command({"action": "click", "selector": args[1]})
+
+    elif cmd_name == "fill":
+        if len(args) < 3:
+            print("Usage: sb-browser fill <@ref|selector> <text>", file=sys.stderr)
+            sys.exit(1)
+        resp = send_command({"action": "fill", "selector": args[1], "text": " ".join(args[2:])})
+
+    elif cmd_name == "type":
+        if len(args) < 2:
+            print("Usage: sb-browser type <text>", file=sys.stderr)
+            sys.exit(1)
+        resp = send_command({"action": "type", "text": " ".join(args[1:])})
+
+    elif cmd_name == "press":
+        if len(args) < 2:
+            print("Usage: sb-browser press <key>", file=sys.stderr)
+            sys.exit(1)
+        resp = send_command({"action": "press", "key": args[1]})
+
+    elif cmd_name == "get":
+        if len(args) < 2:
+            print("Usage: sb-browser get <text|title|url|html|value> [selector]", file=sys.stderr)
+            sys.exit(1)
+        cmd = {"action": "get", "what": args[1]}
+        if len(args) > 2:
+            cmd["selector"] = args[2]
+        resp = send_command(cmd)
+
+    elif cmd_name == "eval":
+        if len(args) < 2:
+            print("Usage: sb-browser eval <js>", file=sys.stderr)
+            sys.exit(1)
+        resp = send_command({"action": "eval", "js": " ".join(args[1:])})
+
+    elif cmd_name == "screenshot":
+        cmd = {"action": "screenshot"}
+        if len(args) > 1:
+            cmd["path"] = args[1]
+        resp = send_command(cmd)
+
+    elif cmd_name == "wait":
+        if len(args) < 2:
+            print("Usage: sb-browser wait <ms|selector>", file=sys.stderr)
+            sys.exit(1)
+        resp = send_command({"action": "wait", "target": args[1]})
+
+    elif cmd_name == "scroll":
+        direction = args[1] if len(args) > 1 else "down"
+        px = int(args[2]) if len(args) > 2 else 500
+        resp = send_command({"action": "scroll", "direction": direction, "px": px})
+
+    elif cmd_name == "close":
+        resp = send_command({"action": "close"})
+
+    elif cmd_name == "quit":
+        resp = send_command({"action": "quit"})
+
+    else:
+        print(f"Unknown command: {cmd_name}", file=sys.stderr)
+        print("Run 'sb-browser help' for usage.", file=sys.stderr)
+        sys.exit(1)
+
+    print_result(resp)
+
+
+if __name__ == "__main__":
+    main()
