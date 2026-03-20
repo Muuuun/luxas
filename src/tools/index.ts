@@ -18,9 +18,9 @@ export function buildResearchTools(
 
   // Search, download, citations, web are now a skill — agent uses bash to call scripts/search
   const workerTools = [...codingTools];
-  const dispatchWorkers = createDispatchWorkersTool(workerTools, model, getApiKey);
+  const dispatchWorkers = createDispatchWorkersTool(workerTools, model, getApiKey, projectDir);
 
-  const experimentTool = createExperimentTool(projectDir);
+  const experimentTool = createExperimentTool(projectDir, model, getApiKey);
 
   return [
     ...reportTools,

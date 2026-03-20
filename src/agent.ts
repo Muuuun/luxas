@@ -15,7 +15,7 @@
 import { Agent } from "@mariozechner/pi-agent-core";
 import { getModel } from "@mariozechner/pi-ai";
 import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, isAbsolute, resolve } from "node:path";
 import { buildResearchPrompt } from "./prompt.js";
 import { buildResearchTools } from "./tools/index.js";
 import { buildContextTransformer } from "./context.js";
@@ -46,23 +46,47 @@ const MODEL_MAP: Record<string, [string, string]> = {
 };
 
 export function createResearchAgent(opts: ResearchAgentOptions) {
+  // Enforce absolute projectDir — all tools depend on this
+  const projectDir = isAbsolute(opts.projectDir) ? opts.projectDir : resolve(opts.projectDir);
+
   const modelKey = opts.model ?? "sonnet";
   const [provider, modelId] = MODEL_MAP[modelKey] ?? MODEL_MAP.sonnet;
   const model = getModel(provider as any, modelId as any);
   const thinkingLevel = opts.thinkingLevel ?? "medium";
 
-  // Layer 1: System Prompt
-  const systemPrompt = buildResearchPrompt();
+  // Layer 1: System Prompt — now includes projectDir
+  const systemPrompt = buildResearchPrompt(projectDir);
 
   // Layer 2: Tools (research tools + PI review tool)
-  const tools = buildResearchTools(opts.projectDir, model, getApiKey);
+  const tools = buildResearchTools(projectDir, model, getApiKey);
+
+  // Hooks must be created before PI monitor so we can wire setPIStopped
+  const hooks = buildResearchHooks({
+    projectDir,
+    maxCostUsd: opts.maxCostUsd,
+    maxDurationMs: opts.maxDurationMs,
+  });
+
+  // Check if PI already said STOP in a previous session (persisted in pi_feedback.md)
+  const prevFeedback = existsSync(join(projectDir, "reviews", "pi_feedback.md"))
+    ? readFileSync(join(projectDir, "reviews", "pi_feedback.md"), "utf-8")
+    : "";
+  if (prevFeedback.includes("## Verdict: STOP")) {
+    hooks.setPIStopped();
+  }
 
   const piMonitorOpts = {
-    projectDir: opts.projectDir,
+    projectDir: projectDir,
     fallbackInterval: opts.piFallbackInterval ?? 50,
-    costTracker: undefined as any, // set below after hooks
-    startTime: undefined as any,
-    onVerdict: opts.onPIVerdict,
+    costTracker: hooks.tracker,
+    startTime: hooks.startTime,
+    onVerdict: (verdict: PIVerdict, toolCallCount: number) => {
+      // Enforce PI STOP — block non-finalization tools
+      if (verdict.verdict === "stop") {
+        hooks.setPIStopped();
+      }
+      opts.onPIVerdict?.(verdict, toolCallCount);
+    },
   };
 
   const piReview = opts.piFallbackInterval !== 0
@@ -73,28 +97,17 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
     tools.push(piReview.tool);
   }
 
-  // Layer 4: Hooks (before context transformer — tracker needed for token thresholds)
-  const hooks = buildResearchHooks({
-    projectDir: opts.projectDir,
-    maxCostUsd: opts.maxCostUsd,
-    maxDurationMs: opts.maxDurationMs,
-  });
-
   // #8: Extension bus
   const bus = new ExtensionBus();
 
   // Layer 3: transformContext — now with LLM compaction (#1), precise tokens (#3), extensions (#8)
   const transformContext = buildContextTransformer({
-    projectDir: opts.projectDir,
+    projectDir: projectDir,
     model,
     getApiKey,
     tracker: hooks.tracker,
     bus,
   });
-
-  // Wire cost tracker into PI monitor
-  piMonitorOpts.costTracker = hooks.tracker;
-  piMonitorOpts.startTime = hooks.startTime;
 
   // Assemble Agent
   const agent = new Agent({
@@ -114,7 +127,7 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
   });
 
   // Track usage + emit events + auto-checkpoint after each turn
-  const agentDir = join(opts.projectDir, ".agent");
+  const agentDir = join(projectDir, ".agent");
   mkdirSync(agentDir, { recursive: true });
   const checkpointPath = join(agentDir, "checkpoint.jsonl");
   let lastCheckpointedMsgCount = 0;
@@ -188,6 +201,21 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
       if (messages.length > 0) {
         // #6: Clean messages for cross-model compatibility before restoring
         const cleaned = cleanMessagesForModel(messages, currentModel);
+
+        // Inject resume directive so agent doesn't re-verify everything
+        cleaned.push({
+          role: "user",
+          content: [
+            `[SESSION RESUMED] You have been restored from a checkpoint with ${cleaned.length} messages.`,
+            `Your current state is in the research snapshot above (notes, report, memory).`,
+            `Do NOT re-verify or re-read files you already know about.`,
+            `Do NOT rewrite notes/memory.md unless you have new information.`,
+            `Continue working from where you left off — check the research snapshot and your last actions to determine what to do next.`,
+            `If PI feedback says STOP, finalize and stop immediately.`,
+          ].join("\n"),
+          timestamp: Date.now(),
+        });
+
         agent.replaceMessages(cleaned);
         lastCheckpointedMsgCount = cleaned.length;
         return cleaned.length;

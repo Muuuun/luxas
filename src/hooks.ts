@@ -37,6 +37,12 @@ export function buildResearchHooks(opts: ResearchOptions) {
     lastContextTokens: 0,
   };
 
+  // PI STOP enforcement — when PI says stop, block non-finalization tools
+  let piStopped = false;
+  const FINALIZATION_TOOLS = new Set([
+    "read", "write", "edit", "compile_latex", "request_pi_review",
+  ]);
+
   // Simple rate limiters
   const lastCallTime: Record<string, number> = {};
   const rateLimits: Record<string, number> = {
@@ -56,19 +62,24 @@ export function buildResearchHooks(opts: ResearchOptions) {
       }
     }
 
-    // 2. Cost limit
+    // 2. PI STOP enforcement — only allow finalization tools after PI says stop
+    if (piStopped && !FINALIZATION_TOOLS.has(name)) {
+      return { block: true, reason: `PI verdict is STOP. Only finalization tools (read, write, edit, compile_latex) are allowed. Tool "${name}" is blocked.` };
+    }
+
+    // 3. Cost limit
     if (tracker.totalCost > maxCost) {
       return { block: true, reason: `Cost limit reached: $${tracker.totalCost.toFixed(2)} / $${maxCost}` };
     }
 
-    // 3. Time limit
+    // 4. Time limit
     const elapsed = Date.now() - startTime;
     if (elapsed > maxDuration) {
       const hours = (maxDuration / 3600000).toFixed(1);
       return { block: true, reason: `Time limit reached: ${hours}h` };
     }
 
-    // 4. Rate limiting for API tools
+    // 5. Rate limiting for API tools
     const rateLimit = rateLimits[name];
     if (rateLimit) {
       const lastCall = lastCallTime[name] ?? 0;
@@ -169,7 +180,10 @@ export function buildResearchHooks(opts: ResearchOptions) {
     }
   };
 
-  return { before, after, tracker, trackUsage, startTime };
+  /** Call when PI verdict is STOP — blocks non-finalization tools */
+  const setPIStopped = () => { piStopped = true; };
+
+  return { before, after, tracker, trackUsage, startTime, setPIStopped };
 }
 
 function summarizeArgs(args: any): any {

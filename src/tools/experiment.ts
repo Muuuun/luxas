@@ -3,7 +3,9 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import { createAgentSession, createCodingTools } from "@mariozechner/pi-coding-agent";
+import { Agent } from "@mariozechner/pi-agent-core";
+import { createCodingTools } from "@mariozechner/pi-coding-agent";
+import type { Model } from "@mariozechner/pi-ai";
 import { join } from "node:path";
 import { mkdirSync, readFileSync } from "node:fs";
 import { listFilesRecursive, readFileSafe, smartTruncate } from "../utils.js";
@@ -68,7 +70,11 @@ function buildExperimentContext(projectDir: string): string {
   ].join("\n");
 }
 
-export function createExperimentTool(projectDir: string) {
+export function createExperimentTool(
+  projectDir: string,
+  model: Model<any>,
+  getApiKey: (provider: string) => Promise<string | undefined> | string | undefined,
+) {
   return {
     name: "run_experiment",
     label: "Run Experiment",
@@ -94,18 +100,32 @@ export function createExperimentTool(projectDir: string) {
         const trackDirs = [join(projectDir, "data"), join(projectDir, "report")];
         const filesBefore = new Set(trackDirs.flatMap(d => listFilesRecursive(d)));
 
-        const { session } = await createAgentSession({
-          cwd,
-          tools: createCodingTools(cwd),
-          thinkingLevel,
+        const expTools = createCodingTools(cwd);
+        const experimentContext = buildExperimentContext(projectDir);
+
+        const systemPrompt = [
+          `You are an experiment coding agent. Write code, run simulations, and report results.`,
+          ``,
+          `Working directory: ${projectDir}`,
+          `Scripts go in: data/scripts/`,
+          `Save figures to: report/figures/`,
+          `Experiment runs go in: data/runs/run_N/`,
+          `When using matplotlib: use plt.savefig(..., bbox_inches='tight', dpi=150).`,
+        ].join("\n");
+
+        const expAgent = new Agent({
+          initialState: {
+            systemPrompt,
+            model,
+            thinkingLevel,
+            tools: expTools,
+          },
+          getApiKey,
         });
 
         if (logFile) {
-          session.subscribe(tmux.createAgentObserver(logFile));
+          expAgent.subscribe(tmux.createAgentObserver(logFile));
         }
-
-        // Build context from previous experiments
-        const experimentContext = buildExperimentContext(projectDir);
 
         const prompt = [
           `# Experiment`,
@@ -114,21 +134,21 @@ export function createExperimentTool(projectDir: string) {
           ``,
           `**Task:** ${params.task}`,
           ``,
-          // Inject previous experiment context if available
           ...(experimentContext ? [experimentContext, ``] : []),
           `Write code, run the experiment, and report your findings clearly.`,
           `Include: what you implemented, the results, and your interpretation.`,
-          ``,
-          `## Environment`,
-          `- Working directory (project root): ${projectDir}`,
-          `- Scripts go in: data/scripts/`,
-          `- Save figures to: report/figures/`,
-          `- Experiment runs go in: data/runs/run_N/`,
-          `- When using matplotlib: use plt.savefig(..., bbox_inches='tight', dpi=150). Avoid variable name 'c' (conflicts with speed of light constant).`,
         ].join("\n");
 
-        await session.prompt(prompt);
-        const output = session.getLastAssistantText?.() ?? "(no output)";
+        await expAgent.prompt(prompt);
+
+        const messages = expAgent.state.messages;
+        const lastAssistant = [...messages].reverse().find(
+          (m: any) => m.role === "assistant"
+        ) as any;
+        const output = lastAssistant?.content
+          ?.filter((c: any) => c.type === "text")
+          .map((c: any) => c.text)
+          .join("\n") ?? "(no output)";
 
         // Find new files created during experiment
         const filesAfter = trackDirs.flatMap(d => listFilesRecursive(d));

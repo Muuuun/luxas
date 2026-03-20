@@ -165,6 +165,9 @@ function injectSnapshot(messages: any[], snapshot: string): any[] {
 function buildResearchSnapshot(projectDir: string): string {
   const parts: string[] = [];
 
+  // Project directory (ground truth for path resolution)
+  parts.push(`## Project Directory\n\`${projectDir}\``);
+
   // Research goal
   const goal = readFileSafe(join(projectDir, "RESEARCH.md"));
   parts.push(`## Research Goal\n${goal || "(no RESEARCH.md found)"}`);

@@ -6,6 +6,7 @@ import { Type } from "@sinclair/typebox";
 import { Agent } from "@mariozechner/pi-agent-core";
 import type { Model } from "@mariozechner/pi-ai";
 import * as tmux from "../tmux.js";
+import { createCodingToolsForProject } from "./coding.js";
 
 const DispatchParams = Type.Object({
   tasks: Type.Array(Type.Object({
@@ -14,12 +15,18 @@ const DispatchParams = Type.Object({
   }), { description: "List of independent tasks to run in parallel" }),
 });
 
-const WORKER_PROMPT = `You are a research worker agent. Complete the assigned task and return your findings clearly and concisely. Focus on extracting and reporting information, not on managing files.`;
+function buildWorkerPrompt(projectDir: string): string {
+  return `You are a research worker agent. Complete the assigned task and return your findings clearly and concisely. Focus on extracting and reporting information, not on managing files.
+
+Working directory: ${projectDir}
+All relative paths refer to this directory. When running bash commands, always cd to this directory first.`;
+}
 
 export function createDispatchWorkersTool(
-  tools: any[],
+  _parentTools: any[],  // kept for API compat; workers now create their own tools
   model: Model<any>,
   getApiKey: (provider: string) => Promise<string | undefined> | string | undefined,
+  projectDir: string,
 ) {
   return {
     name: "dispatch_workers",
@@ -35,12 +42,14 @@ export function createDispatchWorkersTool(
         const logFile = tmux.openWindow(`w: ${task.description.slice(0, 25)}`);
 
         try {
+          // Each worker gets its own tools bound to projectDir (like Claude Code's cwd inheritance)
+          const workerTools = createCodingToolsForProject(projectDir);
           const worker = new Agent({
             initialState: {
-              systemPrompt: WORKER_PROMPT,
+              systemPrompt: buildWorkerPrompt(projectDir),
               model,
               thinkingLevel: "medium" as any,
-              tools,
+              tools: workerTools,
             },
             getApiKey,
           });
