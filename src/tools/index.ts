@@ -27,8 +27,8 @@ export function buildResearchTools(
   const workerTools = [...codingTools];
   const dispatchWorkers = createDispatchWorkersTool(workerTools, workerModel, getApiKey, projectDir, trackUsage);
 
-  // Experiment uses workerModel by default; main agent can request opus via thinkingLevel
-  const experimentTool = createExperimentTool(projectDir, workerModel, getApiKey, trackUsage);
+  // Experiment uses workerModel by default; thinkingLevel "high" → opus
+  const experimentTool = createExperimentTool(projectDir, workerModel, model, getApiKey, trackUsage);
 
   // finish tool — agent calls this when research is complete
   const finishTool = {

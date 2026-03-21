@@ -72,7 +72,8 @@ function buildExperimentContext(projectDir: string): string {
 
 export function createExperimentTool(
   projectDir: string,
-  model: Model<any>,
+  workerModel: Model<any>,
+  mainModel: Model<any>,
   getApiKey: (provider: string) => Promise<string | undefined> | string | undefined,
   trackUsage?: (usage: any) => void,
 ) {
@@ -93,6 +94,8 @@ export function createExperimentTool(
       mkdirSync(join(projectDir, "report", "figures"), { recursive: true });
 
       const thinkingLevel = (params.thinkingLevel ?? "medium") as any;
+      // thinkingLevel "high" → use opus for complex experiments
+      const expModel = thinkingLevel === "high" ? mainModel : workerModel;
       const t0 = Date.now();
       const logFile = tmux.openWindow(`exp: ${params.hypothesis.slice(0, 25)}`);
       let expAgent: Agent | null = null;
@@ -131,7 +134,7 @@ export function createExperimentTool(
         expAgent = new Agent({
           initialState: {
             systemPrompt,
-            model,
+            model: expModel,
             thinkingLevel,
             tools: expTools,
           },
