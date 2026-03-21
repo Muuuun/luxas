@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Wrapper around browser-use with sensible defaults for research agent.
+# Always uses headed mode + Default Chrome profile (needed for Cloudflare bypass).
+#
+# Usage: browse open <url>
+#        browse state
+#        browse click 5
+#        browse eval "document.title"
+#        browse close
+
+BROWSER_USE="${HOME}/.browser-use-env/bin/browser-use"
+
+if [ ! -x "$BROWSER_USE" ]; then
+  echo "Error: browser-use not found at $BROWSER_USE" >&2
+  echo "Install: pip install browser-use" >&2
+  exit 1
+fi
+
+exec "$BROWSER_USE" --headed --profile "Default" "$@"

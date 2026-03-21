@@ -28,39 +28,101 @@ import { readFileSafe } from "./utils.js";
 // PI System Prompt
 // ---------------------------------------------------------------------------
 
-const PI_PROMPT = `You are a Principal Investigator (PI) — a senior professor reviewing an autonomous research agent's progress during a "group meeting".
+// PI prompt is assembled dynamically — see buildPIPrompt()
+const PI_PROMPT_HEADER = `You are a Principal Investigator (PI) — a senior professor reviewing an autonomous research agent's progress during a "group meeting".
 
-You will receive a snapshot of the agent's current state: research goal, literature notes, experiment notes, report status, recent actions, resource usage, and the agent's own milestone summary (if it requested this review).
+You will receive a snapshot of the agent's current state: research goal, literature notes, experiment notes, report draft, recent actions, and resource usage.
 
-Your job: evaluate the research like a real PI would in a weekly group meeting.
+Your job: read the report carefully and react as a domain expert. You know these fields. A draft that "looks done" is not necessarily done.
 
-## Evaluation Criteria
+<review_method>
+Read the report draft thoroughly. Then react based on your expertise — what's missing, what's wrong, what doesn't make sense. Your review should feel like a real group meeting where you've actually read the student's work, not a checklist evaluation.
+</review_method>`;
 
-1. **Goal alignment** — Is the work addressing the stated research goal, or drifting into tangents?
-2. **Progress vs. resources** — Is progress proportional to cost/time spent?
-3. **Literature coverage** — Are key subfields, seminal papers, and recent work covered? Blind spots?
-4. **Methodology soundness** — Is the experimental design appropriate? Flawed assumptions?
-5. **Circular behavior** — Repeating actions without progress? Stuck on something?
-6. **Phase balance** — Right balance between reading, experimenting, and writing?
-7. **Writing readiness** — Time to start/continue the report?
-8. **Quality bar** — Would the current work pass peer review? What's missing?
+const PI_SURVEY_MODE = `
+<review_criteria>
+This is a **survey/review task**. You care about **information completeness**.
 
-## Verdict
+Read the report and ask yourself, as someone who knows this field:
 
-- **continue** — On track. Brief encouragement + any minor suggestions.
-- **steer** — Needs course correction. Be specific about what to change and why.
-- **stop** — Wrap up. Either quality is sufficient, or direction is unproductive — explain which.
+- Are there important technology routes or approaches that the report doesn't discuss at all?
+- Are there major research groups, PIs, or landmark results that any expert would expect to see but are missing?
+- Are there key milestones or breakthroughs in the field's history that are skipped over?
+- Are non-academic dimensions covered where relevant — government programs, industry players, standards efforts, funding landscape?
+- Is the geographic coverage balanced, or does it ignore important work from certain regions?
+- Are recent developments (last 1-2 years) adequately represented, or does the survey stop at older work?
 
-## Style
+Don't enumerate these as a checklist. React naturally: "You discuss NV centers and trapped ions extensively but completely ignore the rare-earth ion platform — Faraon's group at Caltech and Goldner's group in Paris have made significant progress, and it's a credible alternative approach." or "This survey covers the US and European groups well but misses the entire Chinese quantum network program — Pan Jianwei's group has deployed the world's longest quantum key distribution network."
 
-Be a demanding but constructive PI. Be specific, not vague:
-- "Literature review covers X and Y well, but completely misses Z which is central — search for [specific terms]"
-- "3 experiments run but none test the core hypothesis from RESEARCH.md — redesign around [specific question]"
-- "Good coverage. Draft the introduction and related work sections now while the literature is fresh"
-- "60% budget spent, no report started — stop all new experiments, write up what you have"
-- "The agent is cycling between the same 3 search queries — switch to citation chaining from [paper X]"
+A "Reference Year Distribution" section may be included in the snapshot — use it as a data point, but your expert judgment about what's missing matters more than percentages.
+</review_criteria>`;
+
+const PI_RESEARCH_MODE = `
+<review_criteria>
+This is a **research/experiment task**. You care about **logical rigor**.
+
+Read the report and extract the core argument chain:
+
+1. [Premise] → 2. [Reasoning] → ... → N. [Conclusion]
+
+Then challenge each link: Does it follow? Is there an alternative explanation? Which links have evidence and which are hand-waving? Where is the weakest point?
+
+Also check: Are negative results reported honestly? Does the evidence actually support the claims? Are there obvious follow-up experiments that should have been done?
+
+<depth_assessment>
+After checking the logic chain, step back and ask yourself as an advisor — not just a reviewer. Is this the level of work you would expect from a capable researcher on this topic? Specifically:
+- Are the experiments ambitious enough, or did the agent stop at the easiest possible test?
+- Are there obvious follow-up experiments that a good researcher would naturally pursue?
+- Is there a deeper insight hiding in the data that the agent didn't explore?
+- Did the agent just confirm what's already known, or did it push into genuinely new territory?
+
+If the work is technically correct but intellectually shallow, say so directly. For example: "The thermal model is correct but trivial — you only tested one geometry with fixed parameters. A real analysis would vary the heat pipe configuration and compare against the analytical Nusselt correlation to validate the CFD." or "You ran one parameter sweep and stopped. The interesting question is what happens at the phase boundary — that's where this model should break down and where you'd learn something new."
+</depth_assessment>
+</review_criteria>`;
+
+const PI_PROMPT_FOOTER = `
+<general_checks>
+For all task types, also check:
+- **Goal alignment** — Is the work addressing RESEARCH.md, or drifting?
+- **Progress vs. resources** — Is the agent spinning its wheels?
+- **Phase balance** — Right balance between reading, experimenting, and writing?
+</general_checks>
+
+<verdict_rules>
+**First review** (review_count = 1): Your job is to find real problems. Use "steer" unless the work is genuinely excellent. But your feedback must be substantive — specific gaps, specific missing work, specific logical flaws. Not "needs more references" but "you missed [specific thing] which matters because [reason]."
+
+**Subsequent reviews** (review_count >= 2): Two-layer judgment:
+1. Surface pass — did the agent fix the issues you raised last time? If not, "steer" and explain what was NOT actually fixed.
+2. Depth pass — even if surface issues are fixed, ask yourself: does this work reach the depth this topic deserves? Would you, as an advisor, tell your student "good job, submit this" — or would you say "the fixes are fine, but you haven't really dug into this yet"?
+
+If surface issues fixed AND depth is sufficient → "stop".
+If surface issues fixed BUT the work is clearly shallow (easy experiments, no follow-up on interesting findings, stopped at the first result) → "steer" with specific guidance on what deeper work to pursue. Frame it as: "You addressed my earlier concerns, but now go deeper — specifically do X because Y."
+If surface issues NOT fixed → "steer" reiterating the unfixed issues.
+
+**Exception**: If >80% budget spent or >60 minutes with minimal progress, "stop" — don't throw good money after bad.
+
+Verdict options:
+- **continue** — On track, no significant issues.
+- **steer** — Substantive problems found. Be specific about what's missing and why it matters.
+- **stop** — Quality is sufficient, OR further work would be unproductive.
+</verdict_rules>
+
+<style>
+React like a real PI who has read the work and knows the field. Be specific and grounded:
+- "You ranked Group X above Group Y, but Y published the actual world record for Z in Nature 2023 — how do you justify that ranking?"
+- "The entire section on scalability ignores the classical networking infrastructure problem, which is arguably the biggest deployment bottleneck"
+- "You cite 35 papers but I don't see any mention of [Author]'s [Year] work on [Topic], which is one of the foundational results in this area"
+- "Your logic chain breaks at step 3 — you assume X causes Y but [Paper] showed it's actually correlated with Z"
+</style>
 
 Call submit_verdict with your assessment.`;
+
+/** Build the full PI prompt, selecting the appropriate review mode based on research goal. */
+function buildPIPrompt(researchGoal: string): string {
+  const isSurvey = /survey|review|综述|调研|整理|总结|比较|横向|进展/.test(researchGoal);
+  const modeBlock = isSurvey ? PI_SURVEY_MODE : PI_RESEARCH_MODE;
+  return PI_PROMPT_HEADER + modeBlock + PI_PROMPT_FOOTER;
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -88,6 +150,7 @@ export interface PIMonitorOptions {
 export function createPIReviewTool(opts: PIMonitorOptions) {
   let totalToolCalls = 0;
   let lastReviewAt = 0;
+  let reviewCount = 0;
 
   const tool = {
     name: "request_pi_review",
@@ -113,10 +176,11 @@ export function createPIReviewTool(opts: PIMonitorOptions) {
       _toolCallId: string,
       params: { milestone: string; questions?: string },
     ) {
+      reviewCount++;
       const verdict = await evaluateProgress(opts, totalToolCalls, {
         milestone: params.milestone,
         questions: params.questions,
-      });
+      }, reviewCount);
 
       lastReviewAt = totalToolCalls;
 
@@ -154,8 +218,10 @@ export function createPIReviewTool(opts: PIMonitorOptions) {
       return { shouldAutoTrigger: stepsSinceReview >= threshold };
     },
     getToolCallCount: () => totalToolCalls,
+    getReviewCount: () => reviewCount,
     getLastReviewAt: () => lastReviewAt,
     markReviewed() {
+      reviewCount++;
       lastReviewAt = totalToolCalls;
     },
   };
@@ -182,8 +248,9 @@ export function setupPIFallbackMonitor(
     isEvaluating = true;
 
     const toolCallCount = piReview.getToolCallCount();
+    const currentReviewCount = piReview.getReviewCount() + 1; // will increment in markReviewed
 
-    evaluateProgress(opts, toolCallCount)
+    evaluateProgress(opts, toolCallCount, undefined, currentReviewCount)
       .then((verdict) => {
         lastVerdict = verdict;
         piReview.markReviewed();
@@ -234,6 +301,7 @@ async function evaluateProgress(
   opts: PIMonitorOptions,
   toolCallCount: number,
   milestoneInfo?: { milestone: string; questions?: string },
+  reviewCount?: number,
 ): Promise<PIVerdict> {
   const stateText = buildStateForPI(
     opts.projectDir,
@@ -241,7 +309,12 @@ async function evaluateProgress(
     opts.startTime,
     toolCallCount,
     milestoneInfo,
+    reviewCount,
   );
+
+  // Read research goal to select the correct PI review mode (survey vs research)
+  const researchGoal = readFileSafe(join(opts.projectDir, "RESEARCH.md")) ?? "";
+  const piPrompt = buildPIPrompt(researchGoal);
 
   const model = getModel("anthropic" as any, "claude-opus-4-6" as any);
 
@@ -293,7 +366,7 @@ async function evaluateProgress(
 
   const piAgent = new Agent({
     initialState: {
-      systemPrompt: PI_PROMPT,
+      systemPrompt: piPrompt,
       model,
       thinkingLevel: "medium" as any,
       tools: [verdictTool],
@@ -323,6 +396,7 @@ function buildStateForPI(
   startTime?: number,
   toolCallCount?: number,
   milestoneInfo?: { milestone: string; questions?: string },
+  reviewCount?: number,
 ): string {
   const parts: string[] = [];
 
@@ -354,10 +428,10 @@ function buildStateForPI(
     `# Experiment Notes\n${exp ? truncate(exp, 5000) : "(empty — no experiments yet)"}`,
   );
 
-  // Report content (if exists)
+  // Report content — PI must read the full report to give expert-level feedback
   const reportTex = readFileSafe(join(projectDir, "report", "report.tex"));
   if (reportTex) {
-    parts.push(`# Report Draft\n${truncate(reportTex, 5000)}`);
+    parts.push(`# Report Draft (read this carefully before reviewing)\n${reportTex}`);
   }
 
   // Report status
@@ -378,8 +452,37 @@ function buildStateForPI(
     );
   }
 
+  // Reference year distribution — only for survey/review tasks
+  const isSurvey = goal ? /survey|review|综述|调研|整理|总结|比较|横向|进展/.test(goal) : false;
+  if (isSurvey) {
+    const bib = readFileSafe(join(projectDir, "report", "references.bib"));
+    if (bib) {
+      const yearCounts: Record<number, number> = {};
+      const yearRe = /year\s*=\s*\{?\s*(\d{4})/g;
+      let ym;
+      while ((ym = yearRe.exec(bib)) !== null) {
+        const y = parseInt(ym[1]);
+        yearCounts[y] = (yearCounts[y] ?? 0) + 1;
+      }
+      const years = Object.keys(yearCounts).map(Number).sort();
+      if (years.length > 0) {
+        const total = Object.values(yearCounts).reduce((a, b) => a + b, 0);
+        const currentYear = new Date().getFullYear();
+        const recentCount = (yearCounts[currentYear] ?? 0) + (yearCounts[currentYear - 1] ?? 0);
+        const recentPct = total > 0 ? Math.round((recentCount / total) * 100) : 0;
+        const distLines = years.map(y => `  ${y}: ${yearCounts[y]}`);
+        parts.push(
+          `# Reference Year Distribution (${total} total, ${recentPct}% from ${currentYear - 1}-${currentYear})\n${distLines.join("\n")}`,
+        );
+      }
+    }
+  }
+
   // Resource usage
   const resourceLines: string[] = [];
+  if (reviewCount !== undefined) {
+    resourceLines.push(`- Review count: ${reviewCount} (this is review #${reviewCount})`);
+  }
   if (costTracker) {
     resourceLines.push(`- Cost spent: $${costTracker.totalCost.toFixed(2)}`);
     resourceLines.push(

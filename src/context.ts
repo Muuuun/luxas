@@ -181,50 +181,50 @@ function buildResearchSnapshot(opts: ContextTransformerOptions): string {
   const parts: string[] = [];
 
   // Project directory (ground truth for path resolution)
-  parts.push(`## Project Directory\n\`${projectDir}\``);
+  parts.push(`<project_dir>${projectDir}</project_dir>`);
 
   // Research goal
   const goal = readFileSafe(join(projectDir, "RESEARCH.md"));
-  parts.push(`## Research Goal\n${goal || "(no RESEARCH.md found)"}`);
+  parts.push(`<research_goal>\n${goal || "(no RESEARCH.md found)"}\n</research_goal>`);
 
   // Literature state
   const lit = readFileSafe(join(projectDir, "notes", "literature.md"));
   if (lit) {
-    parts.push(`## Literature Notes (${lit.split("\n").length} lines)\n${smartTruncate(lit, 3000)}`);
+    parts.push(`<literature_notes lines="${lit.split("\n").length}">\n${smartTruncate(lit, 3000)}\n</literature_notes>`);
   } else {
-    parts.push("## Literature Notes\n(empty — no literature review yet)");
+    parts.push("<literature_notes>(empty — no literature review yet)</literature_notes>");
   }
 
   // Experiment state
   const exp = readFileSafe(join(projectDir, "notes", "experiments.md"));
   if (exp) {
-    parts.push(`## Experiment Notes (${exp.split("\n").length} lines)\n${smartTruncate(exp, 2000)}`);
+    parts.push(`<experiment_notes lines="${exp.split("\n").length}">\n${smartTruncate(exp, 2000)}\n</experiment_notes>`);
   } else {
-    parts.push("## Experiment Notes\n(empty — no experiments yet)");
+    parts.push("<experiment_notes>(empty — no experiments yet)</experiment_notes>");
   }
 
   // Memory scratchpad
   const mem = readFileSafe(join(projectDir, "notes", "memory.md"));
   if (mem && mem.trim().length > 20) {
-    parts.push(`## Memory / Scratchpad (${mem.split("\n").length} lines)\n${smartTruncate(mem, 2000)}`);
+    parts.push(`<memory_notes lines="${mem.split("\n").length}">\n${smartTruncate(mem, 2000)}\n</memory_notes>`);
   }
 
   // PI feedback (injected by PI monitor)
   const piFeedback = readFileSafe(join(projectDir, "reviews", "pi_feedback.md"));
   if (piFeedback) {
-    parts.push(`## PI Feedback (Latest)\n${piFeedback}`);
+    parts.push(`<pi_feedback>\n${piFeedback}\n</pi_feedback>`);
   }
 
   // Report status
   const hasReport = existsSync(join(projectDir, "report", "report.tex"));
   const hasPdf = existsSync(join(projectDir, "report", "report.pdf"));
-  parts.push(`## Report\n- report.tex: ${hasReport ? "exists" : "not yet"}\n- report.pdf: ${hasPdf ? "exists" : "not yet"}`);
+  parts.push(`<report_status>\n- report.tex: ${hasReport ? "exists" : "not yet"}\n- report.pdf: ${hasPdf ? "exists" : "not yet"}\n</report_status>`);
 
   // Downloaded papers + figure extraction status
   const papersDir = join(projectDir, "data", "papers");
   const paperCount = countFiles(papersDir);
   const { extracted, unextracted } = countFigureExtraction(papersDir);
-  let dataSection = `## Data\n- Downloaded papers: ${paperCount} files in data/papers/`;
+  let dataSection = `<data_status>\n- Downloaded papers: ${paperCount} files in data/papers/`;
   if (extracted > 0 || unextracted > 0) {
     dataSection += `\n- Figures: ${extracted}/${extracted + unextracted} papers have figures extracted`;
     if (unextracted > 0) {
@@ -234,12 +234,13 @@ function buildResearchSnapshot(opts: ContextTransformerOptions): string {
       dataSection += ` ⚠️ Run extract-figures on PDFs before writing report!`;
     }
   }
-  parts.push(dataSection);
 
   // Scripts
   const scriptsDir = join(projectDir, "data", "scripts");
   const scriptCount = countFiles(scriptsDir);
-  if (scriptCount > 0) parts.push(`- Experiment scripts: ${scriptCount} files in data/scripts/`);
+  if (scriptCount > 0) dataSection += `\n- Experiment scripts: ${scriptCount} files in data/scripts/`;
+  dataSection += `\n</data_status>`;
+  parts.push(dataSection);
 
   // Active reminders — event-driven, compact, budget-controlled
   const remindersSection = opts.reminders?.render(projectDir) ?? null;

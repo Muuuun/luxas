@@ -1,16 +1,16 @@
 ---
 name: search
-description: Unified academic paper search, citation chains, paper download (arXiv LaTeX/PDF, Sci-Hub), figure extraction from papers, LaTeX source reading, BibTeX fetching, web search, and anti-detect browsing for Cloudflare-protected sites (PRL, Science, Nature, Google Scholar).
-compatibility: Requires Node.js 22+. Optional: Python 3.9+ and seleniumbase for sb-browser. PyMuPDF and Pillow for figure extraction.
-allowed-tools: Bash(search:*) Bash(sb-browser:*) Bash(extract-figures:*)
+description: Unified academic paper search, citation chains, paper download (arXiv LaTeX/PDF, Sci-Hub), figure extraction from papers, LaTeX source reading, BibTeX fetching, web search, and browser automation for Cloudflare-protected sites (PRL, Science, Nature, Google Scholar).
+compatibility: Requires Node.js 22+. Optional: browser-use CLI for browser automation. PyMuPDF and Pillow for figure extraction.
+allowed-tools: Bash(search:*) Bash(browse:*) Bash(browser-use:*) Bash(extract-figures:*)
 ---
 
 # Search Skill
 
-All information gathering in one place. Two CLI scripts:
+All information gathering in one place. Two CLI tools:
 
 - `scripts/search` — paper search, citations, download, LaTeX source, BibTeX, web search, URL fetch
-- `scripts/sb-browser` — anti-detect Chrome browser for Cloudflare-protected sites
+- `scripts/browse` — browser automation wrapper (uses browser-use with headed + Chrome profile defaults)
 
 ## Setup
 
@@ -26,11 +26,14 @@ bash scripts/setup.sh
 scripts/search papers "Rydberg atom quantum gate"
 scripts/search papers "topological insulators" --source openalex --count 20
 scripts/search papers "diffusion models" --source arxiv --count 15
+scripts/search papers "quantum error correction" --from-year 2024 --sort date --count 20
 ```
 
 - **OpenAlex**: all fields, citation counts, DOIs. `--source openalex`
 - **arXiv**: recent preprints, physics/CS/math. `--source arxiv`
 - Default: both.
+- `--from-year YYYY`: Only return papers published in YYYY or later.
+- `--sort relevance|date`: Sort by relevance (default) or publication date (newest first).
 
 ### Citation Chains
 
@@ -87,19 +90,33 @@ Requires `BRAVE_API_KEY` env var.
 scripts/search fetch "https://example.com/page"
 ```
 
-Strips HTML to plain text. For Cloudflare-protected sites, use sb-browser instead.
+Strips HTML to plain text. For Cloudflare-protected sites, use `scripts/browse` instead.
 
-## scripts/sb-browser
+## scripts/browse
 
-Real Chrome with anti-detection fingerprints. Bypasses Cloudflare Turnstile.
+Browser automation via browser-use. Always launches in headed mode with the user's real Chrome profile (cookies, fingerprint), so it bypasses Cloudflare and Google Scholar anti-bot.
+
+The daemon persists across commands (~50ms latency after first open). Closed automatically when Sisyphus exits.
 
 ```bash
-scripts/sb-browser open "https://journals.aps.org/prl/"
-scripts/sb-browser snapshot                    # accessibility tree with @refs
-scripts/sb-browser fill @e9 "Rydberg atom"     # fill search box
-scripts/sb-browser click @e10                  # click search button
-scripts/sb-browser get text                    # extract page text
-scripts/sb-browser close                       # shutdown
+scripts/browse open "https://journals.aps.org/prl/"
+scripts/browse state                           # clickable elements with indices
+scripts/browse input 5 "Rydberg atom"          # fill search box by index
+scripts/browse click 7                         # click element by index
+scripts/browse eval "document.body.innerText"  # extract full page text
+scripts/browse close                           # shutdown (optional, auto-closed on exit)
+```
+
+### Workflow: extract text from a protected page
+
+```bash
+scripts/browse open "https://journals.aps.org/prl/abstract/10.1103/PhysRevLett.117.073003"
+# If cookie consent appears, click accept:
+scripts/browse state                           # find the accept button index
+scripts/browse click <accept_index>
+# Extract content:
+scripts/browse eval "document.querySelector('.abstract')?.innerText"
+scripts/browse eval "document.querySelector('h3.title')?.innerText"
 ```
 
 ### Figure Extraction
@@ -117,6 +134,8 @@ scripts/extract-figures data/papers/paper.pdf --output report/figures/extracted
 
 ## Decision Guide
 
+**Use `scripts/search` first** — it covers most academic needs without a browser:
+
 | Need | Command |
 |------|---------|
 | Find papers by keyword | `search papers <query>` |
@@ -128,4 +147,14 @@ scripts/extract-figures data/papers/paper.pdf --output report/figures/extracted
 | General web search | `search web <query>` |
 | Fetch unprotected URL | `search fetch <url>` |
 | Extract figures from paper | `extract-figures <paper-path>` |
-| Cloudflare-protected site | `sb-browser open` → `snapshot` → interact → `get text` |
+
+**Use `scripts/browse` only when `search` cannot do the job** — it launches a real browser which is heavier:
+
+| Need | Command |
+|------|---------|
+| Government reports, policy docs | `browse open <url>` → `eval "document.body.innerText"` |
+| Non-academic web content (news, industry) | `browse open <url>` → `state` → interact |
+| Cloudflare-blocked page (last resort) | `browse open <url>` → extract content |
+| Interactive site requiring login/forms | `browse open <url>` → `state` → `input`/`click` |
+
+**Rule of thumb**: `search` for papers and academic data, `browse` for everything else (government sites, general web, protected pages). Don't use `browse` for tasks that `search` can handle.

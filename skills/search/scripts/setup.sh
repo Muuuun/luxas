@@ -15,27 +15,18 @@ if [ "$NODE_VERSION" -lt 22 ]; then
 fi
 echo "Node.js: v$(node -v | tr -d v)"
 
-# sb-browser needs Python + seleniumbase
-if command -v python3 &>/dev/null; then
-  echo "Python: $(python3 --version 2>&1 | awk '{print $2}')"
-  echo "Installing seleniumbase..."
-  pip3 install --user seleniumbase 2>&1 | tail -3
-
-  # Rosetta 2 for Apple Silicon
-  if [[ "$(uname -m)" == "arm64" ]] && [[ "$(uname)" == "Darwin" ]]; then
-    if ! /usr/bin/pgrep oahd &>/dev/null; then
-      echo "Installing Rosetta 2 (needed for chromedriver)..."
-      softwareupdate --install-rosetta --agree-to-license 2>/dev/null || true
-    fi
-  fi
-  echo "sb-browser: ready"
+# browser-use CLI for browser automation
+BROWSER_USE="$HOME/.browser-use-env/bin/browser-use"
+if [ -x "$BROWSER_USE" ]; then
+  echo "browser-use: ready ($BROWSER_USE)"
+  $BROWSER_USE doctor 2>&1 | grep -E '✓|✗|⚠' | head -5
 else
-  echo "Warning: python3 not found — sb-browser (anti-detect browser) will not work."
-  echo "Install Python 3.9+ if you need Cloudflare bypass."
+  echo "Warning: browser-use not found — browser automation will not work."
+  echo "Install: pip install browser-use (see https://github.com/browser-use/browser-use)"
 fi
 
 # Make scripts executable
-chmod +x "$SCRIPT_DIR/search" "$SCRIPT_DIR/sb-browser" 2>/dev/null
+chmod +x "$SCRIPT_DIR/search" 2>/dev/null
 
 # Brave Search (optional)
 if [ -z "$BRAVE_API_KEY" ]; then
@@ -49,4 +40,4 @@ echo "  $SCRIPT_DIR/search papers <query>"
 echo "  $SCRIPT_DIR/search citations <id>"
 echo "  $SCRIPT_DIR/search web <query>"
 echo "  $SCRIPT_DIR/search fetch <url>"
-echo "  $SCRIPT_DIR/sb-browser open <url>"
+echo "  browser-use open <url>"

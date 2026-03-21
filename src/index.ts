@@ -10,9 +10,24 @@
  *   sisyphus login                          Authenticate with Anthropic OAuth
  */
 
-import { existsSync, readFileSync, readdirSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, mkdirSync, writeFileSync, renameSync } from "node:fs";
+import { execSync } from "node:child_process";
 import { join, resolve } from "node:path";
 import { createResearchAgent } from "./agent.js";
+
+// Ensure pdflatex is in PATH (needed for usetex figstyles + compile_latex)
+try { execSync("which pdflatex", { stdio: "pipe" }); } catch {
+  const texDirs = ["/Library/TeX/texbin", "/usr/local/texlive/2026/bin/universal-darwin",
+    "/usr/local/texlive/2025/bin/universal-darwin"];
+  for (const d of texDirs) {
+    if (existsSync(join(d, "pdflatex"))) { process.env.PATH = `${d}:${process.env.PATH}`; break; }
+  }
+}
+// Ensure browser-use is in PATH (browser automation for search skill)
+const browserUseDir = join(process.env.HOME ?? "", ".browser-use-env", "bin");
+if (existsSync(join(browserUseDir, "browser-use")) && !process.env.PATH?.includes(browserUseDir)) {
+  process.env.PATH = `${browserUseDir}:${process.env.PATH}`;
+}
 import { loginAnthropicOAuth } from "./auth.js";
 import { registerProject, updateProjectAfterRun, loadProjects } from "./memory.js";
 import * as tmux from "./tmux.js";
@@ -78,6 +93,9 @@ async function run(dir: string, modelName: string, userDirective?: string) {
   }
 
   const researchGoal = readFileSync(researchFile, "utf-8").trim();
+
+  // If previous session finished, archive checkpoint + PI feedback so we start fresh
+  archiveIfFinished(dir);
 
   // Register in global project registry
   registerProject(dir);
@@ -156,6 +174,9 @@ async function run(dir: string, modelName: string, userDirective?: string) {
   // Save project summary to global registry
   updateProjectAfterRun(dir, hooks.tracker.totalCost, totalTokens);
 
+  // Clean up browser-use daemon if it was started during this session
+  try { execSync("browser-use close --all", { stdio: "pipe", timeout: 5000 }); } catch { /* not running */ }
+
   tmux.closeWindow(logFile, "sisyphus-main", true, Date.now() - t0);
 }
 
@@ -226,6 +247,58 @@ function listProjects() {
     }
     console.log();
   }
+}
+
+function archiveIfFinished(dir: string) {
+  const logJsonl = join(dir, ".agent", "log.jsonl");
+  const checkpointFile = join(dir, ".agent", "checkpoint.jsonl");
+
+  // Check both log and checkpoint for finish signal
+  let finished = false;
+
+  // Check log.jsonl last line
+  if (existsSync(logJsonl)) {
+    try {
+      const lastLine = readFileSync(logJsonl, "utf-8").trim().split("\n").pop() ?? "";
+      const lastEntry = JSON.parse(lastLine);
+      if (lastEntry.tool === "finish" && lastEntry.success) finished = true;
+    } catch { /* ignore */ }
+  }
+
+  // Check checkpoint for finish tool call (covers case where log was already archived)
+  if (!finished && existsSync(checkpointFile)) {
+    try {
+      const lines = readFileSync(checkpointFile, "utf-8").trim().split("\n");
+      // Check last few lines for a finish tool result
+      for (const line of lines.slice(-5)) {
+        try {
+          const entry = JSON.parse(line);
+          // Check for tool_use with finish name, or tool_result referencing finish
+          if (entry.role === "assistant" && Array.isArray(entry.content)) {
+            for (const block of entry.content) {
+              if (block.type === "toolCall" && block.name === "finish") finished = true;
+              if (block.type === "tool_use" && block.name === "finish") finished = true;
+            }
+          }
+        } catch { /* skip unparseable lines */ }
+      }
+    } catch { /* ignore */ }
+  }
+
+  if (!finished) return;
+
+  const ts = new Date().toISOString().replace(/[:.]/g, "-");
+  if (existsSync(checkpointFile)) {
+    renameSync(checkpointFile, checkpointFile.replace(".jsonl", `.done-${ts}.jsonl`));
+  }
+  const feedbackPath = join(dir, "reviews", "pi_feedback.md");
+  if (existsSync(feedbackPath)) {
+    renameSync(feedbackPath, feedbackPath.replace(".md", `.done-${ts}.md`));
+  }
+  if (existsSync(logJsonl)) {
+    renameSync(logJsonl, logJsonl.replace(".jsonl", `.done-${ts}.jsonl`));
+  }
+  console.log(`  ⟳ Previous session finished — starting fresh (archived)`);
 }
 
 function initProject(dir: string) {
