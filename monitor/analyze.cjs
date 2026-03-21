@@ -40,7 +40,16 @@ function readJsonLines(filePath) {
 }
 
 function argsHash(args) {
-  return crypto.createHash("md5").update(JSON.stringify(args ?? {}, Object.keys(args ?? {}).sort())).digest("hex").slice(0, 10);
+  // Sort keys for deterministic hashing, but use a replacer function
+  // (not an array) to avoid stripping nested keys at all levels
+  return crypto.createHash("md5").update(JSON.stringify(args ?? {}, (key, value) => {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      const sorted = {};
+      for (const k of Object.keys(value).sort()) sorted[k] = value[k];
+      return sorted;
+    }
+    return value;
+  })).digest("hex").slice(0, 10);
 }
 
 function normalizeDoi(doi) {

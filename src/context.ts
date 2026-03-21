@@ -220,10 +220,18 @@ function buildResearchSnapshot(opts: ContextTransformerOptions): string {
   const hasPdf = existsSync(join(projectDir, "report", "report.pdf"));
   parts.push(`## Report\n- report.tex: ${hasReport ? "exists" : "not yet"}\n- report.pdf: ${hasPdf ? "exists" : "not yet"}`);
 
-  // Downloaded papers
+  // Downloaded papers + figure extraction status
   const papersDir = join(projectDir, "data", "papers");
   const paperCount = countFiles(papersDir);
-  parts.push(`## Data\n- Downloaded papers: ${paperCount} files in data/papers/`);
+  const { extracted, unextracted } = countFigureExtraction(papersDir);
+  let dataSection = `## Data\n- Downloaded papers: ${paperCount} files in data/papers/`;
+  if (extracted > 0 || unextracted > 0) {
+    dataSection += `\n- Figure extraction: ${extracted} papers extracted, ${unextracted} pending`;
+    if (unextracted > 0 && extracted === 0) {
+      dataSection += ` ⚠️ Run extract-figures on downloaded PDFs before writing report!`;
+    }
+  }
+  parts.push(dataSection);
 
   // Scripts
   const scriptsDir = join(projectDir, "data", "scripts");
@@ -243,6 +251,29 @@ function buildResearchSnapshot(opts: ContextTransformerOptions): string {
 
 function countFiles(dir: string): number {
   try { return readdirSync(dir).length; } catch { return 0; }
+}
+
+/** Count how many papers have had figures extracted vs not. */
+function countFigureExtraction(papersDir: string): { extracted: number; unextracted: number } {
+  try {
+    const entries = readdirSync(papersDir, { withFileTypes: true });
+    const figDirs = new Set(
+      entries.filter(e => e.isDirectory() && e.name.endsWith("_figures")).map(e => e.name)
+    );
+    // Count PDFs and arXiv source dirs that could have figures extracted
+    let extractable = 0;
+    let extracted = 0;
+    for (const e of entries) {
+      if (e.name.endsWith("_figures")) continue; // skip figure dirs themselves
+      const baseName = e.name.replace(/\.(pdf|txt|html)$/, "");
+      if (e.name.endsWith(".txt") || e.name.endsWith(".html")) continue; // not extractable
+      extractable++;
+      if (figDirs.has(`${baseName}_figures`)) extracted++;
+    }
+    return { extracted, unextracted: extractable - extracted };
+  } catch {
+    return { extracted: 0, unextracted: 0 };
+  }
 }
 
 /**

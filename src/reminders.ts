@@ -11,7 +11,7 @@
  *   Tier 2 — Event providers: read flags set by afterToolCall hooks, with TTL
  */
 
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 // ── Interface ───────────────────────────────────────────────────────────────
@@ -183,6 +183,33 @@ const postLatexError: ReminderProvider = {
   },
 };
 
+/** Paper figures — remind to extract figures before writing report. */
+const paperFigures: ReminderProvider = {
+  id: "paper-figures",
+  priority: 12,
+  evaluate(ctx) {
+    const papersDir = join(ctx.projectDir, "data", "papers");
+    const reportTex = join(ctx.projectDir, "report", "report.tex");
+    try {
+      const entries = readdirSync(papersDir, { withFileTypes: true });
+      const hasPapers = entries.some(e => e.name.endsWith(".pdf") || (e.isDirectory() && !e.name.endsWith("_figures")));
+      if (!hasPapers) return null;
+      const hasFigDirs = entries.some(e => e.isDirectory() && e.name.endsWith("_figures"));
+      if (!hasFigDirs) {
+        return "Papers downloaded but NO figures extracted. Run: bash skills/search/scripts/extract-figures data/papers/<id>.pdf";
+      }
+      // Figures extracted but report exists without using them
+      if (existsSync(reportTex)) {
+        const tex = readFileSync(reportTex, "utf-8");
+        if (!tex.includes("_figures/")) {
+          return "Figures extracted but NOT used in report. Read manifest.json files, select key figures, add to report.tex.";
+        }
+      }
+    } catch {}
+    return null;
+  },
+};
+
 // ── Export ───────────────────────────────────────────────────────────────────
 
 export const builtinProviders: ReminderProvider[] = [
@@ -191,4 +218,5 @@ export const builtinProviders: ReminderProvider[] = [
   postExperiment,
   postWorkers,
   postLatexError,
+  paperFigures,
 ];

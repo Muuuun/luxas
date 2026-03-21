@@ -84,18 +84,47 @@ When you see a [MEMORY WARNING] message, it means context compaction is imminent
   2. If not specified → infer the best-fit venue from the research topic (e.g., quantum physics → PRL/PRX, ML → NeurIPS/ICML, chemistry → JACS, biomedical → Nature/Science).
   Then read skills/venue-specific/SKILL.md, load the matching venue file from skills/venue-specific/references/, and apply its exact formatting rules (page limits, figure specs, citation style, abstract length, section structure, etc.) throughout the report. Use bundled templates from skills/venue-specific/templates/ when available. State your chosen venue in notes/memory.md so it persists across compaction.
 
-### Figures
+### Figures from Downloaded Papers (MANDATORY for surveys)
 
-Downloaded papers have auto-extracted figures in data/papers/{id}/figures/ with a manifest.json. To use them:
-1. Read data/papers/{id}/figures/manifest.json to see available figures with captions.
-2. Copy the relevant figure to report/figures/ (create directory if needed).
-3. Include in LaTeX: \\includegraphics[width=\\linewidth]{figures/fig_name.pdf} inside a figure environment with \\caption and \\label.
+Figures are information. A survey report MUST include key figures from downloaded papers — architecture diagrams, experimental results, comparisons, and visualizations that help the reader understand the topic. Do NOT write a text-only survey when you have downloaded papers with figures.
 
-For experiment results, generate plots (matplotlib) and save to report/figures/.
+**Step 1 — Extract figures from downloaded papers:**
+After downloading papers, run extract-figures on each PDF to extract figures:
+\`\`\`bash
+bash skills/search/scripts/extract-figures data/papers/<paper-id>.pdf
+bash skills/search/scripts/extract-figures data/papers/<arxiv-id>   # arXiv source dir
+\`\`\`
+This creates a \`data/papers/<id>_figures/\` directory with extracted images and a \`manifest.json\` listing each figure with its caption and page number.
 
-A good report includes figures — architecture diagrams, result comparisons, key visualizations from papers. Don't write a text-only report when figures are available.
+**Step 2 — Review ALL figure captions:**
+Read every \`manifest.json\` to understand what figures are available:
+\`\`\`bash
+cat data/papers/*_figures/manifest.json
+\`\`\`
+Read each caption carefully. Identify figures that are:
+- Essential for understanding the topic (architecture diagrams, system schematics)
+- Key experimental results that support your narrative
+- Useful comparisons across methods, systems, or time periods
+- Visually informative (not just tables rendered as images)
 
-### Figure Quality Standards (MANDATORY)
+**Step 3 — Select and include in report:**
+For each selected figure, include it directly in LaTeX:
+\`\`\`latex
+\\begin{figure}[t]
+  \\centering
+  \\includegraphics[width=\\linewidth]{../data/papers/<id>_figures/<filename>}
+  \\caption{<Your caption describing the figure in context of your survey>. Adapted from \\cite{<key>}.}
+  \\label{fig:<label>}
+\\end{figure}
+\`\`\`
+
+**Rules:**
+- For survey/review reports: include at least 3-5 figures from downloaded papers, in addition to any you generate yourself.
+- Write your OWN captions that explain the figure in the context of your survey narrative — do not just copy the original caption.
+- Always cite the source paper with \\cite{}.
+- You may also generate your own figures (matplotlib) for data summaries, timelines, or comparisons not found in existing papers.
+
+### Figure Quality Standards (MANDATORY for generated figures)
 
 All generated figures MUST be publication-quality. Follow this workflow:
 
