@@ -226,9 +226,12 @@ function buildResearchSnapshot(opts: ContextTransformerOptions): string {
   const { extracted, unextracted } = countFigureExtraction(papersDir);
   let dataSection = `## Data\n- Downloaded papers: ${paperCount} files in data/papers/`;
   if (extracted > 0 || unextracted > 0) {
-    dataSection += `\n- Figure extraction: ${extracted} papers extracted, ${unextracted} pending`;
+    dataSection += `\n- Figures: ${extracted}/${extracted + unextracted} papers have figures extracted`;
+    if (unextracted > 0) {
+      dataSection += ` (${unextracted} still need extract-figures)`;
+    }
     if (unextracted > 0 && extracted === 0) {
-      dataSection += ` ⚠️ Run extract-figures on downloaded PDFs before writing report!`;
+      dataSection += ` ⚠️ Run extract-figures on PDFs before writing report!`;
     }
   }
   parts.push(dataSection);
