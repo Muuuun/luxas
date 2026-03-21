@@ -14,7 +14,7 @@ import * as tmux from "../tmux.js";
 const ExperimentParams = Type.Object({
   hypothesis: Type.String({ description: "The hypothesis being tested" }),
   task: Type.String({ description: "What code to write and what experiments to run" }),
-  thinkingLevel: Type.Optional(Type.String({ description: "Thinking level: off, low, medium, high (default: medium)" })),
+  thinkingLevel: Type.Optional(Type.String({ description: "Thinking level controls model and reasoning depth. 'off'/'low': fast, minimal reasoning (simple file ops). 'medium' (default): balanced (plotting, standard scripts). 'high': uses strongest model (opus) for complex physics simulations, difficult algorithms, or tasks requiring deep reasoning." })),
 });
 
 /**

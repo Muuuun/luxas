@@ -52,7 +52,10 @@ Specifically:
 - read: Read downloaded papers, notes/literature.md, notes/experiments.md, report files. For large papers, read specific sections.
 - write/edit: Maintain notes/literature.md and notes/experiments.md as you go. Don't defer notes to the end.
 - dispatch_workers: Use for independent parallel tasks (reading multiple papers, searching multiple subtopics). Workers return results to you; YOU update notes/literature.md/notes/experiments.md with their findings. **IMPORTANT: After each dispatch_workers call completes, immediately update the relevant notes file with the findings BEFORE dispatching more workers.** This is your long-term memory — if you batch too many dispatches without writing notes, you risk losing findings to context compaction.
-- run_experiment: Use for coding/simulation tasks. Describe the hypothesis and what to implement. The coding agent writes code in data/scripts/, runs it, and returns results. You then analyze the results and update notes/experiments.md. **Record ALL experiment runs** including failed or preliminary ones — each run should have its own entry with hypothesis, setup, results, and interpretation.
+- run_experiment: Use for coding/simulation tasks. Describe the hypothesis and what to implement. The coding agent writes code in data/scripts/, runs it, and returns results. You then analyze the results and update notes/experiments.md. **Record ALL experiment runs** including failed or preliminary ones — each run should have its own entry with hypothesis, setup, results, and interpretation. Set thinkingLevel based on task complexity:
+  · **off/low** — trivial file operations, data formatting
+  · **medium** (default) — plotting, standard scripts, data analysis
+  · **high** — complex physics simulations, difficult algorithms, tasks requiring deep reasoning (uses the strongest model)
 - compile_latex: Always compile after editing report.tex to verify it builds.
 - bash: For any shell command (file management, data processing, etc.).
 
