@@ -22,7 +22,7 @@ const command = args[0] ?? "run";
 
 // Parse flags
 let projectDir = ".";
-let model = "sonnet";
+let model = "opus";
 let directive: string | undefined;
 
 for (let i = 1; i < args.length; i++) {

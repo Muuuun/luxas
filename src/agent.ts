@@ -51,9 +51,12 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
   // Enforce absolute projectDir — all tools depend on this
   const projectDir = isAbsolute(opts.projectDir) ? opts.projectDir : resolve(opts.projectDir);
 
-  const modelKey = opts.model ?? "sonnet";
-  const [provider, modelId] = MODEL_MAP[modelKey] ?? MODEL_MAP.sonnet;
+  // Main agent uses opus by default; workers/sub-agents use sonnet
+  const modelKey = opts.model ?? "opus";
+  const [provider, modelId] = MODEL_MAP[modelKey] ?? MODEL_MAP.opus;
   const model = getModel(provider as any, modelId as any);
+  const workerModelKey = "sonnet";
+  const workerModel = getModel(MODEL_MAP[workerModelKey][0] as any, MODEL_MAP[workerModelKey][1] as any);
   const thinkingLevel = opts.thinkingLevel ?? "medium";
 
   // Layer 1: System Prompt — now includes projectDir
@@ -83,7 +86,7 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
   // Created after hooks so sub-agents can report costs via trackUsage
   // finish tool callback — set after agent is created (needs reference to agent)
   let finishCallback: (() => void) | undefined;
-  const tools = buildResearchTools(projectDir, model, getApiKey, hooks.trackUsage, {
+  const tools = buildResearchTools(projectDir, model, workerModel, getApiKey, hooks.trackUsage, {
     onFinish: () => finishCallback?.(),
   });
 

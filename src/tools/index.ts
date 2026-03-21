@@ -15,6 +15,7 @@ export interface ToolCallbacks {
 export function buildResearchTools(
   projectDir: string,
   model: Model<any>,
+  workerModel: Model<any>,
   getApiKey: (provider: string) => Promise<string | undefined> | string | undefined,
   trackUsage?: (usage: any) => void,
   callbacks?: ToolCallbacks,
@@ -22,11 +23,12 @@ export function buildResearchTools(
   const codingTools = createCodingToolsForProject(projectDir);
   const reportTools = createReportTools(projectDir);
 
-  // Search, download, citations, web are now a skill — agent uses bash to call scripts/search
+  // Workers use workerModel (sonnet) for cost efficiency
   const workerTools = [...codingTools];
-  const dispatchWorkers = createDispatchWorkersTool(workerTools, model, getApiKey, projectDir, trackUsage);
+  const dispatchWorkers = createDispatchWorkersTool(workerTools, workerModel, getApiKey, projectDir, trackUsage);
 
-  const experimentTool = createExperimentTool(projectDir, model, getApiKey, trackUsage);
+  // Experiment uses workerModel by default; main agent can request opus via thinkingLevel
+  const experimentTool = createExperimentTool(projectDir, workerModel, getApiKey, trackUsage);
 
   // finish tool — agent calls this when research is complete
   const finishTool = {
