@@ -96,19 +96,33 @@ bash skills/search/scripts/extract-figures data/papers/<arxiv-id>   # arXiv sour
 \`\`\`
 This creates a \`data/papers/<id>_figures/\` directory with extracted images and a \`manifest.json\` listing each figure with its caption and page number.
 
-**Step 2 — Review ALL figure captions:**
+**Step 2 — Review ALL figure captions and classify:**
 Read every \`manifest.json\` to understand what figures are available:
 \`\`\`bash
 cat data/papers/*_figures/manifest.json
 \`\`\`
-Read each caption carefully. Identify figures that are:
+Read each caption carefully. Then record your decisions in notes/memory.md under a \`## Figure Review\` section. Classify every figure into one of three states:
+- **USE** — Important, helps the reader understand the topic. Will be included in report.
+- **SKIP** — Not relevant, redundant, or low quality. Will not be used.
+- **UNREVIEWED** — Haven't read the caption yet.
+
+Format:
+\`\`\`markdown
+## Figure Review
+- [USE] 2312.03982_figures/fig1_p003.png — Logical qubit architecture diagram (cite: Bluvstein_2023)
+- [USE] 10_1103_PhysRevLett_figures/fig2_p005.png — Gate fidelity comparison across platforms
+- [SKIP] 2312.03982_figures/fig4_p012.png — Supplementary calibration data, not needed
+- [SKIP] 2006.12326_figures/fig1_p001.png — Low resolution, similar diagram available elsewhere
+\`\`\`
+
+Select figures that are:
 - Essential for understanding the topic (architecture diagrams, system schematics)
 - Key experimental results that support your narrative
 - Useful comparisons across methods, systems, or time periods
 - Visually informative (not just tables rendered as images)
 
-**Step 3 — Select and include in report:**
-For each selected figure, include it directly in LaTeX:
+**Step 3 — Include [USE] figures in report:**
+For each figure marked [USE], include it directly in LaTeX:
 \`\`\`latex
 \\begin{figure}[t]
   \\centering
@@ -119,10 +133,11 @@ For each selected figure, include it directly in LaTeX:
 \`\`\`
 
 **Rules:**
-- For survey/review reports: include at least 3-5 figures from downloaded papers, in addition to any you generate yourself.
+- For survey/review reports: include at least 3-5 [USE] figures from downloaded papers, in addition to any you generate yourself.
 - Write your OWN captions that explain the figure in the context of your survey narrative — do not just copy the original caption.
 - Always cite the source paper with \\cite{}.
 - You may also generate your own figures (matplotlib) for data summaries, timelines, or comparisons not found in existing papers.
+- Do NOT skip the review step — every extracted figure must be classified before writing the report.
 
 ### Figure Quality Standards (MANDATORY for generated figures)
 

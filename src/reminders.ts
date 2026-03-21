@@ -184,27 +184,28 @@ const postLatexError: ReminderProvider = {
 };
 
 /** Paper figures — remind to extract figures before writing report. */
+/** Paper figures — three-stage reminder: extract → review → include. */
 const paperFigures: ReminderProvider = {
   id: "paper-figures",
   priority: 12,
   evaluate(ctx) {
     const papersDir = join(ctx.projectDir, "data", "papers");
-    const reportTex = join(ctx.projectDir, "report", "report.tex");
     try {
       const entries = readdirSync(papersDir, { withFileTypes: true });
       const hasPapers = entries.some(e => e.name.endsWith(".pdf") || (e.isDirectory() && !e.name.endsWith("_figures")));
       if (!hasPapers) return null;
       const hasFigDirs = entries.some(e => e.isDirectory() && e.name.endsWith("_figures"));
+      // Stage 1: papers exist but no figures extracted
       if (!hasFigDirs) {
-        return "Papers downloaded but NO figures extracted. Run: bash skills/search/scripts/extract-figures data/papers/<id>.pdf";
+        return "Papers downloaded but NO figures extracted. Run extract-figures on each PDF.";
       }
-      // Figures extracted but report exists without using them
-      if (existsSync(reportTex)) {
-        const tex = readFileSync(reportTex, "utf-8");
-        if (!tex.includes("_figures/")) {
-          return "Figures extracted but NOT used in report. Read manifest.json files, select key figures, add to report.tex.";
-        }
+      // Stage 2: figures extracted but not reviewed in notes
+      const mem = join(ctx.projectDir, "notes", "memory.md");
+      if (existsSync(mem)) {
+        const notes = readFileSync(mem, "utf-8");
+        if (notes.includes("## Figure Review")) return null; // reviewed — done
       }
+      return "Figures extracted but NOT reviewed. Read manifest.json captions, add ## Figure Review to notes/memory.md.";
     } catch {}
     return null;
   },
