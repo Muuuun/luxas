@@ -109,12 +109,24 @@ export function buildContextTransformer(opts: ContextTransformerOptions) {
       // #8: Emit after_compaction event
       await bus?.emit({ type: "after_compaction", summary, droppedCount: oldMessages.length });
 
+      // Layer B: Detect if research appears complete → guide agent to finish()
+    let completionHint = "";
+    const hasPdf = existsSync(join(projectDir, "report", "report.pdf"));
+    const piPath = join(projectDir, "reviews", "pi_feedback.md");
+    const piFeedback = readFileSafe(piPath) ?? "";
+    const piApproved = piFeedback.includes("CONTINUE") || piFeedback.includes("APPROVED");
+    if (hasPdf && piApproved) {
+      completionHint = "\n\n⚠️ Research appears COMPLETE (PDF compiled, PI approved). If there is nothing left to do, call finish() immediately. Do NOT re-read memory.md in a loop.";
+    } else if (hasPdf) {
+      completionHint = "\n\nNote: report.pdf exists. If you have completed all research tasks, request PI review and then call finish().";
+    }
+
       return [
         // Research snapshot (ground truth from files)
         { role: "user", content: snapshot, timestamp: Date.now() },
         { role: "assistant", content: [{ type: "text", text: "I've reviewed the current research state. Let me continue from where I left off." }], timestamp: Date.now() },
         // LLM-compacted history + post-compaction reminder
-        { role: "user", content: `<compacted_history>\n${summary}\n</compacted_history>\n\n[MEMORY] Context was compacted — ${oldMessages.length} earlier messages were summarized above. Your notes files (notes/literature.md, notes/experiments.md, notes/memory.md) are your ground truth. If you recall working on something not yet saved to notes, save it now before continuing.`, timestamp: Date.now() },
+        { role: "user", content: `<compacted_history>\n${summary}\n</compacted_history>\n\n[MEMORY] Context was compacted — ${oldMessages.length} earlier messages were summarized above. Your notes files (notes/literature.md, notes/experiments.md, notes/memory.md) are your ground truth. If you recall working on something not yet saved to notes, save it now before continuing.${completionHint}`, timestamp: Date.now() },
         { role: "assistant", content: [{ type: "text", text: "Understood. I'll check my notes and continue based on the current research state." }], timestamp: Date.now() },
         // Recent messages preserved as-is (starts at clean boundary)
         ...recentMessages,

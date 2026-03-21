@@ -81,7 +81,11 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
 
   // Layer 2: Tools (research tools + PI review tool)
   // Created after hooks so sub-agents can report costs via trackUsage
-  const tools = buildResearchTools(projectDir, model, getApiKey, hooks.trackUsage);
+  // finish tool callback — set after agent is created (needs reference to agent)
+  let finishCallback: (() => void) | undefined;
+  const tools = buildResearchTools(projectDir, model, getApiKey, hooks.trackUsage, {
+    onFinish: () => finishCallback?.(),
+  });
 
   const piMonitorOpts = {
     projectDir: projectDir,
@@ -134,6 +138,9 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
     afterToolCall: hooks.after,
     getApiKey,
   });
+
+  // Wire finish tool to abort the agent loop
+  finishCallback = () => agent.abort();
 
   // #5: Session DAG — replaces raw appendFileSync checkpoint
   const agentDir = join(projectDir, ".agent");

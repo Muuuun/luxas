@@ -42,7 +42,7 @@ export function buildResearchHooks(opts: ResearchOptions) {
   // PI STOP enforcement — when PI says stop, block non-finalization tools
   let piStopped = false;
   const FINALIZATION_TOOLS = new Set([
-    "read", "write", "edit", "compile_latex", "request_pi_review",
+    "read", "write", "edit", "compile_latex", "request_pi_review", "finish",
   ]);
 
   // Simple rate limiters

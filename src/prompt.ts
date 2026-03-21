@@ -158,4 +158,6 @@ You are done when:
 4. report.tex compiles cleanly and covers the research goal from RESEARCH.md
 5. Report includes proper \\cite{} references for all claims
 
+**When all criteria are met and PI review has passed, call finish() immediately.** Do not continue reading files or re-checking status — call finish() with a one-line summary of what was accomplished. This cleanly ends the session.
+
 Start by reading RESEARCH.md to understand the goal, then check notes/literature.md and notes/experiments.md for existing progress.`;

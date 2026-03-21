@@ -1,8 +1,8 @@
 ---
 name: search
-description: Unified academic paper search, citation chains, paper download (arXiv LaTeX/PDF, Sci-Hub), LaTeX source reading, BibTeX fetching, web search, and anti-detect browsing for Cloudflare-protected sites (PRL, Science, Nature, Google Scholar).
-compatibility: Requires Node.js 22+. Optional: Python 3.9+ and seleniumbase for sb-browser. BRAVE_API_KEY env var for web search.
-allowed-tools: Bash(search:*) Bash(sb-browser:*)
+description: Unified academic paper search, citation chains, paper download (arXiv LaTeX/PDF, Sci-Hub), figure extraction from papers, LaTeX source reading, BibTeX fetching, web search, and anti-detect browsing for Cloudflare-protected sites (PRL, Science, Nature, Google Scholar).
+compatibility: Requires Node.js 22+. Optional: Python 3.9+ and seleniumbase for sb-browser. PyMuPDF and Pillow for figure extraction.
+allowed-tools: Bash(search:*) Bash(sb-browser:*) Bash(extract-figures:*)
 ---
 
 # Search Skill
@@ -102,6 +102,19 @@ scripts/sb-browser get text                    # extract page text
 scripts/sb-browser close                       # shutdown
 ```
 
+### Figure Extraction
+
+```bash
+scripts/extract-figures data/papers/2104.10350.pdf
+scripts/extract-figures data/papers/2301.07041              # arXiv source dir
+scripts/extract-figures data/papers/paper.pdf --output report/figures/extracted
+```
+
+- **arXiv source**: Parses `.tex` for `\includegraphics`, copies original figure files (PDF/PNG/EPS). Best quality.
+- **PDF**: Renders pages at 200 DPI, detects "Figure N" captions, crops figure regions. Works on both raster and vector figures.
+- Outputs a `manifest.json` with figure metadata (filename, caption, page number).
+- Use this to extract key figures from papers for inclusion in your report.
+
 ## Decision Guide
 
 | Need | Command |
@@ -114,4 +127,5 @@ scripts/sb-browser close                       # shutdown
 | Get BibTeX citation | `search bib <doi>` |
 | General web search | `search web <query>` |
 | Fetch unprotected URL | `search fetch <url>` |
+| Extract figures from paper | `extract-figures <paper-path>` |
 | Cloudflare-protected site | `sb-browser open` → `snapshot` → interact → `get text` |
