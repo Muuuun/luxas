@@ -7,6 +7,7 @@
  *   sisyphus run [project-dir] --model opus Use a specific model
  *   sisyphus status [project-dir]           Show project status
  *   sisyphus init [project-dir]             Initialize a new project
+ *   sisyphus init [project-dir] --prompt "..." Generate RESEARCH.md from a topic
  *   sisyphus login                          Authenticate with Anthropic OAuth
  */
 
@@ -39,12 +40,15 @@ const command = args[0] ?? "run";
 let projectDir = ".";
 let model = "opus";
 let directive: string | undefined;
+let initPrompt: string | undefined;
 
 for (let i = 1; i < args.length; i++) {
   if (args[i] === "--model" && args[i + 1]) {
     model = args[++i];
   } else if (args[i] === "--directive" && args[i + 1]) {
     directive = args[++i];
+  } else if (args[i] === "--prompt" && args[i + 1]) {
+    initPrompt = args[++i];
   } else if (!args[i].startsWith("--")) {
     projectDir = args[i];
   }
@@ -63,7 +67,7 @@ if (command === "status") {
 }
 
 if (command === "init") {
-  initProject(projectDir);
+  await initProject(projectDir, initPrompt);
   process.exit(0);
 }
 
@@ -301,7 +305,7 @@ function archiveIfFinished(dir: string) {
   console.log(`  ⟳ Previous session finished — starting fresh (archived)`);
 }
 
-function initProject(dir: string) {
+async function initProject(dir: string, prompt?: string) {
   mkdirSync(dir, { recursive: true });
   mkdirSync(join(dir, "notes"), { recursive: true });
   mkdirSync(join(dir, "report"), { recursive: true });
@@ -312,7 +316,14 @@ function initProject(dir: string) {
   mkdirSync(join(dir, ".agent"), { recursive: true });
 
   const researchFile = join(dir, "RESEARCH.md");
-  if (!existsSync(researchFile)) {
+
+  if (prompt) {
+    // Generate RESEARCH.md from prompt using PI (Opus)
+    console.log("Generating RESEARCH.md from prompt...");
+    const content = await generateResearchGoal(prompt);
+    writeFileSync(researchFile, content);
+    console.log(`Created ${researchFile} (PI-generated from prompt)`);
+  } else if (!existsSync(researchFile)) {
     writeFileSync(researchFile, "# Research Goal\n\nDescribe your research goal here.\n");
     console.log(`Created ${researchFile}`);
   }
@@ -332,4 +343,67 @@ function initProject(dir: string) {
   registerProject(dir);
 
   console.log(`Initialized Sisyphus project at ${dir}`);
+}
+
+async function generateResearchGoal(prompt: string): Promise<string> {
+  const { getModel, completeSimple } = await import("@mariozechner/pi-ai");
+  const { getApiKey } = await import("./auth.js");
+
+  const model = getModel("anthropic" as any, "claude-opus-4-6" as any);
+  const apiKey = await getApiKey("anthropic");
+  if (!apiKey) {
+    console.error("No API key available. Run: sisyphus login");
+    process.exit(1);
+  }
+
+  const systemPrompt = `You are a Principal Investigator (PI) — a senior professor defining a research agenda for an autonomous research agent.
+
+Given a topic or idea from the user, write a complete RESEARCH.md file that will guide the agent's research. The agent will:
+- Search and read academic papers
+- Run computational experiments
+- Write a LaTeX report
+
+Your RESEARCH.md must be specific enough to guide autonomous execution, but broad enough to allow the agent to discover unexpected directions.
+
+Output format — write ONLY the file content, no explanations:
+
+# Research Goal
+
+[1-2 sentence high-level objective]
+
+## Scope
+
+[What's in scope and what's explicitly out of scope]
+
+## Key Questions
+
+[Numbered list of specific questions to answer]
+
+## Methodology
+
+[What approach should the agent take? Literature survey only? Experiments needed? What kind?]
+
+## Expected Deliverables
+
+[What should the final report contain?]
+
+## Target Venue
+
+[Suggest an appropriate journal/conference for the report format, e.g. "Nature Reviews Physics" for a review, "NeurIPS" for ML, etc.]`;
+
+  const response = await completeSimple(model, {
+    systemPrompt,
+    messages: [{
+      role: "user",
+      content: [{ type: "text", text: prompt }],
+      timestamp: Date.now(),
+    }],
+    tools: [],
+  }, {
+    maxTokens: 2048,
+    apiKey,
+  } as any);
+
+  const { extractTextContent } = await import("./utils.js");
+  return extractTextContent(response.content);
 }
