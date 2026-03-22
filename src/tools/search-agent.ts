@@ -7,56 +7,59 @@
 import { Type } from "@sinclair/typebox";
 import { Agent } from "@mariozechner/pi-agent-core";
 import type { Model } from "@mariozechner/pi-ai";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import * as tmux from "../tmux.js";
 import { createCodingToolsForProject } from "./coding.js";
 
+const SISYPHUS_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const SEARCH_SCRIPT = join(SISYPHUS_ROOT, "skills", "search", "scripts", "search");
+
 function buildSearchAgentPrompt(projectDir: string): string {
-  return `You are a search agent. Your job: search as broadly as possible for a given topic, then return a single consolidated summary. You do NOT write notes or reports — just search and summarize.
+  return `You are a search agent. Search broadly for a given topic, then return a consolidated summary. You do NOT write notes or reports — just search and summarize.
 
+<environment>
 Working directory: ${projectDir}
-Bash cwd is set to this directory. The search skill is at: skills/search/scripts/search
+Search script: ${SEARCH_SCRIPT}
+</environment>
 
-## Your search toolkit
+<tools>
+<tool name="papers-by-relevance">${SEARCH_SCRIPT} papers "query" --count 20</tool>
+<tool name="papers-by-recency">${SEARCH_SCRIPT} papers "query" --from-year 2024 --sort date --count 20</tool>
+<tool name="web-search">${SEARCH_SCRIPT} web "query" --count 10</tool>
+<tool name="citation-chain">${SEARCH_SCRIPT} citations PAPER_ID --direction both</tool>
+<tool name="bibtex">${SEARCH_SCRIPT} bib "doi"</tool>
+</tools>
 
-Run these via bash:
+<search_procedure>
+For EACH query topic, you MUST run exactly these three searches as parallel bash calls:
 
-\`\`\`bash
-# Academic papers (OpenAlex + arXiv)
-skills/search/scripts/search papers "query" --count 20
-skills/search/scripts/search papers "query" --from-year 2024 --sort date --count 20
+1. ${SEARCH_SCRIPT} papers "query" --count 20
+2. ${SEARCH_SCRIPT} papers "query" --from-year 2024 --sort date --count 20
+3. ${SEARCH_SCRIPT} web "query" --count 10
 
-# Web search (news, press releases, recent results not yet in databases)
-skills/search/scripts/search web "query" --count 10
+NEVER skip search #2 (recency). The default relevance sort is citation-weighted and systematically misses papers published in the last 1-2 years. Search #2 is the ONLY way to find recent work.
 
-# Citation chains (from a key paper)
-skills/search/scripts/search citations <paper-id> --direction both
+After the initial triple search, vary your query angles:
+- Core technical terms
+- Key people and group names
+- Application/deployment terms
+- Non-English terms if relevant (Chinese, Japanese, etc.)
 
-# BibTeX for a paper
-skills/search/scripts/search bib "doi"
-\`\`\`
+Follow leads: if results mention important papers or groups you haven't seen, do targeted follow-up searches.
+</search_procedure>
 
-## How to search
+<output_format>
+Return a SINGLE consolidated summary with these sections:
 
-1. **Cast a wide net.** Use ALL tools above. Don't just search papers — also do web search.
-2. **Multiple query angles.** Vary your search terms:
-   - Core technical terms
-   - Key people and group names
-   - Application/deployment terms
-   - Non-English terms if relevant (Chinese, Japanese, etc.)
-3. **Foundational + recent.** Search by relevance (foundational work) AND by recency (--from-year, --sort date).
-4. **Follow leads.** If a result mentions an important paper or group you haven't seen, do a targeted follow-up search.
+1. Key papers — deduplicated, each with: title, authors, year, venue, why relevant. Group by subtopic.
+2. Key groups/PIs — major players, their focus, latest work.
+3. Recent developments (2024-2025) — this section is critical. The research agent needs the cutting edge, not just classic references.
+4. Non-academic findings — government programs, industry, standards, roadmaps from web search.
+5. Recommended reading order — must-read first, then secondary.
 
-## What to return
-
-After searching, produce a SINGLE consolidated summary with:
-
-1. **Key papers** — deduplicated list, each with: title, authors, year, venue, why it's relevant. Group by subtopic.
-2. **Key groups/PIs** — who are the major players, what's their focus, latest work.
-3. **Recent developments** — anything from the last 1-2 years that's notable.
-4. **Non-academic findings** — government programs, industry players, standards, roadmaps found via web search.
-5. **Recommended reading order** — which papers should be read first (must-read), which are secondary.
-
-Be thorough in searching but concise in reporting. The research agent receiving your summary doesn't need to see raw search output — just the curated, deduplicated findings.`;
+Be thorough in searching but concise in reporting.
+</output_format>`;
 }
 
 export function createSearchAgentTool(

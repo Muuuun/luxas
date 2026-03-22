@@ -2,8 +2,21 @@
  * Layer 1: System Prompt — research methodology and tool guidance.
  */
 
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+
+const SISYPHUS_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+const SEARCH_SCRIPT_PATH = join(SISYPHUS_ROOT, "skills", "search", "scripts", "search");
+const EXTRACT_FIGURES_PATH = join(SISYPHUS_ROOT, "skills", "search", "scripts", "extract-figures");
+
+const SKILLS_DIR = join(SISYPHUS_ROOT, "skills");
+
 export function buildResearchPrompt(projectDir: string): string {
-  return SYSTEM_PROMPT.replace("{{PROJECT_DIR}}", projectDir);
+  return SYSTEM_PROMPT
+    .replace("{{PROJECT_DIR}}", projectDir)
+    .replaceAll("skills/search/scripts/search", SEARCH_SCRIPT_PATH)
+    .replaceAll("skills/search/scripts/extract-figures", EXTRACT_FIGURES_PATH)
+    .replaceAll("skills/venue-specific/", join(SKILLS_DIR, "venue-specific") + "/");
 }
 
 const SYSTEM_PROMPT = `You are Sisyphus, an autonomous research agent. You have tools for searching papers, downloading them, reading them, running experiments, and writing reports.
@@ -110,6 +123,16 @@ When you see a [MEMORY WARNING] message, it means context compaction is imminent
 - Use \\cite{} commands referencing entries in references.bib.
 - Compile with compile_latex to verify. Fix any errors before continuing.
 - Report should cover: background, methods, results (from both literature and experiments), discussion, conclusion.
+- **Report language** (priority order):
+  1. If RESEARCH.md explicitly specifies a report language (e.g., "报告语言：中文", "write the report in English") → use that language. This overrides everything.
+  2. Otherwise, infer from ALL available signals — not just what language the text is written in:
+     - The language RESEARCH.md is primarily written in (strongest signal)
+     - The project directory name (e.g., a Chinese directory name like "空气污染防治" signals Chinese)
+     - The target audience (e.g., "为国家制定规划提供决策支撑" → Chinese audience → Chinese report)
+     - The subject matter context (e.g., Chinese domestic policy/regulation → Chinese)
+     If these signals conflict, follow the majority. If RESEARCH.md is in English but all other signals point to another language (Chinese directory name + Chinese audience + Chinese policy topic), use that language.
+  3. Record your language decision in notes/plan.md during the planning phase (e.g., "Report language: Chinese") so it is explicit and reviewable.
+  Technical terms may include the other-language equivalent in parentheses (e.g., "有毒有害空气污染物（HAPs）"). References remain in their original language.
 - **Venue-specific formatting**: Before writing the report, determine the target venue:
   1. If RESEARCH.md specifies a target journal/conference → use that venue.
   2. If not specified → infer the best-fit venue from the research topic (e.g., quantum physics → PRL/PRX, ML → NeurIPS/ICML, chemistry → JACS, biomedical → Nature/Science).

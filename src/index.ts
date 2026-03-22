@@ -365,6 +365,11 @@ Given a topic or idea from the user, write a complete RESEARCH.md file that will
 
 Your RESEARCH.md must be specific enough to guide autonomous execution, but broad enough to allow the agent to discover unexpected directions.
 
+**CRITICAL — Language rule**: The research agent determines the report language from the RESEARCH.md language.
+- Default: write RESEARCH.md in the same language as the user's input. Chinese input → Chinese RESEARCH.md → Chinese report.
+- Exception: if the user explicitly requests a specific output language (e.g., "用英文写" or "write in English"), follow that instruction — write RESEARCH.md in the requested language.
+- Never silently translate the user's input into English when they didn't ask for it.
+
 Output format — write ONLY the file content, no explanations:
 
 # Research Goal

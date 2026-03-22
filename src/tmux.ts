@@ -83,7 +83,7 @@ export function createAgentObserver(logFile: string | null): (event: any) => voi
     if (!logFile) return;
 
     if (event.type === "tool_execution_start") {
-      const argsPreview = event.args ? JSON.stringify(event.args).slice(0, 80) : "";
+      const argsPreview = event.args ? JSON.stringify(event.args).slice(0, 200) : "";
       log(logFile, `✻ ${event.toolName} ${argsPreview}`);
     }
     if (event.type === "tool_execution_end") {

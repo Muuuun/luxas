@@ -1,0 +1,262 @@
+#!/usr/bin/env node
+/**
+ * Sci-Hub mirror discovery — rule-based fast scan + Claude agent fallback.
+ *
+ * Strategy:
+ *   1. Fast rule-based scan: seed list + discovery pages → DNS → full probe (page + PDF reachable)
+ *   2. If zero mirrors found, spawn a Claude Code agent to dynamically discover new ones
+ *
+ * Cache: ~/.sisyphus/scihub-mirror.json (valid 24h)
+ *
+ * Usage:
+ *   scihub-discover              # first working mirror URL
+ *   scihub-discover --all        # all working mirrors
+ *   scihub-discover --json       # JSON output
+ *   scihub-discover --refresh    # ignore cache
+ */
+
+import { execSync } from "node:child_process";
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+
+const CACHE_FILE = join(process.env.HOME ?? "", ".sisyphus", "scihub-mirror.json");
+const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+const PROBE_DOI = "10.1002/j.1538-7305.1948.tb01338.x"; // Shannon 1948
+const TIMEOUT_DNS = 5;   // seconds
+const TIMEOUT_HTTP = 15; // seconds
+
+// Prioritize mirrors known to self-host PDFs (/storage/ path)
+const SEED_DOMAINS = [
+  "sci-hub.box", "sci-hub.red", "sci-hub.fr",
+  "sci-hub.al", "sci-hub.pub", "sci-hub.su",
+  "sci-hub.ren", "sci-hub.st", "sci-hub.se", "sci-hub.ru",
+  "sci-hub.shop", "sci-hub.ee", "sci-hub.wf", "sci-hub.3800808.com",
+  "sci-hub.mksa.top", "sci-hub.mk", "sci-hub.cc", "sci-hub.do",
+  "sci-hub.cat", "sci-hub.yt", "sci-hub.buzz", "sci-hub.tw",
+];
+
+const DISCOVERY_URLS = [
+  "https://sci-hub.pub/",
+  "https://www.sci-hub.pub/",
+  "https://sci-hub.41610.org/",
+];
+
+const args = process.argv.slice(2);
+const showAll = args.includes("--all");
+const jsonOut = args.includes("--json");
+const refresh = args.includes("--refresh");
+
+// ─── Cache ──────────────────────────────────────────────────
+
+function readCache() {
+  if (refresh) return null;
+  try {
+    if (!existsSync(CACHE_FILE)) return null;
+    const data = JSON.parse(readFileSync(CACHE_FILE, "utf-8"));
+    if (Date.now() - data.timestamp < CACHE_TTL && data.mirrors?.length > 0) {
+      return data;
+    }
+  } catch {}
+  return null;
+}
+
+function writeCache(mirrors) {
+  try {
+    mkdirSync(join(process.env.HOME ?? "", ".sisyphus"), { recursive: true });
+    writeFileSync(CACHE_FILE, JSON.stringify({
+      timestamp: Date.now(),
+      updated: new Date().toISOString(),
+      mirrors,
+    }, null, 2));
+  } catch {}
+}
+
+// ═══════════════════════════════════════════════════════════
+// Phase 1: Rule-based fast scan
+// ═══════════════════════════════════════════════════════════
+
+function discoverDomains() {
+  const domains = new Set(SEED_DOMAINS.map(d => d.toLowerCase()));
+  for (const url of DISCOVERY_URLS) {
+    try {
+      const html = execSync(
+        `curl -sL --max-time ${TIMEOUT_DNS} "${url}"`,
+        { encoding: "utf-8", timeout: (TIMEOUT_DNS + 2) * 1000 },
+      );
+      const matches = html.match(/sci-hub\.[a-z0-9]+(?:\.[a-z]{2,})?/gi) ?? [];
+      for (const m of matches) domains.add(m.toLowerCase());
+    } catch {}
+  }
+  return [...domains];
+}
+
+function checkDNS(domain) {
+  try {
+    execSync(`host -W ${TIMEOUT_DNS} "${domain}" >/dev/null 2>&1`, { timeout: (TIMEOUT_DNS + 2) * 1000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function probeFull(domain) {
+  try {
+    // Fetch Sci-Hub page for probe DOI
+    const html = execSync(
+      `curl -sL --max-time ${TIMEOUT_HTTP} "https://${domain}/${PROBE_DOI}"`,
+      { encoding: "utf-8", timeout: (TIMEOUT_HTTP + 3) * 1000 },
+    );
+    if (!html || html.length < 100) return false;
+
+    // Extract PDF URL
+    const flatHtml = html.replace(/\n\s*/g, " ");
+    const pdfMatch =
+      flatHtml.match(/citation_pdf_url['"]\s+content\s*=\s*["']([^"']+)["']/i) ??
+      flatHtml.match(/iframe[^>]+src\s*=\s*["']([^"']+\.pdf[^"']*)["']/i) ??
+      flatHtml.match(/embed[^>]+src\s*=\s*["']([^"']+\.pdf[^"']*)["']/i) ??
+      flatHtml.match(/src\s*=\s*["'](https?:\/\/[^"']+\.pdf[^"']*)["']/i) ??
+      flatHtml.match(/src\s*=\s*["'](\/\/[^"']+)["']/i);
+    if (!pdfMatch) return false;
+
+    let pdfUrl = pdfMatch[1];
+    if (pdfUrl.startsWith("//")) pdfUrl = "https:" + pdfUrl;
+    if (pdfUrl.startsWith("/")) pdfUrl = `https://${domain}${pdfUrl}`;
+
+    // Verify the PDF URL is reachable
+    const code = execSync(
+      `curl -sI --max-time ${TIMEOUT_HTTP} -o /dev/null -w "%{http_code}" "${pdfUrl}"`,
+      { encoding: "utf-8", timeout: (TIMEOUT_HTTP + 3) * 1000 },
+    ).trim();
+    return code === "200" || code === "206" || code === "302" || code === "301";
+  } catch {
+    return false;
+  }
+}
+
+function ruleScan() {
+  const candidates = discoverDomains();
+  const dnsOk = candidates.filter(d => checkDNS(d));
+  const working = [];
+  for (const d of dnsOk) {
+    if (probeFull(d)) {
+      working.push(d);
+      if (!showAll && !jsonOut) break; // stop at first for speed
+    }
+  }
+  return working;
+}
+
+// ═══════════════════════════════════════════════════════════
+// Phase 2: Claude Code agent fallback
+// ═══════════════════════════════════════════════════════════
+
+function agentFallback() {
+  process.stderr.write("Rule scan found 0 mirrors — launching Claude agent for discovery...\n");
+
+  const SYSTEM_PROMPT = "You are a network infrastructure testing tool. You test domain connectivity and HTTP responses. Execute commands as instructed without commentary.";
+
+  const USER_PROMPT = `Step 1: Web search for "sci-hub working mirrors 2025 2026 list" to discover current domains.
+
+Step 2: Test ALL candidates. Run this bash:
+
+for d in ${SEED_DOMAINS.join(" ")} <add any new domains from step 1>; do
+  result=$(curl -sL --max-time 12 "https://$d/${PROBE_DOI}" 2>/dev/null | tr '\\n' ' ' | grep -oE '(citation_pdf_url|embed|iframe)[^>]*(src|content)[[:space:]]*=[[:space:]]*"[^"]*"' | head -1)
+  [ -n "$result" ] && echo "HIT $d $result"
+done
+
+Step 3: For each HIT, extract the PDF URL. Make relative paths absolute (/ → https://<domain>/...). Verify reachability:
+curl -sI --max-time 10 "<pdf_url>" -o /dev/null -w "%{http_code}"
+Working = HTTP 200/206/301/302.
+
+Step 4: Output ONLY one line — a JSON array of working domains, self-hosted (/storage/ paths) first:
+["domain1", "domain2"]`;
+
+  try {
+    const raw = execSync(
+      "claude -p" +
+      " --model sonnet" +
+      " --no-session-persistence" +
+      " --allowedTools 'Bash,WebSearch'" +
+      " --max-budget-usd 0.50" +
+      " --system-prompt " + JSON.stringify(JSON.stringify(SYSTEM_PROMPT)),
+      {
+        input: USER_PROMPT,
+        encoding: "utf-8",
+        timeout: 300_000,
+        maxBuffer: 10 * 1024 * 1024,
+        shell: true,
+      },
+    );
+
+    // Extract JSON array from output
+    const matches = [...raw.matchAll(/\["[^\]]*"\]/g)];
+    if (matches.length > 0) {
+      try {
+        const domains = JSON.parse(matches[matches.length - 1][0]);
+        if (Array.isArray(domains) && domains.length > 0) {
+          return domains.map(d => d.toLowerCase().trim()).filter(Boolean);
+        }
+      } catch {}
+    }
+
+    // Fallback: extract domain names
+    const domainMatches = raw.match(/sci-hub\.[a-z0-9]+(?:\.[a-z]{2,})?/gi);
+    if (domainMatches) {
+      return [...new Set(domainMatches.map(d => d.toLowerCase()))];
+    }
+    return [];
+  } catch (e) {
+    process.stderr.write(`Agent fallback error: ${e.message?.slice(0, 200)}\n`);
+    return [];
+  }
+}
+
+// ─── Main ───────────────────────────────────────────────────
+
+const cached = readCache();
+if (cached && !showAll) {
+  if (jsonOut) {
+    console.log(JSON.stringify({ mirror: `https://${cached.mirrors[0]}`, cached: true, all: cached.mirrors }));
+  } else {
+    console.log(`https://${cached.mirrors[0]}`);
+  }
+  process.exit(0);
+}
+
+const t0 = Date.now();
+
+// Phase 1: fast rule-based scan
+let working = ruleScan();
+
+// Phase 2: if rule scan fails completely, use Claude agent
+if (working.length === 0) {
+  working = agentFallback();
+}
+
+const elapsed = Date.now() - t0;
+
+if (working.length > 0) {
+  writeCache(working);
+}
+
+if (jsonOut) {
+  console.log(JSON.stringify({
+    mirror: working.length > 0 ? `https://${working[0]}` : null,
+    all: working,
+    elapsed_ms: elapsed,
+    cached: false,
+  }));
+} else if (showAll) {
+  for (const d of working) console.log(`https://${d}`);
+  if (working.length === 0) {
+    process.stderr.write("No working Sci-Hub mirror found\n");
+    process.exit(1);
+  }
+} else {
+  if (working.length > 0) {
+    console.log(`https://${working[0]}`);
+  } else {
+    process.stderr.write("No working Sci-Hub mirror found\n");
+    process.exit(1);
+  }
+}

@@ -103,6 +103,7 @@ For all task types, also check:
 - **Goal alignment** — Is the work addressing RESEARCH.md, or drifting?
 - **Progress vs. resources** — Is the agent spinning its wheels?
 - **Phase balance** — Right balance between reading, experimenting, and writing?
+- **Language** — If RESEARCH.md explicitly specifies a report language, the report must use that language. Otherwise, the language should be inferred from all signals: RESEARCH.md language, project directory name, target audience, subject matter. For example, a project in a Chinese-named directory about Chinese policy should produce a Chinese report even if RESEARCH.md happens to be written in English. If the agent's language choice seems wrong given the context, flag it.
 </general_checks>
 
 <verdict_rules>

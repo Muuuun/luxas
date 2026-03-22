@@ -5,7 +5,7 @@
  * Self-contained Node.js script (ESM, no dependencies beyond Node 22+ built-in fetch).
  *
  * Usage:
- *   search papers <query> [--source openalex|arxiv|both] [--count N] [--from-year YYYY] [--sort relevance|date]
+ *   search papers <query> [--source openalex|arxiv|crossref|all] [--count N] [--from-year YYYY] [--sort relevance|date]
  *   search citations <id> [--direction references|citations|both] [--limit N]
  *   search download --arxiv <id> [--output <dir>]
  *   search download --doi <doi> [--output <dir>]
@@ -21,7 +21,7 @@
 const args = process.argv.slice(2);
 if (args.length === 0 || args[0] === "--help" || args[0] === "-h") {
   console.log(`Usage:
-  search papers <query> [--source openalex|arxiv|both] [--count N] [--from-year YYYY] [--sort relevance|date]
+  search papers <query> [--source openalex|arxiv|crossref|all] [--count N] [--from-year YYYY] [--sort relevance|date]
   search citations <id> [--direction references|citations|both] [--limit N]
   search download --arxiv <id> [--output <dir>]
   search download --doi <doi> [--output <dir>]
@@ -192,6 +192,41 @@ async function arxivSearch(query, count, { fromYear = null, sort = "date" } = {}
   return papers.slice(0, count);
 }
 
+// ─── CrossRef ────────────────────────────────────────────────
+
+async function crossrefSearch(query, count, { fromYear = null, sort = "relevance" } = {}) {
+  const params = new URLSearchParams({
+    query, rows: String(count), mailto: "sisyphus-agent@example.com",
+  });
+  if (fromYear) params.set("filter", `from-pub-date:${fromYear}`);
+  if (sort === "date") params.set("sort", "published"); else params.set("sort", "relevance");
+  const res = await fetch(`https://api.crossref.org/works?${params}`, { signal: AbortSignal.timeout(30000) });
+  if (!res.ok) return [];
+  const data = await res.json();
+  return (data.message?.items ?? []).map(normalizeCRWork);
+}
+
+function normalizeCRWork(raw) {
+  const authors = (raw.author ?? []).slice(0, 5).map(a => [a.given, a.family].filter(Boolean).join(" ")).join(", ")
+    + ((raw.author ?? []).length > 5 ? " et al." : "");
+  const year = raw.published?.["date-parts"]?.[0]?.[0] ?? raw["published-print"]?.["date-parts"]?.[0]?.[0] ?? null;
+  const doi = raw.DOI ?? null;
+  const title = Array.isArray(raw.title) ? raw.title[0] : (raw.title ?? "");
+  const venue = Array.isArray(raw["container-title"]) ? raw["container-title"][0] : (raw["container-title"] ?? "");
+  const abstract = (raw.abstract ?? "").replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+  return {
+    id: doi ? `doi:${doi}` : "",
+    title: title.replace(/\s+/g, " "),
+    authors,
+    year,
+    cites: raw["is-referenced-by-count"] ?? 0,
+    arxiv: null,
+    doi,
+    abstract: abstract.slice(0, 500),
+    venue,
+  };
+}
+
 // ─── Brave Web Search ────────────────────────────────────────
 
 async function braveSearch(query, count) {
@@ -238,31 +273,18 @@ import { execSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, copyFileSync, statSync, unlinkSync } from "node:fs";
 import { join, extname, basename } from "node:path";
 
-const SCIHUB_CANDIDATES = [
-  "sci-hub.ren", "sci-hub.fr", "sci-hub.st", "sci-hub.se", "sci-hub.ru",
-  "sci-hub.shop", "sci-hub.ee", "sci-hub.wf", "sci-hub.3800808.com", "sci-hub.mksa.top",
-];
-const PROBE_DOI = "10.1002/j.1538-7305.1948.tb01338.x";
 let cachedMirror = null;
+const SCIHUB_DISCOVER = join(import.meta.dirname ?? new URL(".", import.meta.url).pathname, "scihub-discover");
 
 async function findScihubMirror() {
   if (cachedMirror) return cachedMirror;
-  const candidates = [...SCIHUB_CANDIDATES];
-  // Try dynamic discovery
   try {
-    const html = execSync(`curl -sL --max-time 10 "https://www.sci-hub.pub/"`, { encoding: "utf-8", timeout: 15000 });
-    const domains = html.match(/sci-hub\.[a-z0-9]+(?:\.[a-z]{2,})?/gi) ?? [];
-    for (const d of domains) { if (!candidates.includes(d.toLowerCase())) candidates.push(d.toLowerCase()); }
+    const mirror = execSync(`node "${SCIHUB_DISCOVER}"`, { encoding: "utf-8", timeout: 120000 }).trim();
+    if (mirror && mirror.startsWith("https://")) {
+      cachedMirror = mirror;
+      return cachedMirror;
+    }
   } catch {}
-  for (const domain of candidates) {
-    try {
-      const status = execSync(
-        `curl -s --max-time 8 -o /dev/null -w "%{http_code}" "https://${domain}/${PROBE_DOI}"`,
-        { encoding: "utf-8", timeout: 12000 },
-      ).trim();
-      if (status === "200") { cachedMirror = `https://${domain}`; return cachedMirror; }
-    } catch {}
-  }
   return null;
 }
 
@@ -341,11 +363,14 @@ async function downloadDoi(doi, outputDir) {
   // Parse HTML for PDF URL
   const html = readFileSync(tmpHtml, "utf-8");
   try { unlinkSync(tmpHtml); } catch {}
+  // Flatten multiline tags for matching (Sci-Hub embed tags span multiple lines)
+  const flatHtml = html.replace(/\n\s*/g, " ");
   const pdfMatch =
-    html.match(/citation_pdf_url['"]\s+content\s*=\s*["']([^"']+)["']/i) ??
-    html.match(/iframe[^>]+src\s*=\s*["']([^"']+\.pdf[^"']*)["']/i) ??
-    html.match(/embed[^>]+src\s*=\s*["']([^"']+\.pdf[^"']*)["']/i) ??
-    html.match(/src\s*=\s*["'](\/\/[^"']+)["']/i);
+    flatHtml.match(/citation_pdf_url['"]\s+content\s*=\s*["']([^"']+)["']/i) ??
+    flatHtml.match(/iframe[^>]+src\s*=\s*["']([^"']+\.pdf[^"']*)["']/i) ??
+    flatHtml.match(/embed[^>]+src\s*=\s*["']([^"']+\.pdf[^"']*)["']/i) ??
+    flatHtml.match(/src\s*=\s*["'](https?:\/\/[^"']+\.pdf[^"']*)["']/i) ??
+    flatHtml.match(/src\s*=\s*["'](\/\/[^"']+)["']/i);
   if (!pdfMatch) { console.error("No PDF URL found in Sci-Hub page"); return null; }
   let pdfUrl = pdfMatch[1];
   if (pdfUrl.startsWith("//")) pdfUrl = "https:" + pdfUrl;
@@ -465,24 +490,31 @@ try {
   if (command === "papers") {
     const query = getPositionalArgs(1);
     if (!query) { console.error("Usage: search papers <query>"); process.exit(1); }
-    const source = getFlag("source", "both");
+    const source = getFlag("source", "all");
     const count = Math.min(parseInt(getFlag("count", "10")), 50);
     const fromYearRaw = getFlag("from-year", null);
     const fromYear = fromYearRaw ? parseInt(fromYearRaw) : null;
     const sort = getFlag("sort", "relevance");
     const searchOpts = { fromYear, sort };
     const parts = [];
-    if (source === "openalex" || source === "both") {
+    const all = source === "all" || source === "both";  // "both" = legacy alias for "all"
+    if (all || source === "openalex") {
       const papers = await oaSearch(query, count, searchOpts);
       parts.push(papers.length > 0
         ? papers.map((p, i) => formatPaper(p, "OA", i)).join("\n\n")
         : "[OA] No results");
     }
-    if (source === "arxiv" || source === "both") {
+    if (all || source === "arxiv") {
       const papers = await arxivSearch(query, count, searchOpts);
       parts.push(papers.length > 0
         ? papers.map((p, i) => formatPaper(p, "arXiv", i)).join("\n\n")
         : "[arXiv] No results");
+    }
+    if (all || source === "crossref") {
+      const papers = await crossrefSearch(query, count, searchOpts);
+      parts.push(papers.length > 0
+        ? papers.map((p, i) => formatPaper(p, "CR", i)).join("\n\n")
+        : "[CR] No results");
     }
     console.log(parts.join("\n\n---\n\n"));
 

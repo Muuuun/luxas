@@ -235,6 +235,12 @@ function buildResearchSnapshot(opts: ContextTransformerOptions): string {
     parts.push(`<pi_feedback>\n${piFeedback}\n</pi_feedback>`);
   }
 
+  // User feedback (manually injected, never overwritten by PI)
+  const userFeedback = readFileSafe(join(projectDir, "reviews", "user_feedback.md"));
+  if (userFeedback) {
+    parts.push(`<user_feedback priority="highest">\nThis feedback is from the human user and takes absolute priority over PI feedback.\n${userFeedback}\n</user_feedback>`);
+  }
+
   // Report status
   const hasReport = existsSync(join(projectDir, "report", "report.tex"));
   const hasPdf = existsSync(join(projectDir, "report", "report.pdf"));

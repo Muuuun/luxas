@@ -26,12 +26,14 @@ bash scripts/setup.sh
 scripts/search papers "Rydberg atom quantum gate"
 scripts/search papers "topological insulators" --source openalex --count 20
 scripts/search papers "diffusion models" --source arxiv --count 15
+scripts/search papers "air pollution health effects" --source crossref --count 20
 scripts/search papers "quantum error correction" --from-year 2024 --sort date --count 20
 ```
 
 - **OpenAlex**: all fields, citation counts, DOIs. `--source openalex`
 - **arXiv**: recent preprints, physics/CS/math. `--source arxiv`
-- Default: both.
+- **CrossRef**: broadest coverage (120M+ records), all disciplines, non-English journals. `--source crossref`
+- Default: all three.
 - `--from-year YYYY`: Only return papers published in YYYY or later.
 - `--sort relevance|date`: Sort by relevance (default) or publication date (newest first).
 
