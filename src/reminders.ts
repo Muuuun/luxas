@@ -211,13 +211,43 @@ const paperFigures: ReminderProvider = {
   },
 };
 
+/** Plan required — remind agent to create a research plan before doing research. */
+const planRequired: ReminderProvider = {
+  id: "plan-required",
+  priority: 25,  // highest priority — planning comes first
+  evaluate(ctx) {
+    if (existsSync(join(ctx.projectDir, "notes", "plan.md"))) return null;
+    return "Create notes/plan.md with your research plan, then request PI review before starting research.";
+  },
+};
+
+/** Unresolved lessons — remind agent to update lesson resolutions. */
+const unresolvedLessons: ReminderProvider = {
+  id: "unresolved-lessons",
+  priority: 3,
+  evaluate(ctx) {
+    const lessonsPath = join(ctx.projectDir, "notes", "lessons.md");
+    if (!existsSync(lessonsPath)) return null;
+    try {
+      const content = readFileSync(lessonsPath, "utf-8");
+      const pendingCount = (content.match(/\(pending/g) || []).length;
+      if (pendingCount > 3) {
+        return `${pendingCount} unresolved lessons in notes/lessons.md — update Resolution fields for fixed issues.`;
+      }
+    } catch {}
+    return null;
+  },
+};
+
 // ── Export ───────────────────────────────────────────────────────────────────
 
 export const builtinProviders: ReminderProvider[] = [
+  planRequired,
   figstyle,
   pngFigures,
   postExperiment,
   postWorkers,
   postLatexError,
   paperFigures,
+  unresolvedLessons,
 ];

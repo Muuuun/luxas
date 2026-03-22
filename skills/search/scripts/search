@@ -5,7 +5,7 @@
  * Self-contained Node.js script (ESM, no dependencies beyond Node 22+ built-in fetch).
  *
  * Usage:
- *   search papers <query> [--source openalex|arxiv|both] [--count N]
+ *   search papers <query> [--source openalex|arxiv|both] [--count N] [--from-year YYYY] [--sort relevance|date]
  *   search citations <id> [--direction references|citations|both] [--limit N]
  *   search download --arxiv <id> [--output <dir>]
  *   search download --doi <doi> [--output <dir>]
@@ -21,7 +21,7 @@
 const args = process.argv.slice(2);
 if (args.length === 0 || args[0] === "--help" || args[0] === "-h") {
   console.log(`Usage:
-  search papers <query> [--source openalex|arxiv|both] [--count N]
+  search papers <query> [--source openalex|arxiv|both] [--count N] [--from-year YYYY] [--sort relevance|date]
   search citations <id> [--direction references|citations|both] [--limit N]
   search download --arxiv <id> [--output <dir>]
   search download --doi <doi> [--output <dir>]
@@ -37,6 +37,16 @@ function getFlag(name, fallback) {
   const idx = args.indexOf("--" + name);
   if (idx === -1 || idx + 1 >= args.length) return fallback;
   return args[idx + 1];
+}
+
+/** Extract positional args (query words), skipping --flag value pairs. */
+function getPositionalArgs(startIdx) {
+  const parts = [];
+  for (let i = startIdx; i < args.length; i++) {
+    if (args[i].startsWith("--")) { i++; continue; } // skip flag and its value
+    parts.push(args[i]);
+  }
+  return parts.join(" ");
 }
 
 const command = args[0];
@@ -93,8 +103,10 @@ function formatPaper(p, prefix, i) {
   return line;
 }
 
-async function oaSearch(query, count) {
+async function oaSearch(query, count, { fromYear = null, sort = "relevance" } = {}) {
   const params = new URLSearchParams({ search: query, per_page: String(count), mailto: "sisyphus-agent@example.com" });
+  if (fromYear) params.set("filter", `publication_year:${fromYear}-2099`);
+  if (sort === "date") params.set("sort", "publication_date:desc");
   const res = await fetch(`${OA_BASE}/works?${params}`, { signal: AbortSignal.timeout(30000) });
   if (!res.ok) return [];
   const data = await res.json();
@@ -138,10 +150,13 @@ async function oaReferences(paperId, limit) {
 
 // ─── arXiv ───────────────────────────────────────────────────
 
-async function arxivSearch(query, count) {
+async function arxivSearch(query, count, { fromYear = null, sort = "date" } = {}) {
+  // arXiv sort by date returns globally recent papers, not query-filtered.
+  // Always search by relevance first, then post-filter and re-sort if needed.
+  const fetchCount = fromYear ? Math.min(count * 3, 150) : count;
   const params = new URLSearchParams({
     search_query: `all:${query}`, start: "0",
-    max_results: String(count), sortBy: "submittedDate", sortOrder: "descending",
+    max_results: String(fetchCount), sortBy: "relevance", sortOrder: "descending",
   });
   const res = await fetch(`http://export.arxiv.org/api/query?${params}`, { signal: AbortSignal.timeout(30000) });
   if (!res.ok) return [];
@@ -160,18 +175,21 @@ async function arxivSearch(query, count) {
     let am;
     while ((am = aRe.exec(e)) !== null) authors.push(am[1].trim());
     const pub = tag("published");
+    const year = pub ? parseInt(pub.slice(0, 4)) : null;
+    if (fromYear && year && year < fromYear) continue;
     papers.push({
       id: `arxiv:${arxivMatch[1]}`,
       title: tag("title").replace(/\s+/g, " "),
       authors: authors.slice(0, 5).join(", ") + (authors.length > 5 ? " et al." : ""),
-      year: pub ? parseInt(pub.slice(0, 4)) : null,
+      year,
       cites: 0,
       arxiv: arxivMatch[1],
       doi: null,
       abstract: tag("summary").replace(/\s+/g, " "),
     });
   }
-  return papers;
+  if (sort === "date") papers.sort((a, b) => (b.year ?? 0) - (a.year ?? 0));
+  return papers.slice(0, count);
 }
 
 // ─── Brave Web Search ────────────────────────────────────────
@@ -445,19 +463,23 @@ async function fetchBib(doi, savePath) {
 
 try {
   if (command === "papers") {
-    const query = args.slice(1).filter((a) => !a.startsWith("--")).join(" ");
+    const query = getPositionalArgs(1);
     if (!query) { console.error("Usage: search papers <query>"); process.exit(1); }
     const source = getFlag("source", "both");
     const count = Math.min(parseInt(getFlag("count", "10")), 50);
+    const fromYearRaw = getFlag("from-year", null);
+    const fromYear = fromYearRaw ? parseInt(fromYearRaw) : null;
+    const sort = getFlag("sort", "relevance");
+    const searchOpts = { fromYear, sort };
     const parts = [];
     if (source === "openalex" || source === "both") {
-      const papers = await oaSearch(query, count);
+      const papers = await oaSearch(query, count, searchOpts);
       parts.push(papers.length > 0
         ? papers.map((p, i) => formatPaper(p, "OA", i)).join("\n\n")
         : "[OA] No results");
     }
     if (source === "arxiv" || source === "both") {
-      const papers = await arxivSearch(query, count);
+      const papers = await arxivSearch(query, count, searchOpts);
       parts.push(papers.length > 0
         ? papers.map((p, i) => formatPaper(p, "arXiv", i)).join("\n\n")
         : "[arXiv] No results");
@@ -512,7 +534,7 @@ try {
     await fetchBib(doi, getFlag("save", null));
 
   } else if (command === "web") {
-    const query = args.slice(1).filter((a) => !a.startsWith("--")).join(" ");
+    const query = getPositionalArgs(1);
     if (!query) { console.error("Usage: search web <query>"); process.exit(1); }
     const count = Math.min(parseInt(getFlag("count", "5")), 20);
     await braveSearch(query, count);

@@ -7,13 +7,16 @@
 
 import { appendFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
+import { readFileSafe, extractTextContent } from "./utils.js";
 import type { ReminderRegistry } from "./reminders.js";
+import type { ExtensionBus } from "./extensions.js";
 
 export interface ResearchOptions {
   maxCostUsd?: number;       // Cost limit in USD (default: 50)
   maxDurationMs?: number;    // Time limit in ms (default: 8 hours)
   projectDir: string;
   reminders?: ReminderRegistry;
+  bus?: ExtensionBus;
 }
 
 export interface CostTracker {
@@ -96,20 +99,39 @@ export function buildResearchHooks(opts: ResearchOptions) {
   };
 
   const after = async (ctx: any): Promise<any> => {
-    // 1. Log to JSONL
-    const entry = {
+    const toolName = ctx.toolCall?.name ?? "unknown";
+    const errorText = extractErrorText(ctx);
+    const errorCategory = ctx.isError ? classifyError(errorText, toolName) : undefined;
+
+    // 1. Log to JSONL (enriched with error info)
+    const entry: Record<string, any> = {
       type: "tool_call",
-      tool: ctx.toolCall?.name ?? "unknown",
+      tool: toolName,
       args: summarizeArgs(ctx.args),
       success: !ctx.isError,
       timestamp: new Date().toISOString(),
     };
+    if (ctx.isError && errorCategory) {
+      entry.errorCategory = errorCategory;
+      entry.errorMessage = errorText.slice(0, 300);
+    }
     try {
       appendFileSync(logFile, JSON.stringify(entry) + "\n");
     } catch {}
 
-    // 2. Set reminder flags — providers in reminders.ts render them on next turn
-    const toolName = ctx.toolCall?.name ?? "";
+    // 2. Capture lessons from failures → notes/lessons.md
+    if (ctx.isError && errorText.length > 10) {
+      captureLesson(opts.projectDir, toolName, errorCategory ?? "unknown", errorText, ctx.args);
+      opts.bus?.emit({
+        type: "tool_failure",
+        tool: toolName,
+        errorCategory: errorCategory ?? "unknown",
+        errorMessage: errorText.slice(0, 500),
+        args: summarizeArgs(ctx.args),
+      });
+    }
+
+    // 3. Set reminder flags — providers in reminders.ts render them on next turn
     const reminders = opts.reminders;
 
     if (toolName === "run_experiment" && !ctx.isError && reminders) {
@@ -164,4 +186,75 @@ function summarizeArgs(args: any): any {
     }
   }
   return summary;
+}
+
+// ── Failure capture → notes/lessons.md ───────────────────────────────────────
+
+/** Extract error text from tool result. */
+function extractErrorText(ctx: any): string {
+  if (!ctx.isError) return "";
+  return extractTextContent(ctx.result?.content ?? []).slice(0, 1000);
+}
+
+/** Classify error into a category for structured logging. */
+function classifyError(errorText: string, toolName: string): string {
+  const t = errorText.toLowerCase();
+  // LaTeX
+  if (t.includes("undefined control sequence") || t.includes("missing $")) return "latex_syntax";
+  if (t.includes("file not found") && toolName === "compile_latex") return "latex_missing_file";
+  // Python
+  if (t.includes("modulenotfounderror") || t.includes("importerror")) return "python_import";
+  if (t.includes("syntaxerror")) return "python_syntax";
+  if (t.includes("typeerror") || t.includes("attributeerror")) return "python_type";
+  if (t.includes("filenotfounderror")) return "file_not_found";
+  // Shell
+  if (t.includes("command not found")) return "shell_command_not_found";
+  if (t.includes("permission denied")) return "shell_permission";
+  // Network
+  if (t.includes("econnrefused") || t.includes("timeout") || t.includes("rate limit")) return "network";
+  // Generic
+  if (toolName === "compile_latex") return "latex_other";
+  if (toolName === "bash") return "shell_other";
+  return "other";
+}
+
+/**
+ * Append a lesson entry to notes/lessons.md.
+ * Deduplicates: if the same error category + tool combination exists in the
+ * last 5 entries, skip to avoid noise.
+ */
+function captureLesson(
+  projectDir: string,
+  toolName: string,
+  errorCategory: string,
+  errorText: string,
+  args: any,
+): void {
+  const lessonsPath = join(projectDir, "notes", "lessons.md");
+
+  // Dedup check — skip if same tool+category combo appears in recent entries
+  const existing = readFileSafe(lessonsPath);
+  if (existing) {
+    const tail = existing.slice(-2000);
+    if (tail.includes(`${toolName} — ${errorCategory}`)) return;
+  }
+
+  // First line of error (most informative)
+  const firstLine = errorText.split("\n").find(l => l.trim().length > 5) ?? errorText.slice(0, 200);
+  const argsStr = args?.command ?? args?.file_path ?? args?.hypothesis ?? "";
+
+  const entry = [
+    `### ${new Date().toISOString().slice(0, 16)} ${toolName} — ${errorCategory}`,
+    `- **Error:** ${firstLine.slice(0, 300)}`,
+    argsStr ? `- **Context:** ${String(argsStr).slice(0, 200)}` : "",
+    `- **Resolution:** _(pending — update when fixed)_`,
+    "",
+  ].filter(Boolean).join("\n");
+
+  const header = existing ? "" : "# Lessons Learned\n\nFailures and fixes captured automatically. Update **Resolution** when you fix the issue.\n\n";
+
+  try {
+    mkdirSync(join(projectDir, "notes"), { recursive: true });
+    appendFileSync(lessonsPath, header + entry + "\n");
+  } catch {}
 }

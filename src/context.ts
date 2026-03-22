@@ -15,6 +15,7 @@ import { existsSync, readdirSync } from "node:fs";
 import { readFileSafe, smartTruncate } from "./utils.js";
 import { join, dirname } from "node:path";
 import { generateResearchSummary, heuristicSummary } from "./compaction.js";
+import { compactNotesIfNeeded } from "./notes-compaction.js";
 import type { Model } from "@mariozechner/pi-ai";
 import type { CostTracker } from "./hooks.js";
 import type { ExtensionBus } from "./extensions.js";
@@ -109,12 +110,19 @@ export function buildContextTransformer(opts: ContextTransformerOptions) {
       // #8: Emit after_compaction event
       await bus?.emit({ type: "after_compaction", summary, droppedCount: oldMessages.length });
 
+      // Notes compaction — fire-and-forget (results available by next turn's snapshot)
+      if (model && getApiKey) {
+        getApiKey("anthropic").then(apiKey => {
+          if (apiKey) return compactNotesIfNeeded(projectDir, model, apiKey, bus);
+        }).catch(() => { /* notes compaction failure must not break the agent */ });
+      }
+
       // Layer B: Detect if research appears complete → guide agent to finish()
     let completionHint = "";
     const hasPdf = existsSync(join(projectDir, "report", "report.pdf"));
     const piPath = join(projectDir, "reviews", "pi_feedback.md");
     const piFeedback = readFileSafe(piPath) ?? "";
-    const piApproved = piFeedback.includes("CONTINUE") || piFeedback.includes("APPROVED");
+    const piApproved = piFeedback.includes("## Verdict: CONTINUE") || piFeedback.includes("## Verdict: STOP");
     if (hasPdf && piApproved) {
       completionHint = "\n\n⚠️ Research appears COMPLETE (PDF compiled, PI approved). If there is nothing left to do, call finish() immediately. Do NOT re-read memory.md in a loop.";
     } else if (hasPdf) {
@@ -203,10 +211,22 @@ function buildResearchSnapshot(opts: ContextTransformerOptions): string {
     parts.push("<experiment_notes>(empty — no experiments yet)</experiment_notes>");
   }
 
+  // Research plan
+  const plan = readFileSafe(join(projectDir, "notes", "plan.md"));
+  if (plan && plan.trim().length > 20) {
+    parts.push(`<research_plan>\n${smartTruncate(plan, 1500)}\n</research_plan>`);
+  }
+
   // Memory scratchpad
   const mem = readFileSafe(join(projectDir, "notes", "memory.md"));
   if (mem && mem.trim().length > 20) {
     parts.push(`<memory_notes lines="${mem.split("\n").length}">\n${smartTruncate(mem, 2000)}\n</memory_notes>`);
+  }
+
+  // Lessons learned (auto-captured from tool failures)
+  const lessons = readFileSafe(join(projectDir, "notes", "lessons.md"));
+  if (lessons && lessons.trim().length > 20) {
+    parts.push(`<lessons_learned lines="${lessons.split("\n").length}">\n${smartTruncate(lessons, 1500)}\n</lessons_learned>`);
   }
 
   // PI feedback (injected by PI monitor)

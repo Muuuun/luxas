@@ -7,6 +7,7 @@ import { createReportTools } from "./report.js";
 import { createCodingToolsForProject } from "./coding.js";
 import { createDispatchWorkersTool } from "./workers.js";
 import { createExperimentTool } from "./experiment.js";
+import { createSearchAgentTool } from "./search-agent.js";
 
 export interface ToolCallbacks {
   onFinish?: () => void;
@@ -29,6 +30,9 @@ export function buildResearchTools(
 
   // Experiment uses workerModel by default; thinkingLevel "high" → opus
   const experimentTool = createExperimentTool(projectDir, workerModel, model, getApiKey, trackUsage);
+
+  // Search agent — dedicated agent for broad literature search
+  const searchAgent = createSearchAgentTool(workerModel, getApiKey, projectDir, trackUsage);
 
   // finish tool — agent calls this when research is complete
   const finishTool = {
@@ -54,6 +58,7 @@ export function buildResearchTools(
     ...reportTools,
     ...codingTools,
     dispatchWorkers,
+    searchAgent,
     experimentTool,
     finishTool,
   ];

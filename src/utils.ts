@@ -37,6 +37,14 @@ export function readFileSafe(path: string, fallback = ""): string {
   }
 }
 
+/** Extract text from LLM content blocks (the standard content array format). */
+export function extractTextContent(content: any[]): string {
+  return (content ?? [])
+    .filter((c: any) => c.type === "text")
+    .map((c: any) => c.text)
+    .join("\n");
+}
+
 /**
  * Smart truncation: keeps section headers + most recent content.
  * For structured notes, this preserves the outline and latest entries.

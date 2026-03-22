@@ -7,6 +7,7 @@
 
 import { completeSimple } from "@mariozechner/pi-ai";
 import type { Model } from "@mariozechner/pi-ai";
+import { extractTextContent } from "./utils.js";
 
 // ── Prompts (adapted from pi-coding-agent + research-specific sections) ──
 
@@ -146,10 +147,7 @@ export async function generateResearchSummary(
     apiKey,
   } as any);
 
-  return response.content
-    .filter((c: any) => c.type === "text")
-    .map((c: any) => c.text)
-    .join("\n");
+  return extractTextContent(response.content);
 }
 
 // ── Heuristic fallback (kept for resilience) ────────────

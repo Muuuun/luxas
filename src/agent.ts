@@ -66,12 +66,16 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
   const reminders = new ReminderRegistry();
   for (const p of builtinProviders) reminders.register(p);
 
+  // #8: Extension bus (created early — hooks and context both need it)
+  const bus = new ExtensionBus();
+
   // Hooks must be created before tools so trackUsage can be threaded to sub-agents
   const hooks = buildResearchHooks({
     projectDir,
     maxCostUsd: opts.maxCostUsd,
     maxDurationMs: opts.maxDurationMs,
     reminders,
+    bus,
   });
 
   // Check if PI already said STOP in a previous session (persisted in pi_feedback.md)
@@ -111,9 +115,6 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
   if (piReview) {
     tools.push(piReview.tool);
   }
-
-  // #8: Extension bus
-  const bus = new ExtensionBus();
 
   // Layer 3: transformContext — now with LLM compaction (#1), precise tokens (#3), extensions (#8)
   const transformContext = buildContextTransformer({

@@ -26,7 +26,14 @@ export type SisyphusEvent =
   | { type: "pi_feedback"; verdict: string; feedback: string }
   // Resource
   | { type: "cost_warning"; currentCost: number; maxCost: number }
-  | { type: "usage_update"; cost: number; inputTokens: number; outputTokens: number };
+  | { type: "usage_update"; cost: number; inputTokens: number; outputTokens: number }
+  // Tool failures (structured observability)
+  | { type: "tool_failure"; tool: string; errorCategory: string; errorMessage: string; args: any }
+  // Notes compaction
+  | { type: "notes_compaction"; files: string[]; savings: Record<string, { before: number; after: number }> }
+  // Planning phase
+  | { type: "plan_created"; path: string }
+  | { type: "plan_reviewed"; verdict: string; feedback: string };
 
 export type ExtensionHandler<E extends SisyphusEvent = SisyphusEvent> =
   (event: E) => Promise<void> | void;

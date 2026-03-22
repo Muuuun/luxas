@@ -80,6 +80,23 @@ If the work is technically correct but intellectually shallow, say so directly. 
 </depth_assessment>
 </review_criteria>`;
 
+const PI_PLAN_MODE = `
+<plan_review>
+The agent has submitted a **research plan** for approval before starting execution. This is a critical checkpoint.
+
+Evaluate the plan as a PI would evaluate a student's proposed research agenda:
+
+1. **Scope**: Is the scope realistic for the available resources? Not too narrow (trivial) or too broad (will never finish)?
+2. **Search strategy**: Will the proposed search queries and databases catch the important work? Any obvious blind spots?
+3. **Key questions**: Are the right questions being asked? Are any critical angles missing?
+4. **Experiment plan** (if applicable): Are the hypotheses well-formed? Will the proposed experiments actually test them?
+5. **Report structure**: Does the outline match what this topic needs?
+
+If the plan has significant gaps, use "steer" with specific guidance on what to add or change.
+If the plan is solid, use "continue" to approve it — the agent will then start executing.
+Do NOT use "stop" for plan review unless the plan is fundamentally misguided.
+</plan_review>`;
+
 const PI_PROMPT_FOOTER = `
 <general_checks>
 For all task types, also check:
@@ -117,11 +134,12 @@ React like a real PI who has read the work and knows the field. Be specific and 
 
 Call submit_verdict with your assessment.`;
 
-/** Build the full PI prompt, selecting the appropriate review mode based on research goal. */
-function buildPIPrompt(researchGoal: string): string {
+/** Build the full PI prompt, selecting the appropriate review mode based on research goal and context. */
+function buildPIPrompt(researchGoal: string, isPlanReview?: boolean): string {
   const isSurvey = /survey|review|综述|调研|整理|总结|比较|横向|进展/.test(researchGoal);
   const modeBlock = isSurvey ? PI_SURVEY_MODE : PI_RESEARCH_MODE;
-  return PI_PROMPT_HEADER + modeBlock + PI_PROMPT_FOOTER;
+  const planBlock = isPlanReview ? PI_PLAN_MODE : "";
+  return PI_PROMPT_HEADER + planBlock + modeBlock + PI_PROMPT_FOOTER;
 }
 
 // ---------------------------------------------------------------------------
@@ -314,7 +332,10 @@ async function evaluateProgress(
 
   // Read research goal to select the correct PI review mode (survey vs research)
   const researchGoal = readFileSafe(join(opts.projectDir, "RESEARCH.md")) ?? "";
-  const piPrompt = buildPIPrompt(researchGoal);
+
+  // Detect plan review from milestone text (agent is told to use "Research plan created")
+  const isPlanReview = milestoneInfo?.milestone?.toLowerCase().includes("plan") ?? false;
+  const piPrompt = buildPIPrompt(researchGoal, isPlanReview);
 
   const model = getModel("anthropic" as any, "claude-opus-4-6" as any);
 
@@ -416,6 +437,12 @@ function buildStateForPI(
   const goal = readFileSafe(join(projectDir, "RESEARCH.md"));
   parts.push(`# Research Goal\n${goal || "(RESEARCH.md not found)"}`);
 
+  // Research plan (if exists)
+  const plan = readFileSafe(join(projectDir, "notes", "plan.md"));
+  if (plan) {
+    parts.push(`# Research Plan\n${plan}`);
+  }
+
   // Literature progress
   const lit = readFileSafe(join(projectDir, "notes", "literature.md"));
   parts.push(
@@ -441,6 +468,12 @@ function buildStateForPI(
   parts.push(
     `# Report Status\n- report.tex: ${hasTeX ? "exists" : "not started"}\n- references.bib: ${hasBib ? "exists" : "not started"}\n- report.pdf: ${hasPdf ? "compiled" : "not compiled"}`,
   );
+
+  // Lessons learned (auto-captured failures)
+  const lessons = readFileSafe(join(projectDir, "notes", "lessons.md"));
+  if (lessons && lessons.trim().length > 20) {
+    parts.push(`# Lessons Learned\n${truncate(lessons, 2000)}`);
+  }
 
   // Recent log entries
   const log = readFileSafe(join(projectDir, ".agent", "log.jsonl"));
