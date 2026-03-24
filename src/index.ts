@@ -150,20 +150,8 @@ async function run(dir: string, modelName: string, userDirective?: string) {
       const msgCount = restore();
       if (msgCount > 0) {
         console.log(`  ⟳ Resuming from checkpoint (${msgCount} messages)`);
-
-        // Persist directive to RESEARCH.md so it's always visible to the agent
-        if (userDirective) {
-          const { appendFileSync } = await import("node:fs");
-          const { join } = await import("node:path");
-          const researchPath = join(projectDir, "RESEARCH.md");
-          const timestamp = new Date().toISOString();
-          const feedbackEntry = `\n<feedback timestamp="${timestamp}">\n${userDirective}\n</feedback>\n`;
-          appendFileSync(researchPath, feedbackEntry);
-          console.log(`  ✎ Feedback appended to RESEARCH.md`);
-        }
-
         const resumePrompt = userDirective
-          ? `The user has provided new feedback — it has been appended to RESEARCH.md as a <feedback> block. Re-read RESEARCH.md now, then revise your work accordingly. Update notes/experiments.md and report/report.tex, then recompile with compile_latex.`
+          ? `Continue your research. Additional directive: ${userDirective}\n\nIMPORTANT: This is a follow-up directive on an existing project. After completing the analysis, you MUST update both notes/experiments.md AND report/report.tex (add new sections, update existing comparisons, recompile with compile_latex). The report should always reflect the latest state of the research.`
           : `Continue your research from where you left off. Check notes/literature.md and notes/experiments.md for your current progress.`;
         await agent.followUp({
           role: "user",
@@ -374,26 +362,45 @@ async function generateResearchGoal(prompt: string): Promise<string> {
     process.exit(1);
   }
 
-  const systemPrompt = `You are a Principal Investigator (PI). Read the user's request and produce a RESEARCH.md that captures their core intent. Do NOT write a detailed plan or methodology — the research agent will plan its own approach.
+  const systemPrompt = `You are a Principal Investigator (PI) — a senior professor defining a research agenda for an autonomous research agent.
 
-Your job is to understand:
-1. What the user actually wants — faithfully capture their intent without rewriting or over-specifying.
-2. Type — is this a survey (synthesizing existing literature) or research (original investigation, which may include simulations, computations, analysis, etc.)?
-3. Language — write in the same language as the user's input unless they explicitly request another language.
-4. Field — what domain is this?
+Given a topic or idea from the user, write a complete RESEARCH.md file that will guide the agent's research. The agent will:
+- Search and read academic papers
+- Run computational experiments
+- Write a LaTeX report
 
-The <goal> should faithfully represent the user's intent at whatever length is needed. If the user wrote a detailed request, preserve that detail. If they wrote one sentence, keep it short. Do not truncate or over-summarize. Do not add methodology, scope, or deliverables — the research agent decides those.
+Your RESEARCH.md must be specific enough to guide autonomous execution, but broad enough to allow the agent to discover unexpected directions.
 
-Output format — write ONLY the XML content below, no explanations or markdown:
+**CRITICAL — Language rule**: The research agent determines the report language from the RESEARCH.md language.
+- Default: write RESEARCH.md in the same language as the user's input. Chinese input → Chinese RESEARCH.md → Chinese report.
+- Exception: if the user explicitly requests a specific output language (e.g., "用英文写" or "write in English"), follow that instruction — write RESEARCH.md in the requested language.
+- Never silently translate the user's input into English when they didn't ask for it.
 
-<research>
-<goal>[Faithfully capture what the user wants]</goal>
-<type>[survey or research]</type>
-<language>[e.g. English, Chinese]</language>
-<field>[e.g. quantum physics, machine learning, biology]</field>
-<venue>[Suggest a journal/conference that sets the right tone and depth]</venue>
-<original_request>[Paste the user's original message verbatim]</original_request>
-</research>`;
+Output format — write ONLY the file content, no explanations:
+
+# Research Goal
+
+[1-2 sentence high-level objective]
+
+## Scope
+
+[What's in scope and what's explicitly out of scope]
+
+## Key Questions
+
+[Numbered list of specific questions to answer]
+
+## Methodology
+
+[What approach should the agent take? Literature survey only? Experiments needed? What kind?]
+
+## Expected Deliverables
+
+[What should the final report contain?]
+
+## Target Venue
+
+[Suggest an appropriate journal/conference for the report format, e.g. "Nature Reviews Physics" for a review, "NeurIPS" for ML, etc.]`;
 
   const response = await completeSimple(model, {
     systemPrompt,
