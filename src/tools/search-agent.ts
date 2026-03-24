@@ -6,6 +6,7 @@
 
 import { Type } from "@sinclair/typebox";
 import { Agent } from "@mariozechner/pi-agent-core";
+import { nameAgent } from "agentsmelt";
 import type { Model } from "@mariozechner/pi-ai";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -104,6 +105,7 @@ export function createSearchAgentTool(
           },
           getApiKey,
         });
+        nameAgent(agent, "search", "search");
 
         if (logFile) {
           agent.subscribe(tmux.createAgentObserver(logFile));

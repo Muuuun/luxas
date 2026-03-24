@@ -4,6 +4,7 @@
 
 import { Type } from "@sinclair/typebox";
 import { Agent } from "@mariozechner/pi-agent-core";
+import { nameAgent } from "agentsmelt";
 import type { Model } from "@mariozechner/pi-ai";
 import * as tmux from "../tmux.js";
 import { createCodingToolsForProject } from "./coding.js";
@@ -38,7 +39,7 @@ export function createDispatchWorkersTool(
       _toolCallId: string,
       params: { tasks: Array<{ description: string; prompt: string }> },
     ) {
-      const results = await Promise.all(params.tasks.map(async (task) => {
+      const results = await Promise.all(params.tasks.map(async (task, i) => {
         const t0 = Date.now();
         const logFile = tmux.openWindow(`w: ${task.description.slice(0, 25)}`);
         let worker: Agent | null = null;
@@ -55,6 +56,7 @@ export function createDispatchWorkersTool(
             },
             getApiKey,
           });
+          nameAgent(worker, `worker-${i}`, "worker");
 
           if (logFile) {
             worker.subscribe(tmux.createAgentObserver(logFile));

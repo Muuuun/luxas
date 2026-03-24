@@ -4,6 +4,7 @@
 
 import { Type } from "@sinclair/typebox";
 import { Agent } from "@mariozechner/pi-agent-core";
+import { nameAgent } from "agentsmelt";
 import { createCodingTools } from "@mariozechner/pi-coding-agent";
 import type { Model } from "@mariozechner/pi-ai";
 import { join } from "node:path";
@@ -140,6 +141,7 @@ export function createExperimentTool(
           },
           getApiKey,
         });
+        nameAgent(expAgent, "experiment", "experiment");
 
         if (logFile) {
           expAgent.subscribe(tmux.createAgentObserver(logFile));

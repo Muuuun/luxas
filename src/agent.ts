@@ -13,6 +13,7 @@
  */
 
 import { Agent } from "@mariozechner/pi-agent-core";
+import { nameAgent } from "agentsmelt";
 import { getModel } from "@mariozechner/pi-ai";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { join, isAbsolute, resolve } from "node:path";
@@ -142,6 +143,7 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
     afterToolCall: hooks.after,
     getApiKey,
   });
+  nameAgent(agent, "brain", "brain");
 
   // Wire finish tool to abort the agent loop
   finishCallback = () => agent.abort();
