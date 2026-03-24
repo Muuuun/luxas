@@ -14,6 +14,9 @@
 import { existsSync, readFileSync, readdirSync, mkdirSync, writeFileSync, renameSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { join, resolve } from "node:path";
+import { Agent } from "@mariozechner/pi-agent-core";
+import { autoPatch } from "agentsmelt";
+const agentSmeltHandle = autoPatch(Agent, "sisyphus");
 import { createResearchAgent } from "./agent.js";
 
 // Ensure pdflatex is in PATH (needed for usetex figstyles + compile_latex)
@@ -182,6 +185,9 @@ async function run(dir: string, modelName: string, userDirective?: string) {
   try { execSync("browser-use close --all", { stdio: "pipe", timeout: 5000 }); } catch { /* not running */ }
 
   tmux.closeWindow(logFile, "sisyphus-main", true, Date.now() - t0);
+
+  // Flush AgentSmelt traces
+  await agentSmeltHandle.done();
 }
 
 function buildPrompt(researchGoal: string, userDirective?: string): string {

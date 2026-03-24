@@ -14,10 +14,11 @@
     "setup:search": "bash skills/search/scripts/setup.sh"
   },
   "dependencies": {
-    "@mariozechner/pi-ai": "file:vendor/mariozechner-pi-ai-0.58.1.tgz",
     "@mariozechner/pi-agent-core": "file:vendor/mariozechner-pi-agent-core-0.58.1.tgz",
-    "@mariozechner/pi-tui": "file:vendor/mariozechner-pi-tui-0.58.1.tgz",
+    "@mariozechner/pi-ai": "file:vendor/mariozechner-pi-ai-0.58.1.tgz",
     "@mariozechner/pi-coding-agent": "file:vendor/mariozechner-pi-coding-agent-0.58.1.tgz",
+    "@mariozechner/pi-tui": "file:vendor/mariozechner-pi-tui-0.58.1.tgz",
+    "agentsmelt": "file:../agentsmelt",
     "better-sqlite3": "^11.0.0",
     "ink": "^6.8.0",
     "ink-text-input": "^6.0.0",
