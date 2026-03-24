@@ -49,6 +49,13 @@ export function buildResearchTools(
       required: ["summary"],
     },
     execute: async (args: { summary: string }) => {
+      // Guard: report.pdf must exist before finishing
+      const { existsSync } = await import("node:fs");
+      const { join } = await import("node:path");
+      const pdfPath = join(projectDir, "report/report.pdf");
+      if (!existsSync(pdfPath)) {
+        return { content: [{ type: "text" as const, text: `Cannot finish: report/report.pdf does not exist. Compile the report first with compile_latex, then call finish again.` }] };
+      }
       callbacks?.onFinish?.();
       return { content: [{ type: "text" as const, text: `Research complete: ${args.summary}` }] };
     },

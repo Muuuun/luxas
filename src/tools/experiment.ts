@@ -19,55 +19,84 @@ const ExperimentParams = Type.Object({
 });
 
 /**
- * Build context from previous experiments so the coding agent can reuse
- * existing code/formulas instead of reimplementing from scratch.
+ * Build full project context for the coding agent — like Claude Code seeing the whole project.
  */
 function buildExperimentContext(projectDir: string): string {
   const parts: string[] = [];
 
-  // 1. Existing scripts with content preview
+  // 1. Project file tree
+  const allFiles = listFilesRecursive(projectDir)
+    .map(f => f.replace(projectDir + "/", ""))
+    .filter(f => !f.startsWith(".agent/") && !f.includes("node_modules"));
+  parts.push(`<project_structure>\n${allFiles.join("\n")}\nYou can read any of these files with the read tool.\n</project_structure>`);
+
+  // 2. RESEARCH.md — research goal and user feedback
+  const researchMd = readFileSafe(join(projectDir, "RESEARCH.md"));
+  if (researchMd) {
+    parts.push(`<research_goal readonly="true">\n${smartTruncate(researchMd, 2000)}\n</research_goal>`);
+  }
+
+  // 3. Experiment notes
+  const expNotes = readFileSafe(join(projectDir, "notes", "experiments.md"));
+  if (expNotes && expNotes.trim().length > 20) {
+    parts.push(`<experiment_notes readonly="true">\n${smartTruncate(expNotes, 3000)}\n</experiment_notes>`);
+  }
+
+  // 4. Literature notes
+  const litNotes = readFileSafe(join(projectDir, "notes", "literature.md"));
+  if (litNotes && litNotes.trim().length > 20) {
+    parts.push(`<literature_notes readonly="true">\n${smartTruncate(litNotes, 2000)}\n</literature_notes>`);
+  }
+
+  // 5. Agent memory
+  const memory = readFileSafe(join(projectDir, "notes", "memory.md"));
+  if (memory && memory.trim().length > 20) {
+    parts.push(`<agent_memory readonly="true">\n${smartTruncate(memory, 1500)}\n</agent_memory>`);
+  }
+
+  // 6. Existing scripts with content preview
   const scriptsDir = join(projectDir, "data", "scripts");
   const scripts = listFilesRecursive(scriptsDir)
     .filter(f => /\.(py|jl|m|sh|ts|js)$/.test(f))
-    .slice(0, 8);
+    .slice(0, 12);
 
   if (scripts.length > 0) {
-    parts.push("### Existing Scripts in data/scripts/");
+    parts.push("<existing_scripts>");
     for (const script of scripts) {
       const relPath = script.replace(projectDir + "/", "");
       try {
         const content = readFileSync(script, "utf-8");
         const lines = content.split("\n");
-        const preview = lines.slice(0, 40).join("\n");
-        const suffix = lines.length > 40 ? `\n... (${lines.length} total lines)` : "";
-        parts.push(`\n**${relPath}** (${lines.length} lines):\n\`\`\`\n${preview}${suffix}\n\`\`\``);
+        const preview = lines.slice(0, 60).join("\n");
+        const suffix = lines.length > 60 ? `\n... (${lines.length} total lines — use read tool for full file)` : "";
+        parts.push(`<script path="${relPath}" lines="${lines.length}">\n${preview}${suffix}\n</script>`);
       } catch {
-        parts.push(`\n**${relPath}**: (could not read)`);
+        parts.push(`<script path="${relPath}">use read tool to view</script>`);
       }
     }
+    parts.push("</existing_scripts>");
   }
 
-  // 2. Experiment notes for context on what was already tested and the formulas used
-  const expNotes = readFileSafe(join(projectDir, "notes", "experiments.md"));
-  if (expNotes && expNotes.trim().length > 20) {
-    parts.push(`\n### Experiment Notes (notes/experiments.md)\n${smartTruncate(expNotes, 3000)}`);
+  // 7. Report structure preview
+  const reportTex = readFileSafe(join(projectDir, "report", "report.tex"));
+  if (reportTex) {
+    const sections = reportTex.split("\n")
+      .filter(l => /\\section|\\subsection|\\subsubsection/.test(l))
+      .map(l => l.trim());
+    if (sections.length > 0) {
+      parts.push(`<report_structure readonly="true">\n${sections.join("\n")}\nUse read tool for full content.\n</report_structure>`);
+    }
   }
 
   if (parts.length === 0) return "";
 
   return [
-    `## Previous Experiment Context`,
     ...parts,
     ``,
-    `**IMPORTANT — Code Consistency Protocol:**`,
-    `1. REVIEW existing scripts above. Check their formulas, constants, and methodology for correctness.`,
-    `2. If correct → reuse directly (import or copy). Do not reimplement from scratch.`,
-    `3. If INCORRECT → explain what is wrong and why, then implement the corrected version.`,
-    `4. In your final output, include a section "## Consistency Check" that lists:`,
-    `   - Which existing scripts/formulas you reviewed`,
-    `   - Whether each was correct or had errors`,
-    `   - If errors found: what was wrong, what the correct formula should be, and which previous results may be affected`,
-    `   This section is critical — the supervising agent needs it to decide whether to re-run earlier experiments.`,
+    `<code_consistency>`,
+    `1. REVIEW existing scripts before writing new code. Reuse correct code, fix incorrect code.`,
+    `2. In your output, include a "Consistency Check" section listing which scripts you reviewed and whether they were correct.`,
+    `</code_consistency>`,
   ].join("\n");
 }
 
@@ -106,31 +135,147 @@ export function createExperimentTool(
         const trackDirs = [join(projectDir, "data"), join(projectDir, "report")];
         const filesBefore = new Set(trackDirs.flatMap(d => listFilesRecursive(d)));
 
-        const expTools = createCodingTools(cwd);
+        const rawTools = createCodingTools(cwd);
+
+        // Wrap tools with safety constraints (like Claude Code):
+        // 1. edit requires prior read of the file
+        // 2. write is blocked for existing files (must use edit)
+        // 3. Protected files are read-only
+        const readFiles = new Set<string>();
+        const protectedFiles = ["report.tex", "references.bib", "notes/literature.md", "notes/experiments.md", "notes/memory.md", "RESEARCH.md"];
+
+        const expTools = rawTools.map((tool: any) => {
+          if (tool.name === "read") {
+            const origExecute = tool.execute;
+            return { ...tool, execute: async (id: string, params: any, signal?: any) => {
+              const p = params.path || params.file_path || "";
+              readFiles.add(join(cwd, p));
+              readFiles.add(p);
+              return origExecute(id, params, signal);
+            }};
+          }
+          if (tool.name === "edit") {
+            const origExecute = tool.execute;
+            return { ...tool, execute: async (id: string, params: any, signal?: any) => {
+              const p = params.path || params.file_path || "";
+              const abs = join(cwd, p);
+              if (protectedFiles.some(f => p.endsWith(f) || abs.endsWith(f))) {
+                return { content: [{ type: "text", text: `BLOCKED: ${p} is managed by the supervising agent. Do not modify it.` }] };
+              }
+              if (!readFiles.has(abs) && !readFiles.has(p)) {
+                return { content: [{ type: "text", text: `BLOCKED: You must read ${p} before editing it. Use the read tool first.` }] };
+              }
+              return origExecute(id, params, signal);
+            }};
+          }
+          if (tool.name === "write") {
+            const origExecute = tool.execute;
+            return { ...tool, execute: async (id: string, params: any, signal?: any) => {
+              const p = params.path || params.file_path || "";
+              const abs = join(cwd, p);
+              if (protectedFiles.some(f => p.endsWith(f) || abs.endsWith(f))) {
+                return { content: [{ type: "text", text: `BLOCKED: ${p} is managed by the supervising agent. Do not modify it.` }] };
+              }
+              if (existsSync(abs)) {
+                return { content: [{ type: "text", text: `BLOCKED: ${p} already exists. Use the edit tool to modify existing files, not write. This prevents regression.` }] };
+              }
+              return origExecute(id, params, signal);
+            }};
+          }
+          return tool;
+        });
+
         const experimentContext = buildExperimentContext(projectDir);
 
         const hasStyle = existsSync(join(projectDir, "report", "figstyle.mplstyle"));
         const figStyleLines = hasStyle
           ? [
-              `Figure style: report/figstyle.mplstyle — ALWAYS load it before plotting:`,
-              `  import matplotlib.pyplot as plt`,
-              `  plt.style.use('${join(projectDir, "report", "figstyle.mplstyle")}')`,
-              `Save figures as PDF (vector): fig.savefig('report/figures/fig_name.pdf')`,
+              `<figure_style>Load report/figstyle.mplstyle before plotting: plt.style.use('${join(projectDir, "report", "figstyle.mplstyle")}'). Save as PDF: fig.savefig('report/figures/fig_name.pdf')</figure_style>`,
             ]
           : [
-              `When plotting: use plt.savefig('report/figures/fig_name.pdf', bbox_inches='tight', dpi=300).`,
-              `Prefer PDF format. Use publication-quality font sizes (≥7pt).`,
+              `<figure_style>plt.savefig('report/figures/fig_name.pdf', bbox_inches='tight', dpi=300). Prefer PDF. Publication-quality font sizes (≥7pt).</figure_style>`,
             ];
 
         const systemPrompt = [
           `You are an experiment coding agent. Write code, run simulations, and report results.`,
           ``,
-          `Working directory: ${projectDir}`,
-          `Scripts go in: data/scripts/`,
-          `Save figures to: report/figures/`,
-          `Experiment runs go in: data/runs/run_N/`,
+          `<environment>`,
+          `<working_directory>${projectDir}</working_directory>`,
+          `<paths>`,
+          `  <scripts>data/scripts/</scripts>`,
+          `  <figures>report/figures/</figures>`,
+          `  <runs>data/runs/run_N/</runs>`,
+          `</paths>`,
           ...figStyleLines,
+          `</environment>`,
+          ``,
+          `<tools>`,
+          `<tool name="read">`,
+          `Read file contents. Returns the file with line numbers.`,
+          `You MUST read a file before editing it — the edit tool will reject edits to unread files.`,
+          `You can read ANY file in the project, including report.tex and notes/ (read-only access).`,
+          `For large files, use offset and limit parameters to read specific sections.`,
+          `</tool>`,
+          `<tool name="edit">`,
+          `Make precise changes to existing files using exact string replacement.`,
+          `Provide oldText (exact text to find) and newText (replacement).`,
+          `The oldText must match EXACTLY — including whitespace, indentation, and line breaks.`,
+          `If oldText is not unique in the file, the edit FAILS. Include more surrounding context to make it unique.`,
+          `ALWAYS prefer edit over write for existing files. Edit sends a diff; write overwrites everything.`,
+          `The tool will REJECT edits to files you haven't read yet, and to protected files.`,
+          `</tool>`,
+          `<tool name="write">`,
+          `Create NEW files only. Will be REJECTED if the file already exists — use edit instead.`,
+          `Protected files (report.tex, references.bib, notes/*.md, RESEARCH.md) are always blocked.`,
+          `</tool>`,
+          `<tool name="bash">`,
+          `Run shell commands. Working directory is the project root.`,
+          `Use for: running scripts, installing packages, checking output, listing directories.`,
+          `Always check output for errors. If a command fails, read the error, fix with edit, retry.`,
+          `</tool>`,
+          `</tools>`,
+          ``,
+          `<scope>`,
+          `<writable>data/scripts/, data/runs/, report/figures/</writable>`,
+          `<read_only>report.tex, references.bib, notes/*.md, RESEARCH.md</read_only>`,
+          `You can READ anything in the project. You can only WRITE/EDIT files in the writable paths.`,
+          `</scope>`,
+          ``,
+          `<workflow>`,
+          `1. Read existing code and context before writing. Understand what exists.`,
+          `2. Keep changes minimal. Fix the bug, don't rewrite the file.`,
+          `3. Test your code by running it. Read the output. Fix errors and retry.`,
+          `4. When done, report clearly: what you implemented, results, interpretation.`,
+          `5. If something fails after multiple attempts, report the failure honestly — don't fabricate results.`,
+          `</workflow>`,
         ].join("\n");
+
+        // Context compaction for coding agent — same principle as main agent
+        const CODING_COMPACTION_CHARS = 60_000;
+        const CODING_KEEP_RECENT = 8;
+        const codingTransformContext = async (messages: any[]): Promise<any[]> => {
+          const totalChars = messages.reduce((sum: number, m: any) => {
+            const content = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+            return sum + content.length;
+          }, 0);
+          if (totalChars > CODING_COMPACTION_CHARS && messages.length > CODING_KEEP_RECENT + 2) {
+            const splitIdx = Math.max(2, messages.length - CODING_KEEP_RECENT);
+            const oldMessages = messages.slice(0, splitIdx);
+            const recentMessages = messages.slice(splitIdx);
+            const toolCalls = oldMessages
+              .filter((m: any) => m.role === "assistant")
+              .flatMap((m: any) => (m.content || []).filter((c: any) => c.type === "toolCall"))
+              .map((c: any) => c.name)
+              .filter(Boolean);
+            const summary = `[Context compacted: ${oldMessages.length} messages summarized. Tools called: ${[...new Set(toolCalls)].join(", ") || "none"}. Continue from where you left off.]`;
+            return [
+              messages[0],
+              { role: "user", content: summary, timestamp: Date.now() },
+              ...recentMessages,
+            ];
+          }
+          return messages;
+        };
 
         expAgent = new Agent({
           initialState: {
@@ -139,6 +284,7 @@ export function createExperimentTool(
             thinkingLevel,
             tools: expTools,
           },
+          transformContext: codingTransformContext,
           getApiKey,
         });
         nameAgent(expAgent, "experiment", "experiment");
