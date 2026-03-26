@@ -13,7 +13,7 @@
 
 **Luxas** is an autonomous research agent that reads papers, synthesizes findings, and writes LaTeX survey reports — end to end, no human intervention. Give it a topic; get back a compiled PDF with 30+ cited papers, structured chapters, and extracted figures.
 
-Built on a **vendored, customized fork** of [pi-mono](https://github.com/badlogic/pi-mono) — the same framework that powers [Claude Code](https://claude.ai/claude-code).
+Built on a **vendored, customized fork** of [pi-mono](https://github.com/badlogic/pi-mono), an open-source agent framework by Mario Zechner.
 
 ## How it works
 
