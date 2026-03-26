@@ -99,30 +99,31 @@ npx tsx src/index.ts tui
 ## Architecture
 
 ```
-                        ┌──────────────────────────┐
-                        │     Brain (Claude Opus)    │
-                        │  Reads state → decides     │
-                        │  next action(s)            │
-                        └────────────┬───────────────┘
-                                     │ dispatch 1–8 parallel tasks
-                        ┌────────────▼───────────────┐
-                        │   Conductor (TypeScript)    │
-                        │   State machine, checkpoints│
-                        │   Safety limits, loop detect│
-                        └────────────┬───────────────┘
-                ┌────────────┬───────┴───────┬────────────┐
-                ▼            ▼               ▼            ▼
-          ┌──────────┐ ┌──────────┐   ┌──────────┐ ┌──────────┐
-          │ Claude   │ │ Claude   │   │ Claude   │ │ Claude   │
-          │ search   │ │ extract  │   │ download │ │ write    │
-          └──────────┘ └──────────┘   └──────────┘ └──────────┘
+                     ┌───────────────────────────────┐
+                     │   Research Agent (pi-agent-core)│
+                     │   5-layer brain: reads state,   │
+                     │   decides next action(s)        │
+                     └──────────────┬────────────────┘
+                                    │ tool calls
+                     ┌──────────────▼────────────────┐
+                     │   Hooks + Context Transform     │
+                     │   Safety, logging, state inject  │
+                     └──────────────┬────────────────┘
+              ┌──────────┬─────────┴─────────┬──────────┐
+              ▼          ▼                   ▼          ▼
+        ┌──────────┐ ┌──────────┐     ┌──────────┐ ┌──────────┐
+        │ Search   │ │ Worker   │ ... │ Worker   │ │Experiment│
+        │ Sub-Agent│ │ Sub-Agent│     │ Sub-Agent│ │ Sub-Agent│
+        │(agent-   │ │(agent-   │     │(agent-   │ │(coding-  │
+        │ core)    │ │ core)    │     │ core)    │ │ agent)   │
+        └──────────┘ └──────────┘     └──────────┘ └──────────┘
 ```
+
+All agents — brain, search, workers, experiments — are **pi-agent-core `Agent` instances**, not CLI subprocesses. The brain spawns sub-agents via tool calls; each sub-agent gets its own tool set, model config, and tmux window for observability.
 
 **The Brain** is not a fixed pipeline. It reads current state (papers found, extractions done, report quality) and decides what to do next — it can go backwards, skip steps, or parallelize aggressively.
 
-**The Conductor** dispatches tasks, saves state after each completion (crash-safe), detects loops, enforces rate limits, and validates reports before accepting "done".
-
-**Workers** are coding agent sessions running on pi-agent-core. Each gets a scoped prompt and returns structured output.
+**Sub-Agents** are spawned by tools (`search_literature`, `dispatch_workers`, `run_experiment`). Each is a full `new Agent()` with coding tools (read/write/edit/bash), scoped to the project directory. Usage is tracked and rolled up to the parent.
 
 ---
 
