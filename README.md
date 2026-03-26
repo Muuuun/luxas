@@ -1,80 +1,47 @@
+# Luxas — Autonomous Research Agent
+
 <p align="center">
-  <img src="https://img.shields.io/badge/luxas-research--agent-blue?style=flat-square" />
-  <img src="https://img.shields.io/badge/pi--mono-custom--fork-orange?style=flat-square" />
-  <img src="https://img.shields.io/badge/typescript-5.5+-blue?style=flat-square&logo=typescript&logoColor=white" />
-  <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" />
+  <strong><i>Il faut imaginer Sisyphe heureux.</i></strong>
 </p>
 
-<h1 align="center">Luxas</h1>
-<p align="center"><i>Il faut imaginer Sisyphe heureux.</i></p>
-<p align="center">An autonomous research agent built on a custom fork of pi-mono (pi-agent-core / pi-coding-agent).</p>
+<p align="center">
+  <a href="https://github.com/Muuuun/luxas"><img src="https://img.shields.io/github/last-commit/Muuuun/luxas?style=for-the-badge" alt="Last commit"></a>
+  <a href="https://github.com/Muuuun/luxas"><img src="https://img.shields.io/badge/pi--mono-custom--fork-orange?style=for-the-badge" alt="pi-mono"></a>
+  <a href="https://github.com/Muuuun/luxas"><img src="https://img.shields.io/badge/typescript-5.5+-blue?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge" alt="MIT License"></a>
+</p>
 
----
+**Luxas** is an autonomous research agent that reads papers, synthesizes findings, and writes LaTeX survey reports — end to end, no human intervention. Give it a topic; get back a compiled PDF with 30+ cited papers, structured chapters, and extracted figures.
 
-## What It Does
+Built on a **vendored, customized fork** of [pi-mono](https://github.com/badlogic/pi-mono) — the same framework that powers [Claude Code](https://claude.ai/claude-code).
 
-Give it a research topic. It autonomously searches, downloads, reads, and synthesizes 30+ papers, then produces a LaTeX PDF survey with proper citations — no human intervention required.
-
-Luxas turns coding agents into **research agents** by adding:
-
-- **5-layer architecture** on top of pi-agent-core (prompt → tools → context transform → hooks → PI monitor)
-- **Parallel worker dispatch** — up to 8 agent sessions running simultaneously
-- **Cross-session persistence** — crash-safe checkpoints, resume from any interruption
-- **Adversarial self-review** — a PI monitor (Opus-tier) that challenges the agent's conclusions
-- **Two-stage memory compaction** — graceful degradation when context fills up
-
----
-
-## Built on Custom pi-mono
-
-Luxas depends on a **vendored, customized fork** of the pi-mono packages — the same framework that powers Claude Code:
-
-| Package | Version | Role |
-|---------|---------|------|
-| `@mariozechner/pi-agent-core` | 0.58.1 | Agent loop, tool lifecycle, hooks, LLM compaction, session DAG |
-| `@mariozechner/pi-ai` | 0.58.1 | Model abstraction (Anthropic OAuth), provider routing |
-| `@mariozechner/pi-coding-agent` | 0.58.1 | File tools (read/write/edit/bash), experiment agent |
-| `@mariozechner/pi-tui` | 0.58.1 | Terminal UI framework (Ink-based) |
-
-These live in `vendor/` as `.tgz` files and are installed as local dependencies. This gives us full control over the agent runtime without waiting for upstream releases.
-
-### What We Build on Top of pi-mono
-
-The 5-layer architecture assembles pi-mono primitives into a research-specific agent:
+## How it works
 
 ```
-Layer 1  System Prompt (prompt.ts)
-         └── Research methodology: hypothesis → experiment → discovery cycle
-
-Layer 2  Tools (tools/)
-         └── 7 tools: read/write/edit/bash + compile_latex + dispatch_workers + run_experiment
-         └── Search skill (papers, citations, download, web, browser)
-         └── PI review tool (request feedback from adversarial monitor)
-
-Layer 3  Context Transform (context.ts)
-         └── Injects research state (.md files) before every LLM call
-         └── Two-stage compaction: 60K warning → 80K auto-compress
-
-Layer 4  Hooks (hooks.ts)
-         └── beforeToolCall: RESEARCH.md write-protection, cost/time limits, API rate limiting
-         └── afterToolCall: JSONL session logging
-
-Layer 5  PI Monitor (pi-agent.ts)
-         └── GAN-like adversarial quality control (Opus flagship)
-         └── Dual trigger: agent-initiated milestone review + step-count fallback
-         └── Feedback injection: reviews/pi_feedback.md (persistent) + steer() (immediate)
+                  ┌─────────────────────────────────┐
+                  │     Research Agent (Brain)        │
+                  │     pi-agent-core · Claude Opus   │
+                  │     reads state → decides next    │
+                  └───────────────┬─────────────────┘
+                                  │ tool calls
+                  ┌───────────────▼─────────────────┐
+                  │     Hooks + Context Transform     │
+                  │     safety · logging · state      │
+                  └───────────────┬─────────────────┘
+           ┌───────────┬─────────┴─────────┬───────────┐
+           ▼           ▼                   ▼           ▼
+     ┌───────────┐ ┌───────────┐   ┌───────────┐ ┌───────────┐
+     │  Search   │ │  Worker   │…  │  Worker   │ │ Experiment│
+     │ Sub-Agent │ │ Sub-Agent │   │ Sub-Agent │ │ Sub-Agent │
+     └───────────┘ └───────────┘   └───────────┘ └───────────┘
+           all pi-agent-core Agent instances (not CLI subprocesses)
 ```
 
-Additional cross-cutting features built on pi-agent-core primitives:
-- **Session DAG** (#5) — structured conversation tree with compaction support
-- **Cross-model transform** (#6) — clean messages when switching between Claude models
-- **Extension bus** (#8) — lifecycle events (session, turn, compaction, experiment, PI feedback, cost)
-- **Reminder system** — state-aware reminders injected into context
-- **Notes compaction** — smart truncation of literature/experiment notes (keep headers + recent content)
+The **Brain** is not a fixed pipeline. It reads current state — papers found, extractions done, report quality — and decides what to do next. It can go backwards, skip steps, or parallelize aggressively.
 
----
+**Sub-Agents** are spawned via tool calls (`search_literature`, `dispatch_workers`, `run_experiment`). Each is a full `new Agent()` with its own tools, model config, and tmux window. Usage rolls up to the parent.
 
-## Quick Start
+## Quick start
 
 ```bash
 git clone https://github.com/Muuuun/luxas.git
@@ -92,119 +59,124 @@ npx tsx src/index.ts tui
 ```
 
 > [!TIP]
-> Requires authenticated `claude` CLI (Anthropic OAuth or `ANTHROPIC_API_KEY`). For PDF output: `pdflatex`, `bibtex`, `pdftotext` (poppler).
+> Requires authenticated `claude` CLI (Anthropic OAuth or `ANTHROPIC_API_KEY`).
+> For PDF output: `pdflatex`, `bibtex`, `pdftotext` (poppler).
 
----
+## Custom pi-mono runtime
 
-## Architecture
+Luxas vendors four pi-mono packages as `.tgz` in `vendor/`, giving full control over the agent runtime:
 
-```
-                     ┌───────────────────────────────┐
-                     │   Research Agent (pi-agent-core)│
-                     │   5-layer brain: reads state,   │
-                     │   decides next action(s)        │
-                     └──────────────┬────────────────┘
-                                    │ tool calls
-                     ┌──────────────▼────────────────┐
-                     │   Hooks + Context Transform     │
-                     │   Safety, logging, state inject  │
-                     └──────────────┬────────────────┘
-              ┌──────────┬─────────┴─────────┬──────────┐
-              ▼          ▼                   ▼          ▼
-        ┌──────────┐ ┌──────────┐     ┌──────────┐ ┌──────────┐
-        │ Search   │ │ Worker   │ ... │ Worker   │ │Experiment│
-        │ Sub-Agent│ │ Sub-Agent│     │ Sub-Agent│ │ Sub-Agent│
-        │(agent-   │ │(agent-   │     │(agent-   │ │(coding-  │
-        │ core)    │ │ core)    │     │ core)    │ │ agent)   │
-        └──────────┘ └──────────┘     └──────────┘ └──────────┘
-```
+| Package | Role |
+|---------|------|
+| `pi-agent-core` | Agent loop, tool lifecycle, hooks, LLM compaction, session DAG |
+| `pi-ai` | Model abstraction, provider routing, Anthropic OAuth |
+| `pi-coding-agent` | File tools (read / write / edit / bash), experiment agent |
+| `pi-tui` | Terminal UI framework (Ink-based) |
 
-All agents — brain, search, workers, experiments — are **pi-agent-core `Agent` instances**, not CLI subprocesses. The brain spawns sub-agents via tool calls; each sub-agent gets its own tool set, model config, and tmux window for observability.
+## 5-layer architecture
 
-**The Brain** is not a fixed pipeline. It reads current state (papers found, extractions done, report quality) and decides what to do next — it can go backwards, skip steps, or parallelize aggressively.
+Luxas assembles pi-mono primitives into a research-specific agent:
 
-**Sub-Agents** are spawned by tools (`search_literature`, `dispatch_workers`, `run_experiment`). Each is a full `new Agent()` with coding tools (read/write/edit/bash), scoped to the project directory. Usage is tracked and rolled up to the parent.
+| Layer | File | What it does |
+|-------|------|-------------|
+| **1. System Prompt** | `prompt.ts` | Research methodology: hypothesis → experiment → discovery cycle |
+| **2. Tools** | `tools/` | Coding tools + `compile_latex` + `dispatch_workers` + `run_experiment` + search skill + PI review |
+| **3. Context Transform** | `context.ts` | Injects research state (`.md` files) before every LLM call; two-stage compaction (60K warn → 80K compress) |
+| **4. Hooks** | `hooks.ts` | `RESEARCH.md` write-protection, cost/time limits, API rate limiting, JSONL session logging |
+| **5. PI Monitor** | `pi-agent.ts` | Adversarial quality control (Opus-tier); dual trigger: milestone review + step-count fallback; feedback via `reviews/pi_feedback.md` |
 
----
+Cross-cutting features:
+- **Session DAG** — structured conversation tree with compaction support.
+- **Cross-model transform** — clean messages when switching between Claude models (drop encrypted thinking, fix orphaned tool calls).
+- **Extension bus** — lifecycle events: session, turn, compaction, experiment, PI feedback, cost.
+- **Notes compaction** — smart truncation of literature/experiment notes (keep headers + recent content).
+- **Reminder system** — state-aware reminders injected into context.
 
-## Research Tools
+## Tools
 
-| Tool | Source | Description |
-|------|--------|-------------|
-| `read` / `write` / `edit` / `bash` | pi-coding-agent | File operations + shell |
-| `compile_latex` | `tools/report.ts` | pdflatex + bibtex compilation |
-| `dispatch_workers` | `tools/workers.ts` | Parallel lightweight agent dispatch |
-| `run_experiment` | `tools/experiment.ts` | Launch coding agent for experiments |
-| `search` (skill) | `skills/search/` | Papers (OpenAlex, arXiv, CrossRef), citation chains, download, BibTeX, web search, anti-detect browser |
+| Tool | Description |
+|------|-------------|
+| `read` / `write` / `edit` / `bash` | File operations + shell (from pi-coding-agent) |
+| `compile_latex` | pdflatex + bibtex compilation with figure citation enforcement |
+| `dispatch_workers` | Parallel lightweight sub-agents for batch tasks (read N papers, search N topics) |
+| `run_experiment` | Launch coding agent for experiments; safety-wrapped (protected files, read-before-edit) |
+| `search_literature` | Papers (OpenAlex, arXiv, CrossRef), citation chains, download, BibTeX, Brave web search |
+| `request_pi_review` | Request feedback from the adversarial PI monitor |
+| `finish` | Mark research complete (blocked until PDF passes validation) |
 
----
+## Search skill
 
-## Project Layout
+The search skill (`skills/search/`) handles literature discovery:
+
+- **Paper search** — OpenAlex, arXiv, CrossRef with deduplication and ranking.
+- **Citation chains** — forward and backward citation traversal.
+- **Download** — arXiv LaTeX source (preferred) or PDF fallback.
+- **Figure extraction** — render PDF pages, crop figures, generate `manifest.json`.
+- **Web search** — Brave Search API for grey literature and project pages.
+- **Anti-detect browser** — Cloudflare bypass for paywalled sites (PRL, Science, Nature).
+
+## Project structure
 
 ```
 src/
   agent.ts           5-layer agent assembly
-  prompt.ts          Layer 1: research methodology prompt
-  tools/             Layer 2: tool definitions
-  context.ts         Layer 3: state injection + compaction
-  hooks.ts           Layer 4: safety + logging hooks
-  pi-agent.ts        Layer 5: adversarial PI monitor
-  session.ts         Session DAG with compaction
-  extensions.ts      Lifecycle event bus
-  reminders.ts       State-aware reminder injection
-  tmux.ts            tmux window management for workers
+  prompt.ts          research methodology prompt
+  tools/             tool definitions
+  context.ts         state injection + compaction
+  hooks.ts           safety + logging hooks
+  pi-agent.ts        adversarial PI monitor
+  session.ts         session DAG with compaction
+  extensions.ts      lifecycle event bus
+  reminders.ts       state-aware reminder injection
+  tmux.ts            tmux window management
   auth.ts            Anthropic OAuth PKCE
-  tui/               Interactive terminal dashboard
+  tui/               interactive terminal dashboard
 
 skills/
-  search/            Literature search skill
+  search/            literature search skill
     scripts/
-      search         Paper search + citation chains + web
-      browse         Anti-detect browser (Cloudflare bypass)
+      search         paper search + citation chains + web
+      browse         anti-detect browser
       extract-figures  PDF figure extraction
 
-vendor/              Customized pi-mono packages (.tgz)
+vendor/              customized pi-mono packages (.tgz)
 ```
 
-Each research project follows this structure:
+Each research project:
 
 ```
 project/
-  RESEARCH.md          Human-written research goal (read-only)
+  RESEARCH.md            research goal (read-only, human-written)
   notes/
-    literature.md      Agent-maintained literature notes
-    experiments.md     Agent-maintained experiment notes
-    memory.md          Agent scratchpad (decisions, dead ends, insights)
+    literature.md        agent-maintained literature notes
+    experiments.md       agent-maintained experiment notes
+    memory.md            agent scratchpad
   data/
-    papers/            Downloaded papers (LaTeX source preferred)
-    runs/              Numbered experiment snapshots
+    papers/              downloaded papers (LaTeX source preferred)
+    runs/                numbered experiment snapshots
   report/
-    report.tex         LaTeX survey
-    references.bib     BibTeX database
-    report.pdf         Compiled output
+    report.tex           LaTeX survey
+    references.bib       BibTeX database
+    report.pdf           compiled output
   reviews/
-    pi_feedback.md     PI monitor feedback
+    pi_feedback.md       PI monitor feedback
   .agent/
-    log.jsonl          Append-only session log
-    checkpoint.jsonl   Crash-recovery checkpoint
+    log.jsonl            append-only session log
+    checkpoint.jsonl     crash-recovery checkpoint
 ```
 
----
-
-## Safety Limits
+## Safety
 
 | Limit | Default |
 |-------|---------|
 | Max cost per run | $50 |
 | Max duration | 8 hours |
-| Max steps | 50 |
+| Max agent steps | 50 |
 | Consecutive failures before pause | 5 |
-| Loop detection (same action repeat) | 4 |
+| Loop detection (same action repeat) | 4× |
 | Max concurrent workers | 8 |
-| RESEARCH.md | Write-protected |
-| Report validation | Blocks "done" until PDF passes checks |
-
----
+| `RESEARCH.md` | Write-protected |
+| Report validation | Blocks `finish` until PDF passes checks |
 
 ## Requirements
 
@@ -212,9 +184,12 @@ project/
 - **claude** CLI (authenticated) — or `ANTHROPIC_API_KEY`
 - **pdflatex** + **bibtex** (TeX Live)
 - **pdftotext** + **pdfimages** (poppler)
-- **tmux** (worker process management)
-- **Python 3.10+** (optional, for experiments + figure generation)
+- **tmux** (worker window management)
+- **Python 3.10+** (optional — experiments + figure generation)
+- **`BRAVE_API_KEY`** (optional — web search)
 
----
+## Acknowledgments
+
+Built on [pi-mono](https://github.com/badlogic/pi-mono) by [Mario Zechner](https://mariozechner.at/).
 
 <p align="center"><i>One must imagine Sisyphus happy.</i></p>
