@@ -8,7 +8,7 @@ import { nameAgent } from "agentsmelt";
 import { createCodingTools } from "@mariozechner/pi-coding-agent";
 import type { Model } from "@mariozechner/pi-ai";
 import { join } from "node:path";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { listFilesRecursive, readFileSafe, smartTruncate } from "../utils.js";
 import * as tmux from "../tmux.js";
 
@@ -100,6 +100,56 @@ function buildExperimentContext(projectDir: string): string {
   ].join("\n");
 }
 
+/**
+ * Generate tasks.md — the experiment agent's assignment + figure quality checklist.
+ */
+function buildTasksMd(params: { hypothesis: string; task: string }, projectDir: string): string {
+  const figstylePath = join(projectDir, "report", "figstyle.mplstyle");
+  const hasFigstyle = existsSync(figstylePath);
+  const figstyleContent = hasFigstyle ? readFileSync(figstylePath, "utf-8") : "";
+
+  const figstyleSection = hasFigstyle
+    ? `## Figstyle (MUST load before ANY plotting)\n\nPath: \`${figstylePath}\`\n\n\`\`\`\n${figstyleContent}\`\`\`\n\nUsage: \`plt.style.use('${figstylePath}')\` — call this ONCE at the top of every plotting script.`
+    : `## Figstyle\n\nNo figstyle file found. Use these defaults:\n- figsize: (3.375, 2.5)\n- font size: 8pt labels, 7pt ticks\n- savefig: PDF, bbox_inches='tight', dpi=300`;
+
+  return `# Experiment Task
+
+## Assignment
+**Hypothesis:** ${params.hypothesis}
+
+**Task:** ${params.task}
+
+## Data Requirements
+- Save ALL numerical results to \`data/runs/run_N/\` — choose format by data type:
+  - Small/structured data (parameters, scalar results): JSON (\`.json\`)
+  - Large arrays (wavefunctions, spectra, matrices): NumPy (\`np.savez('results.npz', ...)\`)
+  - Tabular data: CSV
+- Data must be self-contained — a separate plotting script must be able to load it and reproduce figures
+- Separate computation from plotting: run simulation → save data → write a separate plot script
+
+## Figure Requirements
+- Load figstyle BEFORE any plotting (see Figstyle section below)
+- Save as PDF vector: \`fig.savefig('report/figures/name.pdf')\`
+- Every figure MUST have: axis labels with units, legend (if multiple curves)
+- Use the colorblind-friendly color cycle from figstyle (do NOT override axes.prop_cycle)
+- Single column width: 3.375 inches (set by figstyle)
+- Error bars or shaded uncertainty bands where applicable
+- No titles on figures (titles go in LaTeX captions, not matplotlib)
+
+${figstyleSection}
+
+## Pre-Completion Checklist
+**You MUST read this file again and complete this checklist before reporting results:**
+
+1. [ ] Figstyle loaded in every plotting script: \`grep -r "plt.style.use" data/scripts/\`
+2. [ ] All figures saved as PDF in \`report/figures/\`
+3. [ ] All numerical data saved in \`data/runs/run_N/\` (np.savez for arrays, JSON for params)
+4. [ ] Figures have axis labels with units and legends
+5. [ ] Plotting script is separate from simulation script (can re-plot without re-running)
+6. [ ] If any check fails → fix and re-run before reporting
+`;
+}
+
 export function createExperimentTool(
   projectDir: string,
   workerModel: Model<any>,
@@ -187,6 +237,9 @@ export function createExperimentTool(
 
         const experimentContext = buildExperimentContext(projectDir);
 
+        // Generate tasks.md — assignment + figure quality checklist
+        writeFileSync(join(projectDir, "data", "scripts", "tasks.md"), buildTasksMd(params, projectDir));
+
         const hasStyle = existsSync(join(projectDir, "report", "figstyle.mplstyle"));
         const figStyleLines = hasStyle
           ? [
@@ -241,12 +294,25 @@ export function createExperimentTool(
           `You can READ anything in the project. You can only WRITE/EDIT files in the writable paths.`,
           `</scope>`,
           ``,
+          `<data_and_figures>`,
+          `CRITICAL: Separate computation from visualization.`,
+          `1. Write simulation code that saves ALL results to data/runs/run_N/ (use np.savez for arrays, JSON for params).`,
+          `2. Write a SEPARATE plotting script that loads the saved data and generates figures.`,
+          `3. This allows re-plotting without re-running expensive simulations.`,
+          `4. Always load figstyle before plotting: plt.style.use('report/figstyle.mplstyle') or the absolute path.`,
+          `5. Save figures as PDF vectors to report/figures/.`,
+          `6. No titles on figures — titles belong in LaTeX captions.`,
+          `</data_and_figures>`,
+          ``,
           `<workflow>`,
-          `1. Read existing code and context before writing. Understand what exists.`,
-          `2. Keep changes minimal. Fix the bug, don't rewrite the file.`,
-          `3. Test your code by running it. Read the output. Fix errors and retry.`,
-          `4. When done, report clearly: what you implemented, results, interpretation.`,
-          `5. If something fails after multiple attempts, report the failure honestly — don't fabricate results.`,
+          `1. Read data/scripts/tasks.md for your full assignment and pre-completion checklist.`,
+          `2. Read existing code and context. Understand what exists before writing.`,
+          `3. Write simulation code. Save ALL results to data/runs/run_N/ (np.savez for arrays, JSON for params).`,
+          `4. Write a SEPARATE plotting script. Load figstyle. Generate PDF figures.`,
+          `5. Test by running. Read output. Fix errors and retry.`,
+          `6. BEFORE REPORTING: Read data/scripts/tasks.md AGAIN and verify every checklist item.`,
+          `7. Report: what you implemented, results, interpretation, checklist status.`,
+          `8. If something fails after multiple attempts, report the failure honestly — don't fabricate results.`,
           `</workflow>`,
         ].join("\n");
 
@@ -303,6 +369,8 @@ export function createExperimentTool(
           ...(experimentContext ? [experimentContext, ``] : []),
           `Write code, run the experiment, and report your findings clearly.`,
           `Include: what you implemented, the results, and your interpretation.`,
+          ``,
+          `IMPORTANT: Start by reading data/scripts/tasks.md — it contains your full assignment, figure style requirements, and a pre-completion checklist. You MUST complete the checklist before finishing.`,
         ].join("\n");
 
         await expAgent.prompt(prompt);

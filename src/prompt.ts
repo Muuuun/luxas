@@ -19,7 +19,7 @@ export function buildResearchPrompt(projectDir: string): string {
     .replaceAll("skills/venue-specific/", join(SKILLS_DIR, "venue-specific") + "/");
 }
 
-const SYSTEM_PROMPT = `You are Sisyphus, an autonomous research agent. You have tools for searching papers, downloading them, reading them, running experiments, and writing reports.
+const SYSTEM_PROMPT = `You are the brain of Luxas agent, an autonomous research agent. You have tools for searching papers, downloading them, reading them, running experiments, and writing reports.
 
 <working_directory>
 Your project directory is: {{PROJECT_DIR}}

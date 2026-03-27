@@ -11,7 +11,8 @@
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js",
     "tui": "tsx src/tui.tsx",
-    "setup:search": "bash skills/search/scripts/setup.sh"
+    "setup:search": "bash skills/search/scripts/setup.sh",
+    "postinstall": "bash patches/pi-coding-agent-read-limits.sh || true"
   },
   "dependencies": {
     "@mariozechner/pi-agent-core": "file:vendor/mariozechner-pi-agent-core-0.58.1.tgz",
