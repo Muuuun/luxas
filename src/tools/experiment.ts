@@ -129,7 +129,8 @@ function buildTasksMd(params: { hypothesis: string; task: string }, projectDir: 
 
 ## Figure Requirements
 - Load figstyle BEFORE any plotting (see Figstyle section below)
-- Save as PDF vector: \`fig.savefig('report/figures/name.pdf')\`
+- Save as BOTH PDF and PNG: \`fig.savefig('report/figures/name.pdf')\` then \`fig.savefig('report/figures/name.png', dpi=150)\`
+- PDF goes into LaTeX. PNG is for you to visually inspect before finishing.
 - Every figure MUST have: axis labels with units, legend (if multiple curves)
 - Use the colorblind-friendly color cycle from figstyle (do NOT override axes.prop_cycle)
 - Single column width: 3.375 inches (set by figstyle)
@@ -146,11 +147,12 @@ ${figstyleSection}
 1. [ ] Figstyle loaded in every plotting script: \`grep -r "plt.style.use" data/scripts/\`
 2. [ ] No manual fontsize override: \`grep -rn "fontsize" data/scripts/*.py\` must return empty
 3. [ ] No manual figsize override: \`grep -rn "figsize" data/scripts/*.py\` must return empty (exception: double-column figures using 7.0)
-4. [ ] All figures saved as PDF in \`report/figures/\`
+4. [ ] All figures saved as PDF AND PNG in \`report/figures/\`
 5. [ ] All numerical data saved in \`data/runs/run_N/\` (np.savez for arrays, JSON for params)
 6. [ ] Figures have axis labels with units and legends
 7. [ ] Plotting script is separate from simulation script (can re-plot without re-running)
-8. [ ] If any check fails → fix and re-run before reporting
+8. [ ] **VISUAL CHECK**: Read every PNG with the read tool and verify the figure looks correct — check axis labels visible, legend readable, data makes sense, no overlapping text
+9. [ ] If any check fails → fix and re-run before reporting
 `;
 }
 
@@ -304,7 +306,7 @@ export function createExperimentTool(
           `2. Write a SEPARATE plotting script that loads the saved data and generates figures.`,
           `3. This allows re-plotting without re-running expensive simulations.`,
           `4. Always load figstyle before plotting: plt.style.use('report/figstyle.mplstyle') or the absolute path.`,
-          `5. Save figures as PDF vectors to report/figures/.`,
+          `5. Save figures as BOTH PDF (for LaTeX) and PNG (for visual inspection) to report/figures/.`,
           `6. No titles on figures — titles belong in LaTeX captions.`,
           `</data_and_figures>`,
           ``,
@@ -314,7 +316,7 @@ export function createExperimentTool(
           `3. Write simulation code. Save ALL results to data/runs/run_N/ (np.savez for arrays, JSON for params).`,
           `4. Write a SEPARATE plotting script. Load figstyle. Generate PDF figures.`,
           `5. Test by running. Read output. Fix errors and retry.`,
-          `6. BEFORE REPORTING: Read data/scripts/tasks.md AGAIN and verify every checklist item.`,
+          `6. BEFORE REPORTING: Read data/scripts/tasks.md AGAIN and verify every checklist item. Read every PNG figure with the read tool to visually inspect quality.`,
           `7. Report: what you implemented, results, interpretation, checklist status.`,
           `8. If something fails after multiple attempts, report the failure honestly — don't fabricate results.`,
           `</workflow>`,
