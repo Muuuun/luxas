@@ -18,8 +18,10 @@
 import { Agent } from "@mariozechner/pi-agent-core";
 import { getModel } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
-import { existsSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, writeFileSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { execSync } from "node:child_process";
+import { createReadTool } from "@mariozechner/pi-coding-agent";
 import { getApiKey } from "./auth.js";
 import type { CostTracker } from "./hooks.js";
 import { readFileSafe } from "./utils.js";
@@ -103,6 +105,7 @@ For all task types, also check:
 - **Goal alignment** — Is the work addressing RESEARCH.md, or drifting?
 - **Progress vs. resources** — Is the agent spinning its wheels?
 - **Phase balance** — Right balance between reading, experimenting, and writing?
+- **Visual quality** — If report page images are listed below, you MUST use the read tool to view EVERY page. Check: are figures publication-ready (labels readable, legends present, fonts consistent, no clipped/overlapping content)? Does the layout look professional? Would you approve this for journal submission?
 - **Language** — If RESEARCH.md explicitly specifies a report language, the report must use that language. Otherwise, the language should be inferred from all signals: RESEARCH.md language, project directory name, target audience, subject matter. For example, a project in a Chinese-named directory about Chinese policy should produce a Chinese report even if RESEARCH.md happens to be written in English. If the agent's language choice seems wrong given the context, flag it.
 </general_checks>
 
@@ -313,6 +316,35 @@ export function setupPIFallbackMonitor(
 }
 
 // ---------------------------------------------------------------------------
+// PDF → PNG rendering for visual review
+// ---------------------------------------------------------------------------
+
+function renderPdfPages(projectDir: string): string[] {
+  const pdfPath = join(projectDir, "report", "report.pdf");
+  if (!existsSync(pdfPath)) return [];
+
+  const outDir = join(projectDir, "report", "review-pages");
+  mkdirSync(outDir, { recursive: true });
+
+  try {
+    execSync(`pdftoppm -png -r 150 "${pdfPath}" "${join(outDir, "page")}"`,
+      { timeout: 30_000, stdio: "pipe" });
+  } catch {
+    return [];
+  }
+
+  return readdirSync(outDir)
+    .filter(f => f.endsWith(".png"))
+    .sort()
+    .map(f => join("report", "review-pages", f));
+}
+
+function cleanupReviewPages(projectDir: string): void {
+  const outDir = join(projectDir, "report", "review-pages");
+  if (existsSync(outDir)) rmSync(outDir, { recursive: true });
+}
+
+// ---------------------------------------------------------------------------
 // One-shot PI Evaluation (Opus — flagship)
 // ---------------------------------------------------------------------------
 
@@ -386,17 +418,37 @@ async function evaluateProgress(
     },
   };
 
+  const readTool = createReadTool(opts.projectDir);
+
   const piAgent = new Agent({
     initialState: {
       systemPrompt: piPrompt,
       model,
       thinkingLevel: "medium" as any,
-      tools: [verdictTool],
+      tools: [readTool, verdictTool],
     },
     getApiKey,
   });
 
-  await piAgent.prompt(stateText);
+  // Render PDF pages for visual inspection
+  const pagePngs = renderPdfPages(opts.projectDir);
+
+  // Append page list to state text if pages were rendered
+  let fullStateText = stateText;
+  if (pagePngs.length > 0) {
+    fullStateText += "\n\n" +
+      `# Report Pages for Visual Review (${pagePngs.length} pages)\n` +
+      `You MUST use the read tool to view EACH page image below and check visual quality before submitting your verdict.\n` +
+      `- Figure quality: labels readable at print size? Legends present? Fonts consistent?\n` +
+      `- Layout: proper margins, no orphan lines, tables formatted correctly?\n` +
+      `- Overall: does this look like a publishable document?\n\n` +
+      pagePngs.map(p => `- ${p}`).join("\n");
+  }
+
+  await piAgent.prompt(fullStateText);
+
+  // Clean up rendered pages
+  cleanupReviewPages(opts.projectDir);
 
   return (
     result ?? {
