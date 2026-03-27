@@ -135,6 +135,8 @@ function buildTasksMd(params: { hypothesis: string; task: string }, projectDir: 
 - Single column width: 3.375 inches (set by figstyle)
 - Error bars or shaded uncertainty bands where applicable
 - No titles on figures (titles go in LaTeX captions, not matplotlib)
+- Do NOT manually set fontsize in any plotting call — figstyle handles all font sizes
+- Do NOT set figsize in plt.subplots() — figstyle sets the correct single-column width (3.375 × 2.5 in). Only override for double-column figures (figsize=(7.0, height))
 
 ${figstyleSection}
 
