@@ -144,11 +144,13 @@ ${figstyleSection}
 **You MUST read this file again and complete this checklist before reporting results:**
 
 1. [ ] Figstyle loaded in every plotting script: \`grep -r "plt.style.use" data/scripts/\`
-2. [ ] All figures saved as PDF in \`report/figures/\`
-3. [ ] All numerical data saved in \`data/runs/run_N/\` (np.savez for arrays, JSON for params)
-4. [ ] Figures have axis labels with units and legends
-5. [ ] Plotting script is separate from simulation script (can re-plot without re-running)
-6. [ ] If any check fails → fix and re-run before reporting
+2. [ ] No manual fontsize override: \`grep -rn "fontsize" data/scripts/*.py\` must return empty
+3. [ ] No manual figsize override: \`grep -rn "figsize" data/scripts/*.py\` must return empty (exception: double-column figures using 7.0)
+4. [ ] All figures saved as PDF in \`report/figures/\`
+5. [ ] All numerical data saved in \`data/runs/run_N/\` (np.savez for arrays, JSON for params)
+6. [ ] Figures have axis labels with units and legends
+7. [ ] Plotting script is separate from simulation script (can re-plot without re-running)
+8. [ ] If any check fails → fix and re-run before reporting
 `;
 }
 
