@@ -152,7 +152,7 @@ ${figstyleSection}
 6. [ ] Figures have axis labels with units and legends
 7. [ ] Plotting script is separate from simulation script (can re-plot without re-running)
 8. [ ] **VISUAL CHECK**: Read every PNG with the read tool and verify the figure looks correct — check axis labels visible, legend readable, data makes sense, no overlapping text
-9. [ ] If any check fails → fix and re-run before reporting
+9. [ ] If any check fails → fix and re-run ONCE, then report regardless. Do NOT loop on checks — one pass is enough.
 `;
 }
 
