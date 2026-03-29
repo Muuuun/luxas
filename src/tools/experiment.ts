@@ -246,13 +246,23 @@ export function createExperimentTool(
         // Generate tasks.md — assignment + figure quality checklist
         writeFileSync(join(projectDir, "data", "scripts", "tasks.md"), buildTasksMd(params, projectDir));
 
-        const hasStyle = existsSync(join(projectDir, "report", "figstyle.mplstyle"));
+        // Ensure figstyle exists — copy from skills if missing
+        const figstylePath = join(projectDir, "report", "figstyle.mplstyle");
+        if (!existsSync(figstylePath)) {
+          const sisyphusRoot = join(import.meta.url.replace("file://", "").replace(/\/src\/tools\/experiment\.[tj]s$/, ""));
+          const defaultStyle = join(sisyphusRoot, "skills", "venue-specific", "figstyles", "physics-aps.mplstyle");
+          if (existsSync(defaultStyle)) {
+            const { copyFileSync } = await import("node:fs");
+            copyFileSync(defaultStyle, figstylePath);
+          }
+        }
+        const hasStyle = existsSync(figstylePath);
         const figStyleLines = hasStyle
           ? [
-              `<figure_style>Load report/figstyle.mplstyle before plotting: plt.style.use('${join(projectDir, "report", "figstyle.mplstyle")}'). Save as PDF: fig.savefig('report/figures/fig_name.pdf')</figure_style>`,
+              `<figure_style>Load report/figstyle.mplstyle before plotting: plt.style.use('${figstylePath}'). Save as BOTH PDF and PNG.</figure_style>`,
             ]
           : [
-              `<figure_style>plt.savefig('report/figures/fig_name.pdf', bbox_inches='tight', dpi=300). Prefer PDF. Publication-quality font sizes (≥7pt).</figure_style>`,
+              `<figure_style>plt.savefig('report/figures/fig_name.pdf', bbox_inches='tight', dpi=300). Also save PNG for inspection. Publication-quality font sizes (≥7pt).</figure_style>`,
             ];
 
         const systemPrompt = [
