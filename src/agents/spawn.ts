@@ -75,10 +75,10 @@ export async function spawnAgent(opts: SpawnAgentOptions): Promise<SpawnAgentRes
   const def = getDefinition(opts.name);
   const t0 = Date.now();
 
-  // Build hierarchical agent ID for tracing
+  // Build hierarchical agent ID for tracing (use '.' separator, not '/' — agentsmelt uses IDs in file paths)
   const suffix = opts.instanceIndex !== undefined ? `-${opts.instanceIndex}` : "";
   const agentId = opts.parentAgentId
-    ? `${opts.parentAgentId}/${opts.name}${suffix}`
+    ? `${opts.parentAgentId}.${opts.name}${suffix}`
     : `${opts.name}${suffix}`;
   const depth = opts.depth ?? 0;
 
