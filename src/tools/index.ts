@@ -5,7 +5,7 @@
 import type { Agent } from "@mariozechner/pi-agent-core";
 import { createReportTools } from "./report.js";
 import { createCodingToolsForProject } from "./coding.js";
-import { createSpawnAgentTool } from "./spawn-agent.js";
+import { createSpawnAgentTool, getActiveBackgroundAgents } from "./spawn-agent.js";
 
 export interface ToolCallbacks {
   onFinish?: () => void;
@@ -62,6 +62,12 @@ export function buildResearchTools(
       required: ["summary"],
     },
     execute: async (args: { summary: string }) => {
+      // Hard lock: cannot finish while background agents are still running
+      const active = getActiveBackgroundAgents();
+      if (active.length > 0) {
+        const list = active.map(a => `  - ${a.name}: ${a.task} (running ${Math.floor((Date.now() - a.startedAt) / 1000)}s)`).join("\n");
+        return { content: [{ type: "text" as const, text: `Cannot finish: ${active.length} background agent(s) still running. Wait for them to complete before finishing.\n\nActive agents:\n${list}` }] };
+      }
       const { existsSync } = await import("node:fs");
       const { join } = await import("node:path");
       const pdfPath = join(projectDir, "report/report.pdf");

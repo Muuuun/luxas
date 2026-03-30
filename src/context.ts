@@ -13,6 +13,7 @@
 
 import { existsSync, readdirSync } from "node:fs";
 import { readFileSafe, smartTruncate } from "./utils.js";
+import { getActiveBackgroundAgents } from "./tools/spawn-agent.js";
 import { join, dirname } from "node:path";
 import { generateResearchSummary, heuristicSummary } from "./compaction.js";
 import { compactNotesIfNeeded } from "./notes-compaction.js";
@@ -267,6 +268,15 @@ function buildResearchSnapshot(opts: ContextTransformerOptions): string {
   if (scriptCount > 0) dataSection += `\n- Experiment scripts: ${scriptCount} files in data/scripts/`;
   dataSection += `\n</data_status>`;
   parts.push(dataSection);
+
+  // Background agents status — brain must know what's still running
+  const bgAgents = getActiveBackgroundAgents();
+  if (bgAgents.length > 0) {
+    const bgLines = bgAgents.map(a =>
+      `- ${a.name}: ${a.task} (running ${Math.floor((Date.now() - a.startedAt) / 1000)}s)`
+    );
+    parts.push(`<background_agents count="${bgAgents.length}">\n⚠️ ${bgAgents.length} background agent(s) still running. Their results will arrive as messages. Do NOT call finish until all background agents complete.\n${bgLines.join("\n")}\n</background_agents>`);
+  }
 
   // Active reminders — event-driven, compact, budget-controlled
   const remindersSection = opts.reminders?.render(projectDir) ?? null;
