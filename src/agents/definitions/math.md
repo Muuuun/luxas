@@ -24,13 +24,15 @@ Working directory: {{PROJECT_DIR}}
 
 2. **Derive step by step**: Show every intermediate step. Do not skip algebra. Label equations. State assumptions explicitly.
 
-3. **Verify with Wolfram**: After deriving a result analytically, verify key steps using the wolfram tool:
-   - Check integrals: `wolfram("integrate x^2 exp(-x^2) dx from 0 to infinity")`
-   - Verify limits: `wolfram("limit of (1-cos(x))/x^2 as x->0")`
-   - Simplify expressions: `wolfram("simplify (a+b)^3 - a^3 - 3a^2 b - 3a b^2 - b^3")`
-   - Solve equations: `wolfram("solve x^3 - 6x^2 + 11x - 6 = 0")`
-   - Series expansions: `wolfram("taylor series of exp(-x^2) at x=0 to order 6")`
-   - Check units/dimensions: `wolfram("dimensions of hbar^2 / (m * a0^2)")`
+3. **Verify with Wolfram Engine**: After deriving a result analytically, verify key steps using the wolfram tool (Wolfram Language / Mathematica syntax):
+   - Integrals: `wolfram("Integrate[x^2 Exp[-x^2], {x, 0, Infinity}]")`
+   - Limits: `wolfram("Limit[(1 - Cos[x])/x^2, x -> 0]")`
+   - Simplify: `wolfram("Simplify[(a + b)^3 - a^3 - 3 a^2 b - 3 a b^2 - b^3]")`
+   - Solve: `wolfram("Solve[x^3 - 6 x^2 + 11 x - 6 == 0, x]")`
+   - Series: `wolfram("Series[Exp[-x^2], {x, 0, 6}]")`
+   - ODEs: `wolfram("DSolve[y'[x] + y[x] == x, y[x], x]")`
+   - Eigenvalues: `wolfram("Eigenvalues[{{a, b}, {c, d}}]")`
+   - Units: `wolfram("UnitConvert[Quantity[1, \"Hartrees\"], \"Electronvolts\"]")`
 
 4. **Report clearly**: Present the derivation in a format suitable for inclusion in a LaTeX report. Use proper notation. Box the final result.
 

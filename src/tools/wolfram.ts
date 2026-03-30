@@ -1,135 +1,122 @@
 /**
- * Wolfram Alpha tool — symbolic computation via the Wolfram Alpha API.
+ * Wolfram tool — symbolic computation via Wolfram Engine (wolframscript).
  *
- * Requires WOLFRAM_APP_ID environment variable (free at https://developer.wolframalpha.com/).
- * Falls back to the Short Answers API if Full Results is unavailable.
+ * Uses the free Wolfram Engine (https://www.wolfram.com/engine/).
+ * Install: download from wolfram.com/engine, then `wolframscript -activate`.
+ * No API key needed — runs locally.
+ *
+ * Fallback: Python/sympy if wolframscript is not installed.
  */
 
 import { Type } from "@sinclair/typebox";
+import { execSync } from "node:child_process";
+
+let wolframAvailable: boolean | null = null;
+
+function checkWolfram(): boolean {
+  if (wolframAvailable !== null) return wolframAvailable;
+  try {
+    execSync("which wolframscript", { stdio: "pipe" });
+    wolframAvailable = true;
+  } catch {
+    wolframAvailable = false;
+  }
+  return wolframAvailable;
+}
 
 const WolframParams = Type.Object({
   query: Type.String({
     description:
-      "Natural language or Mathematica-style query. Examples: " +
-      '"integrate x^2 exp(-x^2) dx from 0 to infinity", ' +
-      '"solve x^3 - 6x^2 + 11x - 6 = 0", ' +
-      '"taylor series of sin(x)/x at x=0 to order 8", ' +
-      '"simplify (1-cos(2x))/(2 sin(x)^2)", ' +
-      '"dimensions of hbar^2 / (m * a0^2)"',
+      "Wolfram Language (Mathematica) expression to evaluate. Examples:\n" +
+      '  "Integrate[x^2 Exp[-x^2], {x, 0, Infinity}]"\n' +
+      '  "Solve[x^3 - 6x^2 + 11x - 6 == 0, x]"\n' +
+      '  "Series[Sin[x]/x, {x, 0, 8}]"\n' +
+      '  "Simplify[(1 - Cos[2x])/(2 Sin[x]^2)]"\n' +
+      '  "DSolve[y\'[x] + y[x] == x, y[x], x]"\n' +
+      '  "Eigenvalues[{{1, 2}, {3, 4}}]"\n' +
+      '  "UnitConvert[Quantity[1, \\"Hartrees\\"], \\"Electronvolts\\"]"',
   }),
 });
 
 export function createWolframTool() {
   return {
     name: "wolfram",
-    label: "Wolfram Alpha",
+    label: "Wolfram Engine",
     description:
-      "Query Wolfram Alpha for symbolic math: integrals, series, simplification, equation solving, " +
-      "unit analysis, limits, differential equations, linear algebra, etc. " +
-      "Use natural language or Mathematica syntax. Returns the computed result.",
+      "Evaluate Wolfram Language (Mathematica) expressions locally via Wolfram Engine. " +
+      "Use for: symbolic integrals, differential equations, series expansions, simplification, " +
+      "linear algebra, equation solving, unit conversions, special functions, numerical evaluation. " +
+      "Input must be valid Wolfram Language syntax.",
     parameters: WolframParams,
 
     async execute(
       _toolCallId: string,
       params: { query: string },
     ) {
-      const appId = process.env.WOLFRAM_APP_ID;
-
-      if (!appId) {
-        // No API key — execute via Python/sympy as fallback
-        try {
-          const { execSync } = await import("node:child_process");
-          const sympyScript = `
-from sympy import *
-from sympy.parsing.sympy_parser import parse_expr, standard_transformations, implicit_multiplication_application
-try:
-    result = eval("""${params.query.replace(/"/g, '\\"').replace(/\n/g, '\\n')}""")
-    print(result)
-except:
-    # Try as a natural-language-ish query via sympify
-    x, y, z, t, a, b, c, n, m, k = symbols('x y z t a b c n m k')
-    hbar, omega, gamma = symbols('hbar omega gamma', positive=True)
-    print("Use sympy expressions directly, e.g.: integrate(x**2 * exp(-x**2), (x, 0, oo))")
-`;
-          const output = execSync(`python3 -c ${JSON.stringify(sympyScript)}`, {
-            encoding: "utf-8",
-            timeout: 30_000,
-          }).trim();
-          return {
-            content: [{ type: "text" as const, text: `**Result (sympy):** ${output}` }],
-            details: { success: true, api: "sympy" },
-          };
-        } catch (err: any) {
-          return {
-            content: [{
-              type: "text" as const,
-              text: `WOLFRAM_APP_ID not set and sympy fallback failed. Use bash + Python/sympy manually:\n\`\`\`bash\npython3 -c "from sympy import *; x = symbols('x'); print(integrate(x**2 * exp(-x**2), (x, 0, oo)))"\n\`\`\``,
-            }],
-            details: { success: false, reason: "no_api_key_and_sympy_failed" },
-          };
-        }
+      if (checkWolfram()) {
+        return runWolframScript(params.query);
       }
-
-      try {
-        // Try Full Results API first (richer output)
-        const fullUrl = `https://api.wolframalpha.com/v2/query?input=${encodeURIComponent(params.query)}&appid=${appId}&output=json&podstate=Step-by-step+solution`;
-        const fullResp = await fetch(fullUrl, { signal: AbortSignal.timeout(30_000) });
-
-        if (fullResp.ok) {
-          const data = await fullResp.json() as any;
-          if (data.queryresult?.success) {
-            const pods = data.queryresult.pods ?? [];
-            const results: string[] = [];
-
-            for (const pod of pods) {
-              const title = pod.title;
-              const subpods = pod.subpods ?? [];
-              for (const sub of subpods) {
-                const text = sub.plaintext;
-                if (text) {
-                  results.push(`**${title}:**\n${text}`);
-                }
-              }
-            }
-
-            if (results.length > 0) {
-              return {
-                content: [{ type: "text" as const, text: results.join("\n\n") }],
-                details: { success: true, api: "full" },
-              };
-            }
-          }
-        }
-
-        // Fall back to Short Answers API (simpler, more reliable)
-        const shortUrl = `https://api.wolframalpha.com/v1/result?i=${encodeURIComponent(params.query)}&appid=${appId}`;
-        const shortResp = await fetch(shortUrl, { signal: AbortSignal.timeout(15_000) });
-
-        if (shortResp.ok) {
-          const text = await shortResp.text();
-          return {
-            content: [{ type: "text" as const, text: `**Result:** ${text}` }],
-            details: { success: true, api: "short" },
-          };
-        }
-
-        return {
-          content: [{
-            type: "text" as const,
-            text: `Wolfram Alpha could not compute: "${params.query}". HTTP ${shortResp.status}. Try rephrasing or use Python/sympy via bash.`,
-          }],
-          details: { success: false, status: shortResp.status },
-        };
-
-      } catch (err: any) {
-        return {
-          content: [{
-            type: "text" as const,
-            text: `Wolfram Alpha request failed: ${err.message}. Use Python/sympy via bash as fallback.`,
-          }],
-          details: { success: false, error: err.message },
-        };
-      }
+      // Fallback to Python/sympy
+      return runSympyFallback(params.query);
     },
   };
+}
+
+function runWolframScript(query: string): { content: any[]; details: any } {
+  try {
+    const output = execSync(
+      `wolframscript -code ${JSON.stringify(query)}`,
+      { encoding: "utf-8", timeout: 60_000, maxBuffer: 1024 * 1024 },
+    ).trim();
+
+    return {
+      content: [{ type: "text" as const, text: output }],
+      details: { success: true, engine: "wolfram" },
+    };
+  } catch (err: any) {
+    const stderr = err.stderr?.toString().trim() ?? "";
+    const stdout = err.stdout?.toString().trim() ?? "";
+    const output = stdout || stderr || err.message;
+    return {
+      content: [{ type: "text" as const, text: `Wolfram Engine error:\n${output}` }],
+      details: { success: false, engine: "wolfram" },
+    };
+  }
+}
+
+function runSympyFallback(query: string): { content: any[]; details: any } {
+  try {
+    // Attempt to translate common Wolfram-style queries to sympy
+    const script = `
+from sympy import *
+x, y, z, t, r, theta, phi = symbols('x y z t r theta phi')
+a, b, c, n, m, k, L = symbols('a b c n m k L')
+hbar, omega, gamma, alpha, beta, sigma = symbols('hbar omega gamma alpha beta sigma', positive=True)
+oo = S.Infinity
+try:
+    result = eval("""${query.replace(/"/g, '\\"').replace(/\n/g, '\\n')}""")
+    pprint(result, use_unicode=True)
+except Exception as e:
+    print(f"sympy error: {e}")
+    print("Note: input should be sympy syntax, not Wolfram Language.")
+    print("Example: integrate(x**2 * exp(-x**2), (x, 0, oo))")
+`;
+    const output = execSync(`python3 -c ${JSON.stringify(script)}`, {
+      encoding: "utf-8",
+      timeout: 30_000,
+    }).trim();
+
+    return {
+      content: [{ type: "text" as const, text: `**Result (sympy fallback — install wolframscript for full Wolfram Engine):**\n${output}` }],
+      details: { success: true, engine: "sympy" },
+    };
+  } catch (err: any) {
+    return {
+      content: [{
+        type: "text" as const,
+        text: `wolframscript not installed and sympy fallback failed.\n\nInstall Wolfram Engine (free): https://www.wolfram.com/engine/\nThen: wolframscript -activate\n\nOr install sympy: pip install sympy`,
+      }],
+      details: { success: false, engine: "none" },
+    };
+  }
 }
