@@ -34,7 +34,7 @@ if (existsSync(join(browserUseDir, "browser-use")) && !process.env.PATH?.include
 }
 import { loginAnthropicOAuth } from "./auth.js";
 import { registerProject, updateProjectAfterRun, loadProjects } from "./memory.js";
-import * as tmux from "./tmux.js";
+
 
 const args = process.argv.slice(2);
 const command = args[0] ?? "run";
@@ -123,10 +123,6 @@ async function run(dir: string, modelName: string, userDirective?: string) {
     model: modelName,
   });
 
-  // Tmux observability
-  const logFile = tmux.openWindow("sisyphus-main");
-  agent.subscribe(tmux.createAgentObserver(logFile));
-
   // Console progress
   agent.subscribe((event: any) => {
     if (event.type === "tool_execution_start") {
@@ -183,8 +179,6 @@ async function run(dir: string, modelName: string, userDirective?: string) {
 
   // Clean up browser-use daemon if it was started during this session
   try { execSync("browser-use close --all", { stdio: "pipe", timeout: 5000 }); } catch { /* not running */ }
-
-  tmux.closeWindow(logFile, "sisyphus-main", true, Date.now() - t0);
 
   // Flush AgentSmelt traces
   await agentSmeltHandle.done();

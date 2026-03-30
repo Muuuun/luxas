@@ -79,11 +79,11 @@ Luxas assembles pi-mono primitives into a research-specific agent:
 
 | Layer | File | What it does |
 |-------|------|-------------|
-| **1. System Prompt** | `prompt.ts` | Research methodology: hypothesis → experiment → discovery cycle |
-| **2. Tools** | `tools/` | Coding tools + `compile_latex` + `dispatch_workers` + `run_experiment` + search skill + PI review |
+| **1. System Prompt** | `agents/definitions/brain.md` | Research methodology: hypothesis → experiment → discovery cycle |
+| **2. Tools** | `tools/` | Coding tools + `compile_latex` + `spawn_agent` (generic agent spawner) |
 | **3. Context Transform** | `context.ts` | Injects research state (`.md` files) before every LLM call; two-stage compaction (60K warn → 80K compress) |
 | **4. Hooks** | `hooks.ts` | `RESEARCH.md` write-protection, cost/time limits, API rate limiting, JSONL session logging |
-| **5. PI Monitor** | `pi-agent.ts` | Adversarial quality control (Opus-tier); dual trigger: milestone review + step-count fallback; feedback via `reviews/pi_feedback.md` |
+| **5. Reviewer** | `pi-agent.ts` | Adversarial quality control (Opus-tier); dual trigger: milestone review + step-count fallback; feedback via `reviews/pi_feedback.md` |
 
 Cross-cutting features:
 - **Session DAG** — structured conversation tree with compaction support.
@@ -98,11 +98,23 @@ Cross-cutting features:
 |------|-------------|
 | `read` / `write` / `edit` / `bash` | File operations + shell (from pi-coding-agent) |
 | `compile_latex` | pdflatex + bibtex compilation with figure citation enforcement |
-| `dispatch_workers` | Parallel lightweight sub-agents for batch tasks (read N papers, search N topics) |
-| `run_experiment` | Launch coding agent for experiments; safety-wrapped (protected files, read-before-edit) |
-| `search_literature` | Papers (OpenAlex, arXiv, CrossRef), citation chains, download, BibTeX, Brave web search |
-| `request_pi_review` | Request feedback from the adversarial PI monitor |
+| `spawn_agent` | Generic agent spawner — brain decides which agent type to spawn (search, worker, experiment, reviewer, or sub-brain) |
+| `request_pi_review` | Request feedback from the adversarial reviewer |
 | `finish` | Mark research complete (blocked until PDF passes validation) |
+
+## Agent definitions
+
+Each agent is defined as a `.md` file in `src/agents/definitions/`:
+
+| Agent | Model | Description |
+|-------|-------|-------------|
+| `brain` | opus | Main research brain — plans, delegates, writes reports |
+| `search` | sonnet | Searches academic databases, citation chains, web |
+| `worker` | sonnet | Lightweight agent for parallel tasks (reading papers, extracting data) |
+| `experiment` | opus | Full coding agent for simulations (safety-wrapped) |
+| `reviewer` | opus | Adversarial PI reviewer — challenges findings, returns verdict |
+
+Agents are defined using YAML frontmatter + markdown body (system prompt). Adding a new agent = creating one `.md` file. Brain can spawn any defined agent, including sub-brains for complex tasks (max depth: 2).
 
 ## Search skill
 
@@ -119,16 +131,24 @@ The search skill (`skills/search/`) handles literature discovery:
 
 ```
 src/
-  agent.ts           5-layer agent assembly
-  prompt.ts          research methodology prompt
-  tools/             tool definitions
+  agent.ts           5-layer brain assembly
+  agents/
+    definitions/     agent .md files (brain, search, worker, experiment, reviewer)
+    registry.ts      loads + caches agent definitions
+    spawn.ts         generic agent spawner (used by spawn_agent tool)
+    tool-sets.ts     named tool-set factories
+    context-builders.ts  dynamic context injection
+    safety-wrappers.ts   runtime tool safety constraints
+  tools/
+    spawn-agent.ts   the single spawn_agent tool
+    report.ts        compile_latex tool
+    coding.ts        pi-coding-agent wrapper
   context.ts         state injection + compaction
   hooks.ts           safety + logging hooks
-  pi-agent.ts        adversarial PI monitor
+  pi-agent.ts        reviewer lifecycle (milestone + fallback triggers)
   session.ts         session DAG with compaction
   extensions.ts      lifecycle event bus
   reminders.ts       state-aware reminder injection
-  tmux.ts            tmux window management
   auth.ts            Anthropic OAuth PKCE
   tui/               interactive terminal dashboard
 
@@ -184,7 +204,6 @@ project/
 - **claude** CLI (authenticated) — or `ANTHROPIC_API_KEY`
 - **pdflatex** + **bibtex** (TeX Live)
 - **pdftotext** + **pdfimages** (poppler)
-- **tmux** (worker window management)
 - **Python 3.10+** (optional — experiments + figure generation)
 - **`BRAVE_API_KEY`** (optional — web search)
 

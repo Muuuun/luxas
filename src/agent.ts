@@ -1,7 +1,7 @@
 /**
  * Research Agent — assembles the five layers on top of agent-core.
  *
- * Layer 1: System Prompt (prompt.ts)
+ * Layer 1: System Prompt (from agents/definitions/brain.md)
  * Layer 2: Tools (tools/index.ts) + PI review tool
  * Layer 3: transformContext (context.ts)
  * Layer 4: Hooks (hooks.ts)
@@ -16,8 +16,9 @@ import { Agent } from "@mariozechner/pi-agent-core";
 import { nameAgent } from "agentsmelt";
 import { getModel } from "@mariozechner/pi-ai";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
-import { join, isAbsolute, resolve } from "node:path";
-import { buildResearchPrompt } from "./prompt.js";
+import { join, isAbsolute, resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { getDefinition, resolvePrompt } from "./agents/registry.js";
 import { buildResearchTools } from "./tools/index.js";
 import { buildContextTransformer } from "./context.js";
 import { buildResearchHooks } from "./hooks.js";
@@ -34,7 +35,7 @@ import type { PIVerdict } from "./pi-agent.js";
 
 export interface ResearchAgentOptions {
   projectDir: string;
-  model?: string;              // "sonnet" | "opus" | "haiku" (default: sonnet)
+  model?: string;              // "sonnet" | "opus" | "haiku" (default: opus)
   thinkingLevel?: ThinkingLevel;
   maxCostUsd?: number;
   maxDurationMs?: number;
@@ -48,20 +49,33 @@ const MODEL_MAP: Record<string, [string, string]> = {
   opus: ["anthropic", "claude-opus-4-6"],
 };
 
+// Resolve paths for template variables
+const SISYPHUS_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+const SEARCH_SCRIPT_PATH = join(SISYPHUS_ROOT, "skills", "search", "scripts", "search");
+const EXTRACT_FIGURES_PATH = join(SISYPHUS_ROOT, "skills", "search", "scripts", "extract-figures");
+const VENUE_SPECIFIC_DIR = join(SISYPHUS_ROOT, "skills", "venue-specific") + "/";
+
 export function createResearchAgent(opts: ResearchAgentOptions) {
   // Enforce absolute projectDir — all tools depend on this
   const projectDir = isAbsolute(opts.projectDir) ? opts.projectDir : resolve(opts.projectDir);
 
-  // Main agent uses opus by default; workers/sub-agents use sonnet
+  // Model for the brain agent
   const modelKey = opts.model ?? "opus";
   const [provider, modelId] = MODEL_MAP[modelKey] ?? MODEL_MAP.opus;
   const model = getModel(provider as any, modelId as any);
-  const workerModelKey = "sonnet";
-  const workerModel = getModel(MODEL_MAP[workerModelKey][0] as any, MODEL_MAP[workerModelKey][1] as any);
   const thinkingLevel = opts.thinkingLevel ?? "medium";
 
-  // Layer 1: System Prompt — now includes projectDir
-  const systemPrompt = buildResearchPrompt(projectDir);
+  // Template variables shared by brain and sub-agents
+  const templateVars: Record<string, string> = {
+    PROJECT_DIR: projectDir,
+    SEARCH_SCRIPT: SEARCH_SCRIPT_PATH,
+    EXTRACT_FIGURES: EXTRACT_FIGURES_PATH,
+    VENUE_SPECIFIC_DIR: VENUE_SPECIFIC_DIR,
+  };
+
+  // Layer 1: System Prompt — loaded from agents/definitions/brain.md
+  const brainDef = getDefinition("brain");
+  const systemPrompt = resolvePrompt(brainDef, templateVars);
 
   // Reminder system — event-driven, per-turn quality nudges
   const reminders = new ReminderRegistry();
@@ -88,10 +102,8 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
   }
 
   // Layer 2: Tools (research tools + PI review tool)
-  // Created after hooks so sub-agents can report costs via trackUsage
-  // finish tool callback — set after agent is created (needs reference to agent)
   let finishCallback: (() => void) | undefined;
-  const tools = buildResearchTools(projectDir, model, workerModel, getApiKey, hooks.trackUsage, {
+  const tools = buildResearchTools(projectDir, templateVars, getApiKey, hooks.trackUsage, {
     onFinish: () => finishCallback?.(),
   });
 
@@ -101,7 +113,6 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
     costTracker: hooks.tracker,
     startTime: hooks.startTime,
     onVerdict: (verdict: PIVerdict, toolCallCount: number) => {
-      // Enforce PI STOP — block non-finalization tools
       if (verdict.verdict === "stop") {
         hooks.setPIStopped();
       }
@@ -117,7 +128,7 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
     tools.push(piReview.tool);
   }
 
-  // Layer 3: transformContext — now with LLM compaction (#1), precise tokens (#3), extensions (#8)
+  // Layer 3: transformContext — LLM compaction, precise tokens, extensions
   const transformContext = buildContextTransformer({
     projectDir: projectDir,
     model,
@@ -148,18 +159,17 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
   // Wire finish tool to abort the agent loop
   finishCallback = () => agent.abort();
 
-  // #5: Session DAG — replaces raw appendFileSync checkpoint
+  // #5: Session DAG
   const agentDir = join(projectDir, ".agent");
   mkdirSync(agentDir, { recursive: true });
   const checkpointPath = join(agentDir, "checkpoint.jsonl");
 
-  // Migrate legacy checkpoint format (raw messages without session header)
+  // Migrate legacy checkpoint format
   if (existsSync(checkpointPath)) {
     try {
       const firstLine = readFileSync(checkpointPath, "utf-8").split("\n")[0];
       const parsed = JSON.parse(firstLine);
       if (parsed.type !== "session") {
-        // Legacy format — rename and let Session.open create a fresh file
         renameSync(checkpointPath, checkpointPath + ".legacy");
       }
     } catch { /* corrupted — Session.open will overwrite */ }
@@ -174,7 +184,6 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
       const msg = event.assistantMessageEvent;
       if (msg?.usage) {
         hooks.trackUsage(msg.usage);
-        // #8: Emit usage_update event
         bus.emit({
           type: "usage_update",
           cost: hooks.tracker.totalCost,
@@ -189,7 +198,6 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
         hooks.trackUsage(msg.usage);
       }
     }
-    // #8: Emit turn events
     if (event.type === "turn_start") {
       bus.emit({ type: "turn_start" });
     }
@@ -204,7 +212,6 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
         const messages = agent.state.messages;
         const newMessages = messages.slice(lastCheckpointedMsgCount)
           .filter((m: any) => {
-            // Skip error responses — empty content with stopReason=error corrupts checkpoint
             if (m.role === "assistant" && m.stopReason === "error") return false;
             if (m.role === "assistant" && Array.isArray(m.content) && m.content.length === 0) return false;
             return true;
@@ -217,7 +224,7 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
     }
   });
 
-  // Layer 5: PI fallback monitor (auto-triggers if agent doesn't request review)
+  // Layer 5: PI fallback monitor
   let piFallback: ReturnType<typeof setupPIFallbackMonitor> | null = null;
   if (piReview) {
     piFallback = setupPIFallbackMonitor(agent, piReview, piMonitorOpts);
@@ -230,10 +237,7 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
     try {
       const messages = buildSessionContext(session);
       if (messages.length > 0) {
-        // #6: Clean messages for cross-model compatibility before restoring
         const cleaned = cleanMessagesForModel(messages, currentModel);
-
-        // Inject resume directive so agent doesn't re-verify everything
         cleaned.push({
           role: "user",
           content: [
@@ -246,7 +250,6 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
           ].join("\n"),
           timestamp: Date.now(),
         });
-
         agent.replaceMessages(cleaned);
         lastCheckpointedMsgCount = cleaned.length;
         return cleaned.length;

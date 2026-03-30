@@ -1,13 +1,10 @@
 /**
- * Tool index — assembles all research tools.
+ * Tool index — assembles all research tools for the brain agent.
  */
 
-import type { Model } from "@mariozechner/pi-ai";
 import { createReportTools } from "./report.js";
 import { createCodingToolsForProject } from "./coding.js";
-import { createDispatchWorkersTool } from "./workers.js";
-import { createExperimentTool } from "./experiment.js";
-import { createSearchAgentTool } from "./search-agent.js";
+import { createSpawnAgentTool } from "./spawn-agent.js";
 
 export interface ToolCallbacks {
   onFinish?: () => void;
@@ -15,8 +12,7 @@ export interface ToolCallbacks {
 
 export function buildResearchTools(
   projectDir: string,
-  model: Model<any>,
-  workerModel: Model<any>,
+  templateVars: Record<string, string>,
   getApiKey: (provider: string) => Promise<string | undefined> | string | undefined,
   trackUsage?: (usage: any) => void,
   callbacks?: ToolCallbacks,
@@ -24,15 +20,8 @@ export function buildResearchTools(
   const codingTools = createCodingToolsForProject(projectDir);
   const reportTools = createReportTools(projectDir);
 
-  // Workers use workerModel (sonnet) for cost efficiency
-  const workerTools = [...codingTools];
-  const dispatchWorkers = createDispatchWorkersTool(workerTools, workerModel, getApiKey, projectDir, trackUsage);
-
-  // Experiment uses workerModel by default; thinkingLevel "high" → opus
-  const experimentTool = createExperimentTool(projectDir, workerModel, model, getApiKey, trackUsage);
-
-  // Search agent — dedicated agent for broad literature search
-  const searchAgent = createSearchAgentTool(workerModel, getApiKey, projectDir, trackUsage);
+  // Single spawn_agent tool replaces search-agent, workers, experiment tools
+  const spawnAgent = createSpawnAgentTool(projectDir, templateVars, getApiKey, trackUsage);
 
   // finish tool — agent calls this when research is complete
   const finishTool = {
@@ -64,9 +53,7 @@ export function buildResearchTools(
   return [
     ...reportTools,
     ...codingTools,
-    dispatchWorkers,
-    searchAgent,
-    experimentTool,
+    spawnAgent,
     finishTool,
   ];
 }
