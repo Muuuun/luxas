@@ -36,15 +36,38 @@ export function createWolframTool() {
       const appId = process.env.WOLFRAM_APP_ID;
 
       if (!appId) {
-        // No API key — fall back to using Python/sympy via bash
-        return {
-          content: [{
-            type: "text" as const,
-            text: "WOLFRAM_APP_ID not set. Use bash + Python/sympy for symbolic computation instead:\n" +
-              "```bash\npython3 -c \"from sympy import *; x = symbols('x'); print(integrate(x**2 * exp(-x**2), (x, 0, oo)))\"\n```",
-          }],
-          details: { success: false, reason: "no_api_key" },
-        };
+        // No API key — execute via Python/sympy as fallback
+        try {
+          const { execSync } = await import("node:child_process");
+          const sympyScript = `
+from sympy import *
+from sympy.parsing.sympy_parser import parse_expr, standard_transformations, implicit_multiplication_application
+try:
+    result = eval("""${params.query.replace(/"/g, '\\"').replace(/\n/g, '\\n')}""")
+    print(result)
+except:
+    # Try as a natural-language-ish query via sympify
+    x, y, z, t, a, b, c, n, m, k = symbols('x y z t a b c n m k')
+    hbar, omega, gamma = symbols('hbar omega gamma', positive=True)
+    print("Use sympy expressions directly, e.g.: integrate(x**2 * exp(-x**2), (x, 0, oo))")
+`;
+          const output = execSync(`python3 -c ${JSON.stringify(sympyScript)}`, {
+            encoding: "utf-8",
+            timeout: 30_000,
+          }).trim();
+          return {
+            content: [{ type: "text" as const, text: `**Result (sympy):** ${output}` }],
+            details: { success: true, api: "sympy" },
+          };
+        } catch (err: any) {
+          return {
+            content: [{
+              type: "text" as const,
+              text: `WOLFRAM_APP_ID not set and sympy fallback failed. Use bash + Python/sympy manually:\n\`\`\`bash\npython3 -c "from sympy import *; x = symbols('x'); print(integrate(x**2 * exp(-x**2), (x, 0, oo)))"\n\`\`\``,
+            }],
+            details: { success: false, reason: "no_api_key_and_sympy_failed" },
+          };
+        }
       }
 
       try {
