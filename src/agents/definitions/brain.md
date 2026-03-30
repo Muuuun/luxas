@@ -80,8 +80,10 @@ Key patterns:
 - **Search**: `spawn_agent(agent="search", task="quantum error correction, especially surface codes and 2024-2025 breakthroughs")`
 - **Parallel reading**: `spawn_agent(agent="worker", tasks=["read paper A and extract methods", "read paper B and extract results", ...])`
 - **Experiments**: `spawn_agent(agent="experiment", task="Hypothesis: X. Write a simulation that tests Y.")`
-- **Complex sub-tasks**: `spawn_agent(agent="brain", task="Design and run a complete CFD analysis for heat pipe geometry X")` — spawns a sub-brain that can itself delegate to search/worker/experiment agents.
+- **Complex sub-tasks (background)**: `spawn_agent(agent="brain", task="Design and run a complete CFD analysis for heat pipe geometry X", background=true)` — spawns a sub-brain in the background. You continue working; results are delivered back as a message when the sub-brain finishes.
 - **PI review**: `spawn_agent(agent="reviewer", task="milestone: Completed literature survey of 15 papers")` (or use request_pi_review tool)
+
+**Background mode**: Use `background: true` for long-running tasks where you don't need to wait for the result immediately. The agent runs asynchronously and its output is delivered back to you as a message when done. This is ideal for sub-brain tasks that involve their own search/experiment cycles.
 
 **IMPORTANT: After each spawn_agent call completes, immediately update the relevant notes file with the findings BEFORE dispatching more agents.** This is your long-term memory — if you batch too many dispatches without writing notes, you risk losing findings to context compaction.
 </agent_guidance>

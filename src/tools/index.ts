@@ -2,6 +2,7 @@
  * Tool index — assembles all research tools for the brain agent.
  */
 
+import type { Agent } from "@mariozechner/pi-agent-core";
 import { createReportTools } from "./report.js";
 import { createCodingToolsForProject } from "./coding.js";
 import { createSpawnAgentTool } from "./spawn-agent.js";
@@ -16,12 +17,35 @@ export function buildResearchTools(
   getApiKey: (provider: string) => Promise<string | undefined> | string | undefined,
   trackUsage?: (usage: any) => void,
   callbacks?: ToolCallbacks,
-): any[] {
+): { tools: any[]; setParentAgent: (agent: Agent) => void } {
   const codingTools = createCodingToolsForProject(projectDir);
   const reportTools = createReportTools(projectDir);
 
-  // Single spawn_agent tool replaces search-agent, workers, experiment tools
-  const spawnAgent = createSpawnAgentTool(projectDir, templateVars, getApiKey, trackUsage);
+  // Deferred parent agent ref — set after Agent is constructed (needed for background steer)
+  let parentAgentRef: Agent | undefined;
+
+  // Use a proxy object so spawn tool picks up the agent ref when it's set later
+  const spawnTool = createSpawnAgentTool(
+    projectDir, templateVars, getApiKey, trackUsage,
+    /* parentAgentId */ undefined,
+    /* depth */ undefined,
+    /* parentAgent — resolved lazily via proxy */ undefined,
+  );
+
+  // Wrap execute to inject parentAgentRef at call time (agent is set after construction)
+  const origExecute = spawnTool.execute;
+  spawnTool.execute = function (toolCallId: string, params: any) {
+    // Patch background support: if parentAgentRef is set and params.background, use steer
+    if (params.background && parentAgentRef) {
+      // Re-create tool with agent ref for this call
+      const toolWithAgent = createSpawnAgentTool(
+        projectDir, templateVars, getApiKey, trackUsage,
+        "brain", 0, parentAgentRef,
+      );
+      return toolWithAgent.execute(toolCallId, params);
+    }
+    return origExecute(toolCallId, params);
+  };
 
   // finish tool — agent calls this when research is complete
   const finishTool = {
@@ -38,7 +62,6 @@ export function buildResearchTools(
       required: ["summary"],
     },
     execute: async (args: { summary: string }) => {
-      // Guard: report.pdf must exist before finishing
       const { existsSync } = await import("node:fs");
       const { join } = await import("node:path");
       const pdfPath = join(projectDir, "report/report.pdf");
@@ -50,10 +73,15 @@ export function buildResearchTools(
     },
   };
 
-  return [
+  const tools = [
     ...reportTools,
     ...codingTools,
-    spawnAgent,
+    spawnTool,
     finishTool,
   ];
+
+  return {
+    tools,
+    setParentAgent: (agent: Agent) => { parentAgentRef = agent; },
+  };
 }

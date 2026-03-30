@@ -103,7 +103,7 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
 
   // Layer 2: Tools (research tools + PI review tool)
   let finishCallback: (() => void) | undefined;
-  const tools = buildResearchTools(projectDir, templateVars, getApiKey, hooks.trackUsage, {
+  const { tools, setParentAgent } = buildResearchTools(projectDir, templateVars, getApiKey, hooks.trackUsage, {
     onFinish: () => finishCallback?.(),
   });
 
@@ -156,7 +156,8 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
   });
   nameAgent(agent, "brain", "brain");
 
-  // Wire finish tool to abort the agent loop
+  // Wire deferred refs now that agent exists
+  setParentAgent(agent);     // enables background spawn_agent with steer()
   finishCallback = () => agent.abort();
 
   // #5: Session DAG
