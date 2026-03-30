@@ -15,9 +15,14 @@ import { resolveSafetyWrapper } from "./safety-wrappers.js";
 // ── Model map ────────────────────────────────────────
 
 const MODEL_MAP: Record<string, [string, string]> = {
+  // Anthropic
   haiku: ["anthropic", "claude-haiku-4-5-20251001"],
   sonnet: ["anthropic", "claude-sonnet-4-6"],
   opus: ["anthropic", "claude-opus-4-6"],
+  // OpenAI
+  o3: ["openai", "o3"],
+  "o3-mini": ["openai", "o3-mini"],
+  "o4-mini": ["openai", "o4-mini"],
 };
 
 function resolveModel(modelKey: string) {
