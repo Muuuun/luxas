@@ -233,7 +233,7 @@ async function refreshCodexToken(refreshToken: string): Promise<{ access_token: 
 
 export async function getApiKey(provider: string): Promise<string | undefined> {
   if (provider === "anthropic") return resolveAnthropicKey();
-  if (provider === "openai") return resolveOpenAIKey();
+  if (provider === "openai" || provider === "openai-codex") return resolveOpenAIKey();
   return undefined;
 }
 

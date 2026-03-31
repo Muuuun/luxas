@@ -6,7 +6,7 @@ description: >
   Has access to Wolfram Alpha for symbolic computation and verification.
   Use for: deriving equations, solving integrals/ODEs/PDEs, verifying analytical
   expressions, Taylor expansions, asymptotic analysis, dimensional analysis.
-model: opus
+model: gpt-5.2
 thinkingLevel: high
 toolSets: [coding, wolfram]
 canSpawn: false

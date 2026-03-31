@@ -19,10 +19,15 @@ const MODEL_MAP: Record<string, [string, string]> = {
   haiku: ["anthropic", "claude-haiku-4-5-20251001"],
   sonnet: ["anthropic", "claude-sonnet-4-6"],
   opus: ["anthropic", "claude-opus-4-6"],
-  // OpenAI
+  // OpenAI (standard API — requires OPENAI_API_KEY sk-...)
   o3: ["openai", "o3"],
   "o3-mini": ["openai", "o3-mini"],
   "o4-mini": ["openai", "o4-mini"],
+  // OpenAI Codex (ChatGPT backend — works with Codex OAuth)
+  "gpt-5.2": ["openai-codex", "gpt-5.2"],
+  "gpt-5.2-codex": ["openai-codex", "gpt-5.2-codex"],
+  "gpt-5.1": ["openai-codex", "gpt-5.1"],
+  "gpt-5.1-codex-mini": ["openai-codex", "gpt-5.1-codex-mini"],
 };
 
 function resolveModel(modelKey: string) {
