@@ -28,7 +28,7 @@ export interface CostTracker {
 
 export function buildResearchHooks(opts: ResearchOptions) {
   const startTime = Date.now();
-  const maxCost = opts.maxCostUsd ?? 50;
+  const maxCost = opts.maxCostUsd ?? Infinity;  // No default cost limit; pass --max-cost to set one
   const maxDuration = opts.maxDurationMs ?? 8 * 60 * 60 * 1000;
   const logFile = join(opts.projectDir, ".agent", "log.jsonl");
 

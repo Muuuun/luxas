@@ -444,24 +444,25 @@ function buildStateForPI(
     }
   }
 
-  // Resource usage
+  // Resource usage — commented out so PI judges on quality, not cost/time.
+  // Uncomment to let PI see resource consumption again.
   const resourceLines: string[] = [];
   if (reviewCount !== undefined) {
     resourceLines.push(`- Review count: ${reviewCount} (this is review #${reviewCount})`);
   }
-  if (costTracker) {
-    resourceLines.push(`- Cost spent: $${costTracker.totalCost.toFixed(2)}`);
-    resourceLines.push(
-      `- Tokens: ${costTracker.totalInputTokens} in / ${costTracker.totalOutputTokens} out`,
-    );
-  }
-  if (startTime) {
-    const mins = ((Date.now() - startTime) / 60_000).toFixed(1);
-    resourceLines.push(`- Time elapsed: ${mins} minutes`);
-  }
-  if (toolCallCount !== undefined) {
-    resourceLines.push(`- Tool calls so far: ${toolCallCount}`);
-  }
+  // if (costTracker) {
+  //   resourceLines.push(`- Cost spent: $${costTracker.totalCost.toFixed(2)}`);
+  //   resourceLines.push(
+  //     `- Tokens: ${costTracker.totalInputTokens} in / ${costTracker.totalOutputTokens} out`,
+  //   );
+  // }
+  // if (startTime) {
+  //   const mins = ((Date.now() - startTime) / 60_000).toFixed(1);
+  //   resourceLines.push(`- Time elapsed: ${mins} minutes`);
+  // }
+  // if (toolCallCount !== undefined) {
+  //   resourceLines.push(`- Tool calls so far: ${toolCallCount}`);
+  // }
   if (resourceLines.length > 0) {
     parts.push(`# Resource Usage\n${resourceLines.join("\n")}`);
   }
