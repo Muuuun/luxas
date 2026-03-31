@@ -133,8 +133,13 @@ export function resolveOpenAIKey(): string | undefined {
     join(home, ".codex", "config.json"),
     join(home, ".config", "codex", "auth.json"),
   ]) {
-    const key = readJsonKey(p, ["apiKey", "api_key", "token", "key"]);
+    // Check flat keys first
+    const key = readJsonKey(p, ["apiKey", "api_key", "token", "key", "OPENAI_API_KEY"]);
     if (key) return key;
+
+    // Check Codex OAuth nested tokens (tokens.access_token)
+    const nestedKey = readNestedJsonKey(p, ["tokens.access_token", "tokens.id_token"]);
+    if (nestedKey) return nestedKey;
   }
 
   return undefined;
@@ -152,6 +157,22 @@ function readJsonKey(path: string, keys: string[]): string | undefined {
     const data = JSON.parse(readFileSync(path, "utf-8"));
     for (const k of keys) {
       if (typeof data[k] === "string" && data[k].length > 0) return data[k];
+    }
+  } catch {}
+  return undefined;
+}
+
+function readNestedJsonKey(path: string, dotPaths: string[]): string | undefined {
+  if (!existsSync(path)) return undefined;
+  try {
+    const data = JSON.parse(readFileSync(path, "utf-8"));
+    for (const dp of dotPaths) {
+      const parts = dp.split(".");
+      let val: any = data;
+      for (const p of parts) {
+        val = val?.[p];
+      }
+      if (typeof val === "string" && val.length > 0) return val;
     }
   } catch {}
   return undefined;
