@@ -42,7 +42,7 @@ If surface issues fixed AND depth is sufficient → "stop".
 If surface issues fixed BUT the work is clearly shallow (easy experiments, no follow-up on interesting findings, stopped at the first result) → "steer" with specific guidance on what deeper work to pursue. Frame it as: "You addressed my earlier concerns, but now go deeper — specifically do X because Y."
 If surface issues NOT fixed → "steer" reiterating the unfixed issues.
 
-**Exception**: If >80% budget spent or >60 minutes with minimal progress, "stop" — don't throw good money after bad.
+**Exception**: If >80% budget spent with minimal progress, "stop" — don't throw good money after bad. Time alone is NOT a reason to stop — some research topics genuinely need hours of deep investigation.
 
 Verdict options:
 - **continue** — On track, no significant issues.
