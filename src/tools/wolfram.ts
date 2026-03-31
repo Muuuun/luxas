@@ -11,17 +11,26 @@
 import { Type } from "@sinclair/typebox";
 import { execSync } from "node:child_process";
 
-let wolframAvailable: boolean | null = null;
+let wolframPath: string | false | null = null;
 
-function checkWolfram(): boolean {
-  if (wolframAvailable !== null) return wolframAvailable;
-  try {
-    execSync("which wolframscript", { stdio: "pipe" });
-    wolframAvailable = true;
-  } catch {
-    wolframAvailable = false;
+const WOLFRAM_SEARCH_PATHS = [
+  "wolframscript",  // in PATH
+  "/usr/local/bin/wolframscript",
+  "/Applications/Wolfram Engine.app/Contents/Resources/Wolfram Player.app/Contents/MacOS/wolframscript",
+  "/Applications/Mathematica.app/Contents/MacOS/wolframscript",
+];
+
+function findWolfram(): string | false {
+  if (wolframPath !== null) return wolframPath;
+  for (const p of WOLFRAM_SEARCH_PATHS) {
+    try {
+      execSync(`"${p}" -code '1+1'`, { stdio: "pipe", timeout: 15_000 });
+      wolframPath = p;
+      return p;
+    } catch { /* try next */ }
   }
-  return wolframAvailable;
+  wolframPath = false;
+  return false;
 }
 
 const WolframParams = Type.Object({
@@ -53,8 +62,9 @@ export function createWolframTool() {
       _toolCallId: string,
       params: { query: string },
     ) {
-      if (checkWolfram()) {
-        return runWolframScript(params.query);
+      const wPath = findWolfram();
+      if (wPath) {
+        return runWolframScript(wPath, params.query);
       }
       // Fallback to Python/sympy
       return runSympyFallback(params.query);
@@ -62,10 +72,10 @@ export function createWolframTool() {
   };
 }
 
-function runWolframScript(query: string): { content: any[]; details: any } {
+function runWolframScript(wPath: string, query: string): { content: any[]; details: any } {
   try {
     const output = execSync(
-      `wolframscript -code ${JSON.stringify(query)}`,
+      `"${wPath}" -code ${JSON.stringify(query)}`,
       { encoding: "utf-8", timeout: 60_000, maxBuffer: 1024 * 1024 },
     ).trim();
 
