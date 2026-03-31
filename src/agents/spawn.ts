@@ -166,6 +166,11 @@ export async function spawnAgent(opts: SpawnAgentOptions): Promise<SpawnAgentRes
 
   } catch (err: any) {
     const elapsed = Date.now() - t0;
-    return { output: `Agent "${opts.name}" failed: ${err.message}`, elapsed, success: false };
+    const msg = err.message || String(err);
+    // Surface auth errors clearly
+    if (msg.includes("API key") || msg.includes("authentication") || msg.includes("401") || msg.includes("getApiKey")) {
+      return { output: `Agent "${opts.name}" failed: No API key for provider "${def.model}". Set the appropriate env var (OPENAI_API_KEY, ANTHROPIC_API_KEY) or configure OAuth.\n\nOriginal error: ${msg}`, elapsed, success: false };
+    }
+    return { output: `Agent "${opts.name}" failed: ${msg}`, elapsed, success: false };
   }
 }
