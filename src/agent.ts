@@ -13,7 +13,10 @@
  */
 
 import { Agent } from "@mariozechner/pi-agent-core";
-import { nameAgent } from "agentsmelt";
+import {
+  nameAgent, createCollector, createSmeltReminderProvider,
+  connectSignalCollector, readPatches, applyPatches, DEFAULT_BASE_DIR,
+} from "agentsmelt";
 import { getModel } from "@mariozechner/pi-ai";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { join, isAbsolute, resolve, dirname } from "node:path";
@@ -75,14 +78,32 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
 
   // Layer 1: System Prompt — loaded from agents/definitions/brain.md
   const brainDef = getDefinition("brain");
-  const systemPrompt = resolvePrompt(brainDef, templateVars);
+  let systemPrompt = resolvePrompt(brainDef, templateVars);
+
+  // AgentSmelt Phase 2: apply high-confidence prompt patches at strategic positions
+  const smeltPatches = readPatches(DEFAULT_BASE_DIR, "brain");
+  if (smeltPatches.length > 0) {
+    systemPrompt = applyPatches(systemPrompt, smeltPatches, "brain");
+  }
 
   // Reminder system — event-driven, per-turn quality nudges
   const reminders = new ReminderRegistry();
   for (const p of builtinProviders) reminders.register(p);
 
+  // AgentSmelt: dynamic knowledge injection via reminders (replaces static prompt append)
+  reminders.register(createSmeltReminderProvider({ agentRole: "brain" }));
+
   // #8: Extension bus (created early — hooks and context both need it)
   const bus = new ExtensionBus();
+
+  // AgentSmelt: auto-collect evaluation signals from extension events
+  const smeltCollector = createCollector({ projectName: "sisyphus" });
+  const smeltSignals = connectSignalCollector(bus, {
+    collector: smeltCollector,
+    agentId: "brain",
+    agentRole: "brain",
+    projectDir,
+  });
 
   // Hooks must be created before tools so trackUsage can be threaded to sub-agents
   const hooks = buildResearchHooks({
@@ -259,5 +280,5 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
     return 0;
   } : null;
 
-  return { agent, hooks, bus, session, piFallback, restore, checkpointPath };
+  return { agent, hooks, bus, session, piFallback, restore, checkpointPath, smeltCollector, smeltSignals };
 }
