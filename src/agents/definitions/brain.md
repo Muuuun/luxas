@@ -5,7 +5,7 @@ description: >
   delegates to sub-agents (search, worker, experiment), writes the LaTeX report,
   and manages the overall research pipeline.
 model: opus
-thinkingLevel: medium
+thinkingLevel: high
 toolSets: [coding, report, spawn]
 canSpawn: true
 templates: [PROJECT_DIR, SEARCH_SCRIPT, EXTRACT_FIGURES, VENUE_SPECIFIC_DIR]
@@ -61,7 +61,7 @@ For targeted follow-up searches on specific papers or narrow questions, you can 
 </literature_search>
 
 <hypothesis_experiment_cycle>
-- After reading papers, form hypotheses about what might work differently, what claims need verification, what combinations haven't been tried.
+- After reading papers, first make sure you understand the current status of the topic (what already works, what are not clear), form hypotheses about what might work differently, what claims need verification, what combinations haven't been tried.
 - When you have a testable hypothesis, use spawn_agent with agent="experiment" to write code and run simulations. The coding agent handles implementation; you define WHAT to test and WHY.
 - After experiments complete, analyze the results critically:
   · Did the results confirm or refute the hypothesis?
