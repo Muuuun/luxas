@@ -7,6 +7,8 @@
 import { Agent } from "@mariozechner/pi-agent-core";
 import { nameAgent } from "agentsmelt";
 import { getModel } from "@mariozechner/pi-ai";
+import { mkdirSync, appendFileSync } from "node:fs";
+import { join } from "node:path";
 import { getDefinition, resolvePrompt, type AgentDefinition } from "./registry.js";
 import { resolveToolSets } from "./tool-sets.js";
 import { resolveContextBuilder } from "./context-builders.js";
@@ -146,6 +148,15 @@ export async function spawnAgent(opts: SpawnAgentOptions): Promise<SpawnAgentRes
 
     // 9. Run
     await agent.prompt(opts.prompt);
+
+    // 9.5. Save full conversation (thinking + tool calls + results) for deep analysis
+    try {
+      const convDir = join(opts.projectDir, ".agent", "conversations");
+      mkdirSync(convDir, { recursive: true });
+      const convPath = join(convDir, `${agentId}.jsonl`);
+      const data = agent.state.messages.map((m: any) => JSON.stringify(m)).join("\n") + "\n";
+      appendFileSync(convPath, data);
+    } catch { /* conversation save must not crash the agent */ }
 
     // 10. Extract output
     const messages = agent.state.messages;
