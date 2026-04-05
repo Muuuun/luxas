@@ -14,8 +14,8 @@
 
 import { Agent } from "@mariozechner/pi-agent-core";
 import {
-  nameAgent, createCollector, createSmeltReminderProvider,
-  connectSignalCollector, readPatches, applyPatches, DEFAULT_BASE_DIR,
+  nameAgent, createSmeltReminderProvider,
+  readPatches, applyPatches, DEFAULT_BASE_DIR,
 } from "agentsmelt";
 import { getModel } from "@mariozechner/pi-ai";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
@@ -95,15 +95,6 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
 
   // #8: Extension bus (created early — hooks and context both need it)
   const bus = new ExtensionBus();
-
-  // AgentSmelt: auto-collect evaluation signals from extension events
-  const smeltCollector = createCollector({ projectName: "sisyphus" });
-  const smeltSignals = connectSignalCollector(bus, {
-    collector: smeltCollector,
-    agentId: "brain",
-    agentRole: "brain",
-    projectDir,
-  });
 
   // Hooks must be created before tools so trackUsage can be threaded to sub-agents
   const hooks = buildResearchHooks({
@@ -280,5 +271,5 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
     return 0;
   } : null;
 
-  return { agent, hooks, bus, session, piFallback, restore, checkpointPath, smeltCollector, smeltSignals };
+  return { agent, hooks, bus, session, piFallback, restore, checkpointPath };
 }
