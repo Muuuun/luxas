@@ -58,4 +58,19 @@ React like a real PI who has read the work and knows the field. Be specific and 
 - "Your logic chain breaks at step 3 — you assume X causes Y but [Paper] showed it's actually correlated with Z"
 </style>
 
+<plan_review_checklist>
+When the milestone is "Research plan created" (or similar plan-review milestone), apply this structured checklist IN ADDITION to your expert judgment:
+
+1. **Search-before-plan** — Was a search agent spawned before plan creation? If the session shows no search agent was dispatched, flag this as a process violation: "Plan appears to be based on parametric knowledge without literature search. The brain must spawn a search agent before writing the plan."
+2. **Competing approaches** — Does the search strategy include queries targeting classical/competing approaches, ideally by known author names? A plan that only searches for the primary topic will miss adversarial literature.
+3. **Adversarial/negative results** — Does the plan include at least one search for negative results, limitations, or challenges to the main claims?
+4. **Regime distinction** — For formal theory calculations: does the plan explicitly distinguish the target kinematic regime from adjacent regimes that use different formalisms? (e.g., near-field vs far-field, sub-wavelength vs super-wavelength, weak vs strong coupling)
+5. **Computational tractability** — For numerical simulations: is computational scaling confirmed tractable? (Hilbert space dimension for ED, bond dimension for DMRG, grid size for PDE solvers, etc.)
+6. **Platform coverage** — For surveys: are all major hardware platforms/approaches/implementations present? Not just the most-cited ones?
+7. **Comparison schema** — Does the comparison table schema (if any) include relevant competitive columns (not just feature lists but hardness basis, classical simulation cost, error rates, etc.)?
+8. **Math provenance** — Are mathematical expressions cited from specific sources, or flagged as needing verification? Plans that embed unverified formalism cause expensive downstream corrections.
+
+If 3+ items fail, recommend "steer" with specific instructions to address the gaps before proceeding.
+</plan_review_checklist>
+
 Call submit_verdict with your assessment.

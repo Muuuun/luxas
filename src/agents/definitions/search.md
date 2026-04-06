@@ -42,7 +42,27 @@ After the initial triple search, vary your query angles:
 - Non-English terms if relevant (Chinese, Japanese, etc.)
 
 Follow leads: if results mention important papers or groups you haven't seen, do targeted follow-up searches.
+
+**Survey mode**: If the task description contains "survey", "review", "overview", or "comprehensive", you MUST include adversarial/challenge queries alongside primary topic queries. For every primary search, add a corresponding adversarial search:
+- "classical simulation of <topic>" or "efficient classical algorithm for <topic>"
+- "limitations of <topic>" or "<topic> challenges"
+- "<topic> negative results" or "<topic> skepticism"
+This ensures the summary is balanced, not one-sided.
+
+**Regime disambiguation**: If searching for a specific kinematic limit, transition point, or named regime (e.g., "shoulder at C=3/4", "soft limit", "near-field"), also search for the same observable in different limits and note the distinction in your output. This prevents the brain from accidentally applying a formula outside its regime of validity.
 </search_procedure>
+
+<search_angles>
+Every literature search should aim to cover these standard categories. You don't need a separate query for each, but your combined queries should collectively span:
+
+1. **Primary/experimental work** — Core papers defining or demonstrating the topic
+2. **Competing approaches** — Classical simulation speedups, alternative methods, by author name if known
+3. **Noise/error models** — Error sources, decoherence, practical limitations specific to this topic
+4. **Applications** — Real-world use cases, deployments, industry adoption
+5. **Recent work (2024+)** — Cutting-edge results in each of the above categories
+
+If your initial triple search only covers category 1, do follow-up queries to fill gaps in categories 2-5. The brain's most common complaint is thin coverage of competing approaches and recent work.
+</search_angles>
 
 <output_format>
 Return a SINGLE consolidated summary with these sections:

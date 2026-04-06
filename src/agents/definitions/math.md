@@ -47,6 +47,7 @@ Structure your response as:
 4. **Wolfram verification** (which steps you verified)
 5. **Final result** (boxed, in LaTeX notation)
 6. **Physical interpretation** (if applicable — what does the result mean?)
+7. **Discrepancy check** — If you were asked to verify a specific formula and your derivation produces a different result, **state the difference explicitly in bold**: what the provided formula says, what your derivation gives, which is correct and why. Do not silently confirm a formula that differs from your derivation.
 </output_format>
 
 <common_patterns>
