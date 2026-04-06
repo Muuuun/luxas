@@ -86,6 +86,29 @@ scripts/search web "quantum error correction review 2024" --count 10
 
 Requires `BRAVE_API_KEY` env var.
 
+### GitHub
+
+```bash
+# Repo search — find repositories by keyword
+scripts/search github "quantum simulation" --count 10
+scripts/search github "transformer inference" --from-year 2024 --sort date
+
+# Code search — find code across public repos (via Sourcegraph)
+scripts/search github "func NewRydbergHamiltonian" --code --count 5
+scripts/search github "class QuantumCircuit" --code
+
+# Read README — quick overview without cloning
+scripts/search github qiskit/qiskit --readme
+
+# Clone repo — shallow clone to local dir for deep analysis
+scripts/search github qiskit/qiskit --clone --output /tmp
+```
+
+- **Repo search** (default): GitHub REST API. Sorted by stars (default) or `--sort date`. `--from-year YYYY` filters by creation date. Auth via `GITHUB_TOKEN` env var or `gh auth token` (optional, increases rate limit from 10 to 30 req/min).
+- **Code search** (`--code`): Sourcegraph streaming API. Supports regex. Searches across most popular public repos. No auth needed.
+- **README** (`--readme`): Fetches raw README markdown via GitHub API. Pass `owner/repo` as the query.
+- **Clone** (`--clone`): `git clone --depth 1` (latest snapshot only, no history). Default output: `/tmp`. Pass `owner/repo` as the query.
+
 ### URL Fetch
 
 ```bash
@@ -149,6 +172,10 @@ scripts/extract-figures data/papers/paper.pdf --output report/figures/extracted
 | General web search | `search web <query>` |
 | Fetch unprotected URL | `search fetch <url>` |
 | Extract figures from paper | `extract-figures <paper-path>` |
+| Find GitHub repos | `search github <query>` |
+| Search code across repos | `search github <query> --code` |
+| Read repo README | `search github owner/repo --readme` |
+| Clone repo for analysis | `search github owner/repo --clone` |
 
 **Use `scripts/browse` only when `search` cannot do the job** — it launches a real browser which is heavier:
 
@@ -159,4 +186,4 @@ scripts/extract-figures data/papers/paper.pdf --output report/figures/extracted
 | Cloudflare-blocked page (last resort) | `browse open <url>` → extract content |
 | Interactive site requiring login/forms | `browse open <url>` → `state` → `input`/`click` |
 
-**Rule of thumb**: `search` for papers and academic data, `browse` for everything else (government sites, general web, protected pages). Don't use `browse` for tasks that `search` can handle.
+**Rule of thumb**: `search` for papers, academic data, and GitHub repos/code; `browse` for everything else (government sites, general web, protected pages). Don't use `browse` for tasks that `search` can handle.

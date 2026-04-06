@@ -14,6 +14,10 @@
  *   search bib <doi> [--save <references.bib path>]
  *   search web <query> [--count N]
  *   search fetch <url>
+ *   search github <query> [--count N] [--from-year YYYY] [--sort stars|date]
+ *   search github <query> --code [--count N]
+ *   search github <owner/repo> --readme
+ *   search github <owner/repo> --clone [--output <dir>]
  */
 
 // ─── CLI argument parsing ────────────────────────────────────
@@ -29,7 +33,11 @@ if (args.length === 0 || args[0] === "--help" || args[0] === "-h") {
   search source <arxivId> [--max-chars N]
   search bib <doi> [--save <references.bib path>]
   search web <query> [--count N]
-  search fetch <url>`);
+  search fetch <url>
+  search github <query> [--count N] [--from-year YYYY] [--sort stars|date]
+  search github <query> --code [--count N]
+  search github <owner/repo> --readme
+  search github <owner/repo> --clone [--output <dir>]`);
   process.exit(0);
 }
 
@@ -241,6 +249,108 @@ async function braveSearch(query, count) {
   const data = await res.json();
   const results = (data.web?.results ?? []).map((r, i) => `[${i + 1}] ${r.title}\n    ${r.url}\n    ${r.description ?? ""}`);
   console.log(results.join("\n\n") || "No results");
+}
+
+// ─── GitHub (repo search, code search, README, clone) ───────
+
+function ghHeaders() {
+  const headers = { accept: "application/vnd.github+json", "user-agent": "Sisyphus/2.0" };
+  const token = process.env.GITHUB_TOKEN
+    ?? (() => { try { return execSync("gh auth token 2>/dev/null").toString().trim(); } catch { return null; } })();
+  if (token) headers.authorization = `Bearer ${token}`;
+  return headers;
+}
+
+async function githubRepos(query, count, { fromYear = null, sort = "stars" } = {}) {
+  let q = query;
+  if (fromYear) q += ` created:>=${fromYear}-01-01`;
+  const params = new URLSearchParams({ q, per_page: String(Math.min(count, 100)), sort: sort === "date" ? "updated" : "stars", order: "desc" });
+  const res = await fetch(`https://api.github.com/search/repositories?${params}`, {
+    headers: ghHeaders(),
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!res.ok) { console.error(`GitHub API ${res.status}: ${(await res.json()).message ?? ""}`); return []; }
+  const data = await res.json();
+  return (data.items ?? []).map(r => ({
+    name: r.full_name,
+    description: (r.description ?? "").slice(0, 500),
+    stars: r.stargazers_count ?? 0,
+    language: r.language ?? "",
+    url: r.html_url,
+    topics: (r.topics ?? []).slice(0, 8),
+    updated: r.pushed_at ? r.pushed_at.slice(0, 10) : "",
+    license: r.license?.spdx_id ?? "",
+  }));
+}
+
+function formatGHRepo(r, i) {
+  let line = `[GH${i + 1}] ${r.name} (${r.stars} stars${r.language ? ", " + r.language : ""}${r.license ? ", " + r.license : ""})`;
+  line += `\n  ${r.url}`;
+  if (r.topics.length) line += `\n  Topics: ${r.topics.join(", ")}`;
+  if (r.updated) line += `  Updated: ${r.updated}`;
+  if (r.description) line += `\n  ${r.description.slice(0, 300)}`;
+  return line;
+}
+
+async function sourcegraphCode(query, count) {
+  const cap = Math.min(count, 50);
+  const params = new URLSearchParams({ q: `${query} count:${cap}`, display: String(cap) });
+  const res = await fetch(`https://sourcegraph.com/.api/search/stream?${params}`, {
+    headers: { accept: "text/event-stream" },
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!res.ok) { console.error(`Sourcegraph ${res.status}`); return []; }
+  const text = await res.text();
+  const matches = [];
+  const lines = text.split("\n");
+  for (let li = 0; li < lines.length; li++) {
+    // Only parse data lines that follow an "event: matches" line
+    if (lines[li].trim() !== "event: matches") continue;
+    li++;
+    if (li >= lines.length || !lines[li].startsWith("data:")) continue;
+    try {
+      const payload = JSON.parse(lines[li].slice(5));
+      if (!Array.isArray(payload)) continue;
+      for (const m of payload) {
+        if (m.type !== "content") continue;
+        const preview = (m.lineMatches ?? m.chunkMatches ?? [])
+          .flatMap(l => l.line ? [l.line.trimStart()] : (l.content ? [l.content.trimStart()] : (l.preview ? [l.preview.trimStart()] : [])))
+          .slice(0, 3).join("\n");
+        matches.push({
+          repo: m.repository,
+          file: m.path,
+          url: `https://sourcegraph.com/${m.repository}/-/blob/${m.path}`,
+          lines: preview,
+        });
+      }
+    } catch { /* skip malformed lines */ }
+  }
+  return matches.slice(0, count);
+}
+
+async function githubReadme(ownerRepo) {
+  const res = await fetch(`https://api.github.com/repos/${ownerRepo}/readme`, {
+    headers: { ...ghHeaders(), accept: "application/vnd.github.raw+json" },
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!res.ok) { console.error(`GitHub README ${res.status} for ${ownerRepo}`); process.exit(1); }
+  const text = await res.text();
+  console.log(text.slice(0, 80000));
+}
+
+function githubClone(ownerRepo, outputDir) {
+  const repo = ownerRepo.split("/").pop();
+  const targetDir = join(outputDir, repo);
+  if (existsSync(targetDir)) {
+    console.log(`Already cloned: ${targetDir}`);
+    return;
+  }
+  mkdirSync(outputDir, { recursive: true });
+  execSync(`git clone --depth 1 "https://github.com/${ownerRepo}.git" "${targetDir}"`, {
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: 120000,
+  });
+  console.log(`Cloned to ${targetDir}`);
 }
 
 // ─── Web Fetch ───────────────────────────────────────────────
@@ -575,6 +685,42 @@ try {
     const url = args[1];
     if (!url) { console.error("Usage: search fetch <url>"); process.exit(1); }
     await webFetch(url);
+
+  } else if (command === "github") {
+    const BOOL_FLAGS = ["--code", "--readme", "--clone"];
+    const isCode = args.includes("--code");
+    const isReadme = args.includes("--readme");
+    const isClone = args.includes("--clone");
+    // getPositionalArgs assumes every -- flag has a value; boolean flags don't, so filter them first
+    const savedArgs = [...args];
+    for (const bf of BOOL_FLAGS) { const idx = args.indexOf(bf); if (idx !== -1) args.splice(idx, 1); }
+    const query = getPositionalArgs(1);
+    args.length = 0; args.push(...savedArgs); // restore
+    if (!query) { console.error("Usage: search github <query|owner/repo> [--code] [--readme] [--clone] [--count N] [--from-year YYYY] [--sort stars|date] [--output <dir>]"); process.exit(1); }
+
+    if (isCode) {
+      const count = Math.min(parseInt(getFlag("count", "10")), 50);
+      const results = await sourcegraphCode(query, count);
+      if (results.length === 0) { console.log("No code results"); }
+      else {
+        console.log(results.map((m, i) =>
+          `[C${i + 1}] ${m.repo} — ${m.file}\n  ${m.url}${m.lines ? "\n  " + m.lines.slice(0, 200) : ""}`
+        ).join("\n\n"));
+      }
+    } else if (isReadme) {
+      await githubReadme(query);
+    } else if (isClone) {
+      const outputDir = getFlag("output", "/tmp");
+      githubClone(query, outputDir);
+    } else {
+      const count = Math.min(parseInt(getFlag("count", "10")), 100);
+      const fromYearRaw = getFlag("from-year", null);
+      const fromYear = fromYearRaw ? parseInt(fromYearRaw) : null;
+      const sort = getFlag("sort", "stars");
+      const repos = await githubRepos(query, count, { fromYear, sort });
+      if (repos.length === 0) { console.log("No repositories found"); }
+      else { console.log(repos.map((r, i) => formatGHRepo(r, i)).join("\n\n")); }
+    }
 
   } else {
     console.error(`Unknown command: ${command}`);
