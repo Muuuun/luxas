@@ -6,6 +6,7 @@ import type { Agent } from "@mariozechner/pi-agent-core";
 import { createReportTools } from "./report.js";
 import { createCodingToolsForProject } from "./coding.js";
 import { createSpawnAgentTool, getActiveBackgroundAgents } from "./spawn-agent.js";
+import { wrapBrainTools } from "../agents/safety-wrappers.js";
 
 export interface ToolCallbacks {
   onFinish?: () => void;
@@ -18,7 +19,10 @@ export function buildResearchTools(
   trackUsage?: (usage: any) => void,
   callbacks?: ToolCallbacks,
 ): { tools: any[]; setParentAgent: (agent: Agent) => void } {
-  const codingTools = createCodingToolsForProject(projectDir);
+  // Brain coding tools are wrapped with read-tracking + edit safety guards.
+  // This enforces read-before-edit, mtime-based stale detection, partial-read
+  // coverage, and fresh-excerpt recovery on edit failure. See safety-wrappers.ts.
+  const codingTools = wrapBrainTools(createCodingToolsForProject(projectDir), projectDir);
   const reportTools = createReportTools(projectDir);
 
   // Deferred parent agent ref — set after Agent is constructed (needed for background steer)

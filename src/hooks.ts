@@ -57,12 +57,15 @@ export function buildResearchHooks(opts: ResearchOptions) {
   };
 
   const before = async (ctx: any): Promise<any> => {
-    // 1. RESEARCH.md write protection
+    // 1. RESEARCH.md write protection (defense-in-depth; the brain/experiment
+    // safety wrappers are the primary line of defense for tools that go through
+    // them, but this hook also covers any future tools that don't).
     const name = ctx.toolCall?.name ?? "";
     const args = ctx.args ?? {};
-    if ((name === "write" || name === "edit") && args.file_path) {
-      const filePath = String(args.file_path);
-      if (filePath.endsWith("RESEARCH.md") || filePath.includes("/RESEARCH.md")) {
+    if (name === "write" || name === "edit") {
+      // pi-coding-agent uses `path`; some other tools may use `file_path`.
+      const filePath = String(args.path ?? args.file_path ?? "");
+      if (filePath && (filePath.endsWith("RESEARCH.md") || filePath.includes("/RESEARCH.md"))) {
         return { block: true, reason: "RESEARCH.md is read-only. It contains the human-written research goal and must not be modified." };
       }
     }

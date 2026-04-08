@@ -7,6 +7,7 @@ description: >
 model: opus
 thinkingLevel: high
 toolSets: [coding, report, spawn]
+safetyWrapper: brain
 canSpawn: true
 templates: [PROJECT_DIR, SEARCH_SCRIPT, EXTRACT_FIGURES, VENUE_SPECIFIC_DIR]
 ---
