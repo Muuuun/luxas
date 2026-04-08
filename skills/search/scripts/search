@@ -62,7 +62,7 @@ const command = args[0];
 // ─── OpenAlex ────────────────────────────────────────────────
 
 const OA_BASE = "https://api.openalex.org";
-const OA_MAILTO = "mailto=sisyphus-agent@example.com";
+const OA_MAILTO = "mailto=luxas-agent@example.com";
 
 function invertAbstract(inv) {
   if (!inv) return "";
@@ -112,7 +112,7 @@ function formatPaper(p, prefix, i) {
 }
 
 async function oaSearch(query, count, { fromYear = null, sort = "relevance" } = {}) {
-  const params = new URLSearchParams({ search: query, per_page: String(count), mailto: "sisyphus-agent@example.com" });
+  const params = new URLSearchParams({ search: query, per_page: String(count), mailto: "luxas-agent@example.com" });
   if (fromYear) params.set("filter", `publication_year:${fromYear}-2099`);
   if (sort === "date") params.set("sort", "publication_date:desc");
   const res = await fetch(`${OA_BASE}/works?${params}`, { signal: AbortSignal.timeout(30000) });
@@ -141,7 +141,7 @@ async function resolveOAId(id) {
 async function oaCitations(paperId, limit) {
   const oaId = await resolveOAId(paperId);
   if (!oaId) { console.error(`Cannot resolve ID: ${paperId}`); return []; }
-  const params = new URLSearchParams({ filter: `cites:${oaId}`, per_page: String(limit), sort: "cited_by_count:desc", mailto: "sisyphus-agent@example.com" });
+  const params = new URLSearchParams({ filter: `cites:${oaId}`, per_page: String(limit), sort: "cited_by_count:desc", mailto: "luxas-agent@example.com" });
   const res = await fetch(`${OA_BASE}/works?${params}`, { signal: AbortSignal.timeout(30000) });
   if (!res.ok) return [];
   return ((await res.json()).results ?? []).map(normalizeOAWork);
@@ -150,7 +150,7 @@ async function oaCitations(paperId, limit) {
 async function oaReferences(paperId, limit) {
   const oaId = await resolveOAId(paperId);
   if (!oaId) { console.error(`Cannot resolve ID: ${paperId}`); return []; }
-  const params = new URLSearchParams({ filter: `cited_by:${oaId}`, per_page: String(limit), sort: "cited_by_count:desc", mailto: "sisyphus-agent@example.com" });
+  const params = new URLSearchParams({ filter: `cited_by:${oaId}`, per_page: String(limit), sort: "cited_by_count:desc", mailto: "luxas-agent@example.com" });
   const res = await fetch(`${OA_BASE}/works?${params}`, { signal: AbortSignal.timeout(30000) });
   if (!res.ok) return [];
   return ((await res.json()).results ?? []).map(normalizeOAWork);
@@ -204,7 +204,7 @@ async function arxivSearch(query, count, { fromYear = null, sort = "date" } = {}
 
 async function crossrefSearch(query, count, { fromYear = null, sort = "relevance" } = {}) {
   const params = new URLSearchParams({
-    query, rows: String(count), mailto: "sisyphus-agent@example.com",
+    query, rows: String(count), mailto: "luxas-agent@example.com",
   });
   if (fromYear) params.set("filter", `from-pub-date:${fromYear}`);
   if (sort === "date") params.set("sort", "published"); else params.set("sort", "relevance");
@@ -254,7 +254,7 @@ async function braveSearch(query, count) {
 // ─── GitHub (repo search, code search, README, clone) ───────
 
 function ghHeaders() {
-  const headers = { accept: "application/vnd.github+json", "user-agent": "Sisyphus/2.0" };
+  const headers = { accept: "application/vnd.github+json", "user-agent": "Luxas/2.0" };
   const token = process.env.GITHUB_TOKEN
     ?? (() => { try { return execSync("gh auth token 2>/dev/null").toString().trim(); } catch { return null; } })();
   if (token) headers.authorization = `Bearer ${token}`;
@@ -357,7 +357,7 @@ function githubClone(ownerRepo, outputDir) {
 
 async function webFetch(url) {
   const res = await fetch(url, {
-    headers: { "user-agent": "Sisyphus/2.0" },
+    headers: { "user-agent": "Luxas/2.0" },
     signal: AbortSignal.timeout(30000),
   });
   if (!res.ok) { console.error(`HTTP ${res.status}`); process.exit(1); }

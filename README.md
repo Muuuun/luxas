@@ -211,4 +211,4 @@ project/
 
 Built on [pi-mono](https://github.com/badlogic/pi-mono) by [Mario Zechner](https://mariozechner.at/).
 
-<p align="center"><i>One must imagine Sisyphus happy.</i></p>
+<p align="center"><i>One must imagine Luxas happy.</i></p>

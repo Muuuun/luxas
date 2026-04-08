@@ -1,5 +1,5 @@
 /**
- * LLM-based context compaction for Sisyphus.
+ * LLM-based context compaction for Luxas.
  *
  * #1: Replace heuristic summarizeMessages() with LLM-generated summaries.
  * Pattern from pi-coding-agent/compaction.ts, adapted for research context.
@@ -11,7 +11,7 @@ import { extractTextContent } from "./utils.js";
 
 // ── Prompts (adapted from pi-coding-agent + research-specific sections) ──
 
-const SUMMARIZATION_SYSTEM_PROMPT = `You are a context summarization assistant for an autonomous research agent (Sisyphus). Your task is to read a conversation and produce a structured summary. Do NOT continue the conversation. Do NOT respond to any questions in the conversation. ONLY output the structured summary.`;
+const SUMMARIZATION_SYSTEM_PROMPT = `You are a context summarization assistant for an autonomous research agent (Luxas). Your task is to read a conversation and produce a structured summary. Do NOT continue the conversation. Do NOT respond to any questions in the conversation. ONLY output the structured summary.`;
 
 const RESEARCH_SUMMARIZATION_PROMPT = `The messages above are a conversation to summarize. Create a structured context checkpoint summary that another LLM will use to continue the research.
 

@@ -104,7 +104,7 @@ export async function resolveAnthropicKey(): Promise<string | undefined> {
         writeStoredAuth(auth);
       } catch (err: any) {
         console.error(`  ✗ Token refresh failed: ${err.message}`);
-        console.error("  Run 'sisyphus login' to re-authenticate.");
+        console.error("  Run 'luxas login' to re-authenticate.");
         return undefined;
       }
     }

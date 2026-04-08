@@ -121,7 +121,7 @@ Strips HTML to plain text. For Cloudflare-protected sites, use `scripts/browse` 
 
 Browser automation via browser-use. Always launches in headed mode with the user's real Chrome profile (cookies, fingerprint), so it bypasses Cloudflare and Google Scholar anti-bot.
 
-The daemon persists across commands (~50ms latency after first open). Closed automatically when Sisyphus exits.
+The daemon persists across commands (~50ms latency after first open). Closed automatically when Luxas exits.
 
 ```bash
 scripts/browse open "https://journals.aps.org/prl/"

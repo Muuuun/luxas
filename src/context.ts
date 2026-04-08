@@ -317,12 +317,12 @@ function countFigureExtraction(papersDir: string): { extracted: number; unextrac
 }
 
 /**
- * Discover skills from the Sisyphus package's skills/ directory.
+ * Discover skills from the Luxas package's skills/ directory.
  * Follows Agent Skills spec: parse SKILL.md frontmatter for name + description.
  * Returns a compact summary for context injection (progressive disclosure).
  */
 function discoverSkills(projectDir: string): string | null {
-  // Sisyphus package root: skills/ lives next to src/
+  // Luxas package root: skills/ lives next to src/
   const packageRoot = join(dirname(import.meta.url.replace("file://", "")), "..");
   const skillsDirs = [
     join(packageRoot, "skills"),       // package-level skills

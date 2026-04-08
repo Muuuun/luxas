@@ -1,6 +1,6 @@
 ---
 name: memory
-description: Cross-project research memory. Read past project summaries, findings, and persistent insights across all Sisyphus research projects.
+description: Cross-project research memory. Read past project summaries, findings, and persistent insights across all Luxas research projects.
 compatibility: Always available. No external dependencies.
 allowed-tools: read write edit
 ---

@@ -1,10 +1,10 @@
 {
-  "name": "sisyphus",
+  "name": "luxas",
   "version": "0.1.0",
   "description": "Autonomous research agent that never stops pushing the boulder of knowledge",
   "type": "module",
   "bin": {
-    "sisyphus": "./dist/index.js"
+    "luxas": "./dist/index.js"
   },
   "scripts": {
     "build": "tsc",

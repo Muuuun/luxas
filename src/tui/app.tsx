@@ -1,5 +1,5 @@
 /**
- * Root TUI application — Sisyphus research agent dashboard.
+ * Root TUI application — Luxas research agent dashboard.
  *
  * Layout:
  *   ┌─────────────┬──────────────────────────────────┐
@@ -480,7 +480,7 @@ export default function App({ baseDir, brainTool = "claude" }: { baseDir: string
       {/* Header */}
       <Box justifyContent="center" paddingX={1}>
         <Text bold color={dark.brand}>
-          {" "}Sisyphus{" "}
+          {" "}Luxas{" "}
         </Text>
         <Text color={dark.subtle}> Il faut imaginer Sisyphe heureux </Text>
         {mode === "brainstorm" && <Text color={dark.warning}> {icons.record} brainstorming</Text>}

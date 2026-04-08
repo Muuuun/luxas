@@ -1,5 +1,5 @@
 /**
- * Lightweight extension system for Sisyphus.
+ * Lightweight extension system for Luxas.
  *
  * #8: Extension system (inspired by pi-coding-agent's full extension model,
  * simplified for research agent needs)
@@ -8,7 +8,7 @@
  * This replaces hardcoded event handling scattered across files.
  */
 
-export type SisyphusEvent =
+export type LuxasEvent =
   // Session lifecycle
   | { type: "session_start" }
   | { type: "session_end"; cost: number; tokens: number; elapsed: number }
@@ -35,15 +35,15 @@ export type SisyphusEvent =
   | { type: "plan_created"; path: string }
   | { type: "plan_reviewed"; verdict: string; feedback: string };
 
-export type ExtensionHandler<E extends SisyphusEvent = SisyphusEvent> =
+export type ExtensionHandler<E extends LuxasEvent = LuxasEvent> =
   (event: E) => Promise<void> | void;
 
 export class ExtensionBus {
   private handlers = new Map<string, Set<ExtensionHandler<any>>>();
 
-  on<T extends SisyphusEvent["type"]>(
+  on<T extends LuxasEvent["type"]>(
     event: T,
-    handler: ExtensionHandler<Extract<SisyphusEvent, { type: T }>>,
+    handler: ExtensionHandler<Extract<LuxasEvent, { type: T }>>,
   ): () => void {
     if (!this.handlers.has(event)) {
       this.handlers.set(event, new Set());
@@ -53,7 +53,7 @@ export class ExtensionBus {
     return () => set.delete(handler);
   }
 
-  async emit(event: SisyphusEvent): Promise<void> {
+  async emit(event: LuxasEvent): Promise<void> {
     const set = this.handlers.get(event.type);
     if (!set) return;
     for (const handler of set) {

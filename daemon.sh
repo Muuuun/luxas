@@ -1,5 +1,5 @@
 #!/bin/bash
-# Sisyphus Daemon — continuously runs research until all phases complete.
+# Luxas Daemon — continuously runs research until all phases complete.
 # Restarts automatically if Claude Code session drops.
 #
 # Usage: ./daemon.sh "Large Language Model Reasoning"
@@ -15,7 +15,7 @@ MAX_RETRIES=10
 RETRY_DELAY=30  # seconds between retries
 
 echo "=========================================="
-echo " Sisyphus Daemon"
+echo " Luxas Daemon"
 echo " Il faut imaginer Sisyphe heureux."
 echo "=========================================="
 

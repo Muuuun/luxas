@@ -125,7 +125,7 @@ async function generateProjectName(topic: string): Promise<string> {
 
 /**
  * Create a new research project with RESEARCH.md.
- * Used by CLI `sisyphus init` — writes a simple template.
+ * Used by CLI `luxas init` — writes a simple template.
  */
 export async function createProject(baseDir: string, topic: string): Promise<string> {
   const dirName = await generateProjectName(topic);

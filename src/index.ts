@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 /**
- * Sisyphus CLI — autonomous research agent.
+ * Luxas CLI — autonomous research agent.
  *
  * Usage:
- *   sisyphus run [project-dir]              Run research on a project
- *   sisyphus run [project-dir] --model opus Use a specific model
- *   sisyphus status [project-dir]           Show project status
- *   sisyphus init [project-dir]             Initialize a new project
- *   sisyphus init [project-dir] --prompt "..." Generate RESEARCH.md from a topic
- *   sisyphus login                          Authenticate with Anthropic OAuth
+ *   luxas run [project-dir]              Run research on a project
+ *   luxas run [project-dir] --model opus Use a specific model
+ *   luxas status [project-dir]           Show project status
+ *   luxas init [project-dir]             Initialize a new project
+ *   luxas init [project-dir] --prompt "..." Generate RESEARCH.md from a topic
+ *   luxas login                          Authenticate with Anthropic OAuth
  */
 
 import { existsSync, readFileSync, readdirSync, mkdirSync, writeFileSync, renameSync } from "node:fs";
@@ -16,6 +16,9 @@ import { execSync } from "node:child_process";
 import { join, resolve } from "node:path";
 import { Agent } from "@mariozechner/pi-agent-core";
 import { autoPatch } from "agentsmelt";
+// Note: AgentSmelt namespace stays "sisyphus" — existing lessons live under
+// ~/.agentsmelt/.../sisyphus/. The project rebranded to Luxas but the data path
+// is preserved to avoid orphaning accumulated knowledge.
 const agentSmeltHandle = autoPatch(Agent, "sisyphus");
 import { createResearchAgent } from "./agent.js";
 
@@ -85,7 +88,7 @@ if (command === "run") {
 }
 
 console.error(`Unknown command: ${command}`);
-console.error("Usage: sisyphus <run|status|init|list|login> [project-dir] [--model sonnet|opus|haiku]");
+console.error("Usage: luxas <run|status|init|list|login> [project-dir] [--model sonnet|opus|haiku]");
 process.exit(1);
 
 // ─── Commands ────────────────────────────────────────────
@@ -95,7 +98,7 @@ async function run(dir: string, modelName: string, userDirective?: string) {
   const researchFile = join(dir, "RESEARCH.md");
   if (!existsSync(researchFile)) {
     console.error(`No RESEARCH.md found in ${dir}`);
-    console.error("Create one with your research goal, or run: sisyphus init <dir>");
+    console.error("Create one with your research goal, or run: luxas init <dir>");
     process.exit(1);
   }
 
@@ -108,7 +111,7 @@ async function run(dir: string, modelName: string, userDirective?: string) {
   registerProject(dir);
 
   const pastProjects = loadProjects().filter(p => p.path !== dir && p.summary);
-  console.log(`\n📚 Sisyphus — Autonomous Research Agent`);
+  console.log(`\n📚 Luxas — Autonomous Research Agent`);
   console.log(`   Project: ${dir}`);
   console.log(`   Model: ${modelName}`);
   console.log(`   Goal: ${researchGoal.split("\n")[0].slice(0, 80)}`);
@@ -193,7 +196,7 @@ function buildPrompt(researchGoal: string, userDirective?: string): string {
 function showStatus(dir: string) {
   const researchFile = join(dir, "RESEARCH.md");
   if (!existsSync(researchFile)) {
-    console.log("No RESEARCH.md found. Not a Sisyphus project.");
+    console.log("No RESEARCH.md found. Not a Luxas project.");
     return;
   }
 
@@ -233,11 +236,11 @@ function showStatus(dir: string) {
 function listProjects() {
   const projects = loadProjects();
   if (projects.length === 0) {
-    console.log("No projects registered. Run: sisyphus init <dir>");
+    console.log("No projects registered. Run: luxas init <dir>");
     return;
   }
 
-  console.log(`\n📚 Sisyphus — ${projects.length} Research Project(s)\n`);
+  console.log(`\n📚 Luxas — ${projects.length} Research Project(s)\n`);
   for (const p of projects) {
     const date = p.lastRun.slice(0, 10);
     const cost = p.costUsd > 0 ? ` | $${p.costUsd.toFixed(2)}` : "";
@@ -342,7 +345,7 @@ async function initProject(dir: string, prompt?: string) {
   // Register in global project registry
   registerProject(dir);
 
-  console.log(`Initialized Sisyphus project at ${dir}`);
+  console.log(`Initialized Luxas project at ${dir}`);
 }
 
 async function generateResearchGoal(prompt: string): Promise<string> {
@@ -352,7 +355,7 @@ async function generateResearchGoal(prompt: string): Promise<string> {
   const model = getModel("anthropic" as any, "claude-opus-4-6" as any);
   const apiKey = await getApiKey("anthropic");
   if (!apiKey) {
-    console.error("No API key available. Run: sisyphus login");
+    console.error("No API key available. Run: luxas login");
     process.exit(1);
   }
 

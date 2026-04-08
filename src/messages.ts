@@ -1,5 +1,5 @@
 /**
- * Custom message types for Sisyphus research agent.
+ * Custom message types for Luxas research agent.
  * Extends pi-agent-core's message system with research-specific types.
  *
  * #7: Custom message types (from pi-coding-agent pattern)
@@ -35,7 +35,7 @@ export interface PIFeedbackMessage {
 }
 
 // Custom message type union (used by convertToLlm at runtime)
-export type SisyphusCustomMessage =
+export type LuxasCustomMessage =
   | CompactionSummaryMessage
   | ExperimentResultMessage
   | PIFeedbackMessage;

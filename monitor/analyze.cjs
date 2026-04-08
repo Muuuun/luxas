@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Sisyphus Operations Monitor — Rule Engine (Layer 0)
+ * Luxas Operations Monitor — Rule Engine (Layer 0)
  *
  * Reads .agent/log.jsonl + project artifacts, runs pattern detectors,
  * outputs structured JSON report. READ-ONLY — never modifies project files.
@@ -535,7 +535,7 @@ if (jsonMode) {
   const status = dedupedIssues.some(i => i.severity === "problem") ? "🔴"
     : dedupedIssues.some(i => i.severity === "warning") ? "🟡" : "🟢";
 
-  console.log(`\n${status} Sisyphus [${report.project}] | ${report.mode} | ${stats.totalTimeSec}s | ${stats.totalCalls} tool calls`);
+  console.log(`\n${status} Luxas [${report.project}] | ${report.mode} | ${stats.totalTimeSec}s | ${stats.totalCalls} tool calls`);
   console.log(`  Last activity: ${report.agent.lastActivity || "none"}`);
   console.log(`  Papers: ${artifacts.papers.validPdfs} valid / ${artifacts.papers.total} total | Literature: ${artifacts.literature.lines} lines (${artifacts.literature.citedDois} DOIs, ${artifacts.literature.citedArxiv} arXiv)`);
   console.log(`  Report: ${artifacts.report.texLines} lines | PDF: ${artifacts.report.pdfExists ? (artifacts.report.pdfSize / 1024).toFixed(0) + "KB" : "none"} | Figures: ${artifacts.report.figures.length}`);

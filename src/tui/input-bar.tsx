@@ -17,7 +17,7 @@ export const COMMANDS: SlashCommand[] = [
   { name: "run", description: "Run research (optional directive)", hasArg: true },
   { name: "open", description: "Open PDF report" },
   { name: "help", description: "Show all commands" },
-  { name: "exit", description: "Exit Sisyphus" },
+  { name: "exit", description: "Exit Luxas" },
 ];
 
 export function InputBar({

@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
- * Sisyphus TUI — interactive research agent dashboard.
+ * Luxas TUI — interactive research agent dashboard.
  *
  * Usage:
  *   npx tsx src/tui.tsx [projects-dir]
- *   sisyphus tui [--projects-dir <path>]
+ *   luxas tui [--projects-dir <path>]
  *
  * Default projects directory: ~/Documents
  */

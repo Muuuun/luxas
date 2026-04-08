@@ -53,10 +53,10 @@ const MODEL_MAP: Record<string, [string, string]> = {
 };
 
 // Resolve paths for template variables
-const SISYPHUS_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const SEARCH_SCRIPT_PATH = join(SISYPHUS_ROOT, "skills", "search", "scripts", "search");
-const EXTRACT_FIGURES_PATH = join(SISYPHUS_ROOT, "skills", "search", "scripts", "extract-figures");
-const VENUE_SPECIFIC_DIR = join(SISYPHUS_ROOT, "skills", "venue-specific") + "/";
+const LUXAS_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+const SEARCH_SCRIPT_PATH = join(LUXAS_ROOT, "skills", "search", "scripts", "search");
+const EXTRACT_FIGURES_PATH = join(LUXAS_ROOT, "skills", "search", "scripts", "extract-figures");
+const VENUE_SPECIFIC_DIR = join(LUXAS_ROOT, "skills", "venue-specific") + "/";
 
 export function createResearchAgent(opts: ResearchAgentOptions) {
   // Enforce absolute projectDir — all tools depend on this

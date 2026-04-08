@@ -51,7 +51,7 @@ function saveProjects(projects: ProjectEntry[]): void {
 
 /**
  * Register a project in the global registry.
- * Called on `sisyphus init` and `sisyphus run`.
+ * Called on `luxas init` and `luxas run`.
  */
 export function registerProject(projectDir: string): ProjectEntry {
   const projects = loadProjects();
