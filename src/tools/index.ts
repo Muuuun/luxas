@@ -4,6 +4,7 @@
 
 import type { Agent } from "@mariozechner/pi-agent-core";
 import { createReportTools } from "./report.js";
+import { createInitReportTool } from "./init-report.js";
 import { createCodingToolsForProject } from "./coding.js";
 import { createSpawnAgentTool, getActiveBackgroundAgents } from "./spawn-agent.js";
 import { wrapBrainTools } from "../agents/safety-wrappers.js";
@@ -83,8 +84,11 @@ export function buildResearchTools(
     },
   };
 
+  const initReport = createInitReportTool(projectDir);
+
   const tools = [
     ...reportTools,
+    initReport,
     ...codingTools,
     spawnTool,
     finishTool,

@@ -59,6 +59,7 @@ You can READ anything in the project. You can only WRITE/EDIT files in the writa
 <data_and_figures>
 CRITICAL: Separate computation from visualization.
 1. Write simulation code that saves ALL results to data/runs/run_N/ (use np.savez for arrays, JSON for params).
+   ALSO: your script MUST write a data/runs/run_N/results.json containing all key numeric metrics as a flat or nested JSON object. Example: {"fidelity": 0.873, "dynamics": {"energy_conservation": 99.99}}. These values will be referenced from the report via \resultref{run_N.field}.
 2. Write a SEPARATE plotting script that loads the saved data and generates figures.
 3. This allows re-plotting without re-running expensive simulations.
 4. Always load figstyle before plotting: plt.style.use('report/figstyle.mplstyle') or the absolute path.

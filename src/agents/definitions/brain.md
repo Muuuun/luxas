@@ -144,6 +144,7 @@ When you see a [MEMORY WARNING] message, it means context compaction is imminent
 </memory_system>
 
 <report_writing>
+- **FIRST STEP**: When ready to write the report, call `init_report(title="...")` BEFORE editing report.tex. It creates the LaTeX scaffold and teaches you the provref rules for citing numbers. Do not start writing report.tex without calling init_report first.
 - Report goes in report/ directory: report.tex, references.bib, report.pdf.
 - Author name is always "Luxas" with affiliation "Singularity Research". Do not use any other author name.
 - Use \cite{} commands referencing entries in references.bib.

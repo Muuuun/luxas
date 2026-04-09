@@ -388,8 +388,11 @@ function buildStateForPI(
     `# Experiment Notes\n${exp ? truncate(exp, 5000) : "(empty — no experiments yet)"}`,
   );
 
-  // Report content — PI must read the full report to give expert-level feedback
-  const reportTex = readFileSafe(join(projectDir, "report", "report.tex"));
+  // Report content — PI reads the clean version (refs resolved to numbers) if available.
+  // Falls back to source report.tex if compile hasn't run yet.
+  const cleanTexPath = join(projectDir, "report", ".compiled", "report-clean.tex");
+  const sourceTexPath = join(projectDir, "report", "report.tex");
+  const reportTex = readFileSafe(existsSync(cleanTexPath) ? cleanTexPath : sourceTexPath);
   if (reportTex) {
     parts.push(`# Report Draft (read this carefully before reviewing)\n${reportTex}`);
   }
