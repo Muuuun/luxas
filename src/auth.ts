@@ -111,16 +111,6 @@ export async function resolveAnthropicKey(): Promise<string | undefined> {
     return auth.anthropic.access;
   }
 
-  // 3. Config files (Claude Code, etc.)
-  const home = homedir();
-  for (const p of [
-    join(home, ".claude", "credentials.json"),
-    join(home, ".claude.json"),
-  ]) {
-    const key = readJsonKey(p, ["oauthToken", "oauth_token", "apiKey", "api_key"]);
-    if (key) return key;
-  }
-
   return undefined;
 }
 
