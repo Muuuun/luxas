@@ -9,6 +9,7 @@ import { nameAgent } from "agentsmelt";
 import { getModel } from "@mariozechner/pi-ai";
 import { mkdirSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
+import { extractTextContent } from "../utils.js";
 import { getDefinition, resolvePrompt, type AgentDefinition } from "./registry.js";
 import { resolveToolSets } from "./tool-sets.js";
 import { resolveContextBuilder } from "./context-builders.js";
@@ -81,94 +82,115 @@ export interface SpawnAgentResult {
   success: boolean;
 }
 
-// ── Spawn ────────────────────────────────────────────
+// ── Build agent from definition (shared by spawnAgent + subagent-runner) ──
 
-export async function spawnAgent(opts: SpawnAgentOptions): Promise<SpawnAgentResult> {
+export interface BuiltAgent {
+  agent: InstanceType<typeof Agent>;
+  agentId: string;
+  definition: AgentDefinition;
+}
+
+export function buildAgentFromDefinition(opts: SpawnAgentOptions): BuiltAgent {
   const def = getDefinition(opts.name);
-  const t0 = Date.now();
 
-  // Build hierarchical agent ID for tracing (use '.' separator, not '/' — agentsmelt uses IDs in file paths)
   const suffix = opts.instanceIndex !== undefined ? `-${opts.instanceIndex}` : "";
   const agentId = opts.parentAgentId
     ? `${opts.parentAgentId}.${opts.name}${suffix}`
     : `${opts.name}${suffix}`;
   const depth = opts.depth ?? 0;
 
+  // 1. Resolve model
+  const modelKey = opts.modelOverride ?? def.model;
+  const model = modelKey === "inherit" ? resolveModel("sonnet") : resolveModel(modelKey);
+
+  // 2. Resolve system prompt with template variables
+  const systemPrompt = resolvePrompt(def, opts.templateVars);
+
+  // 3. Build tools from tool-sets
+  let tools = resolveToolSets(def.toolSets, opts.projectDir);
+
+  // 4. Apply safety wrapper if defined
+  const wrapper = resolveSafetyWrapper(def.safetyWrapper);
+  if (wrapper) {
+    tools = wrapper(tools, opts.projectDir);
+  }
+
+  // 5. Add tool overrides (e.g., PI verdict tool)
+  if (opts.toolOverrides) {
+    tools = [...tools, ...opts.toolOverrides];
+  }
+
+  // 6. If canSpawn and within depth limit, inject spawn_agent tool for recursion
+  if (def.canSpawn && depth < MAX_SPAWN_DEPTH && opts.createSpawnTool) {
+    const spawnTool = opts.createSpawnTool(agentId, depth + 1);
+    tools = [...tools, spawnTool];
+  }
+
+  // 7. Build dynamic context if context builder is defined
+  let fullPrompt = systemPrompt;
+  const contextBuilder = resolveContextBuilder(def.contextBuilder);
+  if (contextBuilder) {
+    const context = contextBuilder(opts.projectDir, opts.contextExtra);
+    if (context) {
+      fullPrompt += "\n\n" + context;
+    }
+  }
+
+  // 8. Create agent
+  const agent = new Agent({
+    initialState: {
+      systemPrompt: fullPrompt,
+      model,
+      thinkingLevel: (def.thinkingLevel || "medium") as any,
+      tools,
+    },
+    getApiKey: opts.getApiKey,
+  });
+  nameAgent(agent, agentId, def.name);
+  (agent as any).__smeltParent = opts.parentAgentId;
+
+  return { agent, agentId, definition: def };
+}
+
+// ── Spawn (in-process mode) ─────────────────────────
+
+export async function spawnAgent(opts: SpawnAgentOptions): Promise<SpawnAgentResult> {
+  const t0 = Date.now();
+
   try {
-    // 1. Resolve model
-    const modelKey = opts.modelOverride ?? def.model;
-    const model = modelKey === "inherit" ? resolveModel("sonnet") : resolveModel(modelKey);
+    const { agent, agentId } = buildAgentFromDefinition(opts);
 
-    // 2. Resolve system prompt with template variables
-    const systemPrompt = resolvePrompt(def, opts.templateVars);
+    // 9. Set up incremental conversation persistence (crash-safe: written per turn, not at end)
+    const convDir = join(opts.projectDir, ".agent", "conversations");
+    mkdirSync(convDir, { recursive: true });
+    const convPath = join(convDir, `${agentId}.jsonl`);
+    let lastSavedMsgCount = 0;
 
-    // 3. Build tools from tool-sets
-    let tools = resolveToolSets(def.toolSets, opts.projectDir);
-
-    // 4. Apply safety wrapper if defined
-    const wrapper = resolveSafetyWrapper(def.safetyWrapper);
-    if (wrapper) {
-      tools = wrapper(tools, opts.projectDir);
-    }
-
-    // 5. Add tool overrides (e.g., PI verdict tool)
-    if (opts.toolOverrides) {
-      tools = [...tools, ...opts.toolOverrides];
-    }
-
-    // 6. If canSpawn and within depth limit, inject spawn_agent tool for recursion
-    if (def.canSpawn && depth < MAX_SPAWN_DEPTH && opts.createSpawnTool) {
-      const spawnTool = opts.createSpawnTool(agentId, depth + 1);
-      tools = [...tools, spawnTool];
-    }
-
-    // 7. Build dynamic context if context builder is defined
-    let fullPrompt = systemPrompt;
-    const contextBuilder = resolveContextBuilder(def.contextBuilder);
-    if (contextBuilder) {
-      const context = contextBuilder(opts.projectDir, opts.contextExtra);
-      if (context) {
-        fullPrompt += "\n\n" + context;
+    agent.subscribe((event: any) => {
+      if (event.type === "turn_end") {
+        try {
+          const msgs = agent.state.messages;
+          for (let i = lastSavedMsgCount; i < msgs.length; i++) {
+            appendFileSync(convPath, JSON.stringify(msgs[i]) + "\n");
+          }
+          lastSavedMsgCount = msgs.length;
+        } catch { /* conversation save must not crash the agent */ }
       }
-    }
-
-    // 8. Create agent
-    const agent = new Agent({
-      initialState: {
-        systemPrompt: fullPrompt,
-        model,
-        thinkingLevel: (def.thinkingLevel || "medium") as any,
-        tools,
-      },
-      getApiKey: opts.getApiKey,
     });
-    nameAgent(agent, agentId, def.name);
-    // Set parent for trace chain
-    (agent as any).__smeltParent = opts.parentAgentId;
 
-    // 9. Run
+    // 10. Run
     await agent.prompt(opts.prompt);
 
-    // 9.5. Save full conversation (thinking + tool calls + results) for deep analysis
-    try {
-      const convDir = join(opts.projectDir, ".agent", "conversations");
-      mkdirSync(convDir, { recursive: true });
-      const convPath = join(convDir, `${agentId}.jsonl`);
-      const data = agent.state.messages.map((m: any) => JSON.stringify(m)).join("\n") + "\n";
-      appendFileSync(convPath, data);
-    } catch { /* conversation save must not crash the agent */ }
-
-    // 10. Extract output
+    // 11. Extract output
     const messages = agent.state.messages;
     const lastAssistant = [...messages].reverse().find(
       (m: any) => m.role === "assistant",
     ) as any;
     const output = lastAssistant?.content
-      ?.filter((c: any) => c.type === "text")
-      .map((c: any) => c.text)
-      .join("\n") ?? "(no output)";
+      ? extractTextContent(lastAssistant.content) || "(no output)"
+      : "(no output)";
 
-    // 11. Track usage
+    // 12. Track usage
     if (opts.trackUsage) {
       for (const m of agent.state.messages) {
         if ((m as any).role === "assistant" && (m as any).usage) {
@@ -185,7 +207,7 @@ export async function spawnAgent(opts: SpawnAgentOptions): Promise<SpawnAgentRes
     const msg = err.message || String(err);
     // Surface auth errors clearly
     if (msg.includes("API key") || msg.includes("authentication") || msg.includes("401") || msg.includes("getApiKey")) {
-      return { output: `Agent "${opts.name}" failed: No API key for provider "${def.model}". Set the appropriate env var (OPENAI_API_KEY, ANTHROPIC_API_KEY) or configure OAuth.\n\nOriginal error: ${msg}`, elapsed, success: false };
+      return { output: `Agent "${opts.name}" failed: No API key. Set the appropriate env var (OPENAI_API_KEY, ANTHROPIC_API_KEY) or configure OAuth.\n\nOriginal error: ${msg}`, elapsed, success: false };
     }
     return { output: `Agent "${opts.name}" failed: ${msg}`, elapsed, success: false };
   }

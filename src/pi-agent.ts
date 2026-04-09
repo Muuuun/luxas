@@ -48,6 +48,8 @@ export interface PIMonitorOptions {
   costTracker?: CostTracker;
   startTime?: number;
   onVerdict?: (verdict: PIVerdict, toolCallCount: number) => void;
+  /** Restored from session JSONL for crash recovery. */
+  initialState?: { totalToolCalls: number; lastReviewAt: number; reviewCount: number };
 }
 
 // ---------------------------------------------------------------------------
@@ -55,9 +57,9 @@ export interface PIMonitorOptions {
 // ---------------------------------------------------------------------------
 
 export function createPIReviewTool(opts: PIMonitorOptions) {
-  let totalToolCalls = 0;
-  let lastReviewAt = 0;
-  let reviewCount = 0;
+  let totalToolCalls = opts.initialState?.totalToolCalls ?? 0;
+  let lastReviewAt = opts.initialState?.lastReviewAt ?? 0;
+  let reviewCount = opts.initialState?.reviewCount ?? 0;
 
   const tool = {
     name: "request_pi_review",
@@ -130,6 +132,10 @@ export function createPIReviewTool(opts: PIMonitorOptions) {
     markReviewed() {
       reviewCount++;
       lastReviewAt = totalToolCalls;
+    },
+    /** Snapshot PI state for session persistence. */
+    snapshotState() {
+      return { piToolCalls: totalToolCalls, piLastReviewAt: lastReviewAt, piReviewCount: reviewCount };
     },
   };
 }

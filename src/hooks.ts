@@ -17,6 +17,15 @@ export interface ResearchOptions {
   projectDir: string;
   reminders?: ReminderRegistry;
   bus?: ExtensionBus;
+  /** Restored harness state from session JSONL (stateless harness recovery). */
+  initialState?: {
+    cost?: number;
+    inputTokens?: number;
+    outputTokens?: number;
+    lastContextTokens?: number;
+    startTime?: number;
+    piStopped?: boolean;
+  };
 }
 
 export interface CostTracker {
@@ -27,7 +36,8 @@ export interface CostTracker {
 }
 
 export function buildResearchHooks(opts: ResearchOptions) {
-  const startTime = Date.now();
+  const init = opts.initialState;
+  const startTime = init?.startTime ?? Date.now();
   const maxCost = opts.maxCostUsd ?? Infinity;  // No default cost limit; pass --max-cost to set one
   const maxDuration = opts.maxDurationMs ?? 8 * 60 * 60 * 1000;
   const logFile = join(opts.projectDir, ".agent", "log.jsonl");
@@ -36,14 +46,14 @@ export function buildResearchHooks(opts: ResearchOptions) {
   mkdirSync(dirname(logFile), { recursive: true });
 
   const tracker: CostTracker = {
-    totalCost: 0,
-    totalInputTokens: 0,
-    totalOutputTokens: 0,
-    lastContextTokens: 0,
+    totalCost: init?.cost ?? 0,
+    totalInputTokens: init?.inputTokens ?? 0,
+    totalOutputTokens: init?.outputTokens ?? 0,
+    lastContextTokens: init?.lastContextTokens ?? 0,
   };
 
   // PI STOP enforcement — when PI says stop, block non-finalization tools
-  let piStopped = false;
+  let piStopped = init?.piStopped ?? false;
   const FINALIZATION_TOOLS = new Set([
     "read", "write", "edit", "compile_latex", "request_pi_review", "finish",
   ]);
@@ -175,7 +185,17 @@ export function buildResearchHooks(opts: ResearchOptions) {
   /** Call when PI verdict is STOP — blocks non-finalization tools */
   const setPIStopped = () => { piStopped = true; };
 
-  return { before, after, tracker, trackUsage, startTime, setPIStopped };
+  /** Snapshot current harness state for session persistence. */
+  const snapshotState = () => ({
+    cost: tracker.totalCost,
+    inputTokens: tracker.totalInputTokens,
+    outputTokens: tracker.totalOutputTokens,
+    lastContextTokens: tracker.lastContextTokens,
+    startTime,
+    piStopped,
+  });
+
+  return { before, after, tracker, trackUsage, startTime, setPIStopped, snapshotState };
 }
 
 function summarizeArgs(args: any): any {

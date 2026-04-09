@@ -14,6 +14,7 @@
 import { existsSync, readdirSync } from "node:fs";
 import { readFileSafe, smartTruncate } from "./utils.js";
 import { getActiveBackgroundAgents } from "./tools/spawn-agent.js";
+import { isAlive } from "./active-agents.js";
 import { join, dirname } from "node:path";
 import { generateResearchSummary, heuristicSummary } from "./compaction.js";
 import { compactNotesIfNeeded } from "./notes-compaction.js";
@@ -39,6 +40,8 @@ export interface ContextTransformerOptions {
   tracker?: CostTracker;
   bus?: ExtensionBus;
   reminders?: ReminderRegistry;
+  /** Restored from session compaction entries for crash recovery. */
+  initialPreviousSummary?: string;
 }
 
 /**
@@ -47,7 +50,7 @@ export interface ContextTransformerOptions {
  */
 export function buildContextTransformer(opts: ContextTransformerOptions) {
   const { projectDir, model, getApiKey, tracker, bus } = opts;
-  let previousSummary: string | undefined;
+  let previousSummary: string | undefined = opts.initialPreviousSummary;
 
   return async (messages: any[]): Promise<any[]> => {
     const snapshot = buildResearchSnapshot(opts);
@@ -269,13 +272,17 @@ function buildResearchSnapshot(opts: ContextTransformerOptions): string {
   dataSection += `\n</data_status>`;
   parts.push(dataSection);
 
-  // Background agents status — brain must know what's still running
-  const bgAgents = getActiveBackgroundAgents();
+  // Background agents status — one-line summary per agent, no session file reads
+  const bgAgents = getActiveBackgroundAgents(projectDir);
   if (bgAgents.length > 0) {
-    const bgLines = bgAgents.map(a =>
-      `- ${a.name}: ${a.task} (running ${Math.floor((Date.now() - a.startedAt) / 1000)}s)`
-    );
-    parts.push(`<background_agents count="${bgAgents.length}">\n⚠️ ${bgAgents.length} background agent(s) still running. Their results will arrive as messages. Do NOT call finish until all background agents complete.\n${bgLines.join("\n")}\n</background_agents>`);
+    const agentDir = join(projectDir, ".agent");
+    const bgLines = bgAgents.map(a => {
+      const elapsed = Math.floor((Date.now() - a.startedAt) / 1000);
+      const alive = a.pid ? isAlive(agentDir, a.id) : true;
+      const status = a.status === "done" ? "✓ done" : a.status === "failed" ? "✗ failed" : alive ? "running" : "✗ dead";
+      return `- ${a.id} [${status} ${elapsed}s]: ${a.task}`;
+    });
+    parts.push(`<background_agents count="${bgAgents.length}">\n${bgLines.join("\n")}\nUse spawn_agent(action="status", id="...") to check details. Do NOT call finish until all complete.\n</background_agents>`);
   }
 
   // Active reminders — event-driven, compact, budget-controlled

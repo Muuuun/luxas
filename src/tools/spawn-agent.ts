@@ -10,14 +10,16 @@
 
 import { Type } from "@sinclair/typebox";
 import type { Agent as AgentType } from "@mariozechner/pi-agent-core";
+import { spawn } from "node:child_process";
 import { spawnAgent, type SpawnAgentOptions } from "../agents/spawn.js";
 import { listAgentDescriptions, getDefinition } from "../agents/registry.js";
+import { addAgent, removeAgent, loadRegistry, isAlive, tryExtractResult } from "../active-agents.js";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 
-/** Track active background agents for observability */
-const activeBackgroundAgents = new Map<string, { name: string; task: string; startedAt: number }>();
-
-export function getActiveBackgroundAgents() {
-  return [...activeBackgroundAgents.values()];
+export function getActiveBackgroundAgents(projectDir?: string) {
+  if (!projectDir) return [];
+  return loadRegistry(join(projectDir, ".agent"));
 }
 
 export function createSpawnAgentTool(
@@ -30,6 +32,8 @@ export function createSpawnAgentTool(
   /** Reference to the parent Agent instance — needed for steer() on background completion */
   parentAgent?: AgentType,
 ) {
+  const agentDir = join(projectDir, ".agent");
+  const luxasRoot = join(dirname(fileURLToPath(import.meta.url)), "../..");
   // Build agent catalog for the tool description
   const agents = listAgentDescriptions();
   const agentCatalog = agents
@@ -51,6 +55,12 @@ export function createSpawnAgentTool(
     })),
     thinkingLevel: Type.Optional(Type.String({
       description: 'Override thinking level: "off", "low", "medium", "high". Defaults to the agent definition\'s level.',
+    })),
+    action: Type.Optional(Type.String({
+      description: '"spawn" (default) or "status" — query a running background agent\'s recent progress.',
+    })),
+    id: Type.Optional(Type.String({
+      description: 'Agent ID to query status for (e.g. "brain.worker-bg-1"). Required when action="status".',
     })),
   });
 
@@ -80,8 +90,28 @@ export function createSpawnAgentTool(
 
     async execute(
       _toolCallId: string,
-      params: { agent: string; task: string; tasks?: string[]; background?: boolean; thinkingLevel?: string },
+      params: { agent: string; task: string; tasks?: string[]; background?: boolean; thinkingLevel?: string; action?: string; id?: string },
     ) {
+      // ── Status query ──
+      if (params.action === "status" && params.id) {
+        const reg = loadRegistry(agentDir);
+        const entry = reg.find(a => a.id === params.id);
+        if (!entry) {
+          return { content: [{ type: "text" as const, text: `No active agent with id "${params.id}".` }], details: { success: false } };
+        }
+        const alive = isAlive(agentDir, params.id);
+        const elapsed = Math.floor((Date.now() - entry.startedAt) / 1000);
+        const status = entry.status === "done" ? "done" : entry.status === "failed" ? "failed" : alive ? "running" : "dead";
+        const recent = tryExtractResult(entry.conversationFile);
+        const lines = [
+          `Agent: ${entry.id}`,
+          `Status: ${status} (${elapsed}s)`,
+          `Task: ${entry.task}`,
+          recent ? `\nLast completed turn:\n${recent.slice(0, 5000)}` : "\nNo output yet.",
+        ];
+        return { content: [{ type: "text" as const, text: lines.join("\n") }], details: { success: true } };
+      }
+
       // Validate agent exists
       try {
         getDefinition(params.agent);
@@ -112,45 +142,41 @@ export function createSpawnAgentTool(
         }
       }
 
-      // ── Background mode ──
-      if (params.background && parentAgent) {
+      // ── Background mode — independent process ──
+      if (params.background) {
         const bgId = `bg-${++bgCounter}`;
         const taskPreview = params.task.slice(0, 80);
-        activeBackgroundAgents.set(bgId, {
+        const agentId = `${parentAgentId ?? "brain"}.${params.agent}-${bgId}`;
+        const convFile = join(agentDir, "conversations", `${agentId}.jsonl`);
+
+        const child = spawn("node", [
+          "--import=tsx",
+          join(luxasRoot, "src", "subagent-runner.ts"),
+          "--agent", params.agent,
+          "--task", params.task,
+          "--project", projectDir,
+          "--id", agentId,
+          "--session", convFile,
+        ], {
+          detached: true,
+          stdio: "ignore",
+        });
+        child.unref();
+
+        addAgent(agentDir, {
+          id: agentId,
           name: params.agent,
           task: taskPreview,
+          mode: "background",
           startedAt: Date.now(),
+          conversationFile: convFile,
+          pid: child.pid,
+          status: "running",
         });
 
-        // Fire and forget — result delivered via steer()
-        spawnAgent({ ...baseOpts, prompt: params.task })
-          .then((result) => {
-            activeBackgroundAgents.delete(bgId);
-            const elapsed = Math.floor(result.elapsed / 1000);
-            const icon = result.success ? "✓" : "✗";
-            parentAgent.steer({
-              role: "user",
-              content: [
-                `[Background Agent Complete: ${params.agent} ${icon} (${elapsed}s)]`,
-                `Task: ${taskPreview}`,
-                ``,
-                result.output.slice(0, 30_000),
-              ].join("\n"),
-              timestamp: Date.now(),
-            });
-          })
-          .catch((err) => {
-            activeBackgroundAgents.delete(bgId);
-            parentAgent.steer({
-              role: "user",
-              content: `[Background Agent Failed: ${params.agent}] ${err.message}`,
-              timestamp: Date.now(),
-            });
-          });
-
         return {
-          content: [{ type: "text" as const, text: `Background agent "${params.agent}" launched (${bgId}). Continue your work — results will be delivered when done.\nTask: ${taskPreview}` }],
-          details: { backgroundId: bgId, success: true },
+          content: [{ type: "text" as const, text: `Background agent "${params.agent}" launched as independent process (${agentId}, pid=${child.pid}). It will survive if this session crashes.\nTask: ${taskPreview}\nUse spawn_agent(action="status", id="${agentId}") to check progress.` }],
+          details: { backgroundId: bgId, agentId, pid: child.pid, success: true },
         };
       }
 

@@ -68,7 +68,7 @@ export function buildResearchTools(
     },
     execute: async (args: { summary: string }) => {
       // Hard lock: cannot finish while background agents are still running
-      const active = getActiveBackgroundAgents();
+      const active = getActiveBackgroundAgents(projectDir);
       if (active.length > 0) {
         const list = active.map(a => `  - ${a.name}: ${a.task} (running ${Math.floor((Date.now() - a.startedAt) / 1000)}s)`).join("\n");
         return { content: [{ type: "text" as const, text: `Cannot finish: ${active.length} background agent(s) still running. Wait for them to complete before finishing.\n\nActive agents:\n${list}` }] };

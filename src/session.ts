@@ -58,7 +58,21 @@ export interface MessageEntry extends EntryBase {
   message: any; // pi-ai Message (user | assistant | toolResult | custom)
 }
 
-export type SessionEntry = DecisionEntry | ActionEntry | CompactionEntry | BranchSummaryEntry | MessageEntry;
+/** Harness state snapshot — persisted every turn for crash recovery. */
+export interface StateEntry extends EntryBase {
+  type: "state";
+  cost: number;
+  inputTokens: number;
+  outputTokens: number;
+  lastContextTokens: number;
+  startTime: number;
+  piStopped: boolean;
+  piToolCalls: number;
+  piLastReviewAt: number;
+  piReviewCount: number;
+}
+
+export type SessionEntry = DecisionEntry | ActionEntry | CompactionEntry | BranchSummaryEntry | MessageEntry | StateEntry;
 
 function genId(): string {
   return randomBytes(4).toString("hex");
@@ -111,7 +125,7 @@ export class Session {
   }
 
   /** Append an entry, linking it to the current leaf. Returns the new entry's id. */
-  append(data: Omit<DecisionEntry, "id" | "parentId" | "timestamp"> | Omit<ActionEntry, "id" | "parentId" | "timestamp"> | Omit<CompactionEntry, "id" | "parentId" | "timestamp"> | Omit<BranchSummaryEntry, "id" | "parentId" | "timestamp">): string {
+  append(data: Omit<DecisionEntry, "id" | "parentId" | "timestamp"> | Omit<ActionEntry, "id" | "parentId" | "timestamp"> | Omit<CompactionEntry, "id" | "parentId" | "timestamp"> | Omit<BranchSummaryEntry, "id" | "parentId" | "timestamp"> | Omit<StateEntry, "id" | "parentId" | "timestamp">): string {
     const entry = {
       ...data,
       id: genId(),
@@ -251,6 +265,15 @@ export class Session {
   getLeafId(): string | null { return this.leafId; }
   getEntries(): SessionEntry[] { return this.entries; }
   getFile(): string { return this.file; }
+}
+
+/** Derive the most recent harness state from session entries (reverse scan, O(1) avg). */
+export function deriveState(session: Session): StateEntry | null {
+  const entries = session.getEntries();
+  for (let i = entries.length - 1; i >= 0; i--) {
+    if (entries[i].type === "state") return entries[i] as StateEntry;
+  }
+  return null;
 }
 
 /**

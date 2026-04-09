@@ -31,7 +31,8 @@ import { getApiKey } from "./auth.js";
 import { convertToLlm } from "./messages.js";                    // #7: custom message types
 import { cleanMessagesForModel } from "./transform.js";           // #6: cross-model compatibility
 import { ExtensionBus } from "./extensions.js";                   // #8: extension system
-import { Session, buildSessionContext } from "./session.js";      // #5: session DAG
+import { Session, buildSessionContext, deriveState } from "./session.js"; // #5: session DAG
+import { loadRegistry, removeAgent, tryExtractResult } from "./active-agents.js";
 
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
 import type { PIVerdict } from "./pi-agent.js";
@@ -96,6 +97,25 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
   // #8: Extension bus (created early — hooks and context both need it)
   const bus = new ExtensionBus();
 
+  // #5: Session DAG — open early so deriveState() can seed hooks/context/PI
+  const agentDir = join(projectDir, ".agent");
+  mkdirSync(agentDir, { recursive: true });
+  const checkpointPath = join(agentDir, "checkpoint.jsonl");
+
+  // Migrate legacy checkpoint format
+  if (existsSync(checkpointPath)) {
+    try {
+      const firstLine = readFileSync(checkpointPath, "utf-8").split("\n")[0];
+      const parsed = JSON.parse(firstLine);
+      if (parsed.type !== "session") {
+        renameSync(checkpointPath, checkpointPath + ".legacy");
+      }
+    } catch { /* corrupted — Session.open will overwrite */ }
+  }
+
+  const session = Session.open(checkpointPath, projectDir);
+  const savedState = deriveState(session);
+
   // Hooks must be created before tools so trackUsage can be threaded to sub-agents
   const hooks = buildResearchHooks({
     projectDir,
@@ -103,6 +123,7 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
     maxDurationMs: opts.maxDurationMs,
     reminders,
     bus,
+    initialState: savedState ?? undefined,
   });
 
   // Check if PI already said STOP in a previous session (persisted in pi_feedback.md)
@@ -124,6 +145,11 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
     fallbackInterval: opts.piFallbackInterval ?? 50,
     costTracker: hooks.tracker,
     startTime: hooks.startTime,
+    initialState: savedState ? {
+      totalToolCalls: savedState.piToolCalls,
+      lastReviewAt: savedState.piLastReviewAt,
+      reviewCount: savedState.piReviewCount,
+    } : undefined,
     onVerdict: (verdict: PIVerdict, toolCallCount: number) => {
       if (verdict.verdict === "stop") {
         hooks.setPIStopped();
@@ -148,6 +174,7 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
     tracker: hooks.tracker,
     bus,
     reminders,
+    initialPreviousSummary: session.getCompactionSummary() ?? undefined,
   });
 
   // Assemble Agent
@@ -172,26 +199,10 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
   setParentAgent(agent);     // enables background spawn_agent with steer()
   finishCallback = () => agent.abort();
 
-  // #5: Session DAG
-  const agentDir = join(projectDir, ".agent");
-  mkdirSync(agentDir, { recursive: true });
-  const checkpointPath = join(agentDir, "checkpoint.jsonl");
-
-  // Migrate legacy checkpoint format
-  if (existsSync(checkpointPath)) {
-    try {
-      const firstLine = readFileSync(checkpointPath, "utf-8").split("\n")[0];
-      const parsed = JSON.parse(firstLine);
-      if (parsed.type !== "session") {
-        renameSync(checkpointPath, checkpointPath + ".legacy");
-      }
-    } catch { /* corrupted — Session.open will overwrite */ }
-  }
-
-  const session = Session.open(checkpointPath, projectDir);
   let lastCheckpointedMsgCount = 0;
+  let turnCount = 0;
 
-  // Track usage + emit events + persist messages to Session after each turn
+  // Track usage + emit events + persist messages + state to Session after each turn
   agent.subscribe((event: any) => {
     if (event.type === "message_update") {
       const msg = event.assistantMessageEvent;
@@ -219,7 +230,7 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
         .filter((b: any) => b.type === "toolCall" || b.type === "tool_use").length;
       bus.emit({ type: "turn_end", message: event.message, toolCalls });
     }
-    // Persist new messages to Session DAG after each completed turn
+    // Persist new messages + harness state to Session DAG after each completed turn
     if (event.type === "turn_end") {
       try {
         const messages = agent.state.messages;
@@ -233,7 +244,40 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
           session.appendMessage(m);
         }
         lastCheckpointedMsgCount = messages.length;
+
+        // Persist harness state snapshot (stateless harness: JSONL is source of truth)
+        const piState = piReview?.snapshotState() ?? { piToolCalls: 0, piLastReviewAt: 0, piReviewCount: 0 };
+        session.append({
+          type: "state" as const,
+          ...hooks.snapshotState(),
+          ...piState,
+        });
       } catch {}
+
+      // Harvest completed/dead background sub-agents every 5 turns
+      turnCount++;
+      if (turnCount % 5 === 0) {
+        try {
+          const active = loadRegistry(agentDir);
+          for (const a of active) {
+            if (a.status === "done" && a.result) {
+              agent.steer({
+                role: "user",
+                content: `[Background Agent Complete: ${a.name} ✓]\nTask: ${a.task}\n\n${a.result.slice(0, 30_000)}`,
+                timestamp: Date.now(),
+              });
+              removeAgent(agentDir, a.id);
+            } else if (a.status === "failed") {
+              agent.steer({
+                role: "user",
+                content: `[Background Agent Failed: ${a.name} ✗]\nTask: ${a.task}\n\n${a.result ?? "Unknown error"}`,
+                timestamp: Date.now(),
+              });
+              removeAgent(agentDir, a.id);
+            }
+          }
+        } catch {}
+      }
     }
   });
 
@@ -251,16 +295,36 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
       const messages = buildSessionContext(session);
       if (messages.length > 0) {
         const cleaned = cleanMessagesForModel(messages, currentModel);
+
+        // Recover orphaned sub-agent results from active-agents registry
+        const orphans = loadRegistry(agentDir);
+        const recoveryLines: string[] = [];
+        for (const orphan of orphans) {
+          const result = tryExtractResult(orphan.conversationFile);
+          if (result) {
+            recoveryLines.push(`[Recovered: ${orphan.name}] Task: "${orphan.task}"\n${result.slice(0, 5000)}`);
+          } else {
+            recoveryLines.push(`[Lost: ${orphan.name}] Task "${orphan.task}" was interrupted. Decide whether to retry.`);
+          }
+          removeAgent(agentDir, orphan.id);
+        }
+
+        const resumeParts = [
+          `[SESSION RESUMED] You have been restored from a checkpoint with ${cleaned.length} messages.`,
+          `Your current state is in the research snapshot above (notes, report, memory).`,
+          `Do NOT re-verify or re-read files you already know about.`,
+          `Do NOT rewrite notes/memory.md unless you have new information.`,
+          `Continue working from where you left off — check the research snapshot and your last actions to determine what to do next.`,
+          `If PI feedback says STOP, finalize and stop immediately.`,
+        ];
+        if (recoveryLines.length > 0) {
+          resumeParts.push(`\n--- Sub-agent recovery (${recoveryLines.length} orphan(s)) ---`);
+          resumeParts.push(...recoveryLines);
+        }
+
         cleaned.push({
           role: "user",
-          content: [
-            `[SESSION RESUMED] You have been restored from a checkpoint with ${cleaned.length} messages.`,
-            `Your current state is in the research snapshot above (notes, report, memory).`,
-            `Do NOT re-verify or re-read files you already know about.`,
-            `Do NOT rewrite notes/memory.md unless you have new information.`,
-            `Continue working from where you left off — check the research snapshot and your last actions to determine what to do next.`,
-            `If PI feedback says STOP, finalize and stop immediately.`,
-          ].join("\n"),
+          content: resumeParts.join("\n"),
           timestamp: Date.now(),
         });
         agent.replaceMessages(cleaned);
