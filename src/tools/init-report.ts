@@ -64,6 +64,20 @@ If any ref is broken, compile fails with line numbers and "Did you mean…?" sug
 
 The full manual is saved to report/PROVREF_USAGE.md — read it if you forget.`;
 
+const PROVREF_STY = `\\NeedsTeXFormat{LaTeX2e}
+\\ProvidesPackage{provref}[2026/04/08 v0.1 Structured numerical references]
+
+\\RequirePackage{jsonparse}
+
+\\newcommand{\\provrefLoadRuns}[1]{\\JSONParseFromFile{\\provrefRuns}{#1}}
+\\newcommand{\\provrefLoadLit}[1]{\\JSONParseFromFile{\\provrefLit}{#1}}
+
+\\newcommand{\\resultref}[1]{\\JSONParseExpandableValue{\\provrefRuns}{#1}}
+\\newcommand{\\litref}[1]{\\JSONParseExpandableValue{\\provrefLit}{#1}}
+
+\\endinput
+`;
+
 function makeScaffold(title: string): string {
   return `\\documentclass{article}
 \\usepackage{provref}
@@ -137,6 +151,15 @@ export function createInitReportTool(projectDir: string) {
         mkdirSync(join(projectDir, "notes"), { recursive: true });
         writeFileSync(litPath, "{}\n");
       }
+
+      // Ensure supporting files exist (even if report.tex was already created)
+      if (!existsSync(join(reportDir, "provref.sty"))) {
+        writeFileSync(join(reportDir, "provref.sty"), PROVREF_STY);
+      }
+      if (!existsSync(join(reportDir, "references.bib"))) {
+        writeFileSync(join(reportDir, "references.bib"), "");
+      }
+
       if (existsSync(texPath)) {
         return {
           content: [{
