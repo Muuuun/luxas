@@ -156,7 +156,9 @@ The brain can spawn any of them; sub-brains are allowed up to depth 2 for deeply
 
 ## Tools
 
-The brain sees a flat tool list after the 5-layer assembly:
+Tool visibility is per-agent, controlled by `toolSets` in each agent definition. The brain sees a focused set; specialized sub-agents get additional tools.
+
+**Brain tools** (`src/tools/index.ts`):
 
 | Tool | What it does |
 |---|---|
@@ -164,9 +166,15 @@ The brain sees a flat tool list after the 5-layer assembly:
 | `init_report` | Scaffolds `report/` with `report.tex`, `references.bib`, and the embedded `provref.sty` shim |
 | `compile_latex` | `pdflatex` + `bibtex`, with figure-citation enforcement and just-in-time provref validation before the final compile |
 | `spawn_agent` | Generic agent spawner (foreground / parallel / background; see above) |
-| `image_gen` | Gemini image generation (used by the illustrator) |
-| `wolfram` | `wolframscript` bridge (used by the math agent); falls back to `sympy` if the engine is not installed |
 | `finish` | Marks research complete. Hard-blocked until `report.pdf` exists and no background agents are still running. |
+
+**Sub-agent-only tool-sets** (`src/agents/tool-sets.ts`):
+
+| Tool-set | Tool | Agents |
+|---|---|---|
+| `wolfram` | `wolfram` — `wolframscript` bridge for symbolic computation; falls back to `sympy` when the engine is not installed | `math` |
+| `imagegen` | `image_gen` — Gemini image generation | `illustrator` |
+| `pi` | reviewer-only read tools | `reviewer` |
 
 ### provref integration
 
@@ -207,20 +215,20 @@ The Sisyphus → Luxas rename (commit `ec04179`) kept the user-data path (`~/.si
 
 ## Safety
 
-Every constraint is a hook, not a prompt-level instruction. The brain cannot talk its way out of them.
+Every constraint is a hook or a tool guard, not a prompt-level instruction. The brain cannot talk its way out of them.
 
-| Limit | Default | Hook |
+| Limit | Default | Enforced by |
 |---|---|---|
-| Max cost per run | unbounded (configurable via hook) | `hooks.ts` |
+| Max cost per run | unbounded (pass `maxCostUsd` to set) | `hooks.ts` |
 | Max duration | 8 hours | `hooks.ts` |
-| Max agent steps | 50 | `hooks.ts` |
-| Consecutive failures before pause | 5 | `hooks.ts` |
-| Loop detection (same action × N) | 4 | `hooks.ts` |
-| Max concurrent workers | 8 | `spawn-agent.ts` |
+| PI review fallback interval | every 50 steps without a brain-triggered review | `agent.ts` |
+| Max sub-agent spawn depth | 2 | `agents/spawn.ts` |
+| Max compaction failures before abort | 3 | `context.ts` |
 | `RESEARCH.md` | write-protected | `hooks.ts` |
+| Experiment agent protected files | `report.tex`, `references.bib`, `notes/*` | `agents/safety-wrappers.ts` |
+| Read-before-edit on brain | enforced with mtime staleness + fresh-excerpt recovery | `agents/safety-wrappers.ts` |
 | `report.pdf` exists before `finish` | enforced | `tools/index.ts` |
 | No background agents still running at `finish` | enforced | `tools/index.ts` |
-| Rate-limited APIs | search 300 ms, paper download 1.1 s | `hooks.ts` |
 
 The `finish` tool is the only clean exit. Anything else is a crash, and the stateless harness is designed to survive crashes.
 
