@@ -19,6 +19,7 @@ import {
 } from "agentsmelt";
 import { getModel } from "@mariozechner/pi-ai";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
+import { execSync } from "node:child_process";
 import { join, isAbsolute, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getDefinition, resolvePrompt } from "./agents/registry.js";
@@ -62,6 +63,12 @@ const VENUE_SPECIFIC_DIR = join(LUXAS_ROOT, "skills", "venue-specific") + "/";
 export function createResearchAgent(opts: ResearchAgentOptions) {
   // Enforce absolute projectDir — all tools depend on this
   const projectDir = isAbsolute(opts.projectDir) ? opts.projectDir : resolve(opts.projectDir);
+
+  if (process.platform === "darwin") {
+    try {
+      execSync(`xattr -cr "${projectDir}"`, { stdio: "pipe" });
+    } catch {}
+  }
 
   // Model for the brain agent
   const modelKey = opts.model ?? "opus";
@@ -252,7 +259,14 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
           ...hooks.snapshotState(),
           ...piState,
         });
-      } catch {}
+      } catch (err: any) {
+        if (err?.message?.startsWith("FATAL:")) {
+          console.error("\n" + err.message + "\n");
+          agent.abort();
+          throw err;
+        }
+        // Swallow other errors (e.g. empty-message filter edge cases)
+      }
 
       // Harvest completed/dead background sub-agents every 5 turns
       turnCount++;

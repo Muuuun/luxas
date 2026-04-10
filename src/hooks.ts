@@ -66,6 +66,9 @@ export function buildResearchHooks(opts: ResearchOptions) {
     download_paper: 1100,  // 1.1s (arXiv rate limit)
   };
 
+  let logWriteFailures = 0;
+  const MAX_LOG_FAILURES = 3;
+
   const before = async (ctx: any): Promise<any> => {
     // 1. RESEARCH.md write protection (defense-in-depth; the brain/experiment
     // safety wrappers are the primary line of defense for tools that go through
@@ -130,7 +133,14 @@ export function buildResearchHooks(opts: ResearchOptions) {
     }
     try {
       appendFileSync(logFile, JSON.stringify(entry) + "\n");
-    } catch {}
+      logWriteFailures = 0;
+    } catch (err: any) {
+      logWriteFailures++;
+      console.error(`[CRITICAL] Failed to write log.jsonl (${err?.code}): ${err?.message}`);
+      if (logWriteFailures >= MAX_LOG_FAILURES) {
+        throw new Error(`FATAL: ${MAX_LOG_FAILURES} consecutive log write failures. Last: ${err?.code}. Aborting to prevent silent cost accumulation.`);
+      }
+    }
 
     // 2. Capture lessons from failures → notes/lessons.md
     if (ctx.isError && errorText.length > 10) {

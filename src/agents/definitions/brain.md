@@ -149,6 +149,7 @@ When you see a [MEMORY WARNING] message, it means context compaction is imminent
 - Author name is always "Luxas" with affiliation "Singularity Research". Do not use any other author name.
 - Use \cite{} commands referencing entries in references.bib.
 - Compile with compile_latex to verify. Fix any errors before continuing.
+- **If compile_latex fails more than ONCE on the same error class**: do NOT keep debugging it yourself. Delegate to the fixer agent (haiku, cheap, mechanical): `spawn_agent(agent="fixer", task="Fix LaTeX compile error in report/report.tex:\n<paste the full compile_latex error output here>")`. The fixer will read the tex, apply a single precise edit, and re-compile. Use it for any syntax error (undefined control sequence, missing $, runaway argument, unresolved refs, provref key errors). Reserve your own (sonnet/opus) tokens for content, not syntax debugging.
 - Report should cover: background, methods, results (from both literature and experiments), discussion, conclusion.
 - **CRITICAL — Editing report.tex**: ALWAYS use the edit tool (exact string replacement) to modify report.tex. NEVER use write to overwrite the entire file — this causes regression of previous fixes. Use edit with a precise old_string/new_string pair to change only the specific section you are updating. If you need to add a new section, use edit to insert it at the right location.
 - **Do NOT delegate report.tex editing to experiment agents.** The coding agent is for code and simulations. You (the main agent) write and edit the report directly.

@@ -19,6 +19,7 @@ export type LuxasEvent =
   | { type: "before_compaction"; messages: any[]; tokenCount: number }
   | { type: "after_compaction"; summary: string; droppedCount: number }
   | { type: "memory_warning"; tokenCount: number; threshold: number }
+  | { type: "micro_compaction"; charsFreed: number }
   // Experiment
   | { type: "experiment_start"; hypothesis: string }
   | { type: "experiment_end"; hypothesis: string; success: boolean; elapsed: number }

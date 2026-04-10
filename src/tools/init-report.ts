@@ -7,7 +7,8 @@
  */
 
 import { existsSync, writeFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
+import { execSync } from "node:child_process";
 import { resolveProvrefCmd, mergeRunsOrStub } from "./provref-utils.js";
 
 const PROVREF_MANUAL = `## Provref Rules — READ CAREFULLY
@@ -152,7 +153,6 @@ export function createInitReportTool(projectDir: string) {
         writeFileSync(litPath, "{}\n");
       }
 
-      // Ensure supporting files exist (even if report.tex was already created)
       if (!existsSync(join(reportDir, "provref.sty"))) {
         writeFileSync(join(reportDir, "provref.sty"), PROVREF_STY);
       }
@@ -170,8 +170,13 @@ export function createInitReportTool(projectDir: string) {
       }
 
       writeFileSync(texPath, makeScaffold(params.title));
-
       writeFileSync(join(reportDir, "PROVREF_USAGE.md"), PROVREF_MANUAL);
+
+      if (process.platform === "darwin") {
+        try {
+          execSync(`xattr -cr "${reportDir}" "${dirname(litPath)}" "${runsDir}"`, { stdio: "pipe" });
+        } catch {}
+      }
 
       return {
         content: [{

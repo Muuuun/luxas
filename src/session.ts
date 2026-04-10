@@ -135,7 +135,14 @@ export class Session {
 
     this.entries.push(entry);
     this.leafId = entry.id;
-    appendFileSync(this.file, JSON.stringify(entry) + "\n");
+    try {
+      appendFileSync(this.file, JSON.stringify(entry) + "\n");
+    } catch (err: any) {
+      if (err?.code === "EPERM" || err?.code === "EACCES") {
+        throw new Error(`FATAL: Cannot write session checkpoint (${err.code} on ${this.file}). Brain cannot proceed without persistence. Check file permissions and macOS extended attributes (xattr -cr).`);
+      }
+      throw err;
+    }
     return entry.id;
   }
 

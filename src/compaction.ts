@@ -1,24 +1,24 @@
 /**
  * LLM-based context compaction for Luxas.
- *
- * #1: Replace heuristic summarizeMessages() with LLM-generated summaries.
- * Pattern from pi-coding-agent/compaction.ts, adapted for research context.
  */
 
 import { completeSimple } from "@mariozechner/pi-ai";
 import type { Model } from "@mariozechner/pi-ai";
 import { extractTextContent } from "./utils.js";
 
-// ── Prompts (adapted from pi-coding-agent + research-specific sections) ──
-
 const SUMMARIZATION_SYSTEM_PROMPT = `You are a context summarization assistant for an autonomous research agent (Luxas). Your task is to read a conversation and produce a structured summary. Do NOT continue the conversation. Do NOT respond to any questions in the conversation. ONLY output the structured summary.`;
 
 const RESEARCH_SUMMARIZATION_PROMPT = `The messages above are a conversation to summarize. Create a structured context checkpoint summary that another LLM will use to continue the research.
 
+CRITICAL: Respond with TEXT ONLY. Do NOT call any tools. You already have all the context you need. Your entire response must be the structured summary below — any tool call will be rejected.
+
 Use this EXACT format:
 
 ## Research Goal
-[Current understanding of the research goal]
+[Current understanding of the research goal, verbatim from RESEARCH.md if available]
+
+## All User Messages Verbatim
+[List EVERY non-tool-result user message from the conversation, in order. These are critical for understanding user intent and preventing drift. Reproduce them verbatim — not paraphrased. If a message is very long, reproduce its key directive sentences verbatim and note "[truncated]" for the rest.]
 
 ## Literature Findings
 - [Key papers read, with citation keys and core findings]
@@ -35,22 +35,31 @@ Use this EXACT format:
 - [Approaches tried that didn't work, and WHY]
 - [Or "(none)" if no dead ends encountered]
 
+## Errors and Fixes
+- [Errors encountered and how they were fixed; especially any user corrections]
+
 ## Progress
 ### Done
 - [x] [Completed tasks/analyses]
 
 ### In Progress
-- [ ] [Current work]
+- [ ] [Current work — be specific about file paths and line numbers]
+
+## Current Work (Verbatim)
+[Describe in detail EXACTLY what was being worked on immediately before this summary. Include direct quotes from the most recent user messages and assistant turns showing the specific task and where work was left off. This should be verbatim to prevent intent drift after resume.]
 
 ## Next Steps
 1. [Ordered list of what should happen next]
+2. [Tie directly to the most recent user request — do NOT start tangential work]
 
 ## Critical Context
 - [File paths, parameter values, formulas, physical constants needed to continue]
 - [Exact wavelengths, intensities, fidelity values, error budget numbers]
 - [Or "(none)" if not applicable]
 
-Keep each section concise but preserve ALL quantitative results. Preserve exact file paths, formula expressions, and numerical values — these are the agent's long-term memory.`;
+Keep each section concise but preserve ALL quantitative results, exact file paths, formula expressions, and numerical values — these are the agent's long-term memory.
+
+REMINDER: Respond with plain text only. No tool calls.`;
 
 const RESEARCH_UPDATE_PROMPT = `The messages above are NEW conversation messages to incorporate into the existing summary provided in <previous-summary> tags.
 
@@ -118,7 +127,17 @@ function serializeConversation(messages: any[]): string {
   return parts.join("\n\n");
 }
 
-// ── LLM summary generation ──────────────────────────────
+const COMPACT_MAX_OUTPUT_TOKENS = 20_000;
+const MAX_PTL_RETRIES = 3;
+const PTL_DROP_FRACTION = 0.25;
+
+function isPromptTooLong(err: any): boolean {
+  const msg = String(err?.message ?? err ?? "").toLowerCase();
+  return msg.includes("prompt is too long")
+    || msg.includes("prompt_too_long")
+    || msg.includes("context_length_exceeded")
+    || msg.includes("input length");
+}
 
 export async function generateResearchSummary(
   messages: any[],
@@ -127,30 +146,47 @@ export async function generateResearchSummary(
   previousSummary?: string,
   signal?: AbortSignal,
 ): Promise<string> {
-  const conversationText = serializeConversation(messages);
+  let messagesToSummarize = messages;
+  let ptlAttempts = 0;
 
-  let promptText = `<conversation>\n${conversationText}\n</conversation>\n\n`;
-  if (previousSummary) {
-    promptText += `<previous-summary>\n${previousSummary}\n</previous-summary>\n\n`;
-    promptText += RESEARCH_UPDATE_PROMPT;
-  } else {
-    promptText += RESEARCH_SUMMARIZATION_PROMPT;
+  while (true) {
+    const conversationText = serializeConversation(messagesToSummarize);
+    let promptText = `<conversation>\n${conversationText}\n</conversation>\n\n`;
+    if (previousSummary) {
+      promptText += `<previous-summary>\n${previousSummary}\n</previous-summary>\n\n`;
+      promptText += RESEARCH_UPDATE_PROMPT;
+    } else {
+      promptText += RESEARCH_SUMMARIZATION_PROMPT;
+    }
+
+    try {
+      const response = await completeSimple(model, {
+        systemPrompt: SUMMARIZATION_SYSTEM_PROMPT,
+        messages: [{ role: "user", content: [{ type: "text", text: promptText }], timestamp: Date.now() }],
+        tools: [],
+      }, {
+        maxTokens: COMPACT_MAX_OUTPUT_TOKENS,
+        signal,
+        apiKey,
+      } as any);
+
+      return extractTextContent(response.content);
+    } catch (err) {
+      if (!isPromptTooLong(err) || ptlAttempts >= MAX_PTL_RETRIES) {
+        throw err;
+      }
+      ptlAttempts++;
+      const dropCount = Math.max(1, Math.floor(messagesToSummarize.length * PTL_DROP_FRACTION));
+      // Must land on an assistant boundary to avoid stranding tool_use without tool_result.
+      let newStart = dropCount;
+      while (newStart < messagesToSummarize.length - 1 && messagesToSummarize[newStart].role !== "assistant") {
+        newStart++;
+      }
+      if (newStart >= messagesToSummarize.length - 1) throw err;
+      messagesToSummarize = messagesToSummarize.slice(newStart);
+    }
   }
-
-  const response = await completeSimple(model, {
-    systemPrompt: SUMMARIZATION_SYSTEM_PROMPT,
-    messages: [{ role: "user", content: [{ type: "text", text: promptText }], timestamp: Date.now() }],
-    tools: [],
-  }, {
-    maxTokens: 4096,
-    signal,
-    apiKey,
-  } as any);
-
-  return extractTextContent(response.content);
 }
-
-// ── Heuristic fallback (kept for resilience) ────────────
 
 export function heuristicSummary(messages: any[]): string {
   const toolCalls: string[] = [];

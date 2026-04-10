@@ -144,7 +144,12 @@ export function createReportTools(projectDir: string) {
         }
       }
 
-      const text = (success ? "✓ Compilation succeeded\n\n" : "✗ Compilation had errors\n\n") + outputs.join("\n\n");
+      const header = success ? "✓ Compilation succeeded\n\n" : "✗ Compilation had errors\n\n";
+      const footer = success ? "" :
+        "\n\n💡 If you've already tried to fix this error once, delegate to the fixer agent instead of burning expensive tokens:\n" +
+        '   spawn_agent(agent="fixer", task="Fix this compile error: <paste the error above>")\n' +
+        "   The fixer uses haiku and is much cheaper than debugging LaTeX syntax yourself.";
+      const text = header + outputs.join("\n\n") + footer;
       return { content: [{ type: "text" as const, text }], details: { success } };
     },
   };
