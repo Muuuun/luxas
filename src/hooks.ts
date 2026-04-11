@@ -8,6 +8,7 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { readFileSafe, extractTextContent } from "./utils.js";
+import { readUsageTotals } from "./usage-log.js";
 import type { ReminderRegistry } from "./reminders.js";
 import type { ExtensionBus } from "./extensions.js";
 
@@ -15,6 +16,7 @@ export interface ResearchOptions {
   maxCostUsd?: number;       // Cost limit in USD (default: 50)
   maxDurationMs?: number;    // Time limit in ms (default: 8 hours)
   projectDir: string;
+  usageLogPath?: string;     // Path to usage.log (default: .agent/usage.log)
   reminders?: ReminderRegistry;
   bus?: ExtensionBus;
   /** Restored harness state from session JSONL (stateless harness recovery). */
@@ -29,10 +31,7 @@ export interface ResearchOptions {
 }
 
 export interface CostTracker {
-  totalCost: number;
-  totalInputTokens: number;
-  totalOutputTokens: number;
-  lastContextTokens: number;  // #3: precise token count from last LLM response
+  lastContextTokens: number;  // #3: precise token count from last LLM response (used by compaction)
 }
 
 export function buildResearchHooks(opts: ResearchOptions) {
@@ -45,10 +44,9 @@ export function buildResearchHooks(opts: ResearchOptions) {
   // Ensure log directory exists
   mkdirSync(dirname(logFile), { recursive: true });
 
+  const usageLogPath = opts.usageLogPath ?? join(opts.projectDir, ".agent", "usage.log");
+
   const tracker: CostTracker = {
-    totalCost: init?.cost ?? 0,
-    totalInputTokens: init?.inputTokens ?? 0,
-    totalOutputTokens: init?.outputTokens ?? 0,
     lastContextTokens: init?.lastContextTokens ?? 0,
   };
 
@@ -88,9 +86,12 @@ export function buildResearchHooks(opts: ResearchOptions) {
       return { block: true, reason: `PI verdict is STOP. Only finalization tools (read, write, edit, compile_latex) are allowed. Tool "${name}" is blocked.` };
     }
 
-    // 3. Cost limit
-    if (tracker.totalCost > maxCost) {
-      return { block: true, reason: `Cost limit reached: $${tracker.totalCost.toFixed(2)} / $${maxCost}` };
+    // 3. Cost limit (reads from usage.log — single source of truth)
+    if (maxCost < Infinity) {
+      const totals = readUsageTotals(usageLogPath);
+      if (totals.cost > maxCost) {
+        return { block: true, reason: `Cost limit reached: $${totals.cost.toFixed(2)} / $${maxCost}` };
+      }
     }
 
     // 4. Time limit
@@ -176,14 +177,10 @@ export function buildResearchHooks(opts: ResearchOptions) {
     return undefined; // Don't modify tool results — reminders appear in snapshot
   };
 
-  // Usage tracking (called from agent event subscription)
-  // pi-ai Usage: { input, output, cacheRead, cacheWrite, totalTokens, cost: { total, ... } }
-  const trackUsage = (usage: any) => {
+  // Update context token count for compaction triggers (called from agent event subscription).
+  // Cost/token totals are tracked in usage.log by the provider-level wrapper.
+  const updateContextTokens = (usage: any) => {
     if (usage) {
-      tracker.totalInputTokens += usage.input ?? 0;
-      tracker.totalOutputTokens += usage.output ?? 0;
-      tracker.totalCost += usage.cost?.total ?? 0;
-      // #3: Track context size from last response for precise compaction triggers
       const contextTokens = usage.totalTokens
         || ((usage.input ?? 0) + (usage.output ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0));
       if (contextTokens > 0) {
@@ -196,16 +193,19 @@ export function buildResearchHooks(opts: ResearchOptions) {
   const setPIStopped = () => { piStopped = true; };
 
   /** Snapshot current harness state for session persistence. */
-  const snapshotState = () => ({
-    cost: tracker.totalCost,
-    inputTokens: tracker.totalInputTokens,
-    outputTokens: tracker.totalOutputTokens,
-    lastContextTokens: tracker.lastContextTokens,
-    startTime,
-    piStopped,
-  });
+  const snapshotState = () => {
+    const totals = readUsageTotals(usageLogPath);
+    return {
+      cost: totals.cost,
+      inputTokens: totals.inputTokens,
+      outputTokens: totals.outputTokens,
+      lastContextTokens: tracker.lastContextTokens,
+      startTime,
+      piStopped,
+    };
+  };
 
-  return { before, after, tracker, trackUsage, startTime, setPIStopped, snapshotState };
+  return { before, after, tracker, updateContextTokens, startTime, setPIStopped, snapshotState };
 }
 
 function summarizeArgs(args: any): any {

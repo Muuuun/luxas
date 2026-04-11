@@ -34,6 +34,7 @@ import { cleanMessagesForModel } from "./transform.js";           // #6: cross-m
 import { ExtensionBus } from "./extensions.js";                   // #8: extension system
 import { Session, buildSessionContext, deriveState } from "./session.js"; // #5: session DAG
 import { loadRegistry, removeAgent, tryExtractResult } from "./active-agents.js";
+import { installUsageTracking, readUsageTotals } from "./usage-log.js";
 
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
 import type { PIVerdict } from "./pi-agent.js";
@@ -123,13 +124,18 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
   const session = Session.open(checkpointPath, projectDir);
   const savedState = deriveState(session);
 
-  // Hooks must be created before tools so trackUsage can be threaded to sub-agents
+  // Usage tracking: wrap all API providers to append to usage.log (single source of truth)
+  const usageLogPath = join(agentDir, "usage.log");
+  installUsageTracking(usageLogPath);
+
+  // Hooks must be created before tools
   const hooks = buildResearchHooks({
     projectDir,
     maxCostUsd: opts.maxCostUsd,
     maxDurationMs: opts.maxDurationMs,
     reminders,
     bus,
+    usageLogPath,
     initialState: savedState ?? undefined,
   });
 
@@ -143,7 +149,7 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
 
   // Layer 2: Tools (research tools + PI review tool)
   let finishCallback: (() => void) | undefined;
-  const { tools, setParentAgent } = buildResearchTools(projectDir, templateVars, getApiKey, hooks.trackUsage, {
+  const { tools, setParentAgent } = buildResearchTools(projectDir, templateVars, getApiKey, {
     onFinish: () => finishCallback?.(),
   });
 
@@ -209,24 +215,25 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
   let lastCheckpointedMsgCount = 0;
   let turnCount = 0;
 
-  // Track usage + emit events + persist messages + state to Session after each turn
+  // Track context size + emit events + persist messages + state to Session after each turn
   agent.subscribe((event: any) => {
     if (event.type === "message_update") {
       const msg = event.assistantMessageEvent;
       if (msg?.usage) {
-        hooks.trackUsage(msg.usage);
-        bus.emit({
-          type: "usage_update",
-          cost: hooks.tracker.totalCost,
-          inputTokens: hooks.tracker.totalInputTokens,
-          outputTokens: hooks.tracker.totalOutputTokens,
-        });
+        hooks.updateContextTokens(msg.usage);
       }
     }
     if (event.type === "message_end") {
       const msg = event.message;
       if (msg?.usage) {
-        hooks.trackUsage(msg.usage);
+        hooks.updateContextTokens(msg.usage);
+        const totals = readUsageTotals(usageLogPath);
+        bus.emit({
+          type: "usage_update",
+          cost: totals.cost,
+          inputTokens: totals.inputTokens,
+          outputTokens: totals.outputTokens,
+        });
       }
     }
     if (event.type === "turn_start") {
@@ -349,5 +356,5 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
     return 0;
   } : null;
 
-  return { agent, hooks, bus, session, piFallback, restore, checkpointPath };
+  return { agent, hooks, bus, session, piFallback, restore, checkpointPath, usageLogPath };
 }

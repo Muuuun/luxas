@@ -21,6 +21,7 @@ import { markDone, markFailed, touchHeartbeat } from "./active-agents.js";
 import { getApiKey } from "./auth.js";
 import { extractTextContent } from "./utils.js";
 import { cleanMessagesForModel } from "./transform.js";
+import { installUsageTracking } from "./usage-log.js";
 
 // ── Parse args ──────────────────────────────────────
 
@@ -50,6 +51,9 @@ async function main() {
 
   mkdirSync(dirname(sessionFile), { recursive: true });
   const processStartTime = Date.now();
+
+  // Usage tracking: append to shared usage.log (same file as main process)
+  installUsageTracking(join(agentDir, "usage.log"));
 
   // Heartbeat: touch every 30s
   touchHeartbeat(agentDir, args.id);

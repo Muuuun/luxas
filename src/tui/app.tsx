@@ -110,7 +110,7 @@ export default function App({ baseDir, brainTool = "claude" }: { baseDir: string
     let toolCallCounter = 0;
 
     try {
-      const { agent, hooks } = createResearchAgent({
+      const { agent, hooks, usageLogPath } = createResearchAgent({
         projectDir: project.dir,
         model: "sonnet",
       });
@@ -196,8 +196,9 @@ export default function App({ baseDir, brainTool = "claude" }: { baseDir: string
 
       await agent.prompt(prompt);
 
-      const cost = hooks.tracker.totalCost.toFixed(4);
-      setBrainStatus(`Done | $${cost}`);
+      const { readUsageTotals } = await import("../usage-log.js");
+      const totals = readUsageTotals(usageLogPath);
+      setBrainStatus(`Done | $${totals.cost.toFixed(4)}`);
       setLogs((p) => [...p, { text: `${icons.full} Completed`, color: dark.success }]);
     } catch (err: any) {
       setBrainStatus(`Error: ${err.message}`);

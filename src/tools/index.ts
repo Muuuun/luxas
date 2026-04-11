@@ -17,7 +17,6 @@ export function buildResearchTools(
   projectDir: string,
   templateVars: Record<string, string>,
   getApiKey: (provider: string) => Promise<string | undefined> | string | undefined,
-  trackUsage?: (usage: any) => void,
   callbacks?: ToolCallbacks,
 ): { tools: any[]; setParentAgent: (agent: Agent) => void } {
   // Brain coding tools are wrapped with read-tracking + edit safety guards.
@@ -31,7 +30,7 @@ export function buildResearchTools(
 
   // Use a proxy object so spawn tool picks up the agent ref when it's set later
   const spawnTool = createSpawnAgentTool(
-    projectDir, templateVars, getApiKey, trackUsage,
+    projectDir, templateVars, getApiKey,
     /* parentAgentId */ undefined,
     /* depth */ undefined,
     /* parentAgent — resolved lazily via proxy */ undefined,
@@ -44,7 +43,7 @@ export function buildResearchTools(
     if (params.background && parentAgentRef) {
       // Re-create tool with agent ref for this call
       const toolWithAgent = createSpawnAgentTool(
-        projectDir, templateVars, getApiKey, trackUsage,
+        projectDir, templateVars, getApiKey,
         "brain", 0, parentAgentRef,
       );
       return toolWithAgent.execute(toolCallId, params);

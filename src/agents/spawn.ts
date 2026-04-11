@@ -55,8 +55,6 @@ export interface SpawnAgentOptions {
   projectDir: string;
   /** API key resolver. */
   getApiKey: (provider: string) => Promise<string | undefined> | string | undefined;
-  /** Usage tracking callback (costs roll up to parent). */
-  trackUsage?: (usage: any) => void;
   /** Override the definition's default model. */
   modelOverride?: string;
   /** Additional tools to include (e.g., PI's verdict tool). */
@@ -190,14 +188,8 @@ export async function spawnAgent(opts: SpawnAgentOptions): Promise<SpawnAgentRes
       ? extractTextContent(lastAssistant.content) || "(no output)"
       : "(no output)";
 
-    // 12. Track usage
-    if (opts.trackUsage) {
-      for (const m of agent.state.messages) {
-        if ((m as any).role === "assistant" && (m as any).usage) {
-          opts.trackUsage((m as any).usage);
-        }
-      }
-    }
+    // Usage tracking is handled automatically by the provider-level wrapper
+    // (installUsageTracking in usage-log.ts). No manual accumulation needed.
 
     const elapsed = Date.now() - t0;
     return { output: output.slice(0, 50_000), elapsed, success: true };

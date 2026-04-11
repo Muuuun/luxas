@@ -121,7 +121,7 @@ async function run(dir: string, modelName: string, userDirective?: string) {
   console.log();
 
   // Create agent
-  const { agent, hooks, restore } = createResearchAgent({
+  const { agent, hooks, restore, usageLogPath } = createResearchAgent({
     projectDir: dir,
     model: modelName,
   });
@@ -172,13 +172,15 @@ async function run(dir: string, modelName: string, userDirective?: string) {
     console.error(`\n✗ Agent error: ${err.message}`);
   }
 
+  const { readUsageTotals } = await import("./usage-log.js");
   const elapsed = Math.floor((Date.now() - t0) / 1000);
-  const totalTokens = hooks.tracker.totalInputTokens + hooks.tracker.totalOutputTokens;
-  const cost = hooks.tracker.totalCost.toFixed(4);
+  const totals = readUsageTotals(usageLogPath);
+  const totalTokens = totals.inputTokens + totals.outputTokens;
+  const cost = totals.cost.toFixed(4);
   console.log(`\n✓ Done in ${elapsed}s | $${cost} | ${totalTokens} tokens`);
 
   // Save project summary to global registry
-  updateProjectAfterRun(dir, hooks.tracker.totalCost, totalTokens);
+  updateProjectAfterRun(dir, totals.cost, totalTokens);
 
   // Clean up browser-use daemon if it was started during this session
   try { execSync("browser-use close --all", { stdio: "pipe", timeout: 5000 }); } catch { /* not running */ }

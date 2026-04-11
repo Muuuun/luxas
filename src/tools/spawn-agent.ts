@@ -26,7 +26,6 @@ export function createSpawnAgentTool(
   projectDir: string,
   templateVars: Record<string, string>,
   getApiKey: (provider: string) => Promise<string | undefined> | string | undefined,
-  trackUsage?: (usage: any) => void,
   parentAgentId?: string,
   depth?: number,
   /** Reference to the parent Agent instance — needed for steer() on background completion */
@@ -70,7 +69,7 @@ export function createSpawnAgentTool(
    */
   function makeSpawnTool(parentId: string, childDepth: number): any {
     // Sub-agents don't get background capability (no parentAgent ref to steer)
-    return createSpawnAgentTool(projectDir, templateVars, getApiKey, trackUsage, parentId, childDepth);
+    return createSpawnAgentTool(projectDir, templateVars, getApiKey, parentId, childDepth);
   }
 
   let bgCounter = 0;
@@ -127,7 +126,6 @@ export function createSpawnAgentTool(
         templateVars,
         projectDir,
         getApiKey,
-        trackUsage,
         parentAgentId: parentAgentId ?? "brain",
         depth: depth ?? 0,
         createSpawnTool: makeSpawnTool,
