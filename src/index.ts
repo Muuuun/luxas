@@ -8,7 +8,7 @@
  *   luxas status [project-dir]           Show project status
  *   luxas init [project-dir]             Initialize a new project
  *   luxas init [project-dir] --prompt "..." Generate RESEARCH.md from a topic
- *   luxas login                          Authenticate with Anthropic OAuth
+ *   luxas list                           List all projects
  */
 
 import { existsSync, readFileSync, readdirSync, mkdirSync, writeFileSync, renameSync } from "node:fs";
@@ -35,7 +35,6 @@ const browserUseDir = join(process.env.HOME ?? "", ".browser-use-env", "bin");
 if (existsSync(join(browserUseDir, "browser-use")) && !process.env.PATH?.includes(browserUseDir)) {
   process.env.PATH = `${browserUseDir}:${process.env.PATH}`;
 }
-import { loginAnthropicOAuth } from "./auth.js";
 import { registerProject, updateProjectAfterRun, loadProjects } from "./memory.js";
 
 
@@ -62,11 +61,6 @@ for (let i = 1; i < args.length; i++) {
 
 projectDir = resolve(projectDir);
 
-if (command === "login") {
-  await loginAnthropicOAuth();
-  process.exit(0);
-}
-
 if (command === "status") {
   showStatus(projectDir);
   process.exit(0);
@@ -88,7 +82,7 @@ if (command === "run") {
 }
 
 console.error(`Unknown command: ${command}`);
-console.error("Usage: luxas <run|status|init|list|login> [project-dir] [--model sonnet|opus|haiku]");
+console.error("Usage: luxas <run|status|init|list> [project-dir] [--model sonnet|opus|haiku]");
 process.exit(1);
 
 // ─── Commands ────────────────────────────────────────────
@@ -357,7 +351,7 @@ async function generateResearchGoal(prompt: string): Promise<string> {
   const model = getModel("anthropic" as any, "claude-opus-4-6" as any);
   const apiKey = await getApiKey("anthropic");
   if (!apiKey) {
-    console.error("No API key available. Run: luxas login");
+    console.error("No API key available. Set ANTHROPIC_API_KEY environment variable.");
     process.exit(1);
   }
 

@@ -41,7 +41,7 @@ Give Luxas a topic. It will:
 8. **Submit to adversarial review** — the reviewer (a "PI" persona) reads the current state, challenges the findings, and returns a verdict. Feedback is injected into the brain's context.
 9. **Iterate until it passes** — or until it hits a cost/time limit, which you set.
 
-The CLI entry points are small: `luxas init`, `luxas run`, `luxas status`, `luxas list`, `luxas login`. Everything else happens inside the harness.
+The CLI entry points are small: `luxas init`, `luxas run`, `luxas status`, `luxas list`. Everything else happens inside the harness.
 
 ---
 
@@ -52,8 +52,8 @@ git clone https://github.com/Muuuun/luxas.git
 cd luxas
 npm install
 
-# Authenticate (Anthropic OAuth — or set ANTHROPIC_API_KEY)
-npx tsx src/index.ts login
+# Set your API key
+export ANTHROPIC_API_KEY="your-key-here"
 
 # Initialize a new project from a one-line prompt (PI writes RESEARCH.md for you)
 npx tsx src/index.ts init ~/research/reasoning --prompt "Survey LLM chain-of-thought reasoning"
@@ -104,7 +104,7 @@ Luxas vendors four [pi-mono](https://github.com/badlogic/pi-mono) packages (`pi-
 
 | Layer | File | Role |
 |---|---|---|
-| **1 — System prompt** | `src/agents/definitions/brain.md` | Research methodology: read → hypothesize → experiment → analyze → iterate. Sub-agent definitions (`search.md`, `worker.md`, …) live alongside it. |
+| **1 — System prompt** | `src/agents/definitions/brain.md` | Research methodology: read, hypothesize, experiment, analyze, iterate. Sub-agent definitions (`search.md`, `worker.md`, ...) live alongside it. |
 | **2 — Tools** | `src/tools/` | Coding tools (`read`/`write`/`edit`/`bash`), `compile_latex`, `init_report`, `spawn_agent`, `image_gen`, `wolfram`, `finish`. |
 | **3 — Context transform** | `src/context.ts` | Injects research state (note files + sub-agent status + reviewer feedback) before every LLM call. Two-stage compaction: 60K char warning, 80K hard compress with summary carry-over. |
 | **4 — Hooks** | `src/hooks.ts` | Write-protects `RESEARCH.md`, enforces cost/time/step limits, rate-limits search APIs, appends every tool call to `log.jsonl`, snapshots brain state on every `turn_end`. |
@@ -112,17 +112,17 @@ Luxas vendors four [pi-mono](https://github.com/badlogic/pi-mono) packages (`pi-
 
 ### Stateless harness
 
-The most recent architectural shift (commit `f50dbce`): **nothing lives only in process memory**. The brain's token counts, cost, PI status, compaction markers, and sub-agent registry are all written to files on every turn. A crash mid-research is fully recoverable:
+**Nothing lives only in process memory.** The brain's token counts, cost, PI status, compaction markers, and sub-agent registry are all written to files on every turn. A crash mid-research is fully recoverable:
 
-- **Brain state** → `session.ts` writes `StateEntry` records to the JSONL log; `deriveState()` reverse-scans on restart to reconstruct the agent's accounting before replaying the checkpoint.
-- **Sub-agents** → spawned as detached Node.js processes via `subagent-runner.ts`. Each has its own checkpoint file and heartbeat; the brain talks to them through `active-agents.json`. If the brain dies, the sub-agents keep running. If a sub-agent dies, the brain notices via heartbeat timeout and harvests whatever result it managed to write.
-- **Session log** → `log.jsonl` is append-only; `checkpoint.jsonl` is the replayable working memory. On a fresh `luxas run`, a finished session is archived (`.done-<timestamp>.jsonl`) and the next run starts clean.
+- **Brain state** — `session.ts` writes `StateEntry` records to the JSONL log; `deriveState()` reverse-scans on restart to reconstruct the agent's accounting before replaying the checkpoint.
+- **Sub-agents** — spawned as detached Node.js processes via `subagent-runner.ts`. Each has its own checkpoint file and heartbeat; the brain talks to them through `active-agents.json`. If the brain dies, the sub-agents keep running. If a sub-agent dies, the brain notices via heartbeat timeout and harvests whatever result it managed to write.
+- **Session log** — `log.jsonl` is append-only; `checkpoint.jsonl` is the replayable working memory. On a fresh `luxas run`, a finished session is archived (`.done-<timestamp>.jsonl`) and the next run starts clean.
 
-This is the opposite of a long-lived Python process that holds everything in RAM. The philosophy is: prompt is code, `.md` files are long-term memory, `checkpoint.jsonl` is working memory, and the report is the artifact. Every layer of state has a file on disk.
+The philosophy is: prompt is code, `.md` files are long-term memory, `checkpoint.jsonl` is working memory, and the report is the artifact. Every layer of state has a file on disk.
 
 ### Generic `spawn_agent`
 
-Earlier versions had one tool per agent type (`search_literature`, `dispatch_workers`, `run_experiment`, …). The current design is a single `spawn_agent` tool that reads the agent catalog from `src/agents/definitions/*.md` and dispatches by name. Adding a new agent is one `.md` file — frontmatter declares the model, thinking level, tool-sets, safety wrapper, template variables, and whether it can spawn further sub-agents.
+A single `spawn_agent` tool reads the agent catalog from `src/agents/definitions/*.md` and dispatches by name. Adding a new agent is one `.md` file — frontmatter declares the model, thinking level, tool-sets, safety wrapper, template variables, and whether it can spawn further sub-agents.
 
 ```ts
 spawn_agent({ agent: "experiment", task: "Run 1000 MCMC samples on the Ising model at T=2.0" })
@@ -146,11 +146,11 @@ Eight agent types ship by default. All definitions live in `src/agents/definitio
 | **worker** | Sonnet | Lightweight parallel worker — batch paper reading, data extraction, file downloads. |
 | **experiment** | Opus (high) | Full coding agent for simulations. Safety-wrapped: read-before-edit enforced, protected files (`report.tex`, `references.bib`, `notes/`) are off-limits. |
 | **reviewer** | Opus (medium) | Adversarial PI. Reads project state, challenges findings, returns `continue` / `steer` / `stop`. |
-| **math** | OpenAI `gpt-5.2` (o3) | Symbolic derivation — integrals, ODEs/PDEs, Taylor expansions, dimensional analysis. Has Wolfram Engine access via `wolframscript`. Falls back to Opus if Codex OAuth is unavailable. |
+| **math** | OpenAI o3 | Symbolic derivation — integrals, ODEs/PDEs, Taylor expansions, dimensional analysis. Has Wolfram Engine access via `wolframscript`. Falls back to Opus if unavailable. |
 | **illustrator** | Sonnet | Scientific schematics — energy-level diagrams, experimental setups, flowcharts. Claude does the prompt engineering; Gemini generates the image. |
 | **fixer** | Haiku (low) | Mechanical LaTeX compile-error fixer. Single-edit + recompile loop. Brain delegates here instead of burning Opus tokens on syntax debugging. |
 
-The brain can spawn any of them; sub-brains are allowed up to depth 2 for deeply nested research tasks. Every sub-agent gets its own tmux window, which makes debugging a live run an exercise in watching tmux panes rather than reading logs.
+The brain can spawn any of them; sub-brains are allowed up to depth 2 for deeply nested research tasks. Every sub-agent gets its own tmux window for live observability.
 
 ---
 
@@ -178,7 +178,7 @@ Tool visibility is per-agent, controlled by `toolSets` in each agent definition.
 
 ### provref integration
 
-Luxas is a sister project to [provref](https://github.com/Muuuun/provref), which stops the agent from typing numerical values directly into LaTeX. `init_report` embeds `provref.sty` into the report directory, and `compile_latex` runs `provref merge` + `provref check` before the final `pdflatex` pass. The brain is encouraged (via system prompt) to write `\resultref{run_5.accuracy}` instead of `87.3\%` — so every number in the published PDF is traceable to a JSON key in `data/runs/`. If the agent hallucinates a reference, the build fails loudly with "Did you mean…?" hints before any PDF is produced. See the provref README for the full story.
+Luxas is a sister project to [provref](https://github.com/Muuuun/provref), which stops the agent from typing numerical values directly into LaTeX. `init_report` embeds `provref.sty` into the report directory, and `compile_latex` runs `provref merge` + `provref check` before the final `pdflatex` pass. The brain writes `\resultref{run_5.accuracy}` instead of `87.3\%` — so every number in the published PDF is traceable to a JSON key in `data/runs/`. If the agent hallucinates a reference, the build fails loudly with "Did you mean...?" hints before any PDF is produced.
 
 ---
 
@@ -188,9 +188,9 @@ Skills live in `skills/` and follow the Agent Skills standard (`SKILL.md` + scri
 
 | Skill | What it's for |
 |---|---|
-| `skills/search/` | Paper discovery — `search` CLI (OpenAlex/arXiv/CrossRef + dedup + ranking), citation chains, arXiv LaTeX source download, figure extraction (`extract-figures` script), Brave web search, anti-detect browser for paywalled venues |
+| `skills/search/` | Paper discovery — `search` CLI (OpenAlex/arXiv/CrossRef + dedup + ranking), citation chains, arXiv LaTeX source download, figure extraction, Brave web search, anti-detect browser for paywalled venues |
 | `skills/venue-specific/` | Formatting rules for 30+ top journals and conferences — Nature, Science, Cell, PRL, NEJM, Lancet, JACS, NeurIPS, ICML, and more. Includes matching `figstyles/` (matplotlib) and `references/` (BibTeX) per venue. |
-| `skills/memory/` | Luxas' own cross-project memory protocol — how to read/write `~/.sisyphus/memory.md` and the per-project `notes/`. |
+| `skills/memory/` | Cross-project memory protocol — how to read/write `~/.sisyphus/memory.md` and the per-project `notes/`. |
 
 ---
 
@@ -209,7 +209,7 @@ Luxas borrows the pre-compaction memory flush from OpenClaw, but stays file-base
 - New projects automatically see a "Past Research Projects" section in their system context.
 - `luxas list` dumps the registry with per-project summaries.
 
-The Sisyphus → Luxas rename (commit `ec04179`) kept the user-data path (`~/.sisyphus/`) intact, so existing memory and project history survived the brand change.
+> **Note:** the user-data path is `~/.sisyphus/` (the project's original name). The rename to Luxas kept disk paths intact so existing memory and project history survived.
 
 ---
 
@@ -238,19 +238,17 @@ The `finish` tool is the only clean exit. Anything else is a crash, and the stat
 
 ```
 luxas/
-├── README.md                   ← you are here
-├── CLAUDE.md                   ← project instructions for Claude Code
-├── idea.md                     ← design rationale (read when in doubt)
+├── README.md
 ├── package.json
 ├── tsconfig.json
 ├── vendor/                     ← customized pi-mono .tgz bundles
 ├── patches/                    ← post-install patches for vendored pi-* packages
 ├── src/
-│   ├── index.ts                ← CLI entry (run/status/init/list/login)
+│   ├── index.ts                ← CLI entry (run/status/init/list)
 │   ├── agent.ts                ← 5-layer brain assembly
-│   ├── auth.ts                 ← Anthropic OAuth PKCE + key resolution
+│   ├── auth.ts                 ← API key resolution
 │   ├── context.ts              ← state injection + two-stage compaction
-│   ├── compaction.ts           ← message compaction policy
+│   ├── compaction/             ← message compaction pipeline
 │   ├── hooks.ts                ← safety + logging + state snapshots
 │   ├── session.ts              ← JSONL session DAG + StateEntry
 │   ├── active-agents.ts        ← file-backed sub-agent registry
@@ -259,15 +257,12 @@ luxas/
 │   ├── extensions.ts           ← lifecycle event bus
 │   ├── reminders.ts            ← state-aware reminder injection
 │   ├── memory.ts               ← cross-project registry + global memory
-│   ├── messages.ts             ← cross-model message transforms
-│   ├── notes-compaction.ts     ← smart truncation for notes files
-│   ├── transform.ts            ← context transform helpers
-│   ├── utils.ts
+│   ├── ...                     ← utils, transforms, notes-compaction, etc.
 │   ├── agents/
 │   │   ├── definitions/        ← brain.md, search.md, worker.md, experiment.md,
 │   │   │                          reviewer.md, math.md, illustrator.md, fixer.md
 │   │   ├── registry.ts         ← loads + caches agent definitions
-│   │   ├── spawn.ts            ← buildAgentFromDefinition (shared by tool + runner)
+│   │   ├── spawn.ts            ← buildAgentFromDefinition
 │   │   ├── tool-sets.ts        ← named tool-set factories
 │   │   ├── context-builders.ts ← per-agent dynamic context
 │   │   └── safety-wrappers.ts  ← runtime tool safety constraints
@@ -294,13 +289,14 @@ luxas/
 ## Requirements
 
 - **Node.js** 22+
-- **`claude` CLI** authenticated (Anthropic OAuth) — or `ANTHROPIC_API_KEY` in the environment
-- **LaTeX** — `pdflatex` + `bibtex` in `PATH`. On macOS, `brew install --cask mactex` or `basictex` (Luxas will auto-install `basictex` if it's missing). Matplotlib `text.usetex: True` (used by the venue-specific figstyles) depends on this.
+- **`ANTHROPIC_API_KEY`** environment variable
+- **LaTeX** — `pdflatex` + `bibtex` in `PATH`. On macOS, `brew install --cask mactex` or `basictex`. Matplotlib `text.usetex: True` (used by the venue-specific figstyles) depends on this.
 - **pdftotext** + **pdfimages** (poppler) — for PDF figure extraction
 - **Python 3.10+** with `matplotlib` and `numpy` — for experiments and plots
 - **tmux** — every worker/experiment gets its own window for live observability
 - **provref** (optional but recommended) — `npm i -g provref` for the merge/check steps during compilation
 - **`WOLFRAM_APP_ID`** or local Wolfram Engine (optional) — for the math agent; it falls back to sympy otherwise
+- **`OPENAI_API_KEY`** (optional) — for the math agent (o3)
 - **`BRAVE_API_KEY`** (optional) — for web search in the search skill
 - **browser-use** (optional) — anti-detect browser at `~/.browser-use-env/bin/browser-use` for paywalled sites
 
@@ -320,9 +316,6 @@ LangGraph has a graph state machine but expects you to build the graph. CrewAI i
 **Why vendor pi-mono instead of importing it?**
 Custom patches to the agent loop, context transform, compaction, and hook lifecycle would be clumsy through a published package. Vendoring `.tgz` files gives full control over the runtime without a fork in git.
 
-**Why is the sub-agent list hardcoded if adding one is "one .md file"?**
-The definitions are hardcoded in the `src/agents/definitions/` directory, but the spawn tool reads them at startup from disk. You can drop a new `.md` file in and the brain will see it on the next run. No code changes needed unless the new agent needs a brand-new tool-set or safety wrapper.
-
 **What happens if I crash the brain mid-run?**
 Re-run `luxas run <dir>`. The harness detects `checkpoint.jsonl`, replays the session, reconstructs brain state (cost/tokens/PI counters) from reverse-scanning `log.jsonl`, and resumes where it left off. Sub-agents that were running at crash time kept running (they're detached processes); their results are harvested on the next turn.
 
@@ -330,16 +323,10 @@ Re-run `luxas run <dir>`. The harness detects `checkpoint.jsonl`, replays the se
 Because the brain asking itself "am I done?" is useless. A separate Opus instance with a different system prompt and no access to the brain's reasoning traces produces adversarial feedback, not agreement. The reviewer writes to `reviews/pi_feedback.md` and that file is injected into the brain's next context.
 
 **How does provref fit in?**
-provref is a separate tool (see the sister repo) that prevents the agent from typing literal numbers into LaTeX — every numeric claim must resolve to a key in a JSON file, and the build fails if it doesn't. Luxas integrates it into `compile_latex` so the number-provenance guarantee comes for free. It is not a replacement for code review of the experiment scripts; it only closes the manuscript-to-data gap.
+provref is a separate tool (see the sister repo) that prevents the agent from typing literal numbers into LaTeX — every numeric claim must resolve to a key in a JSON file, and the build fails if it doesn't. Luxas integrates it into `compile_latex` so the number-provenance guarantee comes for free.
 
 **Does this actually work?**
-It runs end-to-end on literature surveys and on small-scale computational research projects. Whether the output is *publication-quality* depends on the model, the topic, and the reviewer's feedback loop, not on the harness. The harness' job is to stay upright for long enough that the model has a chance to produce good work — and to not burn your entire budget on mechanical errors. No claims are made about SOTA. Read the idea.md for the honest design rationale.
-
-**Why the Sisyphus name in `~/.sisyphus/`?**
-It's the previous name. The rename (Sisyphus → Luxas) kept user data paths intact so existing memory and project history survived. The repo, CLI, and docs now use Luxas; disk state still says Sisyphus.
-
-**Where do I report bugs?**
-Open an issue on GitHub. `idea.md` has the most candid version of what's working and what isn't.
+It runs end-to-end on literature surveys and on small-scale computational research projects. Whether the output is *publication-quality* depends on the model, the topic, and the reviewer's feedback loop, not on the harness. No claims are made about SOTA.
 
 ---
 
