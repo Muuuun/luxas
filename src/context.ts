@@ -6,7 +6,7 @@
  * notes compaction trigger, completion hints, and bus event bridging.
  */
 
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { readFileSafe, smartTruncate } from "./utils.js";
 import { getActiveBackgroundAgents } from "./tools/spawn-agent.js";
 import { isAlive } from "./active-agents.js";
@@ -174,17 +174,48 @@ export function buildContextTransformer(opts: ContextTransformerOptions): Contex
 
 // ── Research snapshot (brain-specific) ────────────────
 
-/** Inject research snapshot into messages without breaking tool_use_id references. */
+/**
+ * Inject research snapshot into messages as a trailing user message.
+ *
+ * Cache strategy: pi-ai places cache_control breakpoints on (1) system prompt
+ * and (2) the last user message. We add a THIRD breakpoint on the last
+ * conversation message before the snapshot. This creates three cache segments:
+ *
+ *   [System Prompt + breakpoint]     → segment 1: stable, cached ✓
+ *   [Messages 1..N + breakpoint]     → segment 2: stable history, cached ✓
+ *   [Snapshot + breakpoint(pi-ai)]   → segment 3: changes each turn, small miss
+ *
+ * Without the middle breakpoint, segments 1→2 are one block that includes
+ * the changing snapshot, causing a full cache miss every turn.
+ *
+ * Safety: transformContext output is ephemeral (used for one LLM call, never
+ * persisted to agent state). Anthropic API accepts consecutive user messages.
+ */
 function injectSnapshot(messages: any[], snapshot: string): any[] {
-  if (messages.length > 2) {
-    const first = messages[0];
-    const firstContent = typeof first.content === "string" ? first.content : JSON.stringify(first.content);
-    return [
-      { ...first, content: `${firstContent}\n\n<research_snapshot>\n${snapshot}\n</research_snapshot>` },
-      ...messages.slice(1),
-    ];
+  if (messages.length <= 2) return messages;
+
+  // Add cache breakpoint to the last message BEFORE snapshot,
+  // so conversation history becomes a stable cacheable segment.
+  // Deep-clone the last message to avoid mutating persisted agent state.
+  const result = [...messages];
+  const lastMsg = result[result.length - 1];
+  if (Array.isArray(lastMsg.content) && lastMsg.content.length > 0) {
+    const clonedContent = lastMsg.content.map((b: any) => ({ ...b }));
+    clonedContent[clonedContent.length - 1].cache_control = { type: "ephemeral" };
+    result[result.length - 1] = { ...lastMsg, content: clonedContent };
+  } else if (typeof lastMsg.content === "string") {
+    result[result.length - 1] = {
+      ...lastMsg,
+      content: [{ type: "text", text: lastMsg.content, cache_control: { type: "ephemeral" } }],
+    };
   }
-  return messages;
+
+  result.push({
+    role: "user",
+    content: `<research_snapshot>\n${snapshot}\n</research_snapshot>`,
+    timestamp: Date.now(),
+  });
+  return result;
 }
 
 /**
@@ -247,32 +278,11 @@ function buildResearchSnapshot(opts: ContextTransformerOptions): string {
     parts.push(`<user_feedback priority="highest">\nThis feedback is from the human user and takes absolute priority over PI feedback.\n${userFeedback}\n</user_feedback>`);
   }
 
-  // Report status
-  const hasReport = existsSync(join(projectDir, "report", "report.tex"));
-  const hasPdf = existsSync(join(projectDir, "report", "report.pdf"));
-  parts.push(`<report_status>\n- report.tex: ${hasReport ? "exists" : "not yet"}\n- report.pdf: ${hasPdf ? "exists" : "not yet"}\n</report_status>`);
+  // Report status (enhanced — reduces redundant bash queries for report state)
+  parts.push(buildReportStatus(projectDir));
 
-  // Downloaded papers + figure extraction status
-  const papersDir = join(projectDir, "data", "papers");
-  const paperCount = countFiles(papersDir);
-  const { extracted, unextracted } = countFigureExtraction(papersDir);
-  let dataSection = `<data_status>\n- Downloaded papers: ${paperCount} files in data/papers/`;
-  if (extracted > 0 || unextracted > 0) {
-    dataSection += `\n- Figures: ${extracted}/${extracted + unextracted} papers have figures extracted`;
-    if (unextracted > 0) {
-      dataSection += ` (${unextracted} still need extract-figures)`;
-    }
-    if (unextracted > 0 && extracted === 0) {
-      dataSection += ` ⚠️ Run extract-figures on PDFs before writing report!`;
-    }
-  }
-
-  // Scripts
-  const scriptsDir = join(projectDir, "data", "scripts");
-  const scriptCount = countFiles(scriptsDir);
-  if (scriptCount > 0) dataSection += `\n- Experiment scripts: ${scriptCount} files in data/scripts/`;
-  dataSection += `\n</data_status>`;
-  parts.push(dataSection);
+  // Data status (enhanced — file names, run contents, results summary)
+  parts.push(buildDataStatus(projectDir));
 
   // Background agents status — one-line summary per agent, no session file reads
   const bgAgents = getActiveBackgroundAgents(projectDir);
@@ -298,32 +308,107 @@ function buildResearchSnapshot(opts: ContextTransformerOptions): string {
   return parts.join("\n\n");
 }
 
-function countFiles(dir: string): number {
-  try { return readdirSync(dir).length; } catch { return 0; }
+// ── Enhanced report status ──────────────────────────────
+
+function buildReportStatus(projectDir: string): string {
+  const reportDir = join(projectDir, "report");
+  const lines: string[] = [];
+
+  // report.tex: lines + section headers
+  const tex = readFileSafe(join(reportDir, "report.tex"));
+  if (tex) {
+    const lineCount = tex.split("\n").length;
+    const sections = [...tex.matchAll(/\\section\{([^}]+)\}/g)].map(m => m[1]);
+    lines.push(`- report.tex: ${lineCount} lines` + (sections.length > 0 ? `, sections: [${sections.join(", ")}]` : ""));
+  } else {
+    lines.push("- report.tex: not yet");
+  }
+
+  // report.pdf: existence + size
+  try {
+    const stat = statSync(join(reportDir, "report.pdf"));
+    lines.push(`- report.pdf: ${Math.round(stat.size / 1024)}KB`);
+  } catch {
+    lines.push("- report.pdf: not yet");
+  }
+
+  // references.bib: entry count
+  const bib = readFileSafe(join(reportDir, "references.bib"));
+  if (bib) {
+    const entryCount = (bib.match(/@\w+\{/g) || []).length;
+    lines.push(`- references.bib: ${entryCount} entries`);
+  }
+
+  // compile status from report.log
+  const log = readFileSafe(join(reportDir, "report.log"));
+  if (log) {
+    const warnings = (log.match(/Warning/gi) || []).length;
+    const errors = (log.match(/^!/gm) || []).length;
+    lines.push(`- last compile: ${errors > 0 ? errors + " errors" : "OK"}${warnings > 0 ? ", " + warnings + " warnings" : ""}`);
+  }
+
+  // figures/ listing
+  try {
+    const figs = readdirSync(join(reportDir, "figures")).filter(f => !f.startsWith("."));
+    if (figs.length > 0) lines.push(`- figures/: ${figs.join(", ")} (${figs.length} files)`);
+  } catch {}
+
+  return `<report_status>\n${lines.join("\n")}\n</report_status>`;
 }
 
-/** Count how many papers have had figures extracted vs not. */
-function countFigureExtraction(papersDir: string): { extracted: number; unextracted: number } {
+// ── Enhanced data status ────────────────────────────────
+
+function buildDataStatus(projectDir: string): string {
+  const lines: string[] = [];
+
+  // Papers with names + figure extraction status
+  const papersDir = join(projectDir, "data", "papers");
   try {
-    const entries = readdirSync(papersDir, { withFileTypes: true });
-    const figDirs = new Set(
-      entries.filter(e => e.isDirectory() && e.name.endsWith("_figures")).map(e => e.name)
-    );
-    // Count PDFs and arXiv source dirs that could have figures extracted
-    let extractable = 0;
-    let extracted = 0;
-    for (const e of entries) {
-      if (e.name.endsWith("_figures")) continue; // skip figure dirs themselves
-      const baseName = e.name.replace(/\.(pdf|txt|html)$/, "");
-      if (e.name.endsWith(".txt") || e.name.endsWith(".html")) continue; // not extractable
-      extractable++;
-      if (figDirs.has(`${baseName}_figures`)) extracted++;
+    const entries = readdirSync(papersDir);
+    const papers = entries.filter(e => !e.endsWith("_figures") && !e.startsWith("."));
+    const figDirs = entries.filter(e => e.endsWith("_figures"));
+    if (papers.length > 0) {
+      lines.push(`- Papers: ${papers.join(", ")} (${figDirs.length}/${papers.length} with figures)`);
+    } else {
+      lines.push("- Papers: none");
     }
-    return { extracted, unextracted: extractable - extracted };
   } catch {
-    return { extracted: 0, unextracted: 0 };
+    lines.push("- Papers: none");
   }
+
+  // Scripts with names
+  const scriptsDir = join(projectDir, "data", "scripts");
+  try {
+    const scripts = readdirSync(scriptsDir).filter(f => !f.startsWith("."));
+    if (scripts.length > 0) lines.push(`- Scripts: ${scripts.join(", ")}`);
+  } catch {}
+
+  // Runs with contents
+  const runsDir = join(projectDir, "data", "runs");
+  try {
+    const runs = readdirSync(runsDir, { withFileTypes: true });
+    const runParts: string[] = [];
+    for (const r of runs) {
+      if (r.isDirectory()) {
+        const files = readdirSync(join(runsDir, r.name)).filter(f => !f.startsWith("."));
+        runParts.push(`${r.name}/ (${files.join(", ")})`);
+      } else if (!r.name.startsWith(".")) {
+        runParts.push(r.name);
+      }
+    }
+    if (runParts.length > 0) lines.push(`- Runs: ${runParts.join("; ")}`);
+  } catch {}
+
+  // Latest aggregate results summary (if exists)
+  const allResults = readFileSafe(join(runsDir, "all_results.json"));
+  if (allResults) {
+    lines.push(`- all_results.json: ${smartTruncate(allResults, 500)}`);
+  }
+
+  return `<data_status>\n${lines.join("\n")}\n</data_status>`;
 }
+
+
 
 /**
  * Discover skills from the Luxas package's skills/ directory.
