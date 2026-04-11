@@ -205,7 +205,7 @@ export function buildResearchHooks(opts: ResearchOptions) {
     };
   };
 
-  return { before, after, tracker, updateContextTokens, startTime, setPIStopped, snapshotState };
+  return { before, after, tracker, updateContextTokens, setPIStopped, snapshotState };
 }
 
 function summarizeArgs(args: any): any {

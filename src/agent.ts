@@ -156,8 +156,6 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
   const piMonitorOpts = {
     projectDir: projectDir,
     fallbackInterval: opts.piFallbackInterval ?? 50,
-    costTracker: hooks.tracker,
-    startTime: hooks.startTime,
     initialState: savedState ? {
       totalToolCalls: savedState.piToolCalls,
       lastReviewAt: savedState.piLastReviewAt,

@@ -25,7 +25,6 @@ import { createReadTool } from "@mariozechner/pi-coding-agent";
 import { nameAgent } from "agentsmelt";
 import { getApiKey } from "./auth.js";
 import { spawnAgent } from "./agents/spawn.js";
-import type { CostTracker } from "./hooks.js";
 import { readFileSafe } from "./utils.js";
 
 // PI system prompt is now in agents/definitions/pi.md
@@ -45,8 +44,6 @@ export interface PIVerdict {
 export interface PIMonitorOptions {
   projectDir: string;
   fallbackInterval?: number;  // auto-trigger after N tool calls without review (default 50)
-  costTracker?: CostTracker;
-  startTime?: number;
   onVerdict?: (verdict: PIVerdict, toolCallCount: number) => void;
   /** Restored from session JSONL for crash recovery. */
   initialState?: { totalToolCalls: number; lastReviewAt: number; reviewCount: number };
@@ -247,8 +244,6 @@ async function evaluateProgress(
 ): Promise<PIVerdict> {
   const stateText = buildStateForPI(
     opts.projectDir,
-    opts.costTracker,
-    opts.startTime,
     toolCallCount,
     milestoneInfo,
     reviewCount,
@@ -352,8 +347,6 @@ async function evaluateProgress(
 
 function buildStateForPI(
   projectDir: string,
-  costTracker?: CostTracker,
-  startTime?: number,
   toolCallCount?: number,
   milestoneInfo?: { milestone: string; questions?: string },
   reviewCount?: number,
@@ -453,27 +446,9 @@ function buildStateForPI(
     }
   }
 
-  // Resource usage — commented out so PI judges on quality, not cost/time.
-  // Uncomment to let PI see resource consumption again.
-  const resourceLines: string[] = [];
+  // Resource usage (review count only — cost/time intentionally omitted so PI judges on quality)
   if (reviewCount !== undefined) {
-    resourceLines.push(`- Review count: ${reviewCount} (this is review #${reviewCount})`);
-  }
-  // if (costTracker) {
-  //   resourceLines.push(`- Cost spent: $${costTracker.totalCost.toFixed(2)}`);
-  //   resourceLines.push(
-  //     `- Tokens: ${costTracker.totalInputTokens} in / ${costTracker.totalOutputTokens} out`,
-  //   );
-  // }
-  // if (startTime) {
-  //   const mins = ((Date.now() - startTime) / 60_000).toFixed(1);
-  //   resourceLines.push(`- Time elapsed: ${mins} minutes`);
-  // }
-  // if (toolCallCount !== undefined) {
-  //   resourceLines.push(`- Tool calls so far: ${toolCallCount}`);
-  // }
-  if (resourceLines.length > 0) {
-    parts.push(`# Resource Usage\n${resourceLines.join("\n")}`);
+    parts.push(`# Resource Usage\n- Review count: ${reviewCount} (this is review #${reviewCount})`);
   }
 
   return parts.join("\n\n");
