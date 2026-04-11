@@ -9,6 +9,8 @@ import { nameAgent } from "agentsmelt";
 import { getModel } from "@mariozechner/pi-ai";
 import { mkdirSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
+import { createCompactionTransform, getContextWindow } from "../compaction/create-transform.js";
+import type { TokenTap } from "../compaction/token-tap.js";
 import { extractTextContent } from "../utils.js";
 import { getDefinition, resolvePrompt, type AgentDefinition } from "./registry.js";
 import { resolveToolSets } from "./tool-sets.js";
@@ -86,6 +88,7 @@ export interface BuiltAgent {
   agent: InstanceType<typeof Agent>;
   agentId: string;
   definition: AgentDefinition;
+  tokenTap: TokenTap;
 }
 
 export function buildAgentFromDefinition(opts: SpawnAgentOptions): BuiltAgent {
@@ -134,7 +137,14 @@ export function buildAgentFromDefinition(opts: SpawnAgentOptions): BuiltAgent {
     }
   }
 
-  // 8. Create agent
+  // 8. Build compaction transform (universal — every agent gets context compaction)
+  const { transformContext, tokenTap } = createCompactionTransform({
+    model,
+    getApiKey: opts.getApiKey,
+    thresholds: { windowLimit: getContextWindow(model) },
+  });
+
+  // 9. Create agent
   const agent = new Agent({
     initialState: {
       systemPrompt: fullPrompt,
@@ -143,11 +153,15 @@ export function buildAgentFromDefinition(opts: SpawnAgentOptions): BuiltAgent {
       tools,
     },
     getApiKey: opts.getApiKey,
+    transformContext,
   });
   nameAgent(agent, agentId, def.name);
   (agent as any).__smeltParent = opts.parentAgentId;
 
-  return { agent, agentId, definition: def };
+  // 10. Install token tracking (feeds packer with precise token counts after first turn)
+  tokenTap.install(agent);
+
+  return { agent, agentId, definition: def, tokenTap };
 }
 
 // ── Spawn (in-process mode) ─────────────────────────
@@ -158,7 +172,7 @@ export async function spawnAgent(opts: SpawnAgentOptions): Promise<SpawnAgentRes
   try {
     const { agent, agentId } = buildAgentFromDefinition(opts);
 
-    // 9. Set up incremental conversation persistence (crash-safe: written per turn, not at end)
+    // 11. Set up incremental conversation persistence (crash-safe: written per turn, not at end)
     const convDir = join(opts.projectDir, ".agent", "conversations");
     mkdirSync(convDir, { recursive: true });
     const convPath = join(convDir, `${agentId}.jsonl`);
@@ -176,10 +190,10 @@ export async function spawnAgent(opts: SpawnAgentOptions): Promise<SpawnAgentRes
       }
     });
 
-    // 10. Run
+    // 12. Run
     await agent.prompt(opts.prompt);
 
-    // 11. Extract output
+    // 13. Extract output
     const messages = agent.state.messages;
     const lastAssistant = [...messages].reverse().find(
       (m: any) => m.role === "assistant",

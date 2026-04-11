@@ -74,7 +74,7 @@ async function main() {
       parentAgentId: args.id.split(".").slice(0, -1).join(".") || "brain",
     };
 
-    const { agent, agentId, definition } = buildAgentFromDefinition(spawnOpts);
+    const { agent, agentId, definition, tokenTap } = buildAgentFromDefinition(spawnOpts);
 
     // Resolve the actual model for cross-model message cleaning
     const modelKey = definition.model === "inherit" ? "sonnet" : definition.model;
@@ -114,7 +114,7 @@ async function main() {
           session.append({
             type: "state" as const,
             cost: 0, inputTokens: 0, outputTokens: 0,
-            lastContextTokens: 0, startTime: processStartTime,
+            lastContextTokens: tokenTap.lastContextTokens, startTime: processStartTime,
             piStopped: false, piToolCalls: 0, piLastReviewAt: 0, piReviewCount: 0,
           });
         } catch { /* must not crash the agent */ }

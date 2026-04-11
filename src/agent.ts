@@ -177,12 +177,11 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
     tools.push(piReview.tool);
   }
 
-  // Layer 3: transformContext — LLM compaction, precise tokens, extensions
-  const transformContext = buildContextTransformer({
+  // Layer 3: transformContext — universal compaction (ContextPacker) + brain research snapshot
+  const { transformContext, tokenTap } = buildContextTransformer({
     projectDir: projectDir,
     model,
     getApiKey,
-    tracker: hooks.tracker,
     bus,
     reminders,
     initialPreviousSummary: session.getCompactionSummary() ?? undefined,
@@ -209,6 +208,9 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
   // Wire deferred refs now that agent exists
   setParentAgent(agent);     // enables background spawn_agent with steer()
   finishCallback = () => agent.abort();
+
+  // Install token tracking for ContextPacker (feeds precise token counts after first turn)
+  tokenTap.install(agent);
 
   let lastCheckpointedMsgCount = 0;
   let turnCount = 0;

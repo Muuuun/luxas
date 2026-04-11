@@ -1,5 +1,9 @@
 /**
  * Layer 3: transformContext — research state injection + message compaction.
+ *
+ * Compaction is handled by the universal ContextPacker module.
+ * This file adds the brain-specific layer: research snapshot injection,
+ * notes compaction trigger, completion hints, and bus event bridging.
  */
 
 import { existsSync, readdirSync } from "node:fs";
@@ -7,276 +11,168 @@ import { readFileSafe, smartTruncate } from "./utils.js";
 import { getActiveBackgroundAgents } from "./tools/spawn-agent.js";
 import { isAlive } from "./active-agents.js";
 import { join, dirname } from "node:path";
-import { generateResearchSummary, heuristicSummary } from "./compaction.js";
 import { compactNotesIfNeeded } from "./notes-compaction.js";
+import { createCompactionTransform, getContextWindow } from "./compaction/create-transform.js";
+import type { TokenTap } from "./compaction/token-tap.js";
 import type { Model } from "@mariozechner/pi-ai";
-import type { CostTracker } from "./hooks.js";
 import type { ExtensionBus } from "./extensions.js";
 import type { ReminderRegistry } from "./reminders.js";
 
-const TOOL_DEF_RESERVE = 20_000;
-const AUTOCOMPACT_BUFFER = 13_000;
-const WARNING_HEADROOM = 53_000;
-const DEFAULT_CONTEXT_WINDOW = 200_000;
+// ── Research-specific summarizer prompts ─────────────
+// (Moved from old compaction.ts — these customize the ContextPacker's
+// summarizer for brain's research context.)
 
-function computeThresholds(contextWindow: number = DEFAULT_CONTEXT_WINDOW) {
-  const effectiveWindow = contextWindow - TOOL_DEF_RESERVE;
-  return {
-    compaction: effectiveWindow - AUTOCOMPACT_BUFFER,
-    warning: effectiveWindow - WARNING_HEADROOM,
-  };
-}
+const SUMMARIZATION_SYSTEM_PROMPT = `You are a context summarization assistant for an autonomous research agent (Luxas). Your task is to read a conversation and produce a structured summary. Do NOT continue the conversation. Do NOT respond to any questions in the conversation. ONLY output the structured summary.`;
 
-const COMPACTION_CHAR_THRESHOLD = 80_000;
-const WARNING_CHAR_THRESHOLD = 60_000;
+const RESEARCH_SUMMARIZATION_PROMPT = `The messages above are a conversation to summarize. Create a structured context checkpoint summary that another LLM will use to continue the research.
 
-const KEEP_RECENT = 12;
+CRITICAL: Respond with TEXT ONLY. Do NOT call any tools. You already have all the context you need. Your entire response must be the structured summary below — any tool call will be rejected.
 
-const RAPID_REFILL_TURN_WINDOW = 3;
-const RAPID_REFILL_LIMIT = 3;
-const FAILURE_LIMIT = 3;
+Use this EXACT format:
 
-const MICROCOMPACT_KEEP_RECENT_TOOL_RESULTS = 10;
-const MICROCOMPACT_PLACEHOLDER = "[tool result cleared by micro-compaction to save context — re-run the tool if needed]";
+## Research Goal
+[Current understanding of the research goal, verbatim from RESEARCH.md if available]
+
+## All User Messages Verbatim
+[List EVERY non-tool-result user message from the conversation, in order. These are critical for understanding user intent and preventing drift. Reproduce them verbatim — not paraphrased. If a message is very long, reproduce its key directive sentences verbatim and note "[truncated]" for the rest.]
+
+## Literature Findings
+- [Key papers read, with citation keys and core findings]
+- [Or "(none yet)" if no papers read]
+
+## Experiments Conducted
+- [For each experiment: Hypothesis → Setup → Result → Interpretation]
+- [Include EXACT numerical results, formulas, and parameter values]
+
+## Key Decisions
+- **[Decision]**: [Brief rationale]
+
+## Dead Ends
+- [Approaches tried that didn't work, and WHY]
+- [Or "(none)" if no dead ends encountered]
+
+## Errors and Fixes
+- [Errors encountered and how they were fixed; especially any user corrections]
+
+## Progress
+### Done
+- [x] [Completed tasks/analyses]
+
+### In Progress
+- [ ] [Current work — be specific about file paths and line numbers]
+
+## Current Work (Verbatim)
+[Describe in detail EXACTLY what was being worked on immediately before this summary. Include direct quotes from the most recent user messages and assistant turns showing the specific task and where work was left off. This should be verbatim to prevent intent drift after resume.]
+
+## Next Steps
+1. [Ordered list of what should happen next]
+2. [Tie directly to the most recent user request — do NOT start tangential work]
+
+## Critical Context
+- [File paths, parameter values, formulas, physical constants needed to continue]
+- [Exact wavelengths, intensities, fidelity values, error budget numbers]
+- [Or "(none)" if not applicable]
+
+Keep each section concise but preserve ALL quantitative results, exact file paths, formula expressions, and numerical values — these are the agent's long-term memory.
+
+REMINDER: Respond with plain text only. No tool calls.`;
+
+const RESEARCH_UPDATE_PROMPT = `The messages above are NEW conversation messages to incorporate into the existing summary provided in <previous_note> tags.
+
+Update the existing structured summary with new information. RULES:
+- PRESERVE all existing information from the previous summary
+- ADD new experiments, literature, decisions, and context
+- UPDATE Progress: move items from "In Progress" to "Done" when completed
+- UPDATE "Next Steps" based on what was accomplished
+- PRESERVE all exact numerical results, file paths, and formulas
+- If something is no longer relevant, you may remove it
+- If an earlier result was found to be WRONG, mark it clearly and add the correction
+
+Use the same EXACT format as the original summary:
+
+## Research Goal
+## Literature Findings
+## Experiments Conducted
+## Key Decisions
+## Dead Ends
+## Progress
+### Done / In Progress
+## Next Steps
+## Critical Context
+
+Keep each section concise. Preserve exact file paths, formulas, and numerical values.`;
+
+// ── Tool names eligible for micro-compaction ─────────
+
 const COMPACTABLE_TOOLS = new Set([
   "read", "write", "edit", "bash",
   "search_papers", "get_citations", "download_paper",
   "grep", "glob", "web_search", "web_fetch",
 ]);
 
+// ── Public interface ─────────────────────────────────
+
 export interface ContextTransformerOptions {
   projectDir: string;
   model?: Model<any>;
   getApiKey?: (provider: string) => Promise<string | undefined>;
-  tracker?: CostTracker;
   bus?: ExtensionBus;
   reminders?: ReminderRegistry;
   /** Restored from session compaction entries for crash recovery. */
   initialPreviousSummary?: string;
 }
 
-export function buildContextTransformer(opts: ContextTransformerOptions) {
-  const { projectDir, model, getApiKey, tracker, bus } = opts;
-  let previousSummary: string | undefined = opts.initialPreviousSummary;
+export interface ContextTransformerResult {
+  transformContext: (messages: any[]) => Promise<any[]>;
+  tokenTap: TokenTap;
+}
 
-  const tracking = {
-    turnCounter: 0,
-    lastCompactTurn: -1,
-    consecutiveRapidRefills: 0,
-    consecutiveFailures: 0,
-    hasWarnedSinceLastCompaction: false,
-  };
+export function buildContextTransformer(opts: ContextTransformerOptions): ContextTransformerResult {
+  const { projectDir, model, getApiKey, bus } = opts;
 
-  const modelContextWindow = (model as any)?.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
-  const TOKEN_THRESHOLDS = computeThresholds(modelContextWindow);
-
-  return async (messages: any[]): Promise<any[]> => {
-    tracking.turnCounter++;
-
-    const snapshot = buildResearchSnapshot(opts);
-
-    const tokenCount = tracker?.lastContextTokens ?? 0;
-    const useTokens = tokenCount > 0;
-
-    let needsCompaction: boolean;
-    let needsWarning: boolean;
-    let sizeForEvent = tokenCount;
-
-    if (useTokens) {
-      needsCompaction = tokenCount > TOKEN_THRESHOLDS.compaction;
-      needsWarning = tokenCount > TOKEN_THRESHOLDS.warning;
-    } else {
-      let totalChars = 0;
-      for (const m of messages) {
-        totalChars += typeof m.content === "string" ? m.content.length : JSON.stringify(m.content).length;
-      }
-      needsCompaction = totalChars > COMPACTION_CHAR_THRESHOLD;
-      needsWarning = totalChars > WARNING_CHAR_THRESHOLD;
-      sizeForEvent = totalChars;
-    }
-
-    if (needsWarning && !needsCompaction) {
-      const { messages: compacted, charsFreed } = microCompactToolResults(messages);
-      if (charsFreed > 0) {
-        messages = compacted;
-        bus?.emit({ type: "micro_compaction", charsFreed });
-      }
-    }
-
-    if (needsCompaction && messages.length > KEEP_RECENT + 2) {
-      const turnsSinceLastCompact = tracking.turnCounter - tracking.lastCompactTurn;
-      if (tracking.lastCompactTurn >= 0 && turnsSinceLastCompact < RAPID_REFILL_TURN_WINDOW) {
-        tracking.consecutiveRapidRefills++;
-        if (tracking.consecutiveRapidRefills >= RAPID_REFILL_LIMIT) {
-          throw new Error(
-            `FATAL: Compaction thrashing — context refilled to threshold within ${RAPID_REFILL_TURN_WINDOW} turns, ${RAPID_REFILL_LIMIT} times in a row. ` +
-            `Likely a tool result too large for context window. ` +
-            `Try smaller reads, or restart brain with /clear.`
-          );
-        }
-      } else {
-        tracking.consecutiveRapidRefills = 0;
-      }
-
-      // Split point must land on an assistant message to keep tool_use/tool_result pairing valid.
-      let splitIdx = Math.max(1, messages.length - KEEP_RECENT);
-      while (splitIdx < messages.length - 4) {
-        if (messages[splitIdx].role === "assistant") break;
-        splitIdx++;
-      }
-      if (splitIdx >= messages.length - 4) {
-        return injectSnapshot(messages, snapshot);
-      }
-
-      const oldMessages = messages.slice(0, splitIdx);
-      const recentMessages = messages.slice(splitIdx);
-
-      await bus?.emit({ type: "before_compaction", messages: oldMessages, tokenCount });
-
-      let summary: string;
-      try {
+  // ── Build universal compaction via ContextPacker ──
+  const { transformContext: packTransform, tokenTap } = createCompactionTransform({
+    model,
+    getApiKey,
+    thresholds: { windowLimit: model ? getContextWindow(model) : undefined },
+    toolPrune: { eligibleToolNames: COMPACTABLE_TOOLS },
+    summarizer: {
+      systemPrompt: SUMMARIZATION_SYSTEM_PROMPT,
+      freshNoteTemplate: RESEARCH_SUMMARIZATION_PROMPT,
+      updateNoteTemplate: RESEARCH_UPDATE_PROMPT,
+    },
+    callbacks: {
+      onTrim: (p: any) => bus?.emit({ type: "micro_compaction", charsFreed: p.freedUnits }),
+      onWarning: (p: any) => bus?.emit({ type: "memory_warning", tokenCount: p.observedSize, threshold: p.threshold }),
+      onBeforeCondense: (p: any) => bus?.emit({ type: "before_compaction", messages: p.messages, tokenCount: p.observedSize }),
+      onAfterCondense: (p: any) => {
+        bus?.emit({ type: "after_compaction", summary: p.note, droppedCount: p.removedCount });
         if (model && getApiKey) {
-          const apiKey = await getApiKey("anthropic");
-          if (!apiKey) throw new Error("No API key");
-          summary = await generateResearchSummary(oldMessages, model, apiKey, previousSummary);
-        } else {
-          summary = heuristicSummary(oldMessages);
+          getApiKey("anthropic").then(apiKey => {
+            if (apiKey) return compactNotesIfNeeded(projectDir, model, apiKey, bus);
+          }).catch(() => {});
         }
-        tracking.consecutiveFailures = 0;
-      } catch (err) {
-        tracking.consecutiveFailures++;
-        if (tracking.consecutiveFailures >= FAILURE_LIMIT) {
-          throw new Error(
-            `FATAL: ${FAILURE_LIMIT} consecutive compaction failures. ` +
-            `Last error: ${(err as any)?.message ?? err}. ` +
-            `Stopping to prevent silent cost accumulation.`
-          );
-        }
-        summary = heuristicSummary(oldMessages);
-      }
+      },
+    },
+    ledger: opts.initialPreviousSummary
+      ? { readSnapshot: () => ({ note: opts.initialPreviousSummary! }), markApplied: () => {} }
+      : undefined,
+  });
 
-      previousSummary = summary;
-      tracking.lastCompactTurn = tracking.turnCounter;
-      tracking.hasWarnedSinceLastCompaction = false;
+  // ── Brain-specific layer: research snapshot injection ──
+  const transformContext = async (messages: any[]): Promise<any[]> => {
+    // Step 1: Universal compaction (micro-compact, snip, or full condense)
+    const packed = await packTransform(messages);
 
-      await bus?.emit({ type: "after_compaction", summary, droppedCount: oldMessages.length });
-
-      if (model && getApiKey) {
-        getApiKey("anthropic").then(apiKey => {
-          if (apiKey) return compactNotesIfNeeded(projectDir, model, apiKey, bus);
-        }).catch(() => {});
-      }
-
-      let completionHint = "";
-      const hasPdf = existsSync(join(projectDir, "report", "report.pdf"));
-      const piFeedback = readFileSafe(join(projectDir, "reviews", "pi_feedback.md")) ?? "";
-      const piApproved = piFeedback.includes("## Verdict: CONTINUE") || piFeedback.includes("## Verdict: STOP");
-      if (hasPdf && piApproved) {
-        completionHint = "\n\n⚠️ Research appears COMPLETE (PDF compiled, PI approved). If there is nothing left to do, call finish() immediately. Do NOT re-read memory.md in a loop.";
-      } else if (hasPdf) {
-        completionHint = "\n\nNote: report.pdf exists. If you have completed all research tasks, request PI review and then call finish().";
-      }
-
-      return [
-        { role: "user", content: snapshot, timestamp: Date.now() },
-        { role: "assistant", content: [{ type: "text", text: "I've reviewed the current research state. Let me continue from where I left off." }], timestamp: Date.now() },
-        { role: "user", content: `<compacted_history>\n${summary}\n</compacted_history>\n\n[MEMORY] Context was compacted — ${oldMessages.length} earlier messages were summarized above. Your notes files (notes/literature.md, notes/experiments.md, notes/memory.md) are your ground truth. If you recall working on something not yet saved to notes, save it now before continuing.${completionHint}`, timestamp: Date.now() },
-        { role: "assistant", content: [{ type: "text", text: "Understood. I'll check my notes and continue based on the current research state." }], timestamp: Date.now() },
-        ...recentMessages,
-      ];
-    }
-
-    // Warnings fire once per compaction cycle as bus events only — never injected into
-    // the message stream (brain must never see them, to prevent panic-save loops).
-    if (needsWarning && !tracking.hasWarnedSinceLastCompaction) {
-      tracking.hasWarnedSinceLastCompaction = true;
-      const threshold = useTokens ? TOKEN_THRESHOLDS.compaction : COMPACTION_CHAR_THRESHOLD;
-      await bus?.emit({ type: "memory_warning", tokenCount: sizeForEvent, threshold });
-    }
-
-    return injectSnapshot(messages, snapshot);
+    // Step 2: Brain-specific research snapshot injection (every turn)
+    const snapshot = buildResearchSnapshot(opts);
+    return injectSnapshot(packed, snapshot);
   };
+
+  return { transformContext, tokenTap };
 }
 
-/**
- * Replaces old compactable tool results with a placeholder while preserving
- * tool_use/tool_result pairing. Returns the original array reference (not a
- * copy) when nothing changed, so callers can detect no-ops cheaply.
- */
-function microCompactToolResults(
-  messages: any[],
-): { messages: any[]; charsFreed: number } {
-  const idToName = new Map<string, string>();
-  for (const m of messages) {
-    if (m.role !== "assistant") continue;
-    const blocks = Array.isArray(m.content) ? m.content : [];
-    for (const b of blocks) {
-      if (b.type === "toolCall" || b.type === "tool_use") {
-        const id = b.id ?? b.toolCallId;
-        if (id && b.name) idToName.set(id, b.name);
-      }
-    }
-  }
-
-  let toolResultsSeen = 0;
-  let charsFreed = 0;
-  let modified = false;
-  const out: any[] = new Array(messages.length);
-
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i];
-
-    if (m.role === "toolResult") {
-      toolResultsSeen++;
-      if (toolResultsSeen <= MICROCOMPACT_KEEP_RECENT_TOOL_RESULTS) {
-        out[i] = m;
-        continue;
-      }
-      const toolName = m.toolName ?? idToName.get(m.toolCallId) ?? "";
-      const existing = Array.isArray(m.content)
-        ? m.content.filter((c: any) => c.type === "text").map((c: any) => c.text).join("")
-        : "";
-      if (!COMPACTABLE_TOOLS.has(toolName) || existing === MICROCOMPACT_PLACEHOLDER) {
-        out[i] = m;
-        continue;
-      }
-      charsFreed += existing.length - MICROCOMPACT_PLACEHOLDER.length;
-      modified = true;
-      out[i] = { ...m, content: [{ type: "text", text: MICROCOMPACT_PLACEHOLDER }] };
-      continue;
-    }
-
-    if (m.role === "user" && Array.isArray(m.content) && m.content.some((b: any) => b.type === "tool_result")) {
-      let blockChanged = false;
-      const newBlocks = m.content.map((b: any) => {
-        if (b.type !== "tool_result") return b;
-        toolResultsSeen++;
-        if (toolResultsSeen <= MICROCOMPACT_KEEP_RECENT_TOOL_RESULTS) return b;
-        const toolName = idToName.get(b.tool_use_id) ?? "";
-        const existing = typeof b.content === "string"
-          ? b.content
-          : Array.isArray(b.content)
-            ? b.content.filter((c: any) => c.type === "text").map((c: any) => c.text).join("")
-            : "";
-        if (!COMPACTABLE_TOOLS.has(toolName) || existing === MICROCOMPACT_PLACEHOLDER) return b;
-        charsFreed += existing.length - MICROCOMPACT_PLACEHOLDER.length;
-        blockChanged = true;
-        return { ...b, content: [{ type: "text", text: MICROCOMPACT_PLACEHOLDER }] };
-      });
-      if (blockChanged) {
-        modified = true;
-        out[i] = { ...m, content: newBlocks };
-      } else {
-        out[i] = m;
-      }
-      continue;
-    }
-
-    out[i] = m;
-  }
-
-  return modified ? { messages: out, charsFreed } : { messages, charsFreed: 0 };
-}
+// ── Research snapshot (brain-specific) ────────────────
 
 /** Inject research snapshot into messages without breaking tool_use_id references. */
 function injectSnapshot(messages: any[], snapshot: string): any[] {
