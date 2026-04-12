@@ -84,7 +84,13 @@ export function createSpawnAgentTool(
       'spawn_agent(agent="worker", tasks=["read paper A", "read paper B"])\n\n' +
       "For long-running tasks, use `background: true` — you continue working while the agent runs.\n" +
       "Results are delivered back as a message when done. Good for sub-brain research tasks.\n" +
-      'spawn_agent(agent="brain", task="investigate sub-topic X in depth", background=true)',
+      'spawn_agent(agent="brain", task="investigate sub-topic X in depth", background=true)\n\n' +
+      "Common mistakes to avoid:\n" +
+      '  ✗ spawn_agent(agent="worker", tasks=[{"task": "..."}])    — `tasks` must be string[], not object[]\n' +
+      '  ✗ spawn_agent(action={"type": "spawn", agent: "..."})    — no `action` wrapper; pass fields at top level\n' +
+      '  ✗ spawn_agent(agent="worker", task=["a", "b"])            — `task` is a single string; use `tasks` for arrays\n' +
+      "If you need to pass multiple sub-instructions to one agent, concatenate them into a single string using " +
+      "newlines or bullet points inside `task`.",
     parameters: SpawnParams,
 
     async execute(
