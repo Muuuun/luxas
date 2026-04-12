@@ -8,6 +8,7 @@
 
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { readFileSafe, smartTruncate } from "./utils.js";
+import { findUnprocessedPapers, methodologyPath } from "./methodology.js";
 import { getActiveBackgroundAgents } from "./tools/spawn-agent.js";
 import { isAlive } from "./active-agents.js";
 import { join, dirname } from "node:path";
@@ -238,6 +239,38 @@ function buildResearchSnapshot(opts: ContextTransformerOptions): string {
     parts.push(`<literature_notes lines="${lit.split("\n").length}">\n${smartTruncate(lit, 3000)}\n</literature_notes>`);
   } else {
     parts.push("<literature_notes>(empty — no literature review yet)</literature_notes>");
+  }
+
+  // Field methodology standard — auto-extracted by methodology-worker on paper download.
+  // Brain should compare its own experiments/report against these standards.
+  const method = readFileSafe(methodologyPath(projectDir));
+  if (method && method.trim().length > 40) {
+    parts.push(`<field_methodology_standard lines="${method.split("\n").length}">
+Auto-extracted from the literature you have downloaded. This is a map of what
+this field considers STANDARD methodology (what to compute, what to demo, what
+rigor bar to meet, what goes in figures). Before claiming a milestone, verify
+that your actual work covers these points. If there is a gap, address it — do
+not paper over methodology gaps in the report.
+${smartTruncate(method, 3000)}
+</field_methodology_standard>`);
+  }
+
+  // Unprocessed papers fallback — catches downloads that missed the hook,
+  // manual paper drops, DOI/URL downloads (flat PDFs), or session races.
+  const unprocessed = findUnprocessedPapers(projectDir);
+  if (unprocessed.length > 0) {
+    parts.push(`<unprocessed_papers count="${unprocessed.length}">
+The following papers are present under data/papers/ but have no entry in
+notes/methodology.md "Papers processed":
+${unprocessed.map(id => `- ${id}`).join("\n")}
+
+Each ID is either an arXiv-style subdirectory (data/papers/<id>/ with LaTeX source)
+or a flat PDF (data/papers/<id>.pdf from a DOI/URL download). Dispatch one
+methodology-worker per unprocessed paper:
+  spawn_agent(agent="methodology-worker", task="Extract methodology coverage from paper <id>.", templateVars={{ PAPER_ID: "<id>" }})
+
+These can all run in parallel (background=true). The worker is cheap (haiku, ≤30s) and idempotent.
+</unprocessed_papers>`);
   }
 
   // Experiment state

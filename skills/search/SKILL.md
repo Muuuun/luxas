@@ -60,6 +60,8 @@ scripts/search download --url "https://example.com/paper.pdf" --output data/pape
 - URL: direct download.
 - Default `--output`: `data/papers/`
 
+**Automatic methodology extraction (arXiv only).** After a successful `search download --arxiv <id>`, a background `methodology-worker` is dispatched automatically to read the paper's main text + figure manifest and append coverage entries (what's computed, what's demo'd, what goes in figures, what rigor bar) into `notes/methodology.md`. You never need to launch this worker manually. If it silently misses a paper (hook race, manual drop), the research snapshot will surface an `<unprocessed_papers>` reminder asking you to `spawn_agent(agent="methodology-worker", ...)` for the gap.
+
 ### LaTeX Source
 
 ```bash

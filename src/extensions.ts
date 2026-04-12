@@ -34,7 +34,10 @@ export type LuxasEvent =
   | { type: "notes_compaction"; files: string[]; savings: Record<string, { before: number; after: number }> }
   // Planning phase
   | { type: "plan_created"; path: string }
-  | { type: "plan_reviewed"; verdict: string; feedback: string };
+  | { type: "plan_reviewed"; verdict: string; feedback: string }
+  // Methodology extraction (auto-dispatched after arXiv download)
+  | { type: "methodology_worker_done"; paperId: string; success: boolean; elapsedMs: number; summary: string }
+  | { type: "methodology_worker_failed"; paperId: string; error: string };
 
 export type ExtensionHandler<E extends LuxasEvent = LuxasEvent> =
   (event: E) => Promise<void> | void;

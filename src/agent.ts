@@ -23,6 +23,8 @@ import { execSync } from "node:child_process";
 import { join, isAbsolute, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getDefinition, resolvePrompt } from "./agents/registry.js";
+import { spawnAgent } from "./agents/spawn.js";
+import { ensureMethodologyFile } from "./methodology.js";
 import { buildResearchTools } from "./tools/index.js";
 import { buildContextTransformer } from "./context.js";
 import { buildResearchHooks } from "./hooks.js";
@@ -129,6 +131,42 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
   installUsageTracking(usageLogPath);
 
   // Hooks must be created before tools
+  // Methodology-worker dispatcher: serialized per-project via a promise chain
+  // so concurrent downloads in one turn don't race on notes/methodology.md.
+  // Per-paper dedup via an in-flight Set that drains on completion.
+  const inFlightPapers = new Set<string>();
+  let workerQueueTail: Promise<void> = Promise.resolve();
+  const onPaperDownloaded = (paperId: string): void => {
+    if (inFlightPapers.has(paperId)) return;
+    inFlightPapers.add(paperId);
+    // Scaffold before spawning so a worker crash mid-run can't leave the file
+    // in a partially-written state that a sibling worker would clobber.
+    ensureMethodologyFile(projectDir);
+    workerQueueTail = workerQueueTail.catch(() => {}).then(async () => {
+      const t0 = Date.now();
+      try {
+        const result = await spawnAgent({
+          name: "methodology-worker",
+          projectDir,
+          templateVars: { PROJECT_DIR: projectDir, PAPER_ID: paperId },
+          prompt: `Extract methodology coverage from paper ${paperId}. See your system prompt for exact procedure. Target file: notes/methodology.md.`,
+          getApiKey,
+        });
+        bus.emit({
+          type: "methodology_worker_done",
+          paperId, success: result.success,
+          elapsedMs: Date.now() - t0,
+          summary: result.output.slice(0, 300),
+        });
+      } catch (err: any) {
+        bus.emit({ type: "methodology_worker_failed", paperId, error: String(err?.message ?? err) });
+      } finally {
+        inFlightPapers.delete(paperId);
+      }
+    });
+    workerQueueTail.catch(() => {});  // terminal — absorb any rejection from bus.emit etc.
+  };
+
   const hooks = buildResearchHooks({
     projectDir,
     maxCostUsd: opts.maxCostUsd,
@@ -136,6 +174,7 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
     reminders,
     bus,
     usageLogPath,
+    onPaperDownloaded,
     initialState: savedState ?? undefined,
   });
 

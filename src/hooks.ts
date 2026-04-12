@@ -19,6 +19,13 @@ export interface ResearchOptions {
   usageLogPath?: string;     // Path to usage.log (default: .agent/usage.log)
   reminders?: ReminderRegistry;
   bus?: ExtensionBus;
+  /**
+   * Side-effect invoked after a successful `search download --arxiv <id>`
+   * bash call. Injected by agent.ts so hooks stay policy-only (no direct
+   * dependency on agents/spawn.ts). Fire-and-forget; callback owns queueing,
+   * dedup, and error handling.
+   */
+  onPaperDownloaded?: (paperId: string) => void;
   /** Restored harness state from session JSONL (stateless harness recovery). */
   initialState?: {
     cost?: number;
@@ -174,6 +181,26 @@ export function buildResearchHooks(opts: ResearchOptions) {
       reminders.setFlag("workers_completed", true);  // self-clears when notes updated
     }
 
+    // 4. Notify on successful arXiv paper download so the caller (agent.ts) can
+    //    dispatch a methodology-worker. Hook stays policy-only.
+    //
+    //    Arxiv-only here: DOI/URL downloads have non-predictable filename
+    //    derivation, and the <unprocessed_papers> fallback in the research
+    //    snapshot catches them by scanning data/papers/ every turn.
+    if (toolName === "bash" && !ctx.isError && opts.onPaperDownloaded) {
+      const cmd = String(ctx.args?.command ?? "");
+      if (/\bsearch\s+download\b[^|&;]*?--arxiv\b/.test(cmd)) {
+        // Primary: literal id directly after the flag, e.g. `--arxiv 2308.07915`
+        // or `--arxiv=2308.07915`, optionally quoted.
+        let m = cmd.match(/--arxiv[=\s]+["']?(\d{4}\.\d{4,5})["']?/);
+        // Fallback: shell-variable form like `id=2308.07915; search download --arxiv $id`.
+        // The literal id appears elsewhere on the same command string — take the first
+        // well-formed arXiv token. Conservative: only if the primary match missed.
+        if (!m) m = cmd.match(/\b(\d{4}\.\d{4,5})\b/);
+        if (m) opts.onPaperDownloaded(m[1]);
+      }
+    }
+
     return undefined; // Don't modify tool results — reminders appear in snapshot
   };
 
@@ -291,3 +318,4 @@ function captureLesson(
     appendFileSync(lessonsPath, header + entry + "\n");
   } catch {}
 }
+

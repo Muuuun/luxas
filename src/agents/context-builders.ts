@@ -3,11 +3,50 @@
  * appended to an agent's system prompt at spawn time.
  */
 
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { readFileSafe, smartTruncate, listFilesRecursive } from "../utils.js";
+import { readFileSafe, smartTruncate, listFilesRecursive, ORIGINAL_REQUEST_HEADER } from "../utils.js";
 
 export type ContextBuilder = (projectDir: string, extra?: Record<string, any>) => string;
+
+// ── Shared script loading ────────────────────────────
+//
+// Both buildExperimentContext and buildPIContext expose the project's
+// simulation scripts to the agent. They share the same "list + read + count
+// lines" core; only the envelope and the full-inline policy differ.
+
+const SCRIPT_EXTENSIONS = /\.(py|jl|m|sh|ts|js|R)$/;
+
+interface ScriptFile { relPath: string; content: string; lines: number; }
+
+function collectScripts(projectDir: string, opts: { maxFiles?: number } = {}): ScriptFile[] {
+  const scriptsDir = join(projectDir, "data", "scripts");
+  const all = listFilesRecursive(scriptsDir)
+    .filter(f => SCRIPT_EXTENSIONS.test(f))
+    .sort();
+  const selected = opts.maxFiles ? all.slice(0, opts.maxFiles) : all;
+  const result: ScriptFile[] = [];
+  for (const full of selected) {
+    try {
+      const content = readFileSync(full, "utf-8");
+      result.push({
+        relPath: full.replace(projectDir + "/", ""),
+        content,
+        lines: content.split("\n").length,
+      });
+    } catch {}
+  }
+  return result;
+}
+
+function renderScriptPreview(entry: ScriptFile, previewLines: number): string {
+  const lines = entry.content.split("\n");
+  const preview = lines.slice(0, previewLines).join("\n");
+  const suffix = lines.length > previewLines
+    ? `\n... (${lines.length - previewLines} more lines — use read tool for full file)`
+    : "";
+  return preview + suffix;
+}
 
 const CONTEXT_BUILDERS: Record<string, ContextBuilder> = {
   experiment: buildExperimentContext,
@@ -59,24 +98,11 @@ function buildExperimentContext(projectDir: string): string {
   }
 
   // 6. Existing scripts with content preview
-  const scriptsDir = join(projectDir, "data", "scripts");
-  const scripts = listFilesRecursive(scriptsDir)
-    .filter(f => /\.(py|jl|m|sh|ts|js)$/.test(f))
-    .slice(0, 12);
-
+  const scripts = collectScripts(projectDir, { maxFiles: 12 });
   if (scripts.length > 0) {
     parts.push("<existing_scripts>");
-    for (const script of scripts) {
-      const relPath = script.replace(projectDir + "/", "");
-      try {
-        const content = readFileSync(script, "utf-8");
-        const lines = content.split("\n");
-        const preview = lines.slice(0, 60).join("\n");
-        const suffix = lines.length > 60 ? `\n... (${lines.length} total lines — use read tool for full file)` : "";
-        parts.push(`<script path="${relPath}" lines="${lines.length}">\n${preview}${suffix}\n</script>`);
-      } catch {
-        parts.push(`<script path="${relPath}">use read tool to view</script>`);
-      }
+    for (const s of scripts) {
+      parts.push(`<script path="${s.relPath}" lines="${s.lines}">\n${renderScriptPreview(s, 60)}\n</script>`);
     }
     parts.push("</existing_scripts>");
   }
@@ -117,7 +143,80 @@ function buildPIContext(projectDir: string, extra?: Record<string, any>): string
   }
   parts.push(isSurvey ? PI_SURVEY_MODE : PI_RESEARCH_MODE);
 
-  return parts.join("\n");
+  // Classify RESEARCH.md format once, up-front. The verbatim-user-request
+  // section was introduced in 2026-04; legacy projects lack it. Emitting an
+  // explicit signal here means the PI prompt doesn't rely on opus parsing a
+  // conditional "if section present / else" sentence at inference time.
+  const researchMd = readFileSafe(join(projectDir, "RESEARCH.md"));
+  const userRequestLocator = researchMd.includes(ORIGINAL_REQUEST_HEADER)
+    ? `the "${ORIGINAL_REQUEST_HEADER}" section at the top of RESEARCH.md (the verbatim user input; the PI-synthesized plan below it may have amplified scope)`
+    : `the entire RESEARCH.md file (this is a legacy project with no dedicated verbatim section)`;
+  parts.push(`<user_request_locator>${userRequestLocator}</user_request_locator>`);
+
+  // Field methodology standard — auto-extracted from downloaded literature by
+  // methodology-worker. Lets the PI compare the project's actual work against
+  // what standard papers in the field do, instead of judging only by report
+  // completeness.
+  const method = readFileSafe(join(projectDir, "notes", "methodology.md"));
+  if (method && method.trim().length > 40) {
+    parts.push(`<field_methodology_standard>
+This was extracted from the papers the project has downloaded into
+data/papers/. Treat it as a REVIEW BASELINE for judging methodology rigor —
+BUT subordinate to the user's original request (see \`<user_request_locator>\`
+above). When the PI-synthesized plan disagrees with the user's request, the
+request wins. If the user's request is specific and concrete, the project
+only has to answer THAT question well; the field standard below is advisory,
+and you flag gaps only when they undermine the user's own ask. If the user's
+request is open-ended (design / feasibility / investigate without a narrow
+target), the field standard is load-bearing — the agent is implicitly on the
+hook for what competent work in the field looks like, and you should call
+out methodology gaps even when the written report looks complete.
+${smartTruncate(method, 4000)}
+</field_methodology_standard>`);
+  }
+
+  // Full project code assembly — the report-surface view alone is not enough
+  // to catch methodology shortcuts. Read the actual simulation scripts and
+  // cross-check against the rigor bar from <field_methodology_standard>.
+  const codeBlock = buildProjectCodeBlock(projectDir);
+  if (codeBlock) parts.push(codeBlock);
+
+  return parts.join("\n\n");
+}
+
+// Full-inline budget for PI code assembly. Opus (1M ctx) comfortably holds
+// ~400 KB of source alongside the rest of the snapshot; realistic projects
+// have a few hundred KB of scripts total. Below this, PI sees every line —
+// that's the whole point of the layering fix. Above, per-file preview.
+const PI_CODE_FULL_INLINE_BUDGET = 400_000;
+const PI_CODE_PREVIEW_LINES = 60;
+
+function buildProjectCodeBlock(projectDir: string): string | null {
+  const entries = collectScripts(projectDir);
+  if (entries.length === 0) return null;
+
+  const totalChars = entries.reduce((n, e) => n + e.content.length, 0);
+  const full = totalChars <= PI_CODE_FULL_INLINE_BUDGET;
+  const mode = full ? "full" : "preview";
+
+  const blocks = entries.map(e => {
+    const body = full ? e.content : renderScriptPreview(e, PI_CODE_PREVIEW_LINES);
+    return `=== ${e.relPath} (${e.lines} lines) ===\n${body}`;
+  });
+
+  return `<project_code mode="${mode}" files="${entries.length}" total_chars="${totalChars}">
+The actual simulation / experiment code the project produced. Check this
+against <field_methodology_standard>. Common methodology tells worth flagging:
+
+- Comments like "phenomenological", "simplified model", "TODO proper" that
+  disagree with how the report frames the work
+- Different noise models / sample counts between baseline and treatment (not a
+  fair comparison)
+- Hardcoded error rates or shot counts well below the field's rigor bar
+- Missing key demonstrations that the field considers standard
+
+${blocks.join("\n\n")}
+</project_code>`;
 }
 
 // PI mode blocks (moved from pi-agent.ts)
@@ -158,6 +257,7 @@ After checking the logic chain, step back and ask yourself as an advisor — not
 - Are there obvious follow-up experiments that a good researcher would naturally pursue?
 - Is there a deeper insight hiding in the data that the agent didn't explore?
 - Did the agent just confirm what's already known, or did it push into genuinely new territory?
+- **Methodology gap check** (user-request-gated): The ground-truth deliverable is at \`<user_request_locator>\` above — read it first. If the user's request is specific and concrete, judge the work primarily against THAT request — the \`<field_methodology_standard>\` block is advisory and you only flag a gap if it undermines the user's own ask. If the user's request is open-ended (design / feasibility / investigate without a narrow target), treat the field standard as load-bearing: open \`<project_code>\` and the experiment notes, and check whether what the code *actually does* matches what the report *claims it does* and what the field standard *expects*. The failure mode to catch is: a methodologically weaker implementation dressed in a complete-looking report — e.g. the report's terminology is stronger than the code's actual behavior, or a baseline and a treatment are compared under asymmetric assumptions, or a demonstration that the field treats as standard is absent entirely. Derive the specifics from \`<field_methodology_standard>\` yourself; do not rely on pre-supplied examples.
 
 If the work is technically correct but intellectually shallow, say so directly.
 </depth_assessment>

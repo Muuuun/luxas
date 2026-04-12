@@ -9,6 +9,18 @@ export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Strict arXiv id: YYMM.NNNNN (4-5 digits after the dot). */
+export const ARXIV_ID_RE = /^\d{4}\.\d{4,5}$/;
+
+/**
+ * Section header under which `luxas init --prompt` preserves the user's
+ * verbatim request in RESEARCH.md. Downstream PI prompts key off this exact
+ * string to locate the ground-truth deliverable, so the writer and the
+ * readers must stay in sync — import this constant rather than typing the
+ * literal.
+ */
+export const ORIGINAL_REQUEST_HEADER = "## Original User Request";
+
 export function hasTexFiles(dir: string): boolean {
   try {
     return readdirSync(dir).some((f) => f.endsWith(".tex"));

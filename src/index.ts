@@ -36,6 +36,7 @@ if (existsSync(join(browserUseDir, "browser-use")) && !process.env.PATH?.include
   process.env.PATH = `${browserUseDir}:${process.env.PATH}`;
 }
 import { registerProject, updateProjectAfterRun, loadProjects } from "./memory.js";
+import { ORIGINAL_REQUEST_HEADER } from "./utils.js";
 
 
 const args = process.argv.slice(2);
@@ -317,10 +318,16 @@ async function initProject(dir: string, prompt?: string) {
   const researchFile = join(dir, "RESEARCH.md");
 
   if (prompt) {
-    // Generate RESEARCH.md from prompt using PI (Opus)
+    // Preserve the user's prompt verbatim so downstream agents (brain, PI)
+    // always see the ground-truth ask — not just the PI-synthesized plan
+    // which may amplify scope.
     console.log("Generating RESEARCH.md from prompt...");
-    const content = await generateResearchGoal(prompt);
-    writeFileSync(researchFile, content);
+    const plan = await generateResearchGoal(prompt);
+    if (!plan.trim() || !/^#\s*Research Goal\b/m.test(plan)) {
+      console.error("PI returned an invalid plan (empty or missing '# Research Goal' header). Aborting init.");
+      process.exit(1);
+    }
+    writeFileSync(researchFile, renderResearchDoc(prompt, plan));
     console.log(`Created ${researchFile} (PI-generated from prompt)`);
   } else if (!existsSync(researchFile)) {
     writeFileSync(researchFile, "# Research Goal\n\nDescribe your research goal here.\n");
@@ -344,6 +351,30 @@ async function initProject(dir: string, prompt?: string) {
   console.log(`Initialized Luxas project at ${dir}`);
 }
 
+/**
+ * Assemble the final RESEARCH.md: user's prompt verbatim at the top (fenced in
+ * a blockquote so any markdown it contains — headings, horizontal rules, code
+ * fences — can't corrupt the surrounding document structure), followed by the
+ * PI-synthesized plan. Downstream agents treat the Original User Request
+ * section as the authoritative deliverable spec; the plan may have amplified
+ * scope and should be cross-checked against the verbatim request.
+ */
+function renderResearchDoc(userPrompt: string, piPlan: string): string {
+  const quoted = userPrompt.trim().split("\n").map(l => l.length ? `> ${l}` : ">").join("\n");
+  return [
+    ORIGINAL_REQUEST_HEADER,
+    "",
+    "_The following block is the user's verbatim input. It is the ground truth for what the user asked for. The PI-synthesized plan below may drift — if it does, the request wins._",
+    "",
+    quoted,
+    "",
+    "---",
+    "",
+    piPlan.trim(),
+    "",
+  ].join("\n");
+}
+
 async function generateResearchGoal(prompt: string): Promise<string> {
   const { getModel, completeSimple } = await import("@mariozechner/pi-ai");
   const { getApiKey } = await import("./auth.js");
@@ -357,19 +388,19 @@ async function generateResearchGoal(prompt: string): Promise<string> {
 
   const systemPrompt = `You are a Principal Investigator (PI) — a senior professor defining a research agenda for an autonomous research agent.
 
-Given a topic or idea from the user, write a complete RESEARCH.md file that will guide the agent's research. The agent will:
+Given a topic or idea from the user, write a research plan that will guide the agent's research. The agent will:
 - Search and read academic papers
 - Run computational experiments
 - Write a LaTeX report
 
-Your RESEARCH.md must be specific enough to guide autonomous execution, but broad enough to allow the agent to discover unexpected directions.
+Your plan must be specific enough to guide autonomous execution, but broad enough to allow the agent to discover unexpected directions. **Do not amplify scope** beyond what the user asked: if the user asked a narrow question, plan a narrow investigation. The user's verbatim request will be preserved separately in the RESEARCH.md; you do not need to restate it.
 
 **CRITICAL — Language rule**: The research agent determines the report language from the RESEARCH.md language.
-- Default: write RESEARCH.md in the same language as the user's input. Chinese input → Chinese RESEARCH.md → Chinese report.
-- Exception: if the user explicitly requests a specific output language (e.g., "用英文写" or "write in English"), follow that instruction — write RESEARCH.md in the requested language.
+- Default: write the plan in the same language as the user's input. Chinese input → Chinese plan → Chinese report.
+- Exception: if the user explicitly requests a specific output language (e.g., "用英文写" or "write in English"), follow that instruction.
 - Never silently translate the user's input into English when they didn't ask for it.
 
-Output format — write ONLY the file content, no explanations:
+Output format — write ONLY the plan body, no explanations, no preamble, starting directly at "# Research Goal":
 
 # Research Goal
 
