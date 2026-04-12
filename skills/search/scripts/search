@@ -381,7 +381,15 @@ async function webFetch(url) {
 
 import { execSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, copyFileSync, statSync, unlinkSync } from "node:fs";
-import { join, extname, basename } from "node:path";
+import { join, extname, basename, isAbsolute } from "node:path";
+
+// Anchor relative paths against $LUXAS_PROJECT_DIR (set by harness at src/index.ts).
+// Falls back to cwd-relative when unset, preserving standalone CLI use.
+function anchorPath(p) {
+  if (!p || isAbsolute(p)) return p;
+  const root = process.env.LUXAS_PROJECT_DIR;
+  return root ? join(root, p) : p;
+}
 
 let cachedMirror = null;
 const SCIHUB_DISCOVER = join(import.meta.dirname ?? new URL(".", import.meta.url).pathname, "scihub-discover");
@@ -647,7 +655,7 @@ try {
     console.log(parts.join("\n\n"));
 
   } else if (command === "download") {
-    const outputDir = getFlag("output", "data/papers");
+    const outputDir = anchorPath(getFlag("output", "data/papers"));
     const arxivId = getFlag("arxiv", null);
     const doi = getFlag("doi", null);
     const url = getFlag("url", null);
@@ -659,7 +667,7 @@ try {
   } else if (command === "source") {
     const arxivId = args[1];
     if (!arxivId) { console.error("Usage: search source <arxivId>"); process.exit(1); }
-    const papersDir = getFlag("papers-dir", "data/papers");
+    const papersDir = anchorPath(getFlag("papers-dir", "data/papers"));
     const maxChars = parseInt(getFlag("max-chars", "100000"));
     // Download if not present
     const safeName = arxivId.replace(/\//g, "_");
@@ -710,7 +718,7 @@ try {
     } else if (isReadme) {
       await githubReadme(query);
     } else if (isClone) {
-      const outputDir = getFlag("output", "/tmp");
+      const outputDir = anchorPath(getFlag("output", "/tmp"));
       githubClone(query, outputDir);
     } else {
       const count = Math.min(parseInt(getFlag("count", "10")), 100);

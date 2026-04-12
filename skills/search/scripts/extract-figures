@@ -17,17 +17,28 @@ Output: figures/ subdirectory + manifest.json with caption metadata.
 import os, sys, re, json, time
 from pathlib import Path
 
+
+def anchor_path(p):
+    """Anchor relative paths against $LUXAS_PROJECT_DIR (set by harness at src/index.ts).
+    Falls back to cwd-relative when unset, preserving standalone CLI use."""
+    p = Path(p)
+    if p.is_absolute():
+        return p
+    root = os.environ.get("LUXAS_PROJECT_DIR")
+    return Path(root) / p if root else p
+
+
 # ─── Args ─────────────────────────────────────────────────
 
 if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
     print(__doc__.strip())
     sys.exit(0)
 
-paper_path = Path(sys.argv[1])
+paper_path = anchor_path(sys.argv[1])
 output_dir = None
 for i, a in enumerate(sys.argv):
     if a == "--output" and i + 1 < len(sys.argv):
-        output_dir = Path(sys.argv[i + 1])
+        output_dir = anchor_path(sys.argv[i + 1])
 
 if not paper_path.exists():
     print(f"Error: {paper_path} not found", file=sys.stderr)
@@ -228,18 +239,8 @@ if paper_path.is_dir():
     out = output_dir or (paper_path / "figures")
     extract_from_latex_source(paper_path, out)
 elif paper_path.suffix == ".pdf":
-    # PDF file
+    # PDF file → figures land next to it as {stem}_figures/
     out = output_dir or (paper_path.parent / (paper_path.stem + "_figures"))
-    # If paper is in data/papers/, put figures alongside as {id}/figures/
-    if "data/papers" in str(paper_path):
-        stem = paper_path.stem
-        out = output_dir or (paper_path.parent / stem / "figures")
-        # Simpler: just put next to pdf as {stem}_figures/
-        out = output_dir or (paper_path.with_suffix("") if paper_path.with_suffix("").is_dir()
-                             else paper_path.parent / (stem + "_figures"))
-        out = out / "figures" if out.exists() and not str(out).endswith("figures") else out
-        # Simplest: {paper_dir}/{stem}_figures/
-        out = output_dir or paper_path.parent / (stem + "_figures")
     extract_from_pdf(paper_path, out)
 else:
     print(json.dumps({"status": "error", "message": f"Unsupported: {paper_path}"}))

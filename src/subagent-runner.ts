@@ -46,6 +46,7 @@ function parseArgs(): { agent: string; task: string; project: string; id: string
 async function main() {
   const args = parseArgs();
   const projectDir = isAbsolute(args.project) ? args.project : resolve(args.project);
+  process.env.LUXAS_PROJECT_DIR = projectDir;  // see src/index.ts — same contract for detached subagent processes
   const agentDir = join(projectDir, ".agent");
   const sessionFile = isAbsolute(args.session) ? args.session : join(projectDir, args.session);
 

@@ -62,6 +62,12 @@ for (let i = 1; i < args.length; i++) {
 
 projectDir = resolve(projectDir);
 
+// Declared anchor for downstream CLI tools invoked via bash (e.g.
+// skills/search/scripts/search) — lets them resolve relative --output /
+// --papers-dir flags against project root instead of cwd, so `cd data/papers
+// && search source X` can't produce a nested data/papers/data/papers path.
+process.env.LUXAS_PROJECT_DIR = projectDir;
+
 if (command === "status") {
   showStatus(projectDir);
   process.exit(0);
