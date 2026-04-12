@@ -13,6 +13,7 @@
 
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { parseLiteratureCiteKeys } from "./methodology.js";
 
 // ── Interface ───────────────────────────────────────────────────────────────
 
@@ -239,6 +240,69 @@ const unresolvedLessons: ReminderProvider = {
   },
 };
 
+/**
+ * Citation integrity — every \cite{key} in report.tex must have a `### key`
+ * entry in notes/literature.md (i.e. a reader actually read that paper).
+ * State-driven: re-evaluates only when either file's mtime changes, so the
+ * hot path skips 100KB+ of I/O + regex scan on turns that edited neither.
+ */
+// Match \cite{…}, \citep, \citet, \cite* with optional [opts]. Hoisted so
+// V8 doesn't recompile per turn.
+const CITE_RE = /\\cite[a-zA-Z]*\*?(?:\[[^\]]*\])?\{([^}]+)\}/g;
+// Strip full-line LaTeX comments; the `[^\\]` guard keeps `\%` escapes intact.
+const TEX_COMMENT_RE = /(^|[^\\])%.*$/gm;
+
+const citationCache = new Map<string, { reportMtime: number; litMtime: number; result: string | null }>();
+
+const citationIntegrity: ReminderProvider = {
+  id: "citation-integrity",
+  priority: 18,
+  evaluate(ctx) {
+    const reportPath = join(ctx.projectDir, "report", "report.tex");
+    const litPath = join(ctx.projectDir, "notes", "literature.md");
+
+    let reportMtime = 0;
+    try { reportMtime = statSync(reportPath).mtimeMs; } catch { return null; }
+    let litMtime = 0;
+    try { litMtime = statSync(litPath).mtimeMs; } catch { /* missing — every cite is orphan */ }
+
+    const cached = citationCache.get(ctx.projectDir);
+    if (cached && cached.reportMtime === reportMtime && cached.litMtime === litMtime) {
+      return cached.result;
+    }
+
+    let report: string;
+    try { report = readFileSync(reportPath, "utf-8"); } catch { return null; }
+    const stripped = report.replace(TEX_COMMENT_RE, "$1");
+    const cited = new Set<string>();
+    CITE_RE.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = CITE_RE.exec(stripped)) !== null) {
+      for (const k of m[1].split(",")) {
+        const key = k.trim();
+        if (key) cited.add(key);
+      }
+    }
+
+    let result: string | null = null;
+    if (cited.size > 0) {
+      let litContent: string | null = null;
+      try { litContent = readFileSync(litPath, "utf-8"); } catch {}
+      const known = parseLiteratureCiteKeys(litContent);
+      const orphans: string[] = [];
+      for (const k of cited) if (!known.has(k)) orphans.push(k);
+      if (orphans.length > 0) {
+        const extra = Math.max(0, orphans.length - 6);
+        const shown = orphans.slice(0, 6).join(", ");
+        result = `Citation integrity: ${orphans.length} \\cite key(s) have no ### entry in notes/literature.md — ${shown}${extra ? ` (+${extra} more)` : ""}. Dispatch search (topical) or a reader (specific paper) to produce the entry, or remove the cite.`;
+      }
+    }
+
+    citationCache.set(ctx.projectDir, { reportMtime, litMtime, result });
+    return result;
+  },
+};
+
 // ── Export ───────────────────────────────────────────────────────────────────
 
 export const builtinProviders: ReminderProvider[] = [
@@ -249,5 +313,6 @@ export const builtinProviders: ReminderProvider[] = [
   postWorkers,
   postLatexError,
   paperFigures,
+  citationIntegrity,
   unresolvedLessons,
 ];

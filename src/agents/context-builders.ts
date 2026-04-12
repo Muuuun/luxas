@@ -154,7 +154,7 @@ function buildPIContext(projectDir: string, extra?: Record<string, any>): string
   parts.push(`<user_request_locator>${userRequestLocator}</user_request_locator>`);
 
   // Field methodology standard — auto-extracted from downloaded literature by
-  // methodology-worker. Lets the PI compare the project's actual work against
+  // the reader agent. Lets the PI compare the project's actual work against
   // what standard papers in the field do, instead of judging only by report
   // completeness.
   const method = readFileSafe(join(projectDir, "notes", "methodology.md"));

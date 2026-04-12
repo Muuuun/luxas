@@ -25,7 +25,7 @@ import { installUsageTracking } from "./usage-log.js";
 
 // ── Parse args ──────────────────────────────────────
 
-function parseArgs(): { agent: string; task: string; project: string; id: string; session: string } {
+function parseArgs(): { agent: string; task: string; project: string; id: string; session: string; "template-vars"?: string } {
   const args = process.argv.slice(2);
   const parsed: Record<string, string> = {};
   for (let i = 0; i < args.length; i += 2) {
@@ -63,12 +63,28 @@ async function main() {
   }, 30_000);
 
   try {
+    // Parse forwarded templateVars from the spawning parent (e.g. PAPER_ID for
+    // the reader). Fail fast — an agent spawned without its required vars
+    // would silently no-op on unresolved {{…}} in its system prompt.
+    let forwardedVars: Record<string, string> = {};
+    if (args["template-vars"]) {
+      try {
+        const parsed = JSON.parse(args["template-vars"]);
+        if (!parsed || typeof parsed !== "object") throw new Error("expected JSON object");
+        forwardedVars = parsed;
+      } catch (err) {
+        console.error(`Invalid --template-vars JSON: ${(err as any)?.message ?? err}`);
+        process.exit(1);
+      }
+    }
+
     // Build agent from definition (reuses the same logic as in-process spawnAgent)
     const spawnOpts: SpawnAgentOptions = {
       name: args.agent,
       prompt: args.task,
       projectDir,
       templateVars: {
+        ...forwardedVars,
         PROJECT_DIR: projectDir,
       },
       getApiKey,

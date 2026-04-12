@@ -241,7 +241,7 @@ function buildResearchSnapshot(opts: ContextTransformerOptions): string {
     parts.push("<literature_notes>(empty — no literature review yet)</literature_notes>");
   }
 
-  // Field methodology standard — auto-extracted by methodology-worker on paper download.
+  // Field methodology standard — auto-extracted by reader on paper download.
   // Brain should compare its own experiments/report against these standards.
   const method = readFileSafe(methodologyPath(projectDir));
   if (method && method.trim().length > 40) {
@@ -266,10 +266,14 @@ ${unprocessed.map(id => `- ${id}`).join("\n")}
 
 Each ID is either an arXiv-style subdirectory (data/papers/<id>/ with LaTeX source)
 or a flat PDF (data/papers/<id>.pdf from a DOI/URL download). Dispatch one
-methodology-worker per unprocessed paper:
-  spawn_agent(agent="methodology-worker", task="Extract methodology coverage from paper <id>.", templateVars={{ PAPER_ID: "<id>" }})
+reader per unprocessed paper (it writes BOTH methodology.md coverage and the
+literature.md per-paper entry in a single read pass):
+  spawn_agent(agent="reader", task="Read paper <id> and extract methodology + literature entry.", templateVars={{ PAPER_ID: "<id>" }})
 
-These can all run in parallel (background=true). The worker is cheap (haiku, ≤30s) and idempotent.
+Emit one call per paper in the SAME turn — the harness runs spawn_agent tool
+calls in parallel, so readers execute concurrently and all finish before the
+turn returns. Do NOT use background=true here; you want the entries on disk
+before you continue. The reader is cheap (haiku, ≤30s) and idempotent.
 </unprocessed_papers>`);
   }
 

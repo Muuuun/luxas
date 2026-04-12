@@ -21,6 +21,7 @@ import { autoPatch } from "agentsmelt";
 // is preserved to avoid orphaning accumulated knowledge.
 const agentSmeltHandle = autoPatch(Agent, "sisyphus");
 import { createResearchAgent } from "./agent.js";
+import { ensureLiteratureFile } from "./methodology.js";
 
 // Ensure pdflatex is in PATH (needed for usetex figstyles + compile_latex)
 try { execSync("which pdflatex", { stdio: "pipe" }); } catch {
@@ -340,8 +341,9 @@ async function initProject(dir: string, prompt?: string) {
     console.log(`Created ${researchFile}`);
   }
 
+  ensureLiteratureFile(dir);
+
   for (const [file, title] of [
-    ["notes/literature.md", "Literature Notes"],
     ["notes/experiments.md", "Experiment Notes"],
     ["notes/memory.md", "Memory"],
   ] as const) {

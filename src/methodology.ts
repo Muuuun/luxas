@@ -1,13 +1,15 @@
 /**
- * Shared helpers for the field-methodology extraction pipeline.
+ * Shared helpers for the reader pipeline (paper full-text extraction).
  *
- * - Template scaffold writer — called by the dispatcher before a worker spawns,
- *   so a worker crash can't leave notes/methodology.md in a clobber-prone
+ * - Template scaffolds — written before a reader spawns, so a reader crash
+ *   can't leave notes/methodology.md or notes/literature.md in a clobber-prone
  *   empty state.
  * - Ledger parser — lives here (shared between context.ts research snapshot
  *   and callers that want to check processed status).
  * - Paper ID discovery — lists both arXiv subdirectories and flat PDF files
  *   so DOI/URL downloads are caught by the fallback scan.
+ * - Literature cite-key extraction — reads `### <key>` headings so the
+ *   citation-integrity reminder can compare them against \cite{} in report.tex.
  */
 
 import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
@@ -101,4 +103,60 @@ export function findUnprocessedPapers(projectDir: string): string[] {
   const method = readFileSafe(methodologyPath(projectDir));
   const processed = parseProcessedLedger(method);
   return present.filter(id => !processed.has(id));
+}
+
+// ── Literature notes (owned by reader agent) ────────────────────────────────
+
+export const LITERATURE_TEMPLATE = `# Literature Notes
+
+Per-paper entries are written by the \`reader\` agent after it reads a paper's
+full text. Each entry's heading is its BibTeX \`cite_key\` — the same key used
+in \`report/references.bib\` and in \`\\cite{…}\` calls in \`report.tex\`.
+
+**Rule:** A \`\\cite{key}\` in the report is only valid if \`### key\` exists
+below (i.e. a reader actually read the paper). Brain may append observations
+under \`#### Notes:\` inside an existing entry but should NOT create new \`###\`
+entries — that would bypass the must-read-to-cite contract. If the brain needs
+a new reference, it should dispatch \`search\` (topical) or spawn a \`reader\`
+(specific paper) to produce the entry.
+
+`;
+
+export function literaturePath(projectDir: string): string {
+  return join(projectDir, "notes", "literature.md");
+}
+
+/**
+ * Ensure notes/literature.md exists with the standard scaffold. The size
+ * threshold upgrades a stub `# Literature Notes\n` header (written by older
+ * init logic) to the full reader-ownership contract text.
+ */
+export function ensureLiteratureFile(projectDir: string): void {
+  const path = literaturePath(projectDir);
+  try {
+    if (statSync(path).size > 80) return;
+  } catch { /* missing file — write it below */ }
+  mkdirSync(join(projectDir, "notes"), { recursive: true });
+  writeFileSync(path, LITERATURE_TEMPLATE);
+}
+
+/**
+ * Parse `### <key>` headings from literature.md. These are the cite_keys that
+ * reader has produced entries for — the ground-truth set of "papers actually
+ * read". Used by the citation-integrity reminder to flag \cite{} in report.tex
+ * that points at a paper never read.
+ */
+// Capture the first whitespace-delimited token after `### `. Trailing text
+// (e.g. `### Rubies2023 — collective emission`) is tolerated so the contract
+// survives minor prompt drift.
+const LITERATURE_HEADING_RE = /^###\s+(\S+)/;
+
+export function parseLiteratureCiteKeys(content: string | null): Set<string> {
+  const result = new Set<string>();
+  if (!content) return result;
+  for (const line of content.split("\n")) {
+    const m = line.match(LITERATURE_HEADING_RE);
+    if (m) result.add(m[1]);
+  }
+  return result;
 }

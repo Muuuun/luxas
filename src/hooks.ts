@@ -182,7 +182,7 @@ export function buildResearchHooks(opts: ResearchOptions) {
     }
 
     // 4. Notify on successful arXiv paper download so the caller (agent.ts) can
-    //    dispatch a methodology-worker. Hook stays policy-only.
+    //    dispatch a reader. Hook stays policy-only.
     //
     //    Arxiv-only here: DOI/URL downloads have non-predictable filename
     //    derivation, and the <unprocessed_papers> fallback in the research

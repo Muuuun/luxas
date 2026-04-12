@@ -35,9 +35,9 @@ export type LuxasEvent =
   // Planning phase
   | { type: "plan_created"; path: string }
   | { type: "plan_reviewed"; verdict: string; feedback: string }
-  // Methodology extraction (auto-dispatched after arXiv download)
-  | { type: "methodology_worker_done"; paperId: string; success: boolean; elapsedMs: number; summary: string }
-  | { type: "methodology_worker_failed"; paperId: string; error: string };
+  // Reader agent (auto-dispatched after arXiv download; writes notes/methodology.md + notes/literature.md)
+  | { type: "reader_done"; paperId: string; success: boolean; elapsedMs: number; summary: string }
+  | { type: "reader_failed"; paperId: string; error: string };
 
 export type ExtensionHandler<E extends LuxasEvent = LuxasEvent> =
   (event: E) => Promise<void> | void;

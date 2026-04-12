@@ -61,6 +61,9 @@ export function createSpawnAgentTool(
     id: Type.Optional(Type.String({
       description: 'Agent ID to query status for (e.g. "brain.worker-bg-1"). Required when action="status".',
     })),
+    templateVars: Type.Optional(Type.Record(Type.String(), Type.String(), {
+      description: 'Per-call template variables substituted into the sub-agent\'s system prompt (e.g. {PAPER_ID: "2301.07041"} for the reader agent). PROJECT_DIR is always injected automatically; do not set it here. Forwarded through to both foreground and background spawns.',
+    })),
   });
 
   /**
@@ -80,8 +83,11 @@ export function createSpawnAgentTool(
     description:
       "Spawn a sub-agent to handle a task. Choose the agent type based on the task.\n\n" +
       "Available agents:\n" + agentCatalog + "\n\n" +
-      "For parallel work, use the `tasks` parameter to spawn multiple instances:\n" +
+      "For parallel work spawning the SAME agent with multiple task strings (shared template vars), use `tasks`:\n" +
       'spawn_agent(agent="worker", tasks=["read paper A", "read paper B"])\n\n' +
+      "To spawn multiple instances with DIFFERENT template vars (e.g. one reader per PAPER_ID), emit multiple spawn_agent calls in the same turn — the harness runs tool calls in parallel:\n" +
+      'spawn_agent(agent="reader", task="Read paper 2301.07041", templateVars={PAPER_ID: "2301.07041"})\n' +
+      'spawn_agent(agent="reader", task="Read paper 2405.12345", templateVars={PAPER_ID: "2405.12345"})\n\n' +
       "For long-running tasks, use `background: true` — you continue working while the agent runs.\n" +
       "Results are delivered back as a message when done. Good for sub-brain research tasks.\n" +
       'spawn_agent(agent="brain", task="investigate sub-topic X in depth", background=true)\n\n' +
@@ -95,7 +101,7 @@ export function createSpawnAgentTool(
 
     async execute(
       _toolCallId: string,
-      params: { agent: string; task: string; tasks?: string[]; background?: boolean; thinkingLevel?: string; action?: string; id?: string },
+      params: { agent: string; task: string; tasks?: string[]; background?: boolean; thinkingLevel?: string; action?: string; id?: string; templateVars?: Record<string, string> },
     ) {
       // ── Status query ──
       if (params.action === "status" && params.id) {
@@ -127,9 +133,16 @@ export function createSpawnAgentTool(
         };
       }
 
+      // Merge per-call templateVars over the factory defaults (PROJECT_DIR etc).
+      // The factory defaults win for PROJECT_DIR to avoid letting a caller
+      // redirect the sub-agent at a different project.
+      const mergedTemplateVars = {
+        ...(params.templateVars ?? {}),
+        ...templateVars,
+      };
       const baseOpts: Omit<SpawnAgentOptions, "prompt" | "instanceIndex"> = {
         name: params.agent,
-        templateVars,
+        templateVars: mergedTemplateVars,
         projectDir,
         getApiKey,
         parentAgentId: parentAgentId ?? "brain",
@@ -153,7 +166,14 @@ export function createSpawnAgentTool(
         const agentId = `${parentAgentId ?? "brain"}.${params.agent}-${bgId}`;
         const convFile = join(agentDir, "conversations", `${agentId}.jsonl`);
 
-        const child = spawn("node", [
+        // Forward the merged templateVars to the subprocess so background
+        // spawns see the same vars as foreground. PROJECT_DIR is re-injected
+        // by the subagent-runner and stripped here to keep callers from
+        // redirecting the sub-agent at a different project.
+        const bgTemplateVars: Record<string, string> = { ...mergedTemplateVars };
+        delete bgTemplateVars.PROJECT_DIR;
+
+        const args = [
           "--import=tsx",
           join(luxasRoot, "src", "subagent-runner.ts"),
           "--agent", params.agent,
@@ -161,7 +181,12 @@ export function createSpawnAgentTool(
           "--project", projectDir,
           "--id", agentId,
           "--session", convFile,
-        ], {
+        ];
+        if (Object.keys(bgTemplateVars).length > 0) {
+          args.push("--template-vars", JSON.stringify(bgTemplateVars));
+        }
+
+        const child = spawn("node", args, {
           detached: true,
           stdio: "ignore",
         });

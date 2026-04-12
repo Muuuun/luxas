@@ -60,7 +60,7 @@ scripts/search download --url "https://example.com/paper.pdf" --output data/pape
 - URL: direct download.
 - Default `--output`: `data/papers/`
 
-**Automatic methodology extraction (arXiv only).** After a successful `search download --arxiv <id>`, a background `methodology-worker` is dispatched automatically to read the paper's main text + figure manifest and append coverage entries (what's computed, what's demo'd, what goes in figures, what rigor bar) into `notes/methodology.md`. You never need to launch this worker manually. If it silently misses a paper (hook race, manual drop), the research snapshot will surface an `<unprocessed_papers>` reminder asking you to `spawn_agent(agent="methodology-worker", ...)` for the gap.
+**Automatic reader dispatch (arXiv only).** After a successful `search download --arxiv <id>`, a background `reader` is dispatched automatically. It reads the paper's main text + figure manifest and writes two things in a single pass: methodology coverage (A/B/C/D: what's computed, what's demo'd, what goes in figures, what rigor bar) into `notes/methodology.md`, AND a per-paper literature entry (keyed by `cite_key`) into `notes/literature.md`. You never need to launch the reader manually. If it silently misses a paper (hook race, manual drop, DOI download), the research snapshot will surface an `<unprocessed_papers>` reminder asking you to `spawn_agent(agent="reader", ...)` for the gap.
 
 ### LaTeX Source
 
