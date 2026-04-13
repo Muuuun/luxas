@@ -1,0 +1,3 @@
+google-genai>=1.0
+rembg[cpu]>=2.0
+Pillow>=10.0

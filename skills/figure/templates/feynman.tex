@@ -1,0 +1,13 @@
+% Feynman diagram — tikz-feynman (automatic layout).
+% Requires LuaLaTeX for best results: compile with `lualatex file.tex`.
+\documentclass[border=4pt]{standalone}
+\usepackage{tikz}
+\usepackage{tikz-feynman}
+
+\begin{document}
+\feynmandiagram [horizontal=a to b] {
+  i1 [particle=\(e^{-}\)] -- [fermion] a -- [fermion] i2 [particle=\(e^{-}\)],
+  a -- [photon, edge label=\(\gamma\)] b,
+  f1 [particle=\(e^{+}\)] -- [fermion] b -- [fermion] f2 [particle=\(e^{+}\)],
+};
+\end{document}

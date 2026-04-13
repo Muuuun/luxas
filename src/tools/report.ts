@@ -74,7 +74,7 @@ function resolveTexPath(): string {
 
 let cachedTexPath: string | null = null;
 
-function getTexEnv(): Record<string, string> {
+export function getTexEnv(): Record<string, string> {
   if (cachedTexPath === null) {
     cachedTexPath = resolveTexPath();
   }

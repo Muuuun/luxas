@@ -1,0 +1,12 @@
+% Quantum circuit — quantikz (successor of qcircuit).
+% Install: quantikz is in TeXLive; \usepackage{quantikz}
+\documentclass[border=4pt]{standalone}
+\usepackage{quantikz}
+\usepackage{amsmath,amssymb}
+
+\begin{document}
+\begin{quantikz}
+  \lstick{$\ket{0}$} & \gate{H}      & \ctrl{1} & \qw       & \meter{} \\
+  \lstick{$\ket{0}$} & \qw           & \targ{}  & \gate{R_z(\theta)} & \meter{}
+\end{quantikz}
+\end{document}

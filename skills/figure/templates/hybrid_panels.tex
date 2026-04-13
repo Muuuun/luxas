@@ -1,0 +1,66 @@
+% Multi-panel hybrid figure skeleton — raster slots + pure-TikZ panels.
+% Adapted from the proven atom-ion figure-1 prototype.
+%
+% Workflow:
+%   1. Generate raster components with scripts/hybrid_gen.py into assets/
+%   2. Adjust \includegraphics paths + panel labels below
+%   3. Tune coordinates via preview iterations
+\documentclass[border=4pt]{standalone}
+
+\usepackage{tikz}
+\usepackage{graphicx}
+\usepackage{amsmath,amssymb}
+\usepackage{siunitx}
+\usepackage{braket}
+\usepackage{xcolor}
+
+\usetikzlibrary{positioning,arrows.meta,calc,decorations.pathmorphing,
+                decorations.markings,backgrounds}
+
+\definecolor{oiBlue}{HTML}{0072B2}
+\definecolor{oiVerm}{HTML}{D55E00}
+\definecolor{oiOrange}{HTML}{E69F00}
+\definecolor{oiPurple}{HTML}{8E44AD}
+\definecolor{oiGreen}{HTML}{009E73}
+\definecolor{labelGray}{HTML}{444444}
+
+\colorlet{atomC}{oiBlue}
+\colorlet{ionC}{oiVerm}
+\colorlet{laserC}{oiOrange}
+\colorlet{accentC}{oiPurple}
+\colorlet{highlightC}{oiGreen}
+
+\begin{document}
+\begin{tikzpicture}[font=\sffamily]
+
+  %% ====================================================
+  %% Panel (a) — raster + TikZ labels
+  %% ====================================================
+  \begin{scope}[local bounding box=panelA]
+    % Raster slot 1
+    % \node[inner sep=0pt] (obj1) at (0,0) {\includegraphics[height=4cm]{assets/obj1.png}};
+
+    % TikZ labels / arrows overlaid
+    % \node[atomC, font=\small\bfseries] at ($(obj1)+(0,-1.5)$) {label};
+
+    \node[font=\large\bfseries] at (-2.5, 2.3) {(a)};
+  \end{scope}
+
+  %% ====================================================
+  %% Panel (b) — pure TikZ
+  %% ====================================================
+  \begin{scope}[xshift=9cm, local bounding box=panelB]
+    % Draw energy levels, arrows, kets here
+    \node[font=\large\bfseries] at (-0.5, 2.3) {(b)};
+  \end{scope}
+
+  %% ====================================================
+  %% Panel (c) — pure TikZ
+  %% ====================================================
+  \begin{scope}[xshift=14cm, local bounding box=panelC]
+    % Force diagram / phase-space / schematic conclusion
+    \node[font=\large\bfseries] at (-0.5, 2.3) {(c)};
+  \end{scope}
+
+\end{tikzpicture}
+\end{document}

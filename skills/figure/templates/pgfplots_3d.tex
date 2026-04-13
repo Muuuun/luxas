@@ -1,0 +1,19 @@
+% 3D surface plot — pgfplots.
+\documentclass[border=4pt]{standalone}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+
+\begin{document}
+\begin{tikzpicture}
+\begin{axis}[
+    width=9cm, height=7cm,
+    xlabel=$x$, ylabel=$y$, zlabel=$E(x,y)$,
+    view={40}{30},
+    colormap/viridis,
+    font=\sffamily,
+]
+\addplot3[surf, shader=interp, samples=40, domain=-3:3, y domain=-3:3]
+  { exp(-(x^2+y^2)/4) };
+\end{axis}
+\end{tikzpicture}
+\end{document}

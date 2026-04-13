@@ -5,7 +5,7 @@
 import { createCodingTools, createReadTool } from "@mariozechner/pi-coding-agent";
 import { createReportTools } from "../tools/report.js";
 import { createWolframTool } from "../tools/wolfram.js";
-import { createImageGenTool } from "../tools/image-gen.js";
+import { createFigureGenTools } from "../tools/figure-gen.js";
 
 export type ToolSetFactory = (projectDir: string) => any[];
 
@@ -14,7 +14,7 @@ const TOOL_SETS: Record<string, ToolSetFactory> = {
   report: (dir) => createReportTools(dir),
   pi: (dir) => [createReadTool(dir)],
   wolfram: () => [createWolframTool()],
-  imagegen: (dir) => [createImageGenTool(dir)],
+  "figure-gen": (dir) => createFigureGenTools(dir),
 };
 
 /**

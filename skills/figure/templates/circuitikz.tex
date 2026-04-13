@@ -1,0 +1,14 @@
+% Classical electronic circuit — circuitikz.
+\documentclass[border=4pt]{standalone}
+\usepackage{circuitikz}
+
+\begin{document}
+\begin{circuitikz}[american voltages]
+  \draw
+    (0,0) to[V, l=$V_\text{in}$] (0,3)
+          to[R, l=$R_1$]         (3,3)
+          to[C, l=$C_1$]         (3,0)
+          to[short] (0,0);
+  \draw (3,3) to[short, -o] (4,3) node[right]{$V_\text{out}$};
+\end{circuitikz}
+\end{document}

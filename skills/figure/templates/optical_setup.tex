@@ -1,0 +1,31 @@
+% Optical bench cartoon — pure TikZ.
+% For truly 3D / textured apparatus, use hybrid pipeline instead.
+\documentclass[border=4pt]{standalone}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta, decorations.markings, calc}
+
+\definecolor{laserC}{HTML}{E69F00}
+\definecolor{atomC}{HTML}{0072B2}
+
+\begin{document}
+\begin{tikzpicture}[font=\sffamily]
+  % Laser source
+  \draw[fill=gray!30] (0,0) rectangle (0.7,0.4);
+  \node[font=\scriptsize] at (0.35,-0.25) {laser};
+
+  % Beam (gradient-ish: two overlapping lines)
+  \draw[laserC, line width=3pt, opacity=0.25] (0.7,0.2) -- (5.3,0.2);
+  \draw[laserC, line width=1pt]               (0.7,0.2) -- (5.3,0.2);
+
+  % Lens (biconvex icon)
+  \draw[thick] (3.0,0.2) ellipse[x radius=0.1, y radius=0.5];
+
+  % Focal point / atom
+  \fill[atomC] (5.5,0.2) circle (0.1);
+  \node[atomC, font=\scriptsize, below=2pt of {(5.5,0.2)}] {atom};
+
+  % Beam-axis label
+  \node[font=\scriptsize] at (3.0, 0.9) {beam axis};
+  \draw[->, thin] (2.7, 0.8) -- (2.3, 0.3);
+\end{tikzpicture}
+\end{document}

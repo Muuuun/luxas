@@ -1,0 +1,40 @@
+% Base template — standalone TikZ figure with standard packages + Okabe-Ito palette.
+% Copy into figures/figure_X.tex and extend.
+\documentclass[border=4pt]{standalone}
+
+\usepackage{tikz}
+\usepackage{graphicx}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{siunitx}
+\usepackage{braket}
+\usepackage{xcolor}
+
+\usetikzlibrary{positioning,arrows.meta,calc,decorations.pathmorphing,
+                decorations.markings,backgrounds,fit,shapes.geometric}
+
+% Okabe-Ito colorblind-safe palette (use these as semantic defaults)
+\definecolor{oiBlack}{HTML}{000000}
+\definecolor{oiOrange}{HTML}{E69F00}
+\definecolor{oiSkyBlue}{HTML}{56B4E9}
+\definecolor{oiGreen}{HTML}{009E73}
+\definecolor{oiYellow}{HTML}{F0E442}
+\definecolor{oiBlue}{HTML}{0072B2}
+\definecolor{oiVerm}{HTML}{D55E00}
+\definecolor{oiPurple}{HTML}{CC79A7}
+\definecolor{labelGray}{HTML}{444444}
+
+% Common semantic aliases — rename per project
+\colorlet{atomC}{oiBlue}
+\colorlet{ionC}{oiVerm}
+\colorlet{laserC}{oiOrange}
+\colorlet{accentC}{oiPurple}
+\colorlet{highlightC}{oiGreen}
+
+\begin{document}
+\begin{tikzpicture}[font=\sffamily]
+
+  % Your content here
+  \node[font=\small\bfseries] at (0,0) {hello};
+
+\end{tikzpicture}
+\end{document}

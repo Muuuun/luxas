@@ -21,6 +21,7 @@ export interface AgentDefinition {
   safetyWrapper?: string;           // function name in safety-wrappers registry
   templates: string[];              // declared template variable names
   canSpawn: boolean;                // can this agent spawn sub-agents?
+  allowedSpawn?: string[];          // if set, restricts which sub-agent names can be spawned
   systemPromptTemplate: string;     // markdown body with {{VAR}} placeholders
 }
 
@@ -102,6 +103,7 @@ function parseAgentDefinition(raw: string, filename: string): AgentDefinition | 
     safetyWrapper: fields.safetyWrapper === "null" ? undefined : fields.safetyWrapper,
     templates: parseYamlArray(fields.templates),
     canSpawn: fields.canSpawn === "true" || fields.canSpawn === true,
+    allowedSpawn: fields.allowedSpawn ? parseYamlArray(fields.allowedSpawn) : undefined,
     systemPromptTemplate: body.trim(),
   };
 }

@@ -30,11 +30,15 @@ export function createSpawnAgentTool(
   depth?: number,
   /** Reference to the parent Agent instance — needed for steer() on background completion */
   parentAgent?: AgentType,
+  /** If set, restricts which sub-agent names this parent may spawn. */
+  allowedSpawn?: string[],
 ) {
   const agentDir = join(projectDir, ".agent");
   const luxasRoot = join(dirname(fileURLToPath(import.meta.url)), "../..");
-  // Build agent catalog for the tool description
-  const agents = listAgentDescriptions();
+  const allAgents = listAgentDescriptions();
+  const agents = allowedSpawn
+    ? allAgents.filter(a => allowedSpawn.includes(a.name))
+    : allAgents;
   const agentCatalog = agents
     .map(a => `- **${a.name}**: ${a.description}${a.canSpawn ? " (can spawn sub-agents)" : ""}`)
     .join("\n");
@@ -70,9 +74,9 @@ export function createSpawnAgentTool(
    * Factory for creating a spawn_agent tool scoped to a specific parent.
    * Used by spawn.ts when canSpawn=true to give sub-agents their own spawn tool.
    */
-  function makeSpawnTool(parentId: string, childDepth: number): any {
+  function makeSpawnTool(parentId: string, childDepth: number, childAllowedSpawn?: string[]): any {
     // Sub-agents don't get background capability (no parentAgent ref to steer)
-    return createSpawnAgentTool(projectDir, templateVars, getApiKey, parentId, childDepth);
+    return createSpawnAgentTool(projectDir, templateVars, getApiKey, parentId, childDepth, undefined, childAllowedSpawn);
   }
 
   let bgCounter = 0;
@@ -129,6 +133,14 @@ export function createSpawnAgentTool(
       } catch (err: any) {
         return {
           content: [{ type: "text" as const, text: err.message }],
+          details: { success: false },
+        };
+      }
+
+      // Enforce allowedSpawn restriction (if parent is scoped)
+      if (allowedSpawn && !allowedSpawn.includes(params.agent)) {
+        return {
+          content: [{ type: "text" as const, text: `Agent "${params.agent}" is not in this agent's allowedSpawn list. Allowed: ${allowedSpawn.join(", ")}.` }],
           details: { success: false },
         };
       }

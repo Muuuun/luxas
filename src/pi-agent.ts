@@ -18,13 +18,13 @@
 import { Agent } from "@mariozechner/pi-agent-core";
 import { getModel } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
-import { existsSync, writeFileSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { execSync } from "node:child_process";
 import { createReadTool } from "@mariozechner/pi-coding-agent";
 import { nameAgent } from "agentsmelt";
 import { getApiKey } from "./auth.js";
 import { spawnAgent } from "./agents/spawn.js";
+import { createSpawnAgentTool } from "./tools/spawn-agent.js";
 import { readFileSafe } from "./utils.js";
 
 // PI system prompt is now in agents/definitions/pi.md
@@ -204,35 +204,6 @@ export function setupPIFallbackMonitor(
 }
 
 // ---------------------------------------------------------------------------
-// PDF → PNG rendering for visual review
-// ---------------------------------------------------------------------------
-
-function renderPdfPages(projectDir: string): string[] {
-  const pdfPath = join(projectDir, "report", "report.pdf");
-  if (!existsSync(pdfPath)) return [];
-
-  const outDir = join(projectDir, "report", "review-pages");
-  mkdirSync(outDir, { recursive: true });
-
-  try {
-    execSync(`pdftoppm -png -r 150 "${pdfPath}" "${join(outDir, "page")}"`,
-      { timeout: 30_000, stdio: "pipe" });
-  } catch {
-    return [];
-  }
-
-  return readdirSync(outDir)
-    .filter(f => f.endsWith(".png"))
-    .sort()
-    .map(f => join("report", "review-pages", f));
-}
-
-function cleanupReviewPages(projectDir: string): void {
-  const outDir = join(projectDir, "report", "review-pages");
-  if (existsSync(outDir)) rmSync(outDir, { recursive: true });
-}
-
-// ---------------------------------------------------------------------------
 // One-shot PI Evaluation (Opus — flagship)
 // ---------------------------------------------------------------------------
 
@@ -301,20 +272,11 @@ async function evaluateProgress(
     },
   };
 
-  // Render PDF pages for visual inspection
-  const pagePngs = renderPdfPages(opts.projectDir);
+  // Visual review is delegated to the illustrator sub-agent (see reviewer.md).
+  const fullStateText = stateText;
 
-  // Append page list to state text if pages were rendered
-  let fullStateText = stateText;
-  if (pagePngs.length > 0) {
-    fullStateText += "\n\n" +
-      `# Report Pages for Visual Review (${pagePngs.length} pages)\n` +
-      `You MUST use the read tool to view EACH page image below and check visual quality before submitting your verdict.\n` +
-      `- Figure quality: labels readable at print size? Legends present? Fonts consistent?\n` +
-      `- Layout: proper margins, no orphan lines, tables formatted correctly?\n` +
-      `- Overall: does this look like a publishable document?\n\n` +
-      pagePngs.map(p => `- ${p}`).join("\n");
-  }
+  const makeSpawnTool = (parentId: string, childDepth: number, childAllowedSpawn?: string[]) =>
+    createSpawnAgentTool(opts.projectDir, {}, getApiKey, parentId, childDepth, undefined, childAllowedSpawn);
 
   // Spawn PI agent via the centralized spawner
   await spawnAgent({
@@ -326,10 +288,8 @@ async function evaluateProgress(
     toolOverrides: [verdictTool],
     contextExtra: { isSurvey, isPlanReview },
     parentAgentId: "brain",
+    createSpawnTool: makeSpawnTool,
   });
-
-  // Clean up rendered pages
-  cleanupReviewPages(opts.projectDir);
 
   return (
     result ?? {

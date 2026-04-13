@@ -73,7 +73,7 @@ export interface SpawnAgentOptions {
    * Factory for the spawn_agent tool — injected by spawn-agent.ts to avoid circular imports.
    * Only used when the definition has canSpawn: true.
    */
-  createSpawnTool?: (parentId: string, depth: number) => any;
+  createSpawnTool?: (parentId: string, depth: number, allowedSpawn?: string[]) => any;
 }
 
 export interface SpawnAgentResult {
@@ -123,7 +123,7 @@ export function buildAgentFromDefinition(opts: SpawnAgentOptions): BuiltAgent {
 
   // 6. If canSpawn and within depth limit, inject spawn_agent tool for recursion
   if (def.canSpawn && depth < MAX_SPAWN_DEPTH && opts.createSpawnTool) {
-    const spawnTool = opts.createSpawnTool(agentId, depth + 1);
+    const spawnTool = opts.createSpawnTool(agentId, depth + 1, def.allowedSpawn);
     tools = [...tools, spawnTool];
   }
 

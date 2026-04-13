@@ -1,0 +1,36 @@
+% Pulse sequence (NMR / qubit timing) — pure TikZ.
+\documentclass[border=4pt]{standalone}
+\usepackage{tikz}
+\usepackage{amsmath}
+
+\definecolor{oiBlue}{HTML}{0072B2}
+\definecolor{oiVerm}{HTML}{D55E00}
+\definecolor{oiGreen}{HTML}{009E73}
+
+\begin{document}
+\begin{tikzpicture}[font=\sffamily, >=stealth]
+  % Time axis
+  \draw[->] (0,0) -- (9.5,0) node[right]{$t$};
+
+  % Channel 1
+  \node[left=4pt of {(0,1)}, font=\small] {Ch.1};
+  \draw[thick] (0,1) -- (1,1);
+  \draw[oiBlue, thick, fill=oiBlue!30] (1,1) rectangle (2.0,1.6);
+  \node[font=\scriptsize] at (1.5, 1.3) {$\pi/2$};
+  \draw[thick] (2.0,1) -- (4.5,1);
+  \draw[oiBlue, thick, fill=oiBlue!30] (4.5,1) rectangle (5.2,1.6);
+  \node[font=\scriptsize] at (4.85, 1.3) {$\pi$};
+  \draw[thick] (5.2,1) -- (9,1);
+
+  % Channel 2
+  \node[left=4pt of {(0,2.5)}, font=\small] {Ch.2};
+  \draw[thick] (0,2.5) -- (2.5,2.5);
+  \draw[oiVerm, thick, fill=oiVerm!30] (2.5,2.5) rectangle (4.0,3.1);
+  \node[font=\scriptsize] at (3.25, 2.8) {evolve};
+  \draw[thick] (4.0,2.5) -- (9,2.5);
+
+  % Readout marker
+  \draw[oiGreen, thick, dashed] (8.5, -0.2) -- (8.5, 3.3);
+  \node[oiGreen, font=\scriptsize, above] at (8.5, 3.3) {readout};
+\end{tikzpicture}
+\end{document}
