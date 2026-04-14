@@ -9,6 +9,9 @@
  *   luxas init [project-dir]             Initialize a new project
  *   luxas init [project-dir] --prompt "..." Generate RESEARCH.md from a topic
  *   luxas list                           List all projects
+ *   luxas figures [project-dir]          Re-audit and re-render figures
+ *          [--figure NAME]               Target one figure only (e.g. --figure 1)
+ *          [--audit-only]                Audit existing figures, no regeneration
  */
 
 import { existsSync, readFileSync, readdirSync, mkdirSync, writeFileSync, renameSync } from "node:fs";
@@ -48,6 +51,8 @@ let projectDir = ".";
 let model = "opus";
 let directive: string | undefined;
 let initPrompt: string | undefined;
+let figureTarget: string | undefined;
+let auditOnly = false;
 
 for (let i = 1; i < args.length; i++) {
   if (args[i] === "--model" && args[i + 1]) {
@@ -56,6 +61,10 @@ for (let i = 1; i < args.length; i++) {
     directive = args[++i];
   } else if (args[i] === "--prompt" && args[i + 1]) {
     initPrompt = args[++i];
+  } else if (args[i] === "--figure" && args[i + 1]) {
+    figureTarget = args[++i];
+  } else if (args[i] === "--audit-only") {
+    auditOnly = true;
   } else if (!args[i].startsWith("--")) {
     projectDir = args[i];
   }
@@ -89,8 +98,17 @@ if (command === "run") {
   process.exit(0);
 }
 
+if (command === "figures") {
+  if (auditOnly && figureTarget) {
+    console.error("--audit-only and --figure are mutually exclusive");
+    process.exit(1);
+  }
+  await runFigures(projectDir, { figure: figureTarget, auditOnly });
+  process.exit(0);
+}
+
 console.error(`Unknown command: ${command}`);
-console.error("Usage: luxas <run|status|init|list> [project-dir] [--model sonnet|opus|haiku]");
+console.error("Usage: luxas <run|status|init|list|figures> [project-dir] [options]");
 process.exit(1);
 
 // ─── Commands ────────────────────────────────────────────
@@ -195,6 +213,56 @@ function buildPrompt(researchGoal: string, userDirective?: string): string {
   return userDirective
     ? `Research goal (from RESEARCH.md):\n${researchGoal}\n\nAdditional directive: ${userDirective}`
     : `Research goal (from RESEARCH.md):\n${researchGoal}\n\nStart by reading RESEARCH.md for the full goal, then check notes/literature.md and notes/experiments.md for any existing progress. Proceed with the research.`;
+}
+
+async function runFigures(dir: string, opts: { figure?: string; auditOnly?: boolean }) {
+  const reportTex = join(dir, "report", "report.tex");
+  if (!existsSync(reportTex)) {
+    console.error(`No report/report.tex found in ${dir}`);
+    console.error("The figures command operates on an existing project. Run `luxas run` first.");
+    process.exit(1);
+  }
+
+  const { spawnAgent } = await import("./agents/spawn.js");
+  const { getApiKey } = await import("./auth.js");
+
+  const mode = opts.auditOnly
+    ? "audit only"
+    : opts.figure
+      ? `regenerate figure_${opts.figure}`
+      : "audit + regenerate all figures";
+
+  console.log(`\n🎨 Luxas Figures — ${mode}`);
+  console.log(`   Project: ${dir}`);
+  if (!process.env.GEMINI_API_KEY && !opts.auditOnly) {
+    console.error(`   ⚠ GEMINI_API_KEY not set — hybrid raster generation will fail.`);
+  }
+  console.log();
+
+  // Task prompts are terse on purpose: illustrator's system prompt
+  // (agents/definitions/illustrator.md) holds the full methodology — data
+  // sourcing, pipeline, iteration rules. Repeating it here would drift.
+  const task = opts.auditOnly
+    ? `Audit all figures in this project. Write findings to reviews/illustrator_notes.md. Do NOT regenerate anything.`
+    : opts.figure
+      ? `Regenerate figure_${opts.figure} for this project. Follow your standard Branch B (GENERATE) procedure.`
+      : `Re-optimize all figures. First audit (write reviews/illustrator_notes.md), then regenerate every figure flagged in audit plus any missing ones referenced by report/report.tex. Follow your standard procedure.`;
+
+  const result = await spawnAgent({
+    name: "illustrator",
+    templateVars: {},
+    prompt: task,
+    projectDir: dir,
+    getApiKey,
+    parentAgentId: "figures-cli",
+  });
+
+  if (!result.success) {
+    console.error(`\n✗ ${result.output}`);
+    process.exit(1);
+  }
+  console.log(`\n✓ Done in ${Math.floor(result.elapsed / 1000)}s`);
+  if (result.output) console.log(result.output);
 }
 
 function showStatus(dir: string) {

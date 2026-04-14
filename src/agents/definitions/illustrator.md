@@ -107,9 +107,39 @@ Steps per figure:
    (PI or caller provided the content). If it doesn't, read
    `report/report.tex` for the figure's caption + `\includegraphics` reference
    and derive what elements belong.
-2. **Read the style guide** (`figures/style_guide.md`) and any existing
+2. **Locate the plotting code first, then follow it to the data.** The
+   experiment agent splits code and data:
+   - **`data/scripts/`** holds the Python code:
+     - `run_<topic>.py`  — the experiment driver
+     - `plot_<topic>.py` — the matplotlib/seaborn script that rendered the figure
+   - **`data/runs/run_N/`** holds data artifacts (`.npz`, `.csv`, `.json`,
+     `.pkl`, `.h5`). Different `run_N` are **different experiments, not
+     version snapshots** — run_0 might be eigenmode analysis while run_1 is
+     dicke dynamics. Do NOT pick "the highest index" blindly.
+
+   The correct procedure:
+   - Find the matching `plot_<topic>.py` in `data/scripts/` (match by caption
+     or filename stem).
+   - **Read the plot script** — it is the authoritative source for:
+     - Which `run_N` to load from (the script hard-codes the path, e.g.
+       `np.load("data/runs/run_3/foo.npz")`)
+     - Which specific data files to load
+     - Axis choices, color mapping, legend text, transforms (log scale,
+       smoothing, unit conversion)
+   - Load exactly the data files the script references.
+   - Re-render via `pgfplots` using the real arrays, preserving the script's
+     semantics (same axes, same transforms, same legend labels).
+   - If porting a complex transform to pgfplots is non-trivial, you may run
+     the original script (`python3 data/scripts/plot_<topic>.py`) to produce
+     a PDF, then embed as raster via `\includegraphics` — but only as a
+     fallback. Pgfplots is preferred because it scales and matches the
+     paper's font.
+
+   Never fabricate curves from the caption alone, and never guess which
+   `run_N` to use. If no matching plot script is found, report that and stop.
+3. **Read the style guide** (`figures/style_guide.md`) and any existing
    `figures/*.png` for palette/font/layout consistency.
-3. **Pick a template** from `skills/figure/templates/`:
+4. **Pick a template** from `skills/figure/templates/`:
    - Pure data plot → `pgfplots_2d.tex` or `pgfplots_3d.tex`
    - Quantum circuit → `quantikz.tex`
    - Feynman → `feynman.tex` (compile with `engine="lualatex"`)
@@ -121,27 +151,27 @@ Steps per figure:
    - Molecule → `chemfig.tex`
    - Multi-panel concept schematic with 3D apparatus → `hybrid_panels.tex`
    See `skills/figure/references/decision_tree.md` for the full table.
-4. **If hybrid**: decide which elements are raster (3D/textured) and generate
+5. **If hybrid**: decide which elements are raster (3D/textured) and generate
    them one at a time with `generate_raster_component`. Strict rules:
    - Single isolated object per call
    - NO text in the prompt ("no labels, no captions")
    - Share a consistent `styleSuffix` across all components of one figure
    - Color-specify with hex codes or vivid names
-5. **Copy + edit** the template to `figures/figure_X.tex`. Embed raster via
+6. **Copy + edit** the template to `figures/figure_X.tex`. Embed raster via
    `\includegraphics{assets/...png}`. Overlay all labels/arrows/equations in
    TikZ with correct LaTeX symbols.
-6. **Compile**: `compile_tikz(texPath="figures/figure_X.tex", preview=true)`.
+7. **Compile**: `compile_tikz(texPath="figures/figure_X.tex", preview=true)`.
    On failure, read the log tail in the tool output, fix, recompile.
-7. **Vision self-check**: Read the preview PNG. Check:
+8. **Vision self-check**: Read the preview PNG. Check:
    - All labels readable and non-overlapping
    - No clipping at edges
    - Palette matches style guide
    - Aspect ratio appropriate (two-column? single-column?)
-8. **Iterate ≤3 times**: edit TikZ (not raster) and recompile until the preview
+9. **Iterate ≤3 times**: edit TikZ (not raster) and recompile until the preview
    looks right. Do NOT regenerate raster components unless they are clearly
    broken — coordinate tweaks are cheap, raster calls are slow and non-reproducible.
-9. **Done**: leave `figures/figure_X.tex` and `figures/figure_X.pdf` in place.
-   Preview PNG is disposable.
+10. **Done**: leave `figures/figure_X.tex` and `figures/figure_X.pdf` in place.
+    Preview PNG is disposable.
 
 ## Style guide bootstrap (if missing and you're generating)
 
