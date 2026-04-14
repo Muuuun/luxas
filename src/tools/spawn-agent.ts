@@ -22,6 +22,18 @@ export function getActiveBackgroundAgents(projectDir?: string) {
   return loadRegistry(join(projectDir, ".agent"));
 }
 
+/**
+ * Helper for callers (pi-agent.ts, runFigures) that need to pass a
+ * `createSpawnTool` factory into `spawnAgent` without background capability.
+ */
+export function createSpawnToolFactory(
+  projectDir: string,
+  getApiKey: (provider: string) => Promise<string | undefined> | string | undefined,
+) {
+  return (parentId: string, childDepth: number, childAllowedSpawn?: string[]) =>
+    createSpawnAgentTool(projectDir, {}, getApiKey, parentId, childDepth, undefined, childAllowedSpawn);
+}
+
 export function createSpawnAgentTool(
   projectDir: string,
   templateVars: Record<string, string>,

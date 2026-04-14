@@ -224,12 +224,13 @@ async function runFigures(dir: string, opts: { figure?: string; auditOnly?: bool
   }
 
   const { spawnAgent } = await import("./agents/spawn.js");
+  const { createSpawnToolFactory } = await import("./tools/spawn-agent.js");
   const { getApiKey } = await import("./auth.js");
 
   const mode = opts.auditOnly
     ? "audit only"
     : opts.figure
-      ? `regenerate figure_${opts.figure}`
+      ? `regenerate figure ${opts.figure}`
       : "audit + regenerate all figures";
 
   console.log(`\n🎨 Luxas Figures — ${mode}`);
@@ -239,22 +240,23 @@ async function runFigures(dir: string, opts: { figure?: string; auditOnly?: bool
   }
   console.log();
 
-  // Task prompts are terse on purpose: illustrator's system prompt
-  // (agents/definitions/illustrator.md) holds the full methodology — data
-  // sourcing, pipeline, iteration rules. Repeating it here would drift.
   const task = opts.auditOnly
-    ? `Audit all figures in this project. Write findings to reviews/illustrator_notes.md. Do NOT regenerate anything.`
+    ? `Figure-only pass: run ONLY the global audit step (one illustrator reads all canonical figures, writes reviews/illustrator_notes.md). Do NOT regenerate anything. Do NOT run multiple rounds.`
     : opts.figure
-      ? `Regenerate figure_${opts.figure} for this project. Follow your standard Branch B (GENERATE) procedure.`
-      : `Re-optimize all figures. First audit (write reviews/illustrator_notes.md), then regenerate every figure flagged in audit plus any missing ones referenced by report/report.tex. Follow your standard procedure.`;
+      ? `Figure-only pass: regenerate ONLY the canonical figure "${opts.figure}". Skip all other figures. Run the standard finalize loop restricted to that one figure.`
+      : `Figure-only pass: run the full finalize loop on all canonical figures (parallel per-figure regeneration + global audit, up to 3 rounds).`;
+
+  const makeSpawnTool = createSpawnToolFactory(dir, getApiKey);
 
   const result = await spawnAgent({
-    name: "illustrator",
+    name: "reviewer",
     templateVars: {},
     prompt: task,
     projectDir: dir,
     getApiKey,
+    contextExtra: { isFigureOnly: true },
     parentAgentId: "figures-cli",
+    createSpawnTool: makeSpawnTool,
   });
 
   if (!result.success) {

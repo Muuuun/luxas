@@ -24,7 +24,7 @@ import { createReadTool } from "@mariozechner/pi-coding-agent";
 import { nameAgent } from "agentsmelt";
 import { getApiKey } from "./auth.js";
 import { spawnAgent } from "./agents/spawn.js";
-import { createSpawnAgentTool } from "./tools/spawn-agent.js";
+import { createSpawnToolFactory } from "./tools/spawn-agent.js";
 import { readFileSafe } from "./utils.js";
 
 // PI system prompt is now in agents/definitions/pi.md
@@ -275,8 +275,7 @@ async function evaluateProgress(
   // Visual review is delegated to the illustrator sub-agent (see reviewer.md).
   const fullStateText = stateText;
 
-  const makeSpawnTool = (parentId: string, childDepth: number, childAllowedSpawn?: string[]) =>
-    createSpawnAgentTool(opts.projectDir, {}, getApiKey, parentId, childDepth, undefined, childAllowedSpawn);
+  const makeSpawnTool = createSpawnToolFactory(opts.projectDir, getApiKey);
 
   // Spawn PI agent via the centralized spawner
   await spawnAgent({

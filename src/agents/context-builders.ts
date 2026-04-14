@@ -135,8 +135,15 @@ function buildExperimentContext(projectDir: string): string {
 function buildPIContext(projectDir: string, extra?: Record<string, any>): string {
   const isSurvey = extra?.isSurvey ?? false;
   const isPlanReview = extra?.isPlanReview ?? false;
+  const isFigureOnly = extra?.isFigureOnly ?? false;
 
   const parts: string[] = [];
+
+  // Figure-only mode (luxas figures CLI): inject PI_FIGURE_MODE, skip normal sections.
+  if (isFigureOnly) {
+    parts.push(PI_FIGURE_MODE);
+    return parts.join("\n\n");
+  }
 
   if (isPlanReview) {
     parts.push(PI_PLAN_MODE);
@@ -279,3 +286,16 @@ If the plan has significant gaps, use "steer" with specific guidance on what to 
 If the plan is solid, use "continue" to approve it — the agent will then start executing.
 Do NOT use "stop" for plan review unless the plan is fundamentally misguided.
 </plan_review>`;
+
+const PI_FIGURE_MODE = `
+<figure_only_pass>
+You are in **figure-only mode** (triggered by \`luxas figures\` CLI).
+
+Three imperatives — they override everything else in your system prompt:
+1. DO NOT review content, methodology, or the report text.
+2. DO NOT call \`submit_verdict\`.
+3. DO NOT view figure images yourself — delegate to illustrator sub-agents.
+
+Execute only the procedure in \`<figure_finalize_loop>\` below. When it exits,
+print a one-line summary and return.
+</figure_only_pass>`;
