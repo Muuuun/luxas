@@ -45,6 +45,21 @@ Entered in two situations:
 
 ## Preamble (once, before the loop)
 
+**P0. Determine the project's figure domain** (cached after first run):
+
+If `notes/figure_domain.txt` already exists, read it and skip to P1. If the user passed `--style-domain X` via the CLI, that value will appear in the `<figure_only_pass>` block (or your context) — write it to `notes/figure_domain.txt` and skip to P1.
+
+Otherwise, classify the project's domain by reading `RESEARCH.md` (and `notes/methodology.md` if present). Pick exactly one of:
+
+- `physics` — quantum, condensed matter, AMO, astro, particle, statistical/soft-matter, applied physics
+- `biology` — molecular bio, neuroscience, genetics, immunology, structural biology, ecology, medicine
+- `chemistry` — synthesis, catalysis, materials chemistry, electrochem, polymers
+- `earth` — climate, atmosphere, ocean, geology, paleo, ecosystem, environment
+- `ml` — machine learning, AI, deep learning, NLP, vision, RL, AI-for-science
+- `policy` — economics, public health, social science, climate policy, psychology
+
+Write the chosen label (one word, no newline) to `notes/figure_domain.txt`. If RESEARCH.md is genuinely ambiguous or doesn't fit, write `_default`.
+
 **P1. Enumerate canonical figures from `report/report.tex`:**
 
 ```bash
@@ -55,9 +70,28 @@ Each `\includegraphics[...]{figures/NAME.pdf}` inside `report/report.tex` → ca
 
 **P2. Seed `report/figures/style_guide.md` if missing** (one-off, skip if it exists):
 
+The base style for this project is the Nature domain guide at `skills/figure/style_guides/<DOMAIN>.md` where `<DOMAIN>` is the label from P0. These are ~1k-word prose guides distilled from real Nature papers in the domain (palette with hex, marker conventions, typography, signature moves, etc.) — they are **the** ground truth for what figures should look like.
+
+Two cases:
+
+**(a) No canonical figures exist yet, OR all canonical figures are placeholders / pre-style-guide era**: copy the domain guide directly. No illustrator spawn needed.
+
+```bash
+DOMAIN=$(cat notes/figure_domain.txt)
+cp "$LUXAS_ROOT/skills/figure/style_guides/${DOMAIN}.md" report/figures/style_guide.md
+```
+
+(`$LUXAS_ROOT` is the path to the Sisyphus install; if undefined, fall back to `$(npm prefix -g)/lib/node_modules/luxas` or wherever the running CLI lives — bash detection: `dirname $(dirname $(which luxas 2>/dev/null || echo $0))` works in most setups.)
+
+**(b) Canonical figures already exist with their own established style** (e.g. an in-progress paper being revised): spawn an illustrator to merge — keep project consistency where it conflicts with Nature norms, adopt Nature norms only where the project hasn't decided.
+
 ```
 spawn_agent(agent="illustrator",
-            task="Seed report/figures/style_guide.md. Read 2-3 representative canonical figures [list their PDFs], extract palette/fonts/line weights, write the style guide. Do NOT regenerate any figures.",
+            task="Seed report/figures/style_guide.md by merging two sources:
+                  (1) the Nature domain reference at skills/figure/style_guides/<DOMAIN>.md
+                  (2) the actual conventions used by the existing canonical figures [list their PDFs].
+                  Where the project's existing figures have made an explicit choice (palette, marker shapes, typography), keep that choice and note it. Where the existing figures are ambiguous or use defaults, adopt the Nature domain norm. Output a single coherent style_guide.md, not a diff or comparison.
+                  Do NOT regenerate any figures.",
             background=false)
 ```
 

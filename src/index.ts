@@ -12,6 +12,8 @@
  *   luxas figures [project-dir]          Re-audit and re-render figures
  *          [--figure NAME]               Target one figure only (e.g. --figure 1)
  *          [--audit-only]                Audit existing figures, no regeneration
+ *          [--style-domain DOMAIN]       Override domain auto-detection
+ *                                        (physics|biology|chemistry|earth|ml|policy|_default)
  */
 
 import { existsSync, readFileSync, readdirSync, mkdirSync, writeFileSync, renameSync } from "node:fs";
@@ -53,6 +55,7 @@ let directive: string | undefined;
 let initPrompt: string | undefined;
 let figureTarget: string | undefined;
 let auditOnly = false;
+let styleDomain: string | undefined;
 
 for (let i = 1; i < args.length; i++) {
   if (args[i] === "--model" && args[i + 1]) {
@@ -65,6 +68,8 @@ for (let i = 1; i < args.length; i++) {
     figureTarget = args[++i];
   } else if (args[i] === "--audit-only") {
     auditOnly = true;
+  } else if (args[i] === "--style-domain" && args[i + 1]) {
+    styleDomain = args[++i];
   } else if (!args[i].startsWith("--")) {
     projectDir = args[i];
   }
@@ -103,7 +108,12 @@ if (command === "figures") {
     console.error("--audit-only and --figure are mutually exclusive");
     process.exit(1);
   }
-  await runFigures(projectDir, { figure: figureTarget, auditOnly });
+  const VALID_DOMAINS = ["physics", "biology", "chemistry", "earth", "ml", "policy", "_default"];
+  if (styleDomain && !VALID_DOMAINS.includes(styleDomain)) {
+    console.error(`--style-domain must be one of: ${VALID_DOMAINS.join(", ")}`);
+    process.exit(1);
+  }
+  await runFigures(projectDir, { figure: figureTarget, auditOnly, styleDomain });
   process.exit(0);
 }
 
@@ -215,7 +225,7 @@ function buildPrompt(researchGoal: string, userDirective?: string): string {
     : `Research goal (from RESEARCH.md):\n${researchGoal}\n\nStart by reading RESEARCH.md for the full goal, then check notes/literature.md and notes/experiments.md for any existing progress. Proceed with the research.`;
 }
 
-async function runFigures(dir: string, opts: { figure?: string; auditOnly?: boolean }) {
+async function runFigures(dir: string, opts: { figure?: string; auditOnly?: boolean; styleDomain?: string }) {
   const reportTex = join(dir, "report", "report.tex");
   if (!existsSync(reportTex)) {
     console.error(`No report/report.tex found in ${dir}`);
@@ -254,7 +264,7 @@ async function runFigures(dir: string, opts: { figure?: string; auditOnly?: bool
     prompt: task,
     projectDir: dir,
     getApiKey,
-    contextExtra: { isFigureOnly: true },
+    contextExtra: { isFigureOnly: true, ...(opts.styleDomain ? { styleDomain: opts.styleDomain } : {}) },
     parentAgentId: "figures-cli",
     createSpawnTool: makeSpawnTool,
   });

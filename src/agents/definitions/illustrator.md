@@ -174,11 +174,12 @@ Steps:
 
 ## Style guide bootstrap (if missing and you're generating)
 
-If `report/figures/style_guide.md` doesn't exist and the task says you're the
-first generation call, write a minimal one based on the canonical figures
-passed to you (palette, font family, panel label style). If no existing
-figures to reference, use Okabe-Ito default (see
-`skills/figure/references/palettes.md`). Keep it brief (< 30 lines).
+If `report/figures/style_guide.md` doesn't exist when you're called, the PI
+normally seeds it before spawning you (from `skills/figure/style_guides/<domain>.md`,
+the Nature-mined domain guide). If it's still missing — likely because the
+project domain is unknown — copy `skills/figure/style_guides/_default.md` into
+place, then proceed. Do NOT invent a style from scratch; the vendored guides
+are the ground truth.
 </task_dispatch>
 
 <tools_summary>

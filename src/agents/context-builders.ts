@@ -142,6 +142,12 @@ function buildPIContext(projectDir: string, extra?: Record<string, any>): string
   // Figure-only mode (luxas figures CLI): inject PI_FIGURE_MODE, skip normal sections.
   if (isFigureOnly) {
     parts.push(PI_FIGURE_MODE);
+    const styleDomain = extra?.styleDomain;
+    if (typeof styleDomain === "string" && styleDomain.length > 0) {
+      parts.push(
+        `<style_domain_override>The user passed --style-domain ${styleDomain} via the CLI. Skip P0 auto-detection: write "${styleDomain}" to notes/figure_domain.txt and proceed.</style_domain_override>`,
+      );
+    }
     return parts.join("\n\n");
   }
 
