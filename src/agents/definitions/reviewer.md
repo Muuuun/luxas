@@ -83,15 +83,13 @@ cp "$LUXAS_ROOT/skills/figure/style_guides/${DOMAIN}.md" report/figures/style_gu
 
 (`$LUXAS_ROOT` is the path to the Sisyphus install; if undefined, fall back to `$(npm prefix -g)/lib/node_modules/luxas` or wherever the running CLI lives — bash detection: `dirname $(dirname $(which luxas 2>/dev/null || echo $0))` works in most setups.)
 
-**(b) Canonical figures already exist with their own established style** (e.g. an in-progress paper being revised): spawn an illustrator to merge — keep project consistency where it conflicts with Nature norms, adopt Nature norms only where the project hasn't decided.
+**(b) Canonical figures already exist.** The Nature domain guide is still the aesthetic target — pre-existing hex codes / matplotlib defaults / Tol-bright in plot scripts are bootstrap noise, not an "explicit project choice".
+
+The only project-side overrides preserved are explicit `luxas:no-restyle` sentinels — either a top-of-file comment in `report/figstyle.mplstyle` or an inline comment on the line being protected. Also honored: `report/figures/style_overrides.md` if present.
 
 ```
 spawn_agent(agent="illustrator",
-            task="Seed report/figures/style_guide.md by merging two sources:
-                  (1) the Nature domain reference at skills/figure/style_guides/<DOMAIN>.md
-                  (2) the actual conventions used by the existing canonical figures [list their PDFs].
-                  Where the project's existing figures have made an explicit choice (palette, marker shapes, typography), keep that choice and note it. Where the existing figures are ambiguous or use defaults, adopt the Nature domain norm. Output a single coherent style_guide.md, not a diff or comparison.
-                  Do NOT regenerate any figures.",
+            task="Seed report/figures/style_guide.md from skills/figure/style_guides/<DOMAIN>.md, copying its content essentially verbatim. Then grep for `luxas:no-restyle` markers in report/figstyle.mplstyle and data/scripts/plot_*.py, plus check report/figures/style_overrides.md — for any matches, append an 'Explicit project overrides' section to style_guide.md preserving those specific choices. Do NOT regenerate any figures.",
             background=false)
 ```
 
@@ -99,10 +97,10 @@ spawn_agent(agent="illustrator",
 
 **Step 1. Build per-figure briefs.** For each canonical figure, extract:
 - Caption + the paragraph around its `\includegraphics` line
-- Matching plot script: `grep -l NAME data/scripts/plot_*.py` (the authoritative source for which `data/runs/run_N/` to load and what transforms to apply)
+- Matching plot script path: `grep -l NAME data/scripts/plot_*.py`
 - Issues from the previous round's `illustrator_notes.md` (if round > 1)
 
-Each brief tells one illustrator exactly which figure, the caption semantics, the plot script path, and any round-specific patches. Do NOT include content-level judgments (illustrator is zero-domain); stick to style/layout/label/axis directives.
+Each brief tells one illustrator: which figure, caption semantics, plot script path, and any round-specific patches. The brief does NOT need to enumerate hex deltas — the worker reads `style_guide.md` and diffs the script itself (illustrator rule 5). PI's job is to surface content-level corrections from the prior audit (illustrator is zero-domain), not to pre-compute palette substitutions.
 
 **Step 2. Parallel regenerate:**
 
@@ -118,7 +116,10 @@ This uses `Promise.all` internally — N illustrators run concurrently, each in 
 
 ```
 spawn_agent(agent="illustrator",
-            task="Audit canonical figures [list]. Read each PNG, check per-figure rendering bugs AND cross-figure consistency (palette, typography, line weights, panel label style). Note these orphans ignored: [orphan list]. Write reviews/illustrator_notes.md with the standard structure. End with Summary: all-clear OR <N> issues.",
+            task="Audit canonical figures [list]. Read style_guide.md, then each canonical PNG. Two checks:
+                  (i) Conformance — palette / markers / weights / typography per figure vs style_guide.md. Per-figure workers self-check, but flag any palette drift they missed (e.g. 'figure uses #4477AA, guide mandates #1F2A44').
+                  (ii) Cross-figure consistency — coherence across the canonical set.
+                  Note these orphans ignored: [orphan list]. Write reviews/illustrator_notes.md with the standard structure. End with Summary: all-clear OR <N> issues.",
             background=false)
 ```
 

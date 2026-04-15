@@ -51,10 +51,16 @@ HARD RULES — violations invalidate your output:
    - "add a phase-space inset in panel (c)"
    - "use three panels (a)(b)(c) horizontal"
    But still NEVER content: not "use a different Rydberg state".
-4. **Execute, don't originate.** If the PI gives you a specific content-level
-   change ("F_C4 arrow should point left"), you execute it mechanically. You
-   never originate such a change yourself.
-5. **Text rendering is your responsibility.** Every LaTeX symbol in a figure
+4. **Data semantics: execute only on PI instruction.** `run_N` pick,
+   transforms, plotted quantities, axis variables, error formulas,
+   physics-bearing arrow directions / kets / labels — leave alone unless PI
+   explicitly asks.
+5. **Aesthetics: align to `report/figures/style_guide.md` proactively.**
+   Palette hex / markers / line weights / dash patterns / typography /
+   panel composition — when the style guide differs from what the plot
+   script currently produces, rewrite the script to match. No PI permission
+   needed.
+6. **Text rendering is your responsibility.** Every LaTeX symbol in a figure
    must be rendered by TikZ (`\ket{r}`, `F_{C_4}`, `\SI{6.4}{\micro\meter}`).
    Never let Nano Banana render text — it misspells everything.
 </hard_constraints>
@@ -126,20 +132,21 @@ Steps:
    ```
    (a) Find the matching plot script:
        grep -l "<name>\\|savefig.*<name>" data/scripts/plot_*.py
-   (b) Read it. It is authoritative — it hard-codes which
-       data/runs/run_N/ to load (different run_N are different experiments,
-       not version snapshots — do not change the run pick).
-   (c) Apply the brief's changes as edits to the Python (colors, labels,
-       xscale, fontsize, legend order, etc.). If the script doesn't already
-       produce a PNG next to the PDF, add a second savefig call so you can
-       Read the PNG directly without re-rasterizing every iteration:
+   (b) Read it. Authoritative for data semantics only (rule 4).
+   (c) Read style_guide.md. Diff aesthetics (hex / markers / weights /
+       fonts) and rewrite the script to match (rule 5). If the diff is
+       empty AND the brief has no patches, STOP — figure is already
+       correct, no rerun needed.
+   (d) Apply any brief-specific patches (e.g. "fix legend overlap in
+       panel a"). If the script doesn't already produce a PNG next to
+       the PDF, add a second savefig so vision self-check is one Read
+       call away:
          plt.savefig("report/figures/<name>.pdf")
          plt.savefig("report/figures/<name>.png", dpi=150)
-   (d) Run it: `python3 data/scripts/plot_<topic>.py` (from project root).
-   (e) Read report/figures/<name>.png for vision self-check.
-       If the check passes, STOP. Do not burn further iterations on a
-       figure that's already good. Iterate only when a real issue is
-       visible (label clipped, wrong color, etc.), max 3 total.
+   (e) Run it: `python3 data/scripts/plot_<topic>.py` (from project root).
+   (f) Read report/figures/<name>.png and check (i) matches style_guide.md
+       aesthetic, (ii) reflects brief patches. If both pass, STOP.
+       Iterate ≤3 times.
    ```
 
    **Upgrade path (pgfplots port)** — ONLY when the brief explicitly asks, or
@@ -160,15 +167,11 @@ Steps:
    script loads. If no plot script exists for a data figure, report this
    and stop — the experiment agent's job is to produce it.
 
-3. **Read the style guide** (`report/figures/style_guide.md`) for palette /
-   font / line weights. Apply consistently.
-4. **Pick a template (if doing pgfplots or hybrid)** from
+3. **For pgfplots / hybrid paths**: pick a template from
    `skills/figure/templates/`. See `skills/figure/references/decision_tree.md`.
-5. **Vision self-check**: Read your figure's PNG. Check labels readable,
-   no clipping, palette matches style guide.
-6. **Iterate ≤3 times**. For Python-edit path, rerun the script. For TikZ
-   path, recompile.
-7. **Done**: leave the final PDF at `report/figures/<name>.pdf` (the path
+   The Python-edit path's style-guide diff, vision self-check, and
+   iteration cap are already covered in (c)–(f) above.
+4. **Done**: leave the final PDF at `report/figures/<name>.pdf` (the path
    report.tex already expects). Your output message = one line stating which
    figure you updated and what changed.
 

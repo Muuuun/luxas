@@ -2,6 +2,8 @@
 
 Used when domain detection fails or the project doesn't fit one of the six mined Nature domains. Conservative, publication-safe, colorblind-friendly. Lifted from defaults that hold across most science venues; **prefer a domain-specific guide if one applies** (`physics.md`, `biology.md`, `chemistry.md`, `earth.md`, `ml.md`, `policy.md`).
 
+> **Adoption rule when this fallback is in use**: be conservative — preserve project conventions where they already exist; do not aggressively rewrite plot script hex codes / markers to match this guide. (Domain-specific guides invert the rule: when `physics.md` etc. is in use, the guide IS the ground truth and plot scripts must conform.)
+
 ## Visual voice
 
 Restrained, technical, colorblind-safe. Plain white background, no decorative ornament. The figure should feel "made by a careful scientist", not styled.
