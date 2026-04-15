@@ -17,6 +17,11 @@ import { addAgent, removeAgent, loadRegistry, isAlive, tryExtractResult } from "
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
+// Module-scope: spawn-agent tools are rebuilt per brain turn (see tools/index.ts),
+// so a closure-local counter would reset and collide across turns. Keeping this
+// at module scope gives every background spawn in the process a unique bg id.
+let bgCounter = 0;
+
 export function getActiveBackgroundAgents(projectDir?: string) {
   if (!projectDir) return [];
   return loadRegistry(join(projectDir, ".agent"));
@@ -90,8 +95,6 @@ export function createSpawnAgentTool(
     // Sub-agents don't get background capability (no parentAgent ref to steer)
     return createSpawnAgentTool(projectDir, templateVars, getApiKey, parentId, childDepth, undefined, childAllowedSpawn);
   }
-
-  let bgCounter = 0;
 
   return {
     name: "spawn_agent",

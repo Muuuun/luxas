@@ -25,12 +25,18 @@ import { installUsageTracking } from "./usage-log.js";
 
 // ── Parse args ──────────────────────────────────────
 
-function parseArgs(): { agent: string; task: string; project: string; id: string; session: string; "template-vars"?: string } {
+function parseArgs(): { agent: string; task: string; project: string; id: string; session: string; "template-vars"?: string; resume?: boolean } {
   const args = process.argv.slice(2);
-  const parsed: Record<string, string> = {};
-  for (let i = 0; i < args.length; i += 2) {
+  const parsed: Record<string, string | boolean> = {};
+  for (let i = 0; i < args.length; i++) {
     const key = args[i].replace(/^--/, "");
+    // Boolean flag: --resume (no value follows)
+    if (key === "resume") {
+      parsed.resume = true;
+      continue;
+    }
     parsed[key] = args[i + 1] ?? "";
+    i++;
   }
   for (const k of ["agent", "task", "project", "id", "session"]) {
     if (!parsed[k]) {
@@ -102,8 +108,11 @@ async function main() {
     const savedState = deriveState(session);
     let lastSavedMsgCount = 0;
 
-    // Restore from checkpoint if available
-    if (savedState && session.getEntries().length > 0) {
+    // Restore from checkpoint ONLY when explicitly resuming a crashed/detached
+    // session. Without this gate, any reuse of a conversation file path would
+    // replay the full prior history into the new agent, causing O(N²) token
+    // blow-up (see plans/cheerful-weaving-flurry.md).
+    if (args.resume && savedState && session.getEntries().length > 0) {
       const messages = buildSessionContext(session);
       if (messages.length > 0) {
         const cleaned = cleanMessagesForModel(messages, { provider: modelProvider, id: modelKey });

@@ -94,7 +94,14 @@ export interface BuiltAgent {
 export function buildAgentFromDefinition(opts: SpawnAgentOptions): BuiltAgent {
   const def = getDefinition(opts.name);
 
-  const suffix = opts.instanceIndex !== undefined ? `-${opts.instanceIndex}` : "";
+  // Give every spawn a unique id. Explicit instanceIndex (parallel batch)
+  // stays `-0`, `-1`, … for predictability; otherwise fall back to a short
+  // random suffix so independent foreground spawns of the same agent type
+  // (e.g. one reader per paper) don't collide onto the same conversation
+  // file and accumulate each other's history as context.
+  const suffix = opts.instanceIndex !== undefined
+    ? `-${opts.instanceIndex}`
+    : `-${Math.random().toString(36).slice(2, 8)}`;
   const agentId = opts.parentAgentId
     ? `${opts.parentAgentId}.${opts.name}${suffix}`
     : `${opts.name}${suffix}`;
