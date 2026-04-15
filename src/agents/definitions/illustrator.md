@@ -115,37 +115,45 @@ If truly nothing is wrong, write "Summary: all-clear" and stop.
 
 ## Branch B — GENERATE (task says "generate", "make", "revise", "regenerate")
 
-You produce/update **one** figure at a time (the task identifies which one).
-Your context should stay lean — read only what you need for your one figure.
+You produce/update the figure(s) in your brief — often one plot script
+owning multiple figures. Keep context lean: read only what the brief
+names.
 
 Steps:
 1. **Read the spec.** The task brief from PI (or caller) tells you the figure
    name, caption semantics, and what to adjust. If anything is missing, read
    `report/report.tex` near the `\includegraphics{figures/<name>.pdf}` line.
-2. **Decide the path — default is "edit the plot script, rerun Python".**
+2. **Decide the path — default is "edit the plot script(s) in place, rerun Python".**
 
-   For most figures in a Sisyphus project, the experiment agent has already
-   produced a plot script at `data/scripts/plot_<topic>.py` that wrote
-   `report/figures/<name>.pdf`. Style tweaks (color, labels, axis, scale,
-   font size, legend position) are fastest as in-place edits:
+   Your brief names one plot script and the figures it owns. Edit all
+   those figures' blocks in a single coherent pass through that one script.
+
+   **Hard rule**: never create a second script that writes a PDF the main
+   script already writes — the main script's next run silently clobbers
+   your fix. (Helper modules that the main script imports are fine; the
+   rule is only about files that themselves call `savefig` to an
+   already-owned PDF path.) Edit in place; temporarily comment out
+   unrelated blocks if you need to iterate on one in isolation.
 
    ```
-   (a) Find the matching plot script:
-       grep -l "<name>\\|savefig.*<name>" data/scripts/plot_*.py
+   (a) Open the plot script your brief names.
    (b) Read it. Authoritative for data semantics only (rule 4).
    (c) Read style_guide.md. Diff aesthetics (hex / markers / weights /
-       fonts) and rewrite the script to match (rule 5). If the diff is
-       empty AND the brief has no patches, STOP — figure is already
-       correct, no rerun needed.
-   (d) Apply any brief-specific patches (e.g. "fix legend overlap in
-       panel a"). If the script doesn't already produce a PNG next to
-       the PDF, add a second savefig so vision self-check is one Read
-       call away:
+       fonts) across all figure blocks in this script and rewrite to
+       match (rule 5). If the style diff is empty AND the brief lists no
+       patches for any figure, STOP — no rerun needed. Otherwise rerun
+       once; regenerating already-clean figures alongside fixed ones is
+       free (same `python3` invocation).
+   (d) Apply any brief-specific patches per figure (e.g. "fix legend
+       overlap in panel a of figure X"). If the script doesn't already
+       savefig a PNG next to each PDF, add a second savefig for each so
+       vision self-check is one Read call away:
          plt.savefig("report/figures/<name>.pdf")
          plt.savefig("report/figures/<name>.png", dpi=150)
-   (e) Run it: `python3 data/scripts/plot_<topic>.py` (from project root).
-   (f) Read report/figures/<name>.png and check (i) matches style_guide.md
-       aesthetic, (ii) reflects brief patches. If both pass, STOP.
+   (e) Run it once: `python3 data/scripts/plot_<topic>.py` (from project
+       root). One run regenerates all figures the script owns.
+   (f) Read each updated PNG and check (i) matches style_guide.md
+       aesthetic, (ii) reflects brief patches. If all pass, STOP.
        Iterate ≤3 times.
    ```
 
@@ -171,9 +179,9 @@ Steps:
    `skills/figure/templates/`. See `skills/figure/references/decision_tree.md`.
    The Python-edit path's style-guide diff, vision self-check, and
    iteration cap are already covered in (c)–(f) above.
-4. **Done**: leave the final PDF at `report/figures/<name>.pdf` (the path
-   report.tex already expects). Your output message = one line stating which
-   figure you updated and what changed.
+4. **Done**: leave each final PDF at `report/figures/<name>.pdf` (the paths
+   report.tex already expects). Your output message = one short line per
+   figure you updated, naming it and what changed.
 
 ## Style guide bootstrap (if missing and you're generating)
 
@@ -195,6 +203,6 @@ are the ground truth.
 <output_brevity>
 Your final message should be ≤ 5 lines:
 - For audit: "Wrote reviews/illustrator_notes.md with N issues."
-- For generate: "Updated report/figures/<name>.pdf via plot.py edit (or pgfplots port); N iterations."
+- For generate: one line per figure updated — "Updated report/figures/<name>.pdf via plot.py edit; <what changed>."
 The full reasoning stays in the file you wrote, not in the chat.
 </output_brevity>

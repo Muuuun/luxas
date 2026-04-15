@@ -95,29 +95,32 @@ spawn_agent(agent="illustrator",
 
 ## Pipeline — per round (≤3 rounds)
 
-**Step 1. Build per-figure briefs.** For each canonical figure, extract:
-- Caption + the paragraph around its `\includegraphics` line
-- Matching plot script path: `grep -l NAME data/scripts/plot_*.py`
-- Issues from the previous round's `illustrator_notes.md` (if round > 1)
+**Step 1. Group canonical figures by their source plot script, then build one brief per group.**
 
-Each brief tells one illustrator: which figure, caption semantics, plot script path, and any round-specific patches. The brief does NOT need to enumerate hex deltas — the worker reads `style_guide.md` and diffs the script itself (illustrator rule 5). PI's job is to surface content-level corrections from the prior audit (illustrator is zero-domain), not to pre-compute palette substitutions.
+For each canonical figure, resolve its matching plot script: `grep -l NAME data/scripts/plot_*.py`. A single script often produces multiple canonical figures. Invert to `{script_path: [figures]}` — one illustrator instance owns each script, avoiding editing-race and overwrite hazards.
 
-**Step 2. Parallel regenerate:**
+Edge cases:
+- `grep` returns multiple scripts for one figure → pick the script whose body contains `savefig(...NAME.pdf...)` literally.
+- `grep` returns empty (pgfplots / hybrid figure, no `plot_*.py`) → put the figure in its own single-figure brief; the illustrator will take the pgfplots or hybrid path for it.
+
+Each brief contains: the list of figures this script produces, caption + `\includegraphics` context per figure, and any prior-round patches from `illustrator_notes.md` organized per figure. Do NOT enumerate hex deltas — the illustrator reads `style_guide.md` and diffs the script itself (illustrator rule 5). PI's job is to surface content-level corrections, not pre-compute palette substitutions.
+
+**Step 2. Parallel regenerate — one illustrator per source script:**
 
 ```
 spawn_agent(agent="illustrator",
-            tasks=[brief_1, brief_2, ..., brief_N],   # one per canonical figure
+            tasks=[brief_for_script_A, brief_for_script_B, ...],   # one per source script
             background=false)
 ```
 
-This uses `Promise.all` internally — N illustrators run concurrently, each in a fresh context seeing only its own figure. Wait for all to return.
+Uses `Promise.all` — M illustrator instances run concurrently (M = number of distinct source scripts), each in a fresh context owning one script. Wait for all to return.
 
 **Step 3. Global audit (only agent in the round that sees all figures):**
 
 ```
 spawn_agent(agent="illustrator",
             task="Audit canonical figures [list]. Read style_guide.md, then each canonical PNG. Two checks:
-                  (i) Conformance — palette / markers / weights / typography per figure vs style_guide.md. Per-figure workers self-check, but flag any palette drift they missed (e.g. 'figure uses #4477AA, guide mandates #1F2A44').
+                  (i) Conformance — palette / markers / weights / typography per figure vs style_guide.md. Per-script illustrators self-check, but flag any palette drift they missed (e.g. 'figure uses #4477AA, guide mandates #1F2A44').
                   (ii) Cross-figure consistency — coherence across the canonical set.
                   Note these orphans ignored: [orphan list]. Write reviews/illustrator_notes.md with the standard structure. End with Summary: all-clear OR <N> issues.",
             background=false)
@@ -136,7 +139,7 @@ This illustrator reads all N PNGs once, writes text notes, and dies. Images neve
 
 - You never Read figure PNGs yourself. All image inspection is in short-lived sub-spawns.
 - If an illustrator reports a content-level issue it shouldn't originate (e.g. "F_C4 arrow direction looks wrong physically"), you decide whether it's a real content problem; if so, include an explicit corrective instruction in the next round's brief (illustrator executes mechanically).
-- If an illustrator worker fails, read its output, fix the brief, retry that single figure in the next round.
+- If an illustrator instance fails, read its output, fix the brief, retry that single script in the next round.
 </figure_finalize_loop>
 
 <verdict_rules>
