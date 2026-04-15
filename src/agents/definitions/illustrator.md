@@ -128,6 +128,13 @@ Steps:
    Your brief names one plot script and the figures it owns. Edit all
    those figures' blocks in a single coherent pass through that one script.
 
+   **Defensive (PI's Step 1 should have filtered these out, but if one
+   slips through):** if the brief lists a figure with no editable source
+   (no plot script, no `<name>.tex`, no hybrid generator), it's an
+   **imported asset** (screenshot from another paper, vendor-supplied
+   figure). DO NOT touch it: leave the PDF as-is and report
+   `Skipped <name>: imported asset, no editable source`.
+
    **Hard rule**: never create a second script that writes a PDF the main
    script already writes — the main script's next run silently clobbers
    your fix. (Helper modules that the main script imports are fine; the

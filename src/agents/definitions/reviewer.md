@@ -101,7 +101,8 @@ For each canonical figure, resolve its matching plot script: `grep -l NAME data/
 
 Edge cases:
 - `grep` returns multiple scripts for one figure → pick the script whose body contains `savefig(...NAME.pdf...)` literally.
-- `grep` returns empty (pgfplots / hybrid figure, no `plot_*.py`) → put the figure in its own single-figure brief; the illustrator will take the pgfplots or hybrid path for it.
+- `grep` returns empty AND a `<NAME>.tex` source exists under `figures/` or `report/figures/` → put it in its own single-figure brief; the illustrator will take the pgfplots / hybrid (TikZ source) path.
+- `grep` returns empty AND no `<NAME>.tex` source exists → this is an **imported asset** (a screenshot from another paper, a vendor-supplied figure, etc.). EXCLUDE it from briefs entirely; do not spawn an illustrator for it. Mention it once in the audit-step task as "skipped (imported, no editable source)".
 
 Each brief contains: the list of figures this script produces, caption + `\includegraphics` context per figure, and any prior-round patches from `illustrator_notes.md` organized per figure. Do NOT enumerate hex deltas — the illustrator reads `style_guide.md` and diffs the script itself (illustrator rule 5). PI's job is to surface content-level corrections, not pre-compute palette substitutions.
 
@@ -119,10 +120,10 @@ Uses `Promise.all` — M illustrator instances run concurrently (M = number of d
 
 ```
 spawn_agent(agent="illustrator",
-            task="Audit canonical figures [list]. Read style_guide.md, then each canonical PNG. Two checks:
+            task="Audit canonical figures [editable list]. Read style_guide.md, then each canonical PNG. Two checks:
                   (i) Conformance — palette / markers / weights / typography per figure vs style_guide.md. Per-script illustrators self-check, but flag any palette drift they missed (e.g. 'figure uses #4477AA, guide mandates #1F2A44').
                   (ii) Cross-figure consistency — coherence across the canonical set.
-                  Note these orphans ignored: [orphan list]. Write reviews/illustrator_notes.md with the standard structure. End with Summary: all-clear OR <N> issues.",
+                  Note these orphans ignored: [orphan list]. Note these imported assets skipped (no editable source, do NOT audit for style conformance): [imported list]. Write reviews/illustrator_notes.md with the standard structure. End with Summary: all-clear OR <N> issues.",
             background=false)
 ```
 
@@ -132,7 +133,7 @@ This illustrator reads all N PNGs once, writes text notes, and dies. Images neve
 
 ## Exit
 
-- **Figure-only mode**: after loop exits, write a final one-line summary to stdout and return. Do NOT call submit_verdict.
+- **Figure-only mode**: after loop exits, you MUST call `figure_done(rounds, remaining_issues, summary)` as your final action. This is the explicit termination signal — the process will hang without it. Do NOT call submit_verdict.
 - **Normal mode**: after loop exits, call `submit_verdict(verdict="stop", ...)` as usual. The assessment may note whether figures converged within 3 rounds.
 
 ## Important rules

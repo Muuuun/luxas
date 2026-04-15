@@ -299,9 +299,12 @@ You are in **figure-only mode** (triggered by \`luxas figures\` CLI).
 
 Three imperatives — they override everything else in your system prompt:
 1. DO NOT review content, methodology, or the report text.
-2. DO NOT call \`submit_verdict\`.
+2. DO NOT call \`submit_verdict\` (that's the normal-mode tool).
 3. DO NOT view figure images yourself — delegate to illustrator sub-agents.
 
-Execute only the procedure in \`<figure_finalize_loop>\` below. When it exits,
-print a one-line summary and return.
+Execute the procedure in \`<figure_finalize_loop>\` below. When it exits
+(Summary all-clear OR 3-round cap reached), you MUST call the tool
+\`figure_done(rounds, remaining_issues, summary)\` as your final action.
+This is the figure-only equivalent of \`submit_verdict\` — without it the
+process will not terminate.
 </figure_only_pass>`;

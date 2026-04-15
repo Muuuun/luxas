@@ -20,6 +20,7 @@ import { existsSync, readFileSync, readdirSync, mkdirSync, writeFileSync, rename
 import { execSync } from "node:child_process";
 import { join, resolve } from "node:path";
 import { Agent } from "@mariozechner/pi-agent-core";
+import { Type } from "@sinclair/typebox";
 import { autoPatch } from "agentsmelt";
 // Note: AgentSmelt namespace stays "sisyphus" — existing lessons live under
 // ~/.agentsmelt/.../sisyphus/. The project rebranded to Luxas but the data path
@@ -258,12 +259,40 @@ async function runFigures(dir: string, opts: { figure?: string; auditOnly?: bool
 
   const makeSpawnTool = createSpawnToolFactory(dir, getApiKey);
 
+  // figure-only mirror of normal mode's submit_verdict: pi-agent-core's natural
+  // end_turn detection isn't reliable here, so PI must signal completion via tool.
+  type FigureSummary = { rounds: number; remaining_issues: number; summary: string };
+  // Object wrapper so TS doesn't narrow the closure-captured value to `null`
+  // after the await boundary.
+  const slot: { value: FigureSummary | null } = { value: null };
+  const figureDoneTool = {
+    name: "figure_done",
+    label: "Mark figure-only pass complete",
+    description:
+      "Call exactly once when the figure-finalize loop has exited (either Summary all-clear " +
+      "or 3-round cap reached). Figure-only equivalent of submit_verdict — without this call " +
+      "the process will not exit.",
+    parameters: Type.Object({
+      rounds: Type.Number({ description: "How many regeneration rounds were run." }),
+      remaining_issues: Type.Number({ description: "Issues unresolved at exit (0 if all-clear)." }),
+      summary: Type.String({ description: "One-line summary of the run." }),
+    }),
+    async execute(_id: string, params: FigureSummary) {
+      if (slot.value) {
+        return { content: [{ type: "text" as const, text: "Already recorded; ignoring duplicate call." }], details: {} };
+      }
+      slot.value = params;
+      return { content: [{ type: "text" as const, text: "Figure-only pass recorded." }], details: {} };
+    },
+  };
+
   const result = await spawnAgent({
     name: "reviewer",
     templateVars: {},
     prompt: task,
     projectDir: dir,
     getApiKey,
+    toolOverrides: [figureDoneTool],
     contextExtra: { isFigureOnly: true, ...(opts.styleDomain ? { styleDomain: opts.styleDomain } : {}) },
     parentAgentId: "figures-cli",
     createSpawnTool: makeSpawnTool,
@@ -274,7 +303,12 @@ async function runFigures(dir: string, opts: { figure?: string; auditOnly?: bool
     process.exit(1);
   }
   console.log(`\n✓ Done in ${Math.floor(result.elapsed / 1000)}s`);
-  if (result.output) console.log(result.output);
+  if (slot.value) {
+    console.log(`Rounds: ${slot.value.rounds}  |  Remaining issues: ${slot.value.remaining_issues}`);
+    console.log(slot.value.summary);
+  } else if (result.output) {
+    console.log(result.output);
+  }
 }
 
 function showStatus(dir: string) {
