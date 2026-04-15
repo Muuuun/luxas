@@ -59,11 +59,11 @@ export function createSpawnAgentTool(
     agent: Type.String({
       description: `Agent type to spawn. Available: ${agents.map(a => a.name).join(", ")}`,
     }),
-    task: Type.String({
-      description: "The task or prompt for the agent. Be specific about what you want it to do.",
-    }),
+    task: Type.Optional(Type.String({
+      description: "The task or prompt for the agent. Use this OR `tasks` (array form). Required for single/background spawns.",
+    })),
     tasks: Type.Optional(Type.Array(Type.String(), {
-      description: "For parallel execution: array of tasks. Spawns one agent instance per task, runs them concurrently.",
+      description: "For parallel execution: array of tasks. Spawns one agent instance per task, runs them concurrently. Mutually exclusive with a singular `task`.",
     })),
     background: Type.Optional(Type.Boolean({
       description: "Run in background — you continue working while this agent runs. Results are delivered back as a message when done. Use for long-running tasks (sub-brain, complex experiments) that you don't need to wait for.",
@@ -117,7 +117,7 @@ export function createSpawnAgentTool(
 
     async execute(
       _toolCallId: string,
-      params: { agent: string; task: string; tasks?: string[]; background?: boolean; thinkingLevel?: string; action?: string; id?: string; templateVars?: Record<string, string> },
+      params: { agent: string; task?: string; tasks?: string[]; background?: boolean; thinkingLevel?: string; action?: string; id?: string; templateVars?: Record<string, string> },
     ) {
       // ── Status query ──
       if (params.action === "status" && params.id) {
@@ -145,6 +145,26 @@ export function createSpawnAgentTool(
       } catch (err: any) {
         return {
           content: [{ type: "text" as const, text: err.message }],
+          details: { success: false },
+        };
+      }
+
+      // Normalize `task` / `tasks` into a single list. Downstream code only
+      // reads taskList; the string-vs-array distinction is surface syntax.
+      const taskList: string[] = params.tasks && params.tasks.length > 0
+        ? params.tasks
+        : params.task !== undefined
+          ? [params.task]
+          : [];
+      if (taskList.length === 0) {
+        return {
+          content: [{ type: "text" as const, text: 'spawn_agent: must provide either `task` (string) or `tasks` (non-empty array of strings).' }],
+          details: { success: false },
+        };
+      }
+      if (params.background && taskList.length > 1) {
+        return {
+          content: [{ type: "text" as const, text: 'spawn_agent: `background` mode expects a single task. Spawn each background task with its own call.' }],
           details: { success: false },
         };
       }
@@ -185,8 +205,9 @@ export function createSpawnAgentTool(
 
       // ── Background mode — independent process ──
       if (params.background) {
+        const task = taskList[0];
         const bgId = `bg-${++bgCounter}`;
-        const taskPreview = params.task.slice(0, 80);
+        const taskPreview = task.slice(0, 80);
         const agentId = `${parentAgentId ?? "brain"}.${params.agent}-${bgId}`;
         const convFile = join(agentDir, "conversations", `${agentId}.jsonl`);
 
@@ -201,7 +222,7 @@ export function createSpawnAgentTool(
           "--import=tsx",
           join(luxasRoot, "src", "subagent-runner.ts"),
           "--agent", params.agent,
-          "--task", params.task,
+          "--task", task,
           "--project", projectDir,
           "--id", agentId,
           "--session", convFile,
@@ -234,9 +255,9 @@ export function createSpawnAgentTool(
       }
 
       // ── Parallel mode ──
-      if (params.tasks && params.tasks.length > 0) {
+      if (taskList.length > 1) {
         const results = await Promise.all(
-          params.tasks.map((task, i) =>
+          taskList.map((task, i) =>
             spawnAgent({ ...baseOpts, prompt: task, instanceIndex: i })
           ),
         );
@@ -254,7 +275,7 @@ export function createSpawnAgentTool(
       }
 
       // ── Foreground mode (default) ──
-      const result = await spawnAgent({ ...baseOpts, prompt: params.task });
+      const result = await spawnAgent({ ...baseOpts, prompt: taskList[0] });
       return {
         content: [{ type: "text" as const, text: result.output }],
         details: { elapsed: result.elapsed, success: result.success },
