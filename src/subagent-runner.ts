@@ -23,6 +23,10 @@ import { extractTextContent } from "./utils.js";
 import { cleanMessagesForModel } from "./transform.js";
 import { installUsageTracking } from "./usage-log.js";
 
+// Match agent.ts: default Anthropic prompt-cache TTL to 1h.
+// Subagents are separate processes, so the env var must be set here too.
+process.env.PI_CACHE_RETENTION ||= "long";
+
 // ── Parse args ──────────────────────────────────────
 
 function parseArgs(): { agent: string; task: string; project: string; id: string; session: string; "template-vars"?: string; resume?: boolean } {

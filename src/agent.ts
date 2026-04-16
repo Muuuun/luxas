@@ -17,7 +17,7 @@ import {
   nameAgent, createSmeltReminderProvider,
   readPatches, applyPatches, DEFAULT_BASE_DIR,
 } from "agentsmelt";
-import { getModel } from "@mariozechner/pi-ai";
+import { getModel, type TextContent } from "@mariozechner/pi-ai";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { join, isAbsolute, resolve, dirname } from "node:path";
@@ -26,7 +26,7 @@ import { getDefinition, resolvePrompt } from "./agents/registry.js";
 import { spawnAgent } from "./agents/spawn.js";
 import { ensureMethodologyFile, ensureLiteratureFile } from "./methodology.js";
 import { buildResearchTools } from "./tools/index.js";
-import { buildContextTransformer } from "./context.js";
+import { buildContextTransformer, buildSemiStaticSystemLayer } from "./context.js";
 import { buildResearchHooks } from "./hooks.js";
 import { ReminderRegistry, builtinProviders } from "./reminders.js";
 import { createPIReviewTool, setupPIFallbackMonitor } from "./pi-agent.js";
@@ -40,6 +40,12 @@ import { installUsageTracking, readUsageTotals } from "./usage-log.js";
 
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
 import type { PIVerdict } from "./pi-agent.js";
+
+// Default Anthropic prompt-cache TTL to 1h. Luxas runs span hours with idle
+// gaps between agents — the 5-min default expires mid-run and forces full
+// re-caching on every cold spawn. 1h costs 2× per write but is amortized
+// over 12× more reuse. Override with PI_CACHE_RETENTION=short.
+process.env.PI_CACHE_RETENTION ||= "long";
 
 export interface ResearchAgentOptions {
   projectDir: string;
@@ -87,14 +93,26 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
     VENUE_SPECIFIC_DIR: VENUE_SPECIFIC_DIR,
   };
 
-  // Layer 1: System Prompt — loaded from agents/definitions/brain.md
+  // Layer 1: System Prompt — brain.md + smelt patches (absolutely static per session)
   const brainDef = getDefinition("brain");
-  let systemPrompt = resolvePrompt(brainDef, templateVars);
+  let layer1 = resolvePrompt(brainDef, templateVars);
 
   // AgentSmelt Phase 2: apply high-confidence prompt patches at strategic positions
   const smeltPatches = readPatches(DEFAULT_BASE_DIR, "brain");
   if (smeltPatches.length > 0) {
-    systemPrompt = applyPatches(systemPrompt, smeltPatches, "brain");
+    layer1 = applyPatches(layer1, smeltPatches, "brain");
+  }
+
+  // Layer 2: semi-static context (RESEARCH.md + skills + lessons.md).
+  // Split into its own cache-pinned block so an occasional lessons.md edit
+  // invalidates only Layer 2 while Layer 1 core-rules cache stays warm.
+  const layer2 = buildSemiStaticSystemLayer(projectDir);
+
+  const systemPrompt: TextContent[] = [
+    { type: "text", text: layer1, cacheControl: { type: "ephemeral" } },
+  ];
+  if (layer2) {
+    systemPrompt.push({ type: "text", text: layer2, cacheControl: { type: "ephemeral" } });
   }
 
   // Reminder system — event-driven, per-turn quality nudges

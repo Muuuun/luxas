@@ -202,12 +202,12 @@ function injectSnapshot(messages: any[], snapshot: string): any[] {
   const lastMsg = result[result.length - 1];
   if (Array.isArray(lastMsg.content) && lastMsg.content.length > 0) {
     const clonedContent = lastMsg.content.map((b: any) => ({ ...b }));
-    clonedContent[clonedContent.length - 1].cache_control = { type: "ephemeral" };
+    clonedContent[clonedContent.length - 1].cacheControl = { type: "ephemeral" };
     result[result.length - 1] = { ...lastMsg, content: clonedContent };
   } else if (typeof lastMsg.content === "string") {
     result[result.length - 1] = {
       ...lastMsg,
-      content: [{ type: "text", text: lastMsg.content, cache_control: { type: "ephemeral" } }],
+      content: [{ type: "text", text: lastMsg.content, cacheControl: { type: "ephemeral" } }],
     };
   }
 
@@ -229,14 +229,16 @@ function buildResearchSnapshot(opts: ContextTransformerOptions): string {
   // Project directory (ground truth for path resolution)
   parts.push(`<project_dir>${projectDir}</project_dir>`);
 
-  // Research goal
-  const goal = readFileSafe(join(projectDir, "RESEARCH.md"));
-  parts.push(`<research_goal>\n${goal || "(no RESEARCH.md found)"}\n</research_goal>`);
+  // NOTE: <research_goal>, skills list, and <lessons_learned> moved to the
+  // semi-static system-prompt layer (Layer 2) — see buildSemiStaticSystemLayer.
+  // They're read-mostly and belong in a block that stays cache-stable.
+  // What remains below is the volatile trailer that legitimately changes
+  // between turns (notes written by sub-agents, disk state, bg agent status).
 
   // Literature state
   const lit = readFileSafe(join(projectDir, "notes", "literature.md"));
   if (lit) {
-    parts.push(`<literature_notes lines="${lit.split("\n").length}">\n${smartTruncate(lit, 3000)}\n</literature_notes>`);
+    parts.push(`<literature_notes>\n${smartTruncate(lit, 3000)}\n</literature_notes>`);
   } else {
     parts.push("<literature_notes>(empty — no literature review yet)</literature_notes>");
   }
@@ -245,7 +247,7 @@ function buildResearchSnapshot(opts: ContextTransformerOptions): string {
   // Brain should compare its own experiments/report against these standards.
   const method = readFileSafe(methodologyPath(projectDir));
   if (method && method.trim().length > 40) {
-    parts.push(`<field_methodology_standard lines="${method.split("\n").length}">
+    parts.push(`<field_methodology_standard>
 Auto-extracted from the literature you have downloaded. This is a map of what
 this field considers STANDARD methodology (what to compute, what to demo, what
 rigor bar to meet, what goes in figures). Before claiming a milestone, verify
@@ -259,7 +261,7 @@ ${smartTruncate(method, 3000)}
   // manual paper drops, DOI/URL downloads (flat PDFs), or session races.
   const unprocessed = findUnprocessedPapers(projectDir);
   if (unprocessed.length > 0) {
-    parts.push(`<unprocessed_papers count="${unprocessed.length}">
+    parts.push(`<unprocessed_papers>
 The following papers are present under data/papers/ but have no entry in
 notes/methodology.md "Papers processed":
 ${unprocessed.map(id => `- ${id}`).join("\n")}
@@ -280,7 +282,7 @@ before you continue. The reader is cheap (haiku, ≤30s) and idempotent.
   // Experiment state
   const exp = readFileSafe(join(projectDir, "notes", "experiments.md"));
   if (exp) {
-    parts.push(`<experiment_notes lines="${exp.split("\n").length}">\n${smartTruncate(exp, 2000)}\n</experiment_notes>`);
+    parts.push(`<experiment_notes>\n${smartTruncate(exp, 2000)}\n</experiment_notes>`);
   } else {
     parts.push("<experiment_notes>(empty — no experiments yet)</experiment_notes>");
   }
@@ -294,13 +296,7 @@ before you continue. The reader is cheap (haiku, ≤30s) and idempotent.
   // Memory scratchpad
   const mem = readFileSafe(join(projectDir, "notes", "memory.md"));
   if (mem && mem.trim().length > 20) {
-    parts.push(`<memory_notes lines="${mem.split("\n").length}">\n${smartTruncate(mem, 2000)}\n</memory_notes>`);
-  }
-
-  // Lessons learned (auto-captured from tool failures)
-  const lessons = readFileSafe(join(projectDir, "notes", "lessons.md"));
-  if (lessons && lessons.trim().length > 20) {
-    parts.push(`<lessons_learned lines="${lessons.split("\n").length}">\n${smartTruncate(lessons, 1500)}\n</lessons_learned>`);
+    parts.push(`<memory_notes>\n${smartTruncate(mem, 2000)}\n</memory_notes>`);
   }
 
   // PI feedback (injected by PI monitor)
@@ -315,97 +311,110 @@ before you continue. The reader is cheap (haiku, ≤30s) and idempotent.
     parts.push(`<user_feedback priority="highest">\nThis feedback is from the human user and takes absolute priority over PI feedback.\n${userFeedback}\n</user_feedback>`);
   }
 
-  // Report status (enhanced — reduces redundant bash queries for report state)
   parts.push(buildReportStatus(projectDir));
-
-  // Data status (enhanced — file names, run contents, results summary)
   parts.push(buildDataStatus(projectDir));
 
-  // Background agents status — one-line summary per agent, no session file reads
+  // No `elapsed` seconds — changed every turn without load-bearing info,
+  // poisoned cache. Callers use spawn_agent(action="status") for progress.
   const bgAgents = getActiveBackgroundAgents(projectDir);
   if (bgAgents.length > 0) {
     const agentDir = join(projectDir, ".agent");
     const bgLines = bgAgents.map(a => {
-      const elapsed = Math.floor((Date.now() - a.startedAt) / 1000);
       const alive = a.pid ? isAlive(agentDir, a.id) : true;
       const status = a.status === "done" ? "✓ done" : a.status === "failed" ? "✗ failed" : alive ? "running" : "✗ dead";
-      return `- ${a.id} [${status} ${elapsed}s]: ${a.task}`;
+      return `- ${a.id} [${status}]: ${a.task}`;
     });
-    parts.push(`<background_agents count="${bgAgents.length}">\n${bgLines.join("\n")}\nUse spawn_agent(action="status", id="...") to check details. Do NOT call finish until all complete.\n</background_agents>`);
+    parts.push(`<background_agents>\n${bgLines.join("\n")}\nUse spawn_agent(action="status", id="...") for progress details. Do NOT call finish until all complete.\n</background_agents>`);
   }
 
   // Active reminders — event-driven, compact, budget-controlled
   const remindersSection = opts.reminders?.render(projectDir) ?? null;
   if (remindersSection) parts.push(remindersSection);
 
-  // Skills (Agent Skills spec — progressive disclosure: only name+description here)
+  return parts.join("\n\n");
+}
+
+/**
+ * Build the semi-static Layer 2 system-prompt block: content that rarely
+ * changes during a run (RESEARCH.md, skills list, lessons.md). Cached
+ * separately from Layer 1 (brain.md) so an occasional edit invalidates only
+ * Layer 2 while the Layer 1 core-rules cache stays warm.
+ */
+export function buildSemiStaticSystemLayer(projectDir: string): string {
+  const parts: string[] = [];
+
+  const goal = readFileSafe(join(projectDir, "RESEARCH.md"));
+  if (goal) parts.push(`<research_goal>\n${goal}\n</research_goal>`);
+
+  const lessons = readFileSafe(join(projectDir, "notes", "lessons.md"));
+  if (lessons && lessons.trim().length > 20) {
+    parts.push(`<lessons_learned>\n${lessons}\n</lessons_learned>`);
+  }
+
   const skillSummary = discoverSkills(projectDir);
   if (skillSummary) parts.push(skillSummary);
 
   return parts.join("\n\n");
 }
 
-// ── Enhanced report status ──────────────────────────────
+// ── Report status ──────────────────────────────
+//
+// Canonicalization: emit discrete signals (exists / not-yet / ok / has-errors)
+// rather than precise numbers (line counts, KB, warning counts). The precise
+// numbers bounce every turn and poison prompt-cache prefix matching without
+// carrying load-bearing information. Same rule applies to buildDataStatus.
 
 function buildReportStatus(projectDir: string): string {
   const reportDir = join(projectDir, "report");
   const lines: string[] = [];
 
-  // report.tex: lines + section headers
   const tex = readFileSafe(join(reportDir, "report.tex"));
   if (tex) {
-    const lineCount = tex.split("\n").length;
     const sections = [...tex.matchAll(/\\section\{([^}]+)\}/g)].map(m => m[1]);
-    lines.push(`- report.tex: ${lineCount} lines` + (sections.length > 0 ? `, sections: [${sections.join(", ")}]` : ""));
+    lines.push(`- report.tex: exists` + (sections.length > 0 ? `, sections: [${sections.join(", ")}]` : ""));
   } else {
     lines.push("- report.tex: not yet");
   }
 
-  // report.pdf: existence + size
   try {
-    const stat = statSync(join(reportDir, "report.pdf"));
-    lines.push(`- report.pdf: ${Math.round(stat.size / 1024)}KB`);
+    statSync(join(reportDir, "report.pdf"));
+    lines.push(`- report.pdf: exists`);
   } catch {
     lines.push("- report.pdf: not yet");
   }
 
-  // references.bib: entry count
-  const bib = readFileSafe(join(reportDir, "references.bib"));
-  if (bib) {
-    const entryCount = (bib.match(/@\w+\{/g) || []).length;
-    lines.push(`- references.bib: ${entryCount} entries`);
+  if (readFileSafe(join(reportDir, "references.bib"))) {
+    lines.push(`- references.bib: exists`);
   }
 
-  // compile status from report.log
   const log = readFileSafe(join(reportDir, "report.log"));
   if (log) {
-    const warnings = (log.match(/Warning/gi) || []).length;
-    const errors = (log.match(/^!/gm) || []).length;
-    lines.push(`- last compile: ${errors > 0 ? errors + " errors" : "OK"}${warnings > 0 ? ", " + warnings + " warnings" : ""}`);
+    const hasErrors = /^!/m.test(log);
+    const hasWarnings = /Warning/i.test(log);
+    lines.push(`- last compile: ${hasErrors ? "has errors" : hasWarnings ? "warnings only" : "ok"}`);
   }
 
-  // figures/ listing
   try {
-    const figs = readdirSync(join(reportDir, "figures")).filter(f => !f.startsWith("."));
-    if (figs.length > 0) lines.push(`- figures/: ${figs.join(", ")} (${figs.length} files)`);
+    const figs = readdirSync(join(reportDir, "figures")).filter(f => !f.startsWith(".")).sort();
+    if (figs.length > 0) lines.push(`- figures/: ${figs.join(", ")}`);
   } catch {}
 
   return `<report_status>\n${lines.join("\n")}\n</report_status>`;
 }
 
-// ── Enhanced data status ────────────────────────────────
+// ── Data status ────────────────────────────────
 
 function buildDataStatus(projectDir: string): string {
   const lines: string[] = [];
 
-  // Papers with names + figure extraction status
   const papersDir = join(projectDir, "data", "papers");
   try {
-    const entries = readdirSync(papersDir);
+    const entries = readdirSync(papersDir).sort();
     const papers = entries.filter(e => !e.endsWith("_figures") && !e.startsWith("."));
-    const figDirs = entries.filter(e => e.endsWith("_figures"));
+    const figSet = new Set(entries.filter(e => e.endsWith("_figures")).map(e => e.replace(/_figures$/, "")));
     if (papers.length > 0) {
-      lines.push(`- Papers: ${papers.join(", ")} (${figDirs.length}/${papers.length} with figures)`);
+      const annotated = papers.map(p => figSet.has(p.replace(/\.pdf$/, "")) || figSet.has(p) ? `${p}✓` : p);
+      lines.push(`- Papers: ${annotated.join(", ")}`);
     } else {
       lines.push("- Papers: none");
     }
@@ -413,21 +422,19 @@ function buildDataStatus(projectDir: string): string {
     lines.push("- Papers: none");
   }
 
-  // Scripts with names
   const scriptsDir = join(projectDir, "data", "scripts");
   try {
-    const scripts = readdirSync(scriptsDir).filter(f => !f.startsWith("."));
+    const scripts = readdirSync(scriptsDir).filter(f => !f.startsWith(".")).sort();
     if (scripts.length > 0) lines.push(`- Scripts: ${scripts.join(", ")}`);
   } catch {}
 
-  // Runs with contents
   const runsDir = join(projectDir, "data", "runs");
   try {
     const runs = readdirSync(runsDir, { withFileTypes: true });
     const runParts: string[] = [];
-    for (const r of runs) {
+    for (const r of runs.sort((a, b) => a.name.localeCompare(b.name))) {
       if (r.isDirectory()) {
-        const files = readdirSync(join(runsDir, r.name)).filter(f => !f.startsWith("."));
+        const files = readdirSync(join(runsDir, r.name)).filter(f => !f.startsWith(".")).sort();
         runParts.push(`${r.name}/ (${files.join(", ")})`);
       } else if (!r.name.startsWith(".")) {
         runParts.push(r.name);
@@ -436,7 +443,6 @@ function buildDataStatus(projectDir: string): string {
     if (runParts.length > 0) lines.push(`- Runs: ${runParts.join("; ")}`);
   } catch {}
 
-  // Latest aggregate results summary (if exists)
   const allResults = readFileSafe(join(runsDir, "all_results.json"));
   if (allResults) {
     lines.push(`- all_results.json: ${smartTruncate(allResults, 500)}`);
