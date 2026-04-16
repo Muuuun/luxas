@@ -21,11 +21,17 @@ import { execSync } from "node:child_process";
 import { join, resolve } from "node:path";
 import { Agent } from "@mariozechner/pi-agent-core";
 import { Type } from "@sinclair/typebox";
-import { autoPatch } from "agentsmelt";
-// Note: AgentSmelt namespace stays "sisyphus" — existing lessons live under
-// ~/.agentsmelt/.../sisyphus/. The project rebranded to Luxas but the data path
-// is preserved to avoid orphaning accumulated knowledge.
-const agentSmeltHandle = autoPatch(Agent, "sisyphus");
+// AgentSmelt autoPatch temporarily disabled: its `extractProjectDir` assumes
+// systemPrompt is a string, but commit 6ce68ab switched brain.systemPrompt to
+// TextContent[] for per-block cache-control. That mismatch crashes every
+// fresh `luxas run` at 0 tokens with `prompt.match is not a function`.
+// Existing smelt patches still apply via readPatches/applyPatches in agent.ts
+// and createSmeltReminderProvider — only the learning-loop side (tool-call
+// tracing, post-session eval, assessment drain) is paused until agentsmelt
+// learns to accept array systemPrompt. Namespace reference kept for context:
+// lessons continue to live under ~/.agentsmelt/.../sisyphus/.
+// import { autoPatch } from "agentsmelt";
+// const agentSmeltHandle = autoPatch(Agent, "sisyphus");
 import { createResearchAgent } from "./agent.js";
 import { ensureLiteratureFile } from "./methodology.js";
 
@@ -216,8 +222,8 @@ async function run(dir: string, modelName: string, userDirective?: string) {
   // Clean up browser-use daemon if it was started during this session
   try { execSync("browser-use close --all", { stdio: "pipe", timeout: 5000 }); } catch { /* not running */ }
 
-  // Flush AgentSmelt traces
-  await agentSmeltHandle.done();
+  // AgentSmelt traces flush disabled alongside autoPatch (see top of file).
+  // await agentSmeltHandle.done();
 }
 
 function buildPrompt(researchGoal: string, userDirective?: string): string {
