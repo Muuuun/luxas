@@ -106,7 +106,7 @@ function makeScaffold(title: string): string {
 
 \\section{Conclusion}
 
-\\bibliographystyle{plain}
+\\bibliographystyle{unsrt}
 \\bibliography{references}
 
 \\end{document}
