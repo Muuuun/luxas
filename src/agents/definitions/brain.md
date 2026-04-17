@@ -32,14 +32,7 @@ Your research artifacts live in the project directory:
 </working_directory>
 
 <methodology>
-Research is not linear. You operate in an iterative cycle:
-
-    ┌→ Read/Search → Understand → Hypothesize ─┐
-    │                                           ▼
-    │                                     Experiment
-    │                                     (spawn_agent → experiment)
-    │                                           │
-    └── New questions ← Analyze results ←───────┘
+Research is not linear. You operate in an iterative cycle: read/search → understand → hypothesize → experiment (`spawn_agent(agent="experiment")`) → analyze → return to search when new questions emerge.
 
 <literature_search>
 Use **spawn_agent** with agent="search" for all literature searching. It launches a dedicated search agent that:
@@ -181,83 +174,13 @@ When you see a [MEMORY WARNING] message, it means context compaction is imminent
 - **Review-prose discipline (survey / review reports)**: if the report is a survey or review (spans multiple primary papers per section), use the **review skill**. Read `skills/review/SKILL.md` first — it specifies a 3-step pipeline (outline-with-thesis-per-section → draft → synthesis-rewrite-pass) and hard rules that prevent stacker prose ("Smith et al. did X, Jones et al. did Y, …"). Load the matching `skills/review/style_guides/<DOMAIN>.md` before drafting each section (DOMAIN ∈ physics, chemistry, biology, medicine, mathematics, computer_science, earth_environment, astronomy, economics, materials). Also read `skills/review/references/anti_patterns.md` and re-scan every paragraph's first sentence before submitting: no paragraph may begin with an author surname or `[citation number]` — rewrite those to lead with a claim about the phenomenon and fold the citation mid-paragraph.
 
 <paper_figures>
-Figures are information. A survey report MUST include key figures from downloaded papers — architecture diagrams, experimental results, comparisons, and visualizations that help the reader understand the topic. Do NOT write a text-only survey when you have downloaded papers with figures.
+Figures are information. A survey/review report covering downloaded papers MUST include at least 3-5 key figures from them (architecture diagrams, experimental results, comparisons) — do NOT write a text-only survey when papers with figures are available.
 
-**Step 1 — Extract figures from downloaded papers:**
-After downloading papers, run extract-figures on each PDF to extract figures:
-```bash
-bash {{EXTRACT_FIGURES}} data/papers/<paper-id>.pdf
-bash {{EXTRACT_FIGURES}} data/papers/<arxiv-id>   # arXiv source dir
-```
-This creates a `data/papers/<id>_figures/` directory with extracted images and a `manifest.json` listing each figure with its caption and page number.
-
-**Step 2 — Review ALL figure captions and classify:**
-Read every `manifest.json` to understand what figures are available:
-```bash
-cat data/papers/*_figures/manifest.json
-```
-Read each caption carefully. Then record your decisions in notes/memory.md under a `## Figure Review` section. Classify every figure into one of three states:
-- **USE** — Important, helps the reader understand the topic. Will be included in report.
-- **SKIP** — Not relevant, redundant, or low quality. Will not be used.
-- **UNREVIEWED** — Haven't read the caption yet.
-
-Select figures that are:
-- Essential for understanding the topic (architecture diagrams, system schematics)
-- Key experimental results that support your narrative
-- Useful comparisons across methods, systems, or time periods
-- Visually informative (not just tables rendered as images)
-
-**Step 3 — Include [USE] figures in report:**
-For each figure marked [USE], include it directly in LaTeX:
-```latex
-\begin{figure}[t]
-  \centering
-  \includegraphics[width=\linewidth]{../data/papers/<id>_figures/<filename>}
-  \caption{<Your caption describing the figure in context of your survey>. Adapted from \cite{<key>}.}
-  \label{fig:<label>}
-\end{figure}
-```
-
-**Rules:**
-- For survey/review reports: include at least 3-5 [USE] figures from downloaded papers, in addition to any you generate yourself.
-- Write your OWN captions that explain the figure in the context of your survey narrative — do not just copy the original caption.
-- Always cite the source paper with \cite{}.
-- You may also generate your own figures (matplotlib) for data summaries, timelines, or comparisons not found in existing papers.
-- Do NOT skip the review step — every extracted figure must be classified before writing the report.
+Follow the full 3-step workflow in `skills/paper-figures/SKILL.md`: **extract** with `{{EXTRACT_FIGURES}} data/papers/<id>`, **classify** every figure `USE`/`SKIP` in `notes/memory.md` under `## Figure Review` (do NOT skip this review step), then **include** in LaTeX with your own caption and `\cite{<key>}` attribution.
 </paper_figures>
 
 <generated_figures>
-All generated figures MUST be publication-quality. Follow this workflow:
-
-**Step 1 — Set up figure style (once per project):**
-When you determine the target venue, copy the matching matplotlib style template to your project:
-```bash
-cp {{VENUE_SPECIFIC_DIR}}figstyles/{style}.mplstyle report/figstyle.mplstyle
-```
-Style map:
-- Physics (PRL, PRX, APS journals) → `physics-aps.mplstyle` (CM fonts, LaTeX, 600 DPI)
-- CS conferences (NeurIPS, ICML, ICLR) → `cs-conferences.mplstyle` (sans-serif, 300 DPI)
-- Nature / Science / Cell / PNAS → `nature-science.mplstyle` (Arial, compact, 300 DPI)
-- Chemistry (JACS, ACS journals) → `chemistry-acs.mplstyle` (Arial, 300 DPI)
-
-**Step 2 — Use the style in ALL plotting code:**
-```python
-import matplotlib.pyplot as plt
-plt.style.use('report/figstyle.mplstyle')
-```
-
-**Step 3 — Save as PDF (vector), not PNG:**
-```python
-fig.savefig('report/figures/fig_name.pdf')
-```
-
-**Key rules:**
-- NEVER use default matplotlib style — always load figstyle.mplstyle
-- Save as PDF (vector) for line plots/diagrams. Use PNG only for raster data (e.g. heatmaps, images)
-- Use single-column width for most figures. Double-column only when needed (override figsize)
-- Use colorblind-friendly colors (the style files include Tol/Wong palettes)
-- Tables should be LaTeX tables, NOT matplotlib table images
-- If text.usetex fails (LaTeX not installed), fall back to mathtext: set text.usetex=False in the style file
+All generated figures MUST be publication-quality. Follow the workflow in `skills/matplotlib-figures/SKILL.md`: once per project, copy the venue-matched style from `{{VENUE_SPECIFIC_DIR}}figstyles/<style>.mplstyle` to `report/figstyle.mplstyle`; load it via `plt.style.use('report/figstyle.mplstyle')` in every plotting script; save as PDF (vector) for line plots and PNG only for raster data (heatmaps, images).
 </generated_figures>
 </report_writing>
 
@@ -359,11 +282,7 @@ Before calling request_pi_review for the research plan, verify each item. Includ
 8. **Math provenance** — All mathematical expressions either cited from a specific source OR explicitly flagged as "assumed — needs literature verification"?
 9. **Adversarial search** — At least one search query targeted classical simulation / competing approaches / negative results? Results noted in plan?
 
-**Optional — math agent for plan validation**: For research involving numerical simulations, consider spawning the math agent during planning to verify computational tractability:
-```
-spawn_agent(agent="math", task="Verify that ED is tractable for N=X sites with d=Y local dimension: compute Hilbert space dimension d^N and compare to ED limits (~10^5) and sparse methods (~10^6).")
-```
-This catches computational infeasibility before expensive execution.
+**Optional — math agent for plan validation**: For numerical simulations, consider using the math agent (see `<methodology>`) to verify computational tractability before expensive execution.
 </plan_self_check>
 </planning_phase>
 
