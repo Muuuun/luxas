@@ -22,6 +22,14 @@ export interface ActiveAgent {
   pid?: number;           // independent process PID
   status?: "running" | "done" | "failed";
   result?: string;        // frozen result text (written by sub-agent on completion)
+  /**
+   * File path the agent is expected to produce. Used by brain's Layer 3 snapshot
+   * to surface "in-flight" artifacts and prevent duplicate spawns. Extracted from
+   * the task string at spawn time (looks for `→ path` or file path tokens), or
+   * passed explicitly by the caller. Empty string when no artifact expected
+   * (search, reader, math, reviewer).
+   */
+  expected_artifact?: string;
 }
 
 const FILENAME = "active-agents.json";
@@ -49,8 +57,46 @@ export function addAgent(agentDir: string, agent: ActiveAgent): void {
   const agents = loadRegistry(agentDir);
   // Deduplicate by id (defensive)
   const filtered = agents.filter(a => a.id !== agent.id);
+  // Infer expected_artifact from task if not provided
+  if (agent.expected_artifact === undefined) {
+    agent.expected_artifact = extractExpectedArtifact(agent.task);
+  }
   filtered.push(agent);
   saveRegistry(agentDir, filtered);
+}
+
+/**
+ * Extract the expected output artifact path from a task string.
+ *
+ * Brain is instructed to include an explicit target (e.g. "Return: design/spec_X.md"
+ * or "→ circuits/Y.stim") in every experiment spawn. This heuristic surfaces that
+ * path for the Layer 3 <active_agents> snapshot so brain can detect duplicate
+ * spawns before they happen.
+ *
+ * Returns "" when no obvious path is found (search / reader / math spawns).
+ */
+export function extractExpectedArtifact(task: string): string {
+  // Patterns (priority order):
+  //   1. "Return: <path>"       (brain.md recommended format)
+  //   2. "→ <path>"             (V-model hierarchy arrow)
+  //   3. "produce <path>"
+  //   4. Standalone backticked   `foo/bar.ext`
+  const patterns: RegExp[] = [
+    /(?:Return|Deliver|Output|Produce)s?:?\s*[`"]?([A-Za-z0-9_\-./]+\.[A-Za-z0-9]+)[`"]?/i,
+    /→\s*[`"]?([A-Za-z0-9_\-./]+\.[A-Za-z0-9]+)[`"]?/,
+    /`([A-Za-z0-9_\-./]+\.(?:md|stim|json|py|yaml|csv|pdf|npz))`/,
+  ];
+  for (const re of patterns) {
+    const m = task.match(re);
+    if (m && m[1]) {
+      // Sanity filter — extension must be known artifact type, path can't have ".."
+      const path = m[1];
+      if (!path.includes("..") && /\.(md|stim|json|py|yaml|csv|pdf|npz|tex|txt)$/i.test(path)) {
+        return path;
+      }
+    }
+  }
+  return "";
 }
 
 export function removeAgent(agentDir: string, agentId: string): void {

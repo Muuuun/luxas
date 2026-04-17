@@ -9,8 +9,6 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { readFileSafe, smartTruncate } from "./utils.js";
 import { findUnprocessedPapers, methodologyPath } from "./methodology.js";
-import { getActiveBackgroundAgents } from "./tools/spawn-agent.js";
-import { isAlive } from "./active-agents.js";
 import { join, dirname } from "node:path";
 import { compactNotesIfNeeded } from "./notes-compaction.js";
 import { createCompactionTransform, getContextWindow } from "./compaction/create-transform.js";
@@ -291,11 +289,7 @@ before you continue. The reader is cheap (haiku, ≤30s) and idempotent.
     parts.push("<experiment_notes>(empty — no experiments yet)</experiment_notes>");
   }
 
-  // Research plan
-  const plan = readFileSafe(join(projectDir, "notes", "plan.md"));
-  if (plan && plan.trim().length > 20) {
-    parts.push(`<research_plan>\n${smartTruncate(plan, 1500)}\n</research_plan>`);
-  }
+  // (plan.md summary moved to brain's Layer 3; read the file directly when needed.)
 
   // Memory scratchpad
   const mem = readFileSafe(join(projectDir, "notes", "memory.md"));
@@ -318,18 +312,6 @@ before you continue. The reader is cheap (haiku, ≤30s) and idempotent.
   parts.push(buildReportStatus(projectDir));
   parts.push(buildDataStatus(projectDir));
 
-  // No `elapsed` seconds — changed every turn without load-bearing info,
-  // poisoned cache. Callers use spawn_agent(action="status") for progress.
-  const bgAgents = getActiveBackgroundAgents(projectDir);
-  if (bgAgents.length > 0) {
-    const agentDir = join(projectDir, ".agent");
-    const bgLines = bgAgents.map(a => {
-      const alive = a.pid ? isAlive(agentDir, a.id) : true;
-      const status = a.status === "done" ? "✓ done" : a.status === "failed" ? "✗ failed" : alive ? "running" : "✗ dead";
-      return `- ${a.id} [${status}]: ${a.task}`;
-    });
-    parts.push(`<background_agents>\n${bgLines.join("\n")}\nUse spawn_agent(action="status", id="...") for progress details. Do NOT call finish until all complete.\n</background_agents>`);
-  }
 
   // Active reminders — event-driven, compact, budget-controlled
   const remindersSection = opts.reminders?.render(projectDir) ?? null;

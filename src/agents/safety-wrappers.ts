@@ -287,6 +287,10 @@ export const wrapBrainTools: SafetyWrapper = createSafetyWrapper({
   writeOnExistingPolicy: "block",
 });
 
+// experiment owns engineering-design artifacts under design/ and may use
+// notes/memory.md as a scratchpad. Blocked from rewriting the report,
+// references, literature notes, and experiments log — those stay with the
+// brain / reader / review pipeline.
 export const wrapExperimentTools: SafetyWrapper = createSafetyWrapper({
   protectedFiles: [
     "RESEARCH.md",
@@ -294,7 +298,6 @@ export const wrapExperimentTools: SafetyWrapper = createSafetyWrapper({
     "references.bib",
     "notes/literature.md",
     "notes/experiments.md",
-    "notes/memory.md",
   ],
   writeOnExistingPolicy: "block",
 });

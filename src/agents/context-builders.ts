@@ -3,10 +3,11 @@
  * appended to an agent's system prompt at spawn time.
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { readFileSafe, smartTruncate, listFilesRecursive, ORIGINAL_REQUEST_HEADER } from "../utils.js";
+import { loadRegistry, type ActiveAgent } from "../active-agents.js";
 
 export type ContextBuilder = (projectDir: string, extra?: Record<string, any>) => string;
 
@@ -50,6 +51,7 @@ function renderScriptPreview(entry: ScriptFile, previewLines: number): string {
 }
 
 const CONTEXT_BUILDERS: Record<string, ContextBuilder> = {
+  brain: buildBrainContext,
   experiment: buildExperimentContext,
   reviewer: buildPIContext,
 };
@@ -119,6 +121,28 @@ function buildExperimentContext(projectDir: string): string {
     }
   }
 
+  // 8. Prior design/*.md artifacts (committed specs from earlier experiment
+  //    sessions). Surfaces so repeated spawns don't re-enumerate alternatives.
+  const designFiles = listFilesRecursive(join(projectDir, "design"))
+    .filter(f => f.endsWith(".md"))
+    .sort();
+  if (designFiles.length > 0) {
+    parts.push("<design_artifacts readonly=\"true\">");
+    parts.push("Prior engineering decisions committed in design/*.md by earlier sessions. Read them before enumerating alternatives or picking parameters — do NOT re-derive already-committed specs. Use the read tool for the full file when a preview below is relevant.");
+    for (const full of designFiles) {
+      try {
+        const content = readFileSync(full, "utf-8");
+        const entry: ScriptFile = {
+          relPath: full.replace(projectDir + "/", ""),
+          content,
+          lines: content.split("\n").length,
+        };
+        parts.push(`<design_file path="${entry.relPath}" lines="${entry.lines}">\n${renderScriptPreview(entry, 40)}\n</design_file>`);
+      } catch {}
+    }
+    parts.push("</design_artifacts>");
+  }
+
   if (parts.length === 0) return "";
 
   return [
@@ -129,6 +153,95 @@ function buildExperimentContext(projectDir: string): string {
     `2. In your output, include a "Consistency Check" section listing which scripts you reviewed and whether they were correct.`,
     `</code_consistency>`,
   ].join("\n");
+}
+
+// Brain's Layer 3 — execution-state snapshot mutated on sub-agent harvest
+// or notes/plan.md edit. Must stay deterministic over equal state: any
+// timestamp or counter baked into the output would defeat the equality
+// short-circuit in rebuildLayer3IfChanged and force a cache miss per rebuild.
+function buildBrainContext(projectDir: string, _extra?: Record<string, any>): string {
+  const agentDir = join(projectDir, ".agent");
+  const registry = loadRegistry(agentDir);
+  const running = registry.filter((a) => a.status === "running");
+
+  // NOTE: no timestamp or other turn-varying content embedded here — any
+  // per-call delta would poison rebuildLayer3IfChanged's equality short-circuit
+  // and force an Anthropic re-encode on every trigger. Rebuild events are
+  // traced via bus.emit(layer3_rebuilt).
+  return [
+    renderActiveAgents(running),
+    renderCompletedArtifacts(projectDir),
+    renderPlanStatus(projectDir),
+  ].filter((s) => s.length > 0).join("\n\n");
+}
+
+function renderActiveAgents(running: ActiveAgent[]): string {
+  if (running.length === 0) {
+    return `<active_agents count="0">\nNo sub-agents currently running. Safe to spawn.\n</active_agents>`;
+  }
+
+  // startedAt NOT rendered — it bakes current time into the string and would
+  // invalidate rebuildLayer3IfChanged's equality check on every call. Use
+  // spawn_agent(action="status", id=...) if wall-clock progress is needed.
+  const rows = running.map((a) => {
+    const taskTrunc = a.task.length > 200 ? a.task.slice(0, 200) + "…" : a.task;
+    const expected = a.expected_artifact ? a.expected_artifact : "(not declared)";
+    return `- ${a.id} [${a.name}, ${a.mode}]\n    Task: ${taskTrunc}\n    Expected artifact: ${expected}`;
+  });
+
+  return `<active_agents count="${running.length}">\nBefore spawning a new sub-agent, check this list. Do NOT re-spawn an agent whose expected artifact matches one here.\n\n${rows.join("\n")}\n</active_agents>`;
+}
+
+function renderCompletedArtifacts(projectDir: string): string {
+  const roots = ["design", "data/runs", "circuits", "report/figures"];
+  const collected: { rel: string; size: number; mtime: number }[] = [];
+
+  for (const root of roots) {
+    for (const f of listFilesRecursive(join(projectDir, root))) {
+      try {
+        const st = statSync(f);
+        collected.push({
+          rel: f.replace(projectDir + "/", ""),
+          size: st.size,
+          mtime: st.mtimeMs,
+        });
+      } catch {}
+    }
+  }
+
+  if (collected.length === 0) {
+    return `<completed_artifacts count="0">\nNo artifacts on disk yet.\n</completed_artifacts>`;
+  }
+
+  collected.sort((a, b) => b.mtime - a.mtime);
+  const MAX = 80;
+  const shown = collected.slice(0, MAX);
+  const more = collected.length > MAX ? `\n... (${collected.length - MAX} more files, use bash/ls to enumerate)` : "";
+  const rows = shown.map((a) => `- ${a.rel} (${(a.size / 1024).toFixed(1)} KB)`);
+
+  return `<completed_artifacts count="${collected.length}">\nFiles produced on disk. If an expected spawn artifact matches one here, read the existing file before re-spawning.\n\n${rows.join("\n")}${more}\n</completed_artifacts>`;
+}
+
+function renderPlanStatus(projectDir: string): string {
+  const planPath = join(projectDir, "notes", "plan.md");
+  const raw = readFileSafe(planPath);
+  if (!raw || raw.trim().length === 0) {
+    return `<plan_status>\nnotes/plan.md does not exist yet.\n</plan_status>`;
+  }
+
+  // Heuristic: count L2 sub-question headers (### Q or ### C or similar markers)
+  // and artifact path mentions to estimate completion.
+  const subqMatches = raw.match(/^\s*-?\s*\*\*Q[0-9]+[a-z]?.*?\*\*/gm) || [];
+  const artifactMatches = raw.match(/→\s*[`"]?[A-Za-z0-9_\-./]+\.[A-Za-z0-9]+/g) || [];
+
+  const hash = createHash("md5").update(raw).digest("hex").slice(0, 8);
+  const lines = raw.split("\n").length;
+
+  // Extract PI feedback status marker if present
+  const piVerdictMatch = raw.match(/PI\s+verdict[:\s]+(continue|steer|stop)/i);
+  const piVerdict = piVerdictMatch ? piVerdictMatch[1].toLowerCase() : "unknown";
+
+  return `<plan_status hash="${hash}" lines="${lines}">\nnotes/plan.md snapshot: ${subqMatches.length} Q-style sub-questions, ${artifactMatches.length} artifact paths mentioned.\nLast PI verdict parsed from plan.md: ${piVerdict}.\nUse read tool for full plan — this block shows only summary counts for quick reference.\n</plan_status>`;
 }
 
 // ── PI context (extracted from pi-agent.ts) ──

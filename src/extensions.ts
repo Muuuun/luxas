@@ -37,7 +37,9 @@ export type LuxasEvent =
   | { type: "plan_reviewed"; verdict: string; feedback: string }
   // Reader agent (auto-dispatched after arXiv download; writes notes/methodology.md + notes/literature.md)
   | { type: "reader_done"; paperId: string; success: boolean; elapsedMs: number; summary: string }
-  | { type: "reader_failed"; paperId: string; error: string };
+  | { type: "reader_failed"; paperId: string; error: string }
+  // Layer 3 rebuild (brain's execution-state snapshot mutated at runtime)
+  | { type: "layer3_rebuilt"; reason: string; at: string };
 
 export type ExtensionHandler<E extends LuxasEvent = LuxasEvent> =
   (event: E) => Promise<void> | void;

@@ -23,6 +23,7 @@ import { execSync } from "node:child_process";
 import { join, isAbsolute, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getDefinition, resolvePrompt } from "./agents/registry.js";
+import { resolveContextBuilder } from "./agents/context-builders.js";
 import { spawnAgent } from "./agents/spawn.js";
 import { ensureMethodologyFile, ensureLiteratureFile } from "./methodology.js";
 import { buildResearchTools } from "./tools/index.js";
@@ -108,12 +109,19 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
   // invalidates only Layer 2 while Layer 1 core-rules cache stays warm.
   const layer2 = buildSemiStaticSystemLayer(projectDir);
 
+  // Layer 3: execution-state snapshot (active sub-agents, completed artifacts,
+  // plan.md status). Its cacheControl breakpoint keeps L1+L2 warm when Layer 3
+  // is rebuilt on state change.
+  const buildLayer3 = resolveContextBuilder(brainDef.contextBuilder);
+  const initialLayer3 = buildLayer3 ? buildLayer3(projectDir) : "";
+
   const systemPrompt: TextContent[] = [
     { type: "text", text: layer1, cacheControl: { type: "ephemeral" } },
   ];
   if (layer2) {
     systemPrompt.push({ type: "text", text: layer2, cacheControl: { type: "ephemeral" } });
   }
+  const layer3Index = initialLayer3 ? systemPrompt.push({ type: "text", text: initialLayer3, cacheControl: { type: "ephemeral" } }) - 1 : -1;
 
   // Reminder system — event-driven, per-turn quality nudges
   const reminders = new ReminderRegistry();
@@ -263,6 +271,24 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
   });
   nameAgent(agent, "brain", "brain");
 
+  function rebuildLayer3IfChanged(reason: string): boolean {
+    if (!buildLayer3 || layer3Index < 0) return false;
+    const state = agent.state as { systemPrompt: TextContent[] | string };
+    if (!Array.isArray(state.systemPrompt)) return false;
+    const fresh = buildLayer3(projectDir);
+    if (fresh === state.systemPrompt[layer3Index].text) return false;
+    // In-place element mutation (NOT `state.systemPrompt = next`): pi-agent-core
+    // captures `currentContext.systemPrompt` as a shared array reference at
+    // runLoop start (agent.js:477, agent-loop.js:43) and never re-reads it.
+    // Reassigning the field on _state breaks the shared reference, so the
+    // currently-running prompt cycle would keep seeing the stale Layer 3.
+    // Mutating the element preserves the reference and propagates immediately
+    // to the next streamAssistantResponse call.
+    state.systemPrompt[layer3Index] = { type: "text", text: fresh, cacheControl: { type: "ephemeral" } };
+    bus.emit({ type: "layer3_rebuilt", reason, at: new Date().toISOString() });
+    return true;
+  }
+
   // Wire deferred refs now that agent exists
   setParentAgent(agent);     // enables background spawn_agent with steer()
   finishCallback = () => agent.abort();
@@ -301,6 +327,18 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
       const toolCalls = (event.message?.content ?? [])
         .filter((b: any) => b.type === "toolCall" || b.type === "tool_use").length;
       bus.emit({ type: "turn_end", message: event.message, toolCalls });
+
+      // Brain editing notes/plan.md is the only brain-side action that changes
+      // Layer 3's rendered output. design/ and data/runs/ changes come from
+      // sub-agents and are picked up by the harvest-loop rebuild below.
+      const editedPlan = (event.message?.content ?? []).some((b: any) => {
+        if (b.type !== "toolCall" && b.type !== "tool_use") return false;
+        const tool = b.name || b.toolName;
+        if (tool !== "write" && tool !== "edit") return false;
+        const args = b.arguments || b.input || {};
+        return args.path === "notes/plan.md";
+      });
+      if (editedPlan) rebuildLayer3IfChanged("brain edited notes/plan.md");
     }
     // Persist new messages + harness state to Session DAG after each completed turn
     if (event.type === "turn_end") {
@@ -338,6 +376,7 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
       if (turnCount % 5 === 0) {
         try {
           const active = loadRegistry(agentDir);
+          let harvested = 0;
           for (const a of active) {
             if (a.status === "done" && a.result) {
               agent.steer({
@@ -346,6 +385,7 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
                 timestamp: Date.now(),
               });
               removeAgent(agentDir, a.id);
+              harvested++;
             } else if (a.status === "failed") {
               agent.steer({
                 role: "user",
@@ -353,7 +393,13 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
                 timestamp: Date.now(),
               });
               removeAgent(agentDir, a.id);
+              harvested++;
             }
+          }
+          // Layer 3 trigger: if any sub-agent was harvested, the active-agents
+          // list + potentially completed-artifacts set changed → rebuild.
+          if (harvested > 0) {
+            rebuildLayer3IfChanged(`harvested ${harvested} sub-agent(s)`);
           }
         } catch {}
       }
