@@ -28,12 +28,17 @@ scripts/search papers "topological insulators" --source openalex --count 20
 scripts/search papers "diffusion models" --source arxiv --count 15
 scripts/search papers "air pollution health effects" --source crossref --count 20
 scripts/search papers "quantum error correction" --from-year 2024 --sort date --count 20
+# Author-filtered search: use last name as an indexed field, not free text.
+# At least one of <query> or --author is required; both together = AND.
+scripts/search papers "" --author "Lukin" --from-year 2025 --sort date --count 20
+scripts/search papers "neutral atom arrays" --author "Bluvstein" --count 15
 ```
 
 - **OpenAlex**: all fields, citation counts, DOIs. `--source openalex`
 - **arXiv**: recent preprints, physics/CS/math. `--source arxiv`
 - **CrossRef**: broadest coverage (120M+ records), all disciplines, non-English journals. `--source crossref`
 - Default: all three.
+- `--author <LastName>`: Filter by author last name. Maps to arXiv `au:`, OpenAlex `raw_author_name.search`, and CrossRef `query.author` — all indexed fields. Strongly preferred over putting the name in the free-text query, which treats the name as an unweighted keyword and routinely misses the target. Pair with `--from-year` for recent work by a specific researcher.
 - `--from-year YYYY`: Only return papers published in YYYY or later.
 - `--sort relevance|date`: Sort by relevance (default) or publication date (newest first).
 

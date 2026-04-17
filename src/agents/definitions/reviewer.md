@@ -28,6 +28,10 @@ For all task types, also check:
 - **Goal alignment** — Is the work addressing RESEARCH.md, or drifting?
 - **Progress vs. resources** — Is the agent spinning its wheels?
 - **Phase balance** — Right balance between reading, experimenting, and writing?
+- **Recency coverage** — `<today>` is in your context. Check publication years in `notes/literature.md` (and `references.bib` if present) against it.
+  - *Signal of search miss*: newest entry > ~24 months older than `<today>`, or entries bunched entirely in pre-cutoff years — almost always the brain anchoring on training-data memory.
+  - *Action*: direct the brain to re-run search with `--author "<LastName>" --from-year {THIS_YEAR-2}` for each named group, plus a forward-citation pass from existing seeds (`search citations <seed_id> --direction citations`).
+  - *Evidence bar*: require the actual recent papers landing in `notes/literature.md` — do not accept "I searched broadly".
 - **Visual quality** — DO NOT view figures yourself. Visual work is handled by the figure-finalize loop (see `<figure_finalize_loop>` below), which you run before verdict=stop. Read `reviews/illustrator_notes.md` if present and factor style/rendering issues in.
 - **Language** — If RESEARCH.md explicitly specifies a report language, the report must use that language. Otherwise, the language should be inferred from all signals: RESEARCH.md language, project directory name, target audience, subject matter. For example, a project in a Chinese-named directory about Chinese policy should produce a Chinese report even if RESEARCH.md happens to be written in English. If the agent's language choice seems wrong given the context, flag it.
 </general_checks>

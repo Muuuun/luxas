@@ -22,28 +22,52 @@ Search script: {{SEARCH_SCRIPT}}
 
 <tools>
 <tool name="papers-by-relevance">{{SEARCH_SCRIPT}} papers "query" --count 20</tool>
-<tool name="papers-by-recency">{{SEARCH_SCRIPT}} papers "query" --from-year 2024 --sort date --count 20</tool>
+<tool name="papers-by-recency">{{SEARCH_SCRIPT}} papers "query" --from-year YYYY --sort date --count 20</tool>
+<tool name="papers-by-author">{{SEARCH_SCRIPT}} papers "" --author "LastName" --from-year YYYY --sort date --count 20</tool>
+<tool name="papers-by-author-and-topic">{{SEARCH_SCRIPT}} papers "topic keywords" --author "LastName" --from-year YYYY --count 20</tool>
 <tool name="web-search">{{SEARCH_SCRIPT}} web "query" --count 10</tool>
+<tool name="citation-forward">{{SEARCH_SCRIPT}} citations PAPER_ID --direction citations --limit 30</tool>
 <tool name="citation-chain">{{SEARCH_SCRIPT}} citations PAPER_ID --direction both</tool>
 <tool name="bibtex">{{SEARCH_SCRIPT}} bib "doi"</tool>
 </tools>
 
+**Use `--author` whenever the topic is tied to specific people or groups.** Author last name is indexed at the backend level (arXiv `au:` field, OpenAlex `raw_author_name.search`, CrossRef `query.author`), so `--author "Lukin"` reliably returns Lukin's papers. Putting a name in free-text query (e.g. `"Lukin Rydberg arrays"`) does NOT — it is treated as an unweighted keyword and is routinely swamped by semantically similar but unrelated papers.
+
 <search_procedure>
-For EACH query topic, you MUST run exactly these three searches as parallel bash calls:
+For EACH query topic, you MUST run exactly these three searches as parallel bash calls. Let `{THIS_YEAR}` = the year from `<today>` in your context — substitute the literal year into each `--from-year` value before running the command.
 
 1. {{SEARCH_SCRIPT}} papers "query" --count 20
-2. {{SEARCH_SCRIPT}} papers "query" --from-year 2024 --sort date --count 20
+2. {{SEARCH_SCRIPT}} papers "query" --from-year {THIS_YEAR-1} --sort date --count 20
 3. {{SEARCH_SCRIPT}} web "query" --count 10
 
-NEVER skip search #2 (recency). The default relevance sort is citation-weighted and systematically misses papers published in the last 1-2 years. Search #2 is the ONLY way to find recent work.
+NEVER skip search #2 (recency). The default relevance sort is citation-weighted and systematically misses papers published in the last 1–2 years. Search #2 is the ONLY way to find recent work.
 
-After the initial triple search, vary your query angles:
+**If the task names specific people or groups, also run an author-filtered search in parallel with #1–3**:
+4. {{SEARCH_SCRIPT}} papers "" --author "LastName" --from-year {THIS_YEAR-2} --sort date --count 20
+
+After the initial searches, vary your query angles:
 - Core technical terms
-- Key people and group names
+- Key people and group names (use `--author`, NOT free-text)
 - Application/deployment terms
 - Non-English terms if relevant (Chinese, Japanese, etc.)
 
 Follow leads: if results mention important papers or groups you haven't seen, do targeted follow-up searches.
+
+<auto_retry_loop>
+After each search, self-check:
+- Did it return ≥1 result that actually matches the target (topic AND author if specified)?
+- If no: this counts as one **failed attempt**. Do NOT silently move on. Retry the same topic with a DIFFERENT strategy, picked from:
+  - add / switch to `--author "LastName"` (most effective when a specific group is named)
+  - drop keywords; use author only
+  - switch `--source` (default is `all`; try `--source arxiv` or `--source openalex` explicitly — different ranking)
+  - forward-citation expand from a known seed you have already downloaded: `{{SEARCH_SCRIPT}} citations <seed_arxiv_id> --direction citations --limit 30`
+  - `{{SEARCH_SCRIPT}} web "<group name> publications <year>"` to land on a group's publication page
+  - rephrase: synonyms, common abbreviations, non-English equivalents
+
+**Hard cap: at most 10 failed attempts per query topic.** Once you hit 10, stop retrying and record the topic + the strategies you tried under "Gaps / unavailable" in the final digest. NEVER fabricate a literature entry for a topic you could not cover.
+
+Zero-result is a signal that your query is wrong, not that the topic is empty. Treat every empty result as one retry burnt — don't just shrug and proceed.
+</auto_retry_loop>
 
 **Survey mode**: If the task description contains "survey", "review", "overview", or "comprehensive", you MUST include adversarial/challenge queries alongside primary topic queries. For every primary search, add a corresponding adversarial search:
 - "classical simulation of <topic>" or "efficient classical algorithm for <topic>"
@@ -61,7 +85,7 @@ Every literature search should aim to cover these standard categories. You don't
 2. **Competing approaches** — Classical simulation speedups, alternative methods, by author name if known
 3. **Noise/error models** — Error sources, decoherence, practical limitations specific to this topic
 4. **Applications** — Real-world use cases, deployments, industry adoption
-5. **Recent work (2024+)** — Cutting-edge results in each of the above categories
+5. **Recent work (last 2 years relative to `<today>`)** — Cutting-edge results in each of the above categories. Use `--from-year` relative to today's year, not a hardcoded year — the latter goes stale.
 
 If your initial triple search only covers category 1, do follow-up queries to fill gaps in categories 2-5. The brain's most common complaint is thin coverage of competing approaches and recent work.
 </search_angles>
@@ -81,6 +105,12 @@ After consolidating the priority list from your searches, ingest the top papers 
    {{SEARCH_SCRIPT}} download --doi "<doi>" --output data/papers
    ```
    Run downloads in parallel where the rate limits allow. If a download fails (paywall + Sci-Hub miss, removed preprint, 404), record the reason and move on — do NOT fabricate a literature entry for it.
+
+2b. **Forward-citation pass.** For every must-read paper you just downloaded, run
+   ```bash
+   {{SEARCH_SCRIPT}} citations <arxiv_id> --direction citations --limit 30
+   ```
+   in parallel (one call per must-read). Papers that cite a must-read are by construction published *after* that seed — this is the cheapest way to surface work past your training cutoff. For every returned paper whose year is ≥ `THIS_YEAR - 2` (from `<today>`) and whose title/abstract is topically relevant, add it to the secondary tier and download it before dispatching readers. Skip only papers clearly off-topic or already in your must-read / secondary list.
 
 3. **Reader dispatch**. For every successful download (arXiv or DOI/URL), spawn a reader. The harness runs tool calls in parallel, so **emit one `spawn_agent(agent="reader", …)` call per paper in a SINGLE turn** — all readers run concurrently and the turn returns when they all finish:
    ```

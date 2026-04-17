@@ -5,7 +5,8 @@
  * Self-contained Node.js script (ESM, no dependencies beyond Node 22+ built-in fetch).
  *
  * Usage:
- *   search papers <query> [--source openalex|arxiv|crossref|all] [--count N] [--from-year YYYY] [--sort relevance|date]
+ *   search papers <query> [--author <lastname>] [--source openalex|arxiv|crossref|all] [--count N] [--from-year YYYY] [--sort relevance|date]
+ *     (query OR --author must be present; both together = AND)
  *   search citations <id> [--direction references|citations|both] [--limit N]
  *   search download --arxiv <id> [--output <dir>]
  *   search download --doi <doi> [--output <dir>]
@@ -25,7 +26,8 @@
 const args = process.argv.slice(2);
 if (args.length === 0 || args[0] === "--help" || args[0] === "-h") {
   console.log(`Usage:
-  search papers <query> [--source openalex|arxiv|crossref|all] [--count N] [--from-year YYYY] [--sort relevance|date]
+  search papers <query> [--author <lastname>] [--source openalex|arxiv|crossref|all] [--count N] [--from-year YYYY] [--sort relevance|date]
+    (query OR --author must be present; both together = AND. Use --author to find papers by a specific researcher by last name — more reliable than putting the name in the free-text query.)
   search citations <id> [--direction references|citations|both] [--limit N]
   search download --arxiv <id> [--output <dir>]
   search download --doi <doi> [--output <dir>]
@@ -111,9 +113,13 @@ function formatPaper(p, prefix, i) {
   return line;
 }
 
-async function oaSearch(query, count, { fromYear = null, sort = "relevance" } = {}) {
-  const params = new URLSearchParams({ search: query, per_page: String(count), mailto: "luxas-agent@example.com" });
-  if (fromYear) params.set("filter", `publication_year:${fromYear}-2099`);
+async function oaSearch(query, count, { fromYear = null, sort = "relevance", author = null } = {}) {
+  const params = new URLSearchParams({ per_page: String(count), mailto: "luxas-agent@example.com" });
+  if (query) params.set("search", query);
+  const filters = [];
+  if (fromYear) filters.push(`publication_year:${fromYear}-2099`);
+  if (author) filters.push(`raw_author_name.search:${author}`);
+  if (filters.length) params.set("filter", filters.join(","));
   if (sort === "date") params.set("sort", "publication_date:desc");
   const res = await fetch(`${OA_BASE}/works?${params}`, { signal: AbortSignal.timeout(30000) });
   if (!res.ok) return [];
@@ -158,13 +164,19 @@ async function oaReferences(paperId, limit) {
 
 // ─── arXiv ───────────────────────────────────────────────────
 
-async function arxivSearch(query, count, { fromYear = null, sort = "date" } = {}) {
+async function arxivSearch(query, count, { fromYear = null, sort = "date", author = null } = {}) {
   // arXiv sort by date returns globally recent papers, not query-filtered.
   // Always search by relevance first, then post-filter and re-sort if needed.
   const fetchCount = fromYear ? Math.min(count * 3, 150) : count;
+  const qParts = [];
+  if (query) qParts.push(`all:${query}`);
+  if (author) qParts.push(`au:"${author}"`);
+  const searchQuery = qParts.length > 0 ? qParts.join(" AND ") : "all:*";
   const params = new URLSearchParams({
-    search_query: `all:${query}`, start: "0",
-    max_results: String(fetchCount), sortBy: "relevance", sortOrder: "descending",
+    search_query: searchQuery, start: "0",
+    max_results: String(fetchCount),
+    sortBy: sort === "date" ? "submittedDate" : "relevance",
+    sortOrder: "descending",
   });
   const res = await fetch(`http://export.arxiv.org/api/query?${params}`, { signal: AbortSignal.timeout(30000) });
   if (!res.ok) return [];
@@ -202,10 +214,12 @@ async function arxivSearch(query, count, { fromYear = null, sort = "date" } = {}
 
 // ─── CrossRef ────────────────────────────────────────────────
 
-async function crossrefSearch(query, count, { fromYear = null, sort = "relevance" } = {}) {
+async function crossrefSearch(query, count, { fromYear = null, sort = "relevance", author = null } = {}) {
   const params = new URLSearchParams({
-    query, rows: String(count), mailto: "luxas-agent@example.com",
+    rows: String(count), mailto: "luxas-agent@example.com",
   });
+  if (query) params.set("query", query);
+  if (author) params.set("query.author", author);
   if (fromYear) params.set("filter", `from-pub-date:${fromYear}`);
   if (sort === "date") params.set("sort", "published"); else params.set("sort", "relevance");
   const res = await fetch(`https://api.crossref.org/works?${params}`, { signal: AbortSignal.timeout(30000) });
@@ -607,13 +621,17 @@ async function fetchBib(doi, savePath) {
 try {
   if (command === "papers") {
     const query = getPositionalArgs(1);
-    if (!query) { console.error("Usage: search papers <query>"); process.exit(1); }
+    const author = getFlag("author", null);
+    if (!query && !author) {
+      console.error("Usage: search papers <query> [--author <lastname>]  (at least one of <query> or --author is required)");
+      process.exit(1);
+    }
     const source = getFlag("source", "all");
     const count = Math.min(parseInt(getFlag("count", "10")), 50);
     const fromYearRaw = getFlag("from-year", null);
     const fromYear = fromYearRaw ? parseInt(fromYearRaw) : null;
     const sort = getFlag("sort", "relevance");
-    const searchOpts = { fromYear, sort };
+    const searchOpts = { fromYear, sort, author };
     const parts = [];
     const all = source === "all" || source === "both";  // "both" = legacy alias for "all"
     if (all || source === "openalex") {

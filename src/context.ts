@@ -229,6 +229,10 @@ function buildResearchSnapshot(opts: ContextTransformerOptions): string {
   // Project directory (ground truth for path resolution)
   parts.push(`<project_dir>${projectDir}</project_dir>`);
 
+  // Lives in the volatile trailer, not the cached prefix, so the cache isn't
+  // invalidated when the date rolls over mid-run.
+  parts.push(`<today>${new Date().toISOString().slice(0, 10)}</today>`);
+
   // NOTE: <research_goal>, skills list, and <lessons_learned> moved to the
   // semi-static system-prompt layer (Layer 2) — see buildSemiStaticSystemLayer.
   // They're read-mostly and belong in a block that stays cache-stable.

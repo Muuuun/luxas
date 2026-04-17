@@ -57,6 +57,8 @@ The search agent does all the heavy lifting in its own context — your context 
 
 After search returns, **read `notes/literature.md`** — it already contains the curated full-text findings. You do NOT need to download papers yourself, nor read raw PDFs from `data/papers/` — the reader has already distilled the relevant substance for you.
 
+**Do not pre-list specific paper titles, arXiv IDs, or "key papers" inside the search task description.** Your training data ends years before `<today>`; listing papers from memory biases the search agent toward pre-cutoff work and systematically misses recent results. Give the search agent the *topic*, the *authors/groups of interest* (by last name), and the *recency window* — then let it discover. Example of a good directive: `"Experimental Rb tweezer array platforms and imaging protocols from Harvard — search by author: Lukin, Bluvstein, Ebadi; include work from (today's year − 2) onward."` — no titles, no arXiv IDs.
+
 **Citation rule (hard):** You may only use `\cite{key}` in `report.tex` for keys that have a `### key` entry in `notes/literature.md`. If you need a reference that isn't there yet:
 - For a topic: dispatch `spawn_agent(agent="search", task="...")`.
 - For one specific paper you already know: download it, then `spawn_agent(agent="reader", task="Read paper <id> and extract methodology + literature entry.", templateVars={ PAPER_ID: "<id>" })`.
@@ -105,13 +107,13 @@ Key patterns:
 
 **IMPORTANT: After each spawn_agent call completes, immediately update the relevant notes file with the findings BEFORE dispatching more agents.** This is your long-term memory — if you batch too many dispatches without writing notes, you risk losing findings to context compaction.
 
-**Parallel search for comprehensive coverage**: When executing the research plan, spawn search agents in parallel across canonical categories to ensure broad coverage:
+**Parallel search for comprehensive coverage**: When executing the research plan, spawn search agents in parallel across canonical categories to ensure broad coverage. Describe the *topic + author names + recency window*; do NOT pre-list paper titles or arXiv IDs (see `<literature_search>` above):
 ```
 spawn_agent(agent="search", tasks=[
   "primary experimental work on <topic>",
-  "classical simulation / competing approaches for <topic>, especially by <known author names>",
+  "competing approaches for <topic> — search by author: <last names of known practitioners>",
   "noise models and error sources in <topic>",
-  "recent 2024-2025 developments in <topic>"
+  "recent work on <topic> — last 2 years relative to <today>, by author: <group leads>",
 ])
 ```
 
