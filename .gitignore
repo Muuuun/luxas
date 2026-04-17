@@ -15,3 +15,10 @@ dist/
 .vscode/
 .idea/
 
+# Python caches (e.g. under skills/search/scripts/)
+__pycache__/
+
+# Local debug scripts (tracked tests use scripts/test_*.mts)
+scripts/check_*.mts
+scripts/repro_*.mts
+
