@@ -4,6 +4,7 @@
  */
 
 import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { readFileSafe, smartTruncate, listFilesRecursive, ORIGINAL_REQUEST_HEADER } from "../utils.js";
 
@@ -148,6 +149,7 @@ function buildPIContext(projectDir: string, extra?: Record<string, any>): string
         `<style_domain_override>The user passed --style-domain ${styleDomain} via the CLI. Skip P0 auto-detection: write "${styleDomain}" to notes/figure_domain.txt and proceed.</style_domain_override>`,
       );
     }
+    parts.push(buildFigureConvergenceBlock(projectDir));
     return parts.join("\n\n");
   }
 
@@ -194,7 +196,88 @@ ${smartTruncate(method, 4000)}
   const codeBlock = buildProjectCodeBlock(projectDir);
   if (codeBlock) parts.push(codeBlock);
 
+  parts.push(buildFigureConvergenceBlock(projectDir));
+
   return parts.join("\n\n");
+}
+
+// ── Figure convergence check ─────────────────────────
+// Short-circuits the reviewer's figure_finalize_loop when every file listed
+// in reviews/illustrator_notes.md frontmatter still hashes to the recorded
+// value — avoids re-auditing figures that already converged in a prior
+// reviewer session. See <figure_finalize_loop> Step 0 in reviewer.md.
+
+function md5OrNull(fullPath: string): string | null {
+  try {
+    return createHash("md5").update(readFileSync(fullPath)).digest("hex");
+  } catch {
+    return null;
+  }
+}
+
+interface Frontmatter {
+  status?: string;
+  audited_at?: string;
+  style_guide_md5?: string;
+  canonical_figures?: Record<string, string>;
+  plot_scripts?: Record<string, string>;
+}
+
+// Fixed-schema parser (js-yaml is not a dep). Tolerates tabs/CRLF; indented
+// entries under `canonical_figures:` / `plot_scripts:` go into the
+// corresponding map, everything else is a top-level scalar.
+function parseFrontmatter(block: string): Frontmatter {
+  const out: Frontmatter = {};
+  let section: "canonical_figures" | "plot_scripts" | null = null;
+  for (const raw of block.replace(/\r/g, "").split("\n")) {
+    if (!raw.trim() || raw.trimStart().startsWith("#")) continue;
+    const indented = /^[\t ]/.test(raw);
+    if (!indented) {
+      section = null;
+      const m = raw.match(/^(\w+)\s*:\s*(.*)$/);
+      if (!m) continue;
+      const [, key, value] = m;
+      if (key === "canonical_figures" || key === "plot_scripts") {
+        section = key;
+        out[key] = {};
+      } else if (value && (key === "status" || key === "audited_at" || key === "style_guide_md5")) {
+        out[key] = value.trim().replace(/^["']|["']$/g, "");
+      }
+    } else if (section) {
+      const m = raw.match(/^[\t ]+(.+?)\s*:\s*(.+)$/);
+      if (m) out[section]![m[1].trim()] = m[2].trim();
+    }
+  }
+  return out;
+}
+
+function buildFigureConvergenceBlock(projectDir: string): string {
+  const notesPath = join(projectDir, "reviews", "illustrator_notes.md");
+  const raw = readFileSafe(notesPath);
+  if (!raw) return `<figure_convergence>none</figure_convergence>`;
+
+  const m = raw.match(/^---\n([\s\S]*?)\n---\n/);
+  if (!m) return `<figure_convergence>none</figure_convergence>`;
+
+  const fm = parseFrontmatter(m[1]);
+  if (fm.status !== "all-clear") {
+    return `<figure_convergence>stale reason="prior-audit-had-issues"</figure_convergence>`;
+  }
+
+  const drift: string[] = [];
+  const check = (rel: string, expected: string) => {
+    const cur = md5OrNull(join(projectDir, rel));
+    if (cur === null) drift.push(`${rel}: missing`);
+    else if (cur !== expected) drift.push(`${rel}: changed`);
+  };
+  if (fm.style_guide_md5) check("report/figures/style_guide.md", fm.style_guide_md5);
+  for (const [rel, h] of Object.entries(fm.canonical_figures ?? {})) check(rel, h);
+  for (const [rel, h] of Object.entries(fm.plot_scripts ?? {})) check(rel, h);
+
+  if (drift.length === 0) {
+    return `<figure_convergence>converged audited_at="${fm.audited_at ?? "unknown"}"</figure_convergence>`;
+  }
+  return `<figure_convergence>stale reason="${drift.join("; ")}"</figure_convergence>`;
 }
 
 // Full-inline budget for PI code assembly. Opus (1M ctx) comfortably holds

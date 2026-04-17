@@ -82,36 +82,108 @@ Steps:
 2. Read `report/figures/style_guide.md` if it exists (this is your ground
    truth for palette/fonts/line weights). If absent, establish a de-facto
    style from the canonical figures themselves.
-3. For each canonical PNG (e.g. `report/figures/NAME.png`), use the Read tool
-   (vision) to inspect visually.
+3. For EACH canonical figure, resolve its source plot script (`grep -l
+   NAME data/scripts/plot_*.py`). Walk the 12-item checklist below in
+   order. For each item, record `[pass]`, `[fail: <one-line reason>]`, or
+   `[N/A]`. Flag only items you can concretely verify against
+   `style_guide.md` or the plot script — do NOT invent issues outside
+   the checklist.
+
+   Items tagged `[script]` are verifiable by reading the plot script
+   source (grep / read — no vision). Items tagged `[vision]` require the
+   Read tool on the PNG.
+
+   1. `[script]` **Palette hex codes** in the plot script match
+      `style_guide.md` palette (or project `style_overrides.md`).
+   2. `[script]` **Font size hierarchy**: axis labels ≥ tick labels ≥
+      annotations, each within the guide's bracket.
+   3. `[script]` **Line weights**: connectors ≥ 0.75 pt; primary data
+      lines ≥ 1.0 pt; spines 0.5 pt unless guide overrides.
+   4. `[vision]` **Panel labels** `(a)/(b)/(c)`: lowercase, parentheses,
+      consistent position (top-left unless guide says otherwise).
+   5. `[vision]` **Legend proxy consistency**: marker shape / face /
+      edgecolor of each legend entry matches the plotted series.
+   6. `[script]` **Tick direction** (`in` / `out`) matches guide.
+   7. `[script]` **Spines**: no top/right unless guide mandates;
+      `ax.spines[...].set_visible(...)` calls consistent across panels.
+   8. `[vision]` **No clipped / overlapping text** (labels, legend,
+      annotations).
+   9. `[vision]` **No font fallback / missing-glyph box** in rendered PNG.
+   10. `[script]` **`fontweight="bold"` + `usetex=True`** incompatibility:
+       if the script sets `text.usetex = True` (or `rcParams["text.usetex"]`),
+       any `fontweight="bold"` passed to `plt.text` / `ax.annotate` /
+       `ax.set_title` is silently dropped by matplotlib. Flag as fail and
+       suggest wrapping the string in `\textbf{…}` instead.
+   11. `[script]` **Raster embed DPI** ≥150 for any `imshow` / imported
+       PNG — else the figure looks soft at print size.
+   12. `[vision]` **Colorblind safety**: primary palette distinguishable
+       to deutan / protan (spot-check — guide's own palettes are
+       pre-audited, so this mainly catches regressions in custom
+       overrides).
+
 4. For each corresponding `.tex` source (if present in `figures/` or
-   `report/figures/`), read for TikZ-level bugs.
-5. Write `reviews/illustrator_notes.md` with the structure below. List
-   orphans briefly but do NOT audit them.
+   `report/figures/`), also read for TikZ-level bugs (unresolved
+   `\ctrl`, missing `\end{}`, deprecated macros). Record under the
+   per-figure "Bug" line.
+5. Write `reviews/illustrator_notes.md` with the structure below —
+   **including the YAML frontmatter**. Writing the frontmatter is
+   mandatory: the reviewer's next run reads it to decide whether to
+   skip the whole finalize loop. If you omit it, the next reviewer
+   session re-audits from scratch even when nothing has changed,
+   burning compute.
 
 `reviews/illustrator_notes.md` structure:
 ```markdown
+---
+status: all-clear        # or: <N>-issues
+audited_at: <ISO-8601 UTC, e.g. 2026-04-17T00:12:34Z>
+style_guide_md5: <md5 of report/figures/style_guide.md>
+canonical_figures:
+  report/figures/NAME.pdf: <md5>
+  report/figures/NAME.png: <md5>
+plot_scripts:
+  data/scripts/plot_NAME.py: <md5>
+---
+
 # Illustrator Notes (visual review only)
 
+## Checklist per figure
+
+### report/figures/NAME.pdf (source: data/scripts/plot_NAME.py)
+1. [pass]
+2. [fail: axis label 10 pt but guide says 8 pt]
+3. [pass]
+…
+12. [pass]
+
 ## Overall consistency
-- Palette: ...
-- Typography: ...
-- Line weights: ...
-
-## figure_1.pdf
-- Bug: ...
-- Style inconsistency: ...
-- Suggestion (composition — figure 1 only): ...
-
-## figure_2.pdf
-- Bug: ...
-- Style inconsistency: ...
+- Palette: …
+- Typography: …
+- Line weights: …
 
 ## Summary
 [one sentence: all-clear / <N> issues to fix]
 ```
 
-If truly nothing is wrong, write "Summary: all-clear" and stop.
+Compute md5s with bash before you write the file. The md5 helper works
+on both macOS and Linux:
+
+```bash
+md5() {
+  if command -v md5sum >/dev/null 2>&1; then md5sum "$1" | awk '{print $1}';
+  else md5 -q "$1"; fi
+}
+md5 report/figures/style_guide.md
+md5 report/figures/<NAME>.pdf
+# ... and so on for every canonical figure (pdf + png) and every plot_*.py
+# listed in the brief.
+```
+
+`status` MUST be `all-clear` iff every checklist item is `[pass]` or
+`[N/A]` across every figure AND the final `Summary:` line is exactly
+`Summary: all-clear`. Otherwise use `status: <N>-issues` where N is the
+count of `[fail]` items. A mismatch between `status` and the body's
+Summary will silently disable the convergence short-circuit.
 
 ## Branch B — GENERATE (task says "generate", "make", "revise", "regenerate")
 

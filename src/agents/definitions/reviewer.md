@@ -47,6 +47,14 @@ Entered in two situations:
 - **Normal review path**: you decided verdict should be `"stop"` (content is sufficient), but before submitting, run this loop to finalize figures.
 - **Figure-only mode** (from `luxas figures` CLI, signaled by the `<figure_only_pass>` block at the top of this prompt): skip content review entirely, run this loop, then return without calling submit_verdict.
 
+**Step 0 — Check prior convergence before doing anything else.** Your context contains a `<figure_convergence>…</figure_convergence>` tag. It has exactly three shapes; match on the first word:
+
+- `<figure_convergence>converged audited_at="…"</figure_convergence>` — a previous audit returned all-clear and every figure / plot script / style_guide.md it recorded still has the same md5 on disk. **Skip this entire loop.** Do NOT run the Preamble, do NOT spawn any illustrator, do NOT re-audit. In **normal mode**, go straight to `submit_verdict(verdict="stop", assessment_note="figures already converged at <audited_at>; skipped finalize loop")`. In **figure-only mode**, go straight to `figure_done(rounds=0, remaining_issues=[], summary="already converged at <audited_at>; loop skipped")`.
+- `<figure_convergence>stale reason="…"</figure_convergence>` — figures / scripts / style_guide have changed since the last all-clear. Run Preamble + Pipeline normally; the Step 3 audit illustrator will write a fresh frontmatter on the way out.
+- `<figure_convergence>none</figure_convergence>` — no prior audit exists. Run Preamble + Pipeline normally.
+
+The convergence tag is computed by re-hashing every file at context-build time; if it says `converged`, nothing has changed on disk since the last all-clear audit and a re-audit is pure waste.
+
 ## Preamble (once, before the loop)
 
 **P0. Determine the project's figure domain** (cached after first run):
