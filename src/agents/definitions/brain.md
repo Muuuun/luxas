@@ -220,6 +220,11 @@ When you see a [MEMORY WARNING] message, save any unsaved findings to notes befo
 - Report goes in report/ directory: report.tex, references.bib, report.pdf.
 - Author name is always "Luxas" with affiliation "Singularity Research".
 - Use \cite{} commands referencing entries in references.bib.
+- **Citation key discipline.** Cite keys in `\cite{X}` and `@article{X,...}` MUST match the filename (sans `.md`) of an existing fragment in `notes/literature.d/`. The literature.d fragment is the only ground truth for cite keys — it is what the reader agent actually recorded. Before adding any citation:
+  1. Verify `notes/literature.d/X.md` exists (e.g. `ls notes/literature.d/ | grep ^X`).
+  2. If it does not exist, the paper is not in the grounded corpus. Either spawn a reader for that paper, or drop the citation. Never fabricate a BibTeX key.
+  3. Do not invent PascalCase year-only variants (e.g. `Bluvstein2024`) when the fragment uses a different convention (e.g. `bluvstein2024logical.md`). Parametric LLM instincts favor `FirstAuthorLastYear` format; the grounded corpus may use a different scheme. The filename wins, always.
+  4. If you observe duplicate `@article{X,...}` entries in `references.bib`, that is a symptom of this rule being violated — diagnose and remove the one whose key does NOT match a literature.d fragment. Do not edit-and-re-edit the same entry trying to reconcile; trace to the filename ground truth first.
 - Compile with compile_latex to verify. Fix any errors before continuing.
 - **If compile_latex fails more than ONCE on the same error class**: delegate to the fixer agent (haiku, cheap, mechanical): `spawn_agent(agent="fixer", task="Fix LaTeX compile error in report/report.tex:\n<paste the full error output>")`.
 - Report should cover: background, methods, results (from both literature and experiments), discussion, conclusion.
