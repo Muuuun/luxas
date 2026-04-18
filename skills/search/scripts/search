@@ -61,6 +61,27 @@ function getPositionalArgs(startIdx) {
 
 const command = args[0];
 
+// ─── HTTP with 429 backoff ───────────────────────────────────
+// arxiv's export API throttles aggressively (~30 queries / short window).
+// A silent empty-result on 429 is indistinguishable from "no papers on
+// this topic" to the search agent, so retry transient failures and log
+// each attempt to stderr.
+async function fetchWithRetry(url, { maxRetries = 3, initialBackoffMs = 3000, timeoutMs = 30000 } = {}) {
+  let lastRes = null;
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+    if (res.ok || (res.status < 500 && res.status !== 429)) return res;
+    lastRes = res;
+    if (attempt < maxRetries - 1) {
+      const wait = initialBackoffMs * (attempt + 1);
+      console.error(`[search] ${res.status} ${url.slice(0, 80)} — retrying in ${wait}ms`);
+      await new Promise(r => setTimeout(r, wait));
+    }
+  }
+  console.error(`[search] ${lastRes.status} after ${maxRetries} attempts: ${url.slice(0, 120)}`);
+  return lastRes;
+}
+
 // ─── OpenAlex ────────────────────────────────────────────────
 
 const OA_BASE = "https://api.openalex.org";
@@ -121,7 +142,7 @@ async function oaSearch(query, count, { fromYear = null, sort = "relevance", aut
   if (author) filters.push(`raw_author_name.search:${author}`);
   if (filters.length) params.set("filter", filters.join(","));
   if (sort === "date") params.set("sort", "publication_date:desc");
-  const res = await fetch(`${OA_BASE}/works?${params}`, { signal: AbortSignal.timeout(30000) });
+  const res = await fetchWithRetry(`${OA_BASE}/works?${params}`);
   if (!res.ok) return [];
   const data = await res.json();
   return (data.results ?? []).map(normalizeOAWork);
@@ -138,7 +159,7 @@ async function resolveOAId(id) {
     if (m) filter = `doi:10.48550/arxiv.${m[1]}`;
     else return null;
   }
-  const res = await fetch(`${OA_BASE}/works/${filter}?${OA_MAILTO}`, { signal: AbortSignal.timeout(15000) });
+  const res = await fetchWithRetry(`${OA_BASE}/works/${filter}?${OA_MAILTO}`, { timeoutMs: 15000 });
   if (!res.ok) return null;
   const data = await res.json();
   return data.id?.replace("https://openalex.org/", "") ?? null;
@@ -148,7 +169,7 @@ async function oaCitations(paperId, limit) {
   const oaId = await resolveOAId(paperId);
   if (!oaId) { console.error(`Cannot resolve ID: ${paperId}`); return []; }
   const params = new URLSearchParams({ filter: `cites:${oaId}`, per_page: String(limit), sort: "cited_by_count:desc", mailto: "luxas-agent@example.com" });
-  const res = await fetch(`${OA_BASE}/works?${params}`, { signal: AbortSignal.timeout(30000) });
+  const res = await fetchWithRetry(`${OA_BASE}/works?${params}`);
   if (!res.ok) return [];
   return ((await res.json()).results ?? []).map(normalizeOAWork);
 }
@@ -157,7 +178,7 @@ async function oaReferences(paperId, limit) {
   const oaId = await resolveOAId(paperId);
   if (!oaId) { console.error(`Cannot resolve ID: ${paperId}`); return []; }
   const params = new URLSearchParams({ filter: `cited_by:${oaId}`, per_page: String(limit), sort: "cited_by_count:desc", mailto: "luxas-agent@example.com" });
-  const res = await fetch(`${OA_BASE}/works?${params}`, { signal: AbortSignal.timeout(30000) });
+  const res = await fetchWithRetry(`${OA_BASE}/works?${params}`);
   if (!res.ok) return [];
   return ((await res.json()).results ?? []).map(normalizeOAWork);
 }
@@ -169,7 +190,14 @@ async function arxivSearch(query, count, { fromYear = null, sort = "date", autho
   // Always search by relevance first, then post-filter and re-sort if needed.
   const fetchCount = fromYear ? Math.min(count * 3, 150) : count;
   const qParts = [];
-  if (query) qParts.push(`all:${query}`);
+  if (query) {
+    // Field each token with `all:` and AND-join. Without per-token fielding,
+    // arxiv defaults unfielded tokens to OR — e.g. "magic state qLDPC" scores
+    // MAGIC-telescope papers via the lone "magic" token. Quoted substrings
+    // stay intact for phrase matches (`all:"tricycle code"`).
+    const tokens = query.trim().match(/"[^"]+"|\S+/g) ?? [];
+    if (tokens.length > 0) qParts.push(tokens.map(t => `all:${t}`).join(" AND "));
+  }
   if (author) qParts.push(`au:"${author}"`);
   const searchQuery = qParts.length > 0 ? qParts.join(" AND ") : "all:*";
   const params = new URLSearchParams({
@@ -178,7 +206,7 @@ async function arxivSearch(query, count, { fromYear = null, sort = "date", autho
     sortBy: sort === "date" ? "submittedDate" : "relevance",
     sortOrder: "descending",
   });
-  const res = await fetch(`http://export.arxiv.org/api/query?${params}`, { signal: AbortSignal.timeout(30000) });
+  const res = await fetchWithRetry(`http://export.arxiv.org/api/query?${params}`);
   if (!res.ok) return [];
   const xml = await res.text();
   const papers = [];
@@ -222,7 +250,7 @@ async function crossrefSearch(query, count, { fromYear = null, sort = "relevance
   if (author) params.set("query.author", author);
   if (fromYear) params.set("filter", `from-pub-date:${fromYear}`);
   if (sort === "date") params.set("sort", "published"); else params.set("sort", "relevance");
-  const res = await fetch(`https://api.crossref.org/works?${params}`, { signal: AbortSignal.timeout(30000) });
+  const res = await fetchWithRetry(`https://api.crossref.org/works?${params}`);
   if (!res.ok) return [];
   const data = await res.json();
   return (data.message?.items ?? []).map(normalizeCRWork);
@@ -632,26 +660,15 @@ try {
     const fromYear = fromYearRaw ? parseInt(fromYearRaw) : null;
     const sort = getFlag("sort", "relevance");
     const searchOpts = { fromYear, sort, author };
-    const parts = [];
-    const all = source === "all" || source === "both";  // "both" = legacy alias for "all"
-    if (all || source === "openalex") {
-      const papers = await oaSearch(query, count, searchOpts);
-      parts.push(papers.length > 0
-        ? papers.map((p, i) => formatPaper(p, "OA", i)).join("\n\n")
-        : "[OA] No results");
-    }
-    if (all || source === "arxiv") {
-      const papers = await arxivSearch(query, count, searchOpts);
-      parts.push(papers.length > 0
-        ? papers.map((p, i) => formatPaper(p, "arXiv", i)).join("\n\n")
-        : "[arXiv] No results");
-    }
-    if (all || source === "crossref") {
-      const papers = await crossrefSearch(query, count, searchOpts);
-      parts.push(papers.length > 0
-        ? papers.map((p, i) => formatPaper(p, "CR", i)).join("\n\n")
-        : "[CR] No results");
-    }
+    const all = source === "all" || source === "both";  // "both" = legacy alias
+    const tasks = [];
+    const renderSource = (label, papers) => papers.length > 0
+      ? papers.map((p, i) => formatPaper(p, label, i)).join("\n\n")
+      : `[${label}] No results`;
+    if (all || source === "openalex") tasks.push(oaSearch(query, count, searchOpts).then(p => renderSource("OA", p)));
+    if (all || source === "arxiv") tasks.push(arxivSearch(query, count, searchOpts).then(p => renderSource("arXiv", p)));
+    if (all || source === "crossref") tasks.push(crossrefSearch(query, count, searchOpts).then(p => renderSource("CR", p)));
+    const parts = await Promise.all(tasks);
     console.log(parts.join("\n\n---\n\n"));
 
   } else if (command === "citations") {

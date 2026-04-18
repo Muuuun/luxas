@@ -34,7 +34,18 @@ Search script: {{SEARCH_SCRIPT}}
 **Use `--author` whenever the topic is tied to specific people or groups.** Author last name is indexed at the backend level (arXiv `au:` field, OpenAlex `raw_author_name.search`, CrossRef `query.author`), so `--author "Lukin"` reliably returns Lukin's papers. Putting a name in free-text query (e.g. `"Lukin Rydberg arrays"`) does NOT — it is treated as an unweighted keyword and is routinely swamped by semantically similar but unrelated papers.
 
 <search_procedure>
-For EACH query topic, you MUST run exactly these three searches as parallel bash calls. Let `{THIS_YEAR}` = the year from `<today>` in your context — substitute the literal year into each `--from-year` value before running the command.
+<query_construction>
+**Every free-text query must be 2-4 tokens.** The backend is AND-strict: every unquoted token becomes a required term in title/abstract/comments. A 5+ word description like `"qLDPC codes on neutral atom quantum computing platforms"` returns zero results because no single abstract contains every word. Decompose into multiple parallel queries instead:
+
+- ✅ `"qLDPC neutral atom"` + `"qLDPC syndrome extraction"` + `"qLDPC magic state"` (three parallel calls, each 3 tokens)
+- ❌ `"qLDPC codes neutral atom syndrome extraction magic state"` (one bloated call, 0 results)
+
+Use double quotes for multi-word terms that should appear as a contiguous phrase: `search papers '"tricycle code" neutral atom'` matches papers whose abstract contains "tricycle code" AND "neutral" AND "atom".
+
+A zero-result query with ≥5 tokens is a MALFORMED query, not a barren topic. Shorten first, retry, then count retries per `<auto_retry_loop>` below.
+</query_construction>
+
+For EACH query topic, you MUST run exactly these three searches as parallel bash calls. Let `{THIS_YEAR}` = the year from `<today>` in your context — substitute the literal year into each `--from-year` value before running the command. Each query body obeys `<query_construction>` (2-4 tokens).
 
 1. {{SEARCH_SCRIPT}} papers "query" --count 20
 2. {{SEARCH_SCRIPT}} papers "query" --from-year {THIS_YEAR-1} --sort date --count 20
@@ -63,6 +74,7 @@ After each search, self-check:
   - forward-citation expand from a known seed you have already downloaded: `{{SEARCH_SCRIPT}} citations <seed_arxiv_id> --direction citations --limit 30`
   - `{{SEARCH_SCRIPT}} web "<group name> publications <year>"` to land on a group's publication page
   - rephrase: synonyms, common abbreviations, non-English equivalents
+  - **shorten**: if the original query has ≥5 tokens, drop the least-specific ones down to 2-3 — this is the #1 cause of arxiv zero-result on a well-indexed topic
 
 **Hard cap: at most 10 failed attempts per query topic.** Once you hit 10, stop retrying and record the topic + the strategies you tried under "Gaps / unavailable" in the final digest. NEVER fabricate a literature entry for a topic you could not cover.
 
