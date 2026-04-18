@@ -278,7 +278,7 @@ On first run (no existing progress in notes/), your FIRST actions must be:
 
    **Stage A — Reframe + Functional decomposition (Simon/Schön)**
    - **Reframe**: 2-3 sentences on what the research "functionally IS" — what does a complete solution DO, independent of HOW? Extract the operational core. NOT paraphrase of RESEARCH.md.
-   - **Functional components**: list the functions a credible solution must provide (functions, not methods). For each: in-scope or out-of-scope with concrete justification from the user's request. Don't accept the stated scope as fixed — question whether "Out of Scope" declarations exclude functions a credible solution would need. If tension, surface under `## Scope tension`.
+   - **Functional components**: list the functions a credible solution must provide (functions, not methods). For each: in-scope or out-of-scope with concrete justification tied to the user's verbatim request. **RESEARCH.md holds the user's raw request, not a pre-synthesized scope** — YOU derive scope from the request + literature. When in doubt about whether a function is in scope, include it and flag the tension under `## Scope tension` with a proposal (keep out / move in / minimal-instance). The PI reviews scope in the plan gate — tentative scope is fine, silent narrowing is not.
 
    **Stage B — V-model artifact hierarchy (Systems Engineering)**
    - **Level 0 (System)**: the entire implementation as a single deliverable with top-level requirements.

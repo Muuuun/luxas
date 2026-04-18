@@ -21,6 +21,18 @@ export const ARXIV_ID_RE = /^\d{4}\.\d{4,5}$/;
  */
 export const ORIGINAL_REQUEST_HEADER = "## Original User Request";
 
+/**
+ * Derive a short project title from the first non-empty line of a markdown
+ * file or raw user prompt. Used for both RESEARCH.md title headers and
+ * cross-project registry names (~/.sisyphus/projects.json), so the
+ * derivation must stay stable across both shapes.
+ */
+export function deriveProjectTitle(text: string, maxLen = 120): string {
+  const firstLine = text.split("\n").find(l => l.trim().length > 0)?.trim() ?? "";
+  const stripped = firstLine.replace(/^#+\s*/, "").replace(/[*_`[\]]/g, "").trim();
+  return stripped.slice(0, maxLen) || "Untitled";
+}
+
 export function hasTexFiles(dir: string): boolean {
   try {
     return readdirSync(dir).some((f) => f.endsWith(".tex"));

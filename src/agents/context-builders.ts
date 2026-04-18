@@ -271,13 +271,14 @@ function buildPIContext(projectDir: string, extra?: Record<string, any>): string
   }
   parts.push(isSurvey ? PI_SURVEY_MODE : PI_RESEARCH_MODE);
 
-  // Classify RESEARCH.md format once, up-front. The verbatim-user-request
-  // section was introduced in 2026-04; legacy projects lack it. Emitting an
-  // explicit signal here means the PI prompt doesn't rely on opus parsing a
-  // conditional "if section present / else" sentence at inference time.
+  // Classify RESEARCH.md format once, up-front. Post-2026-04 projects are
+  // verbatim-only (brain owns scope derivation); a legacy layer of projects
+  // had an opus-synthesized plan appended below the verbatim block. Emitting
+  // an explicit signal means the PI prompt doesn't have to parse a conditional
+  // "if section present / else" sentence at inference time.
   const researchMd = readFileSafe(join(projectDir, "RESEARCH.md"));
   const userRequestLocator = researchMd.includes(ORIGINAL_REQUEST_HEADER)
-    ? `the "${ORIGINAL_REQUEST_HEADER}" section at the top of RESEARCH.md (the verbatim user input; the PI-synthesized plan below it may have amplified scope)`
+    ? `the "${ORIGINAL_REQUEST_HEADER}" section of RESEARCH.md (the verbatim user input — this is the ground-truth ask; any plan.md derivation below is brain's, not the user's)`
     : `the entire RESEARCH.md file (this is a legacy project with no dedicated verbatim section)`;
   parts.push(`<user_request_locator>${userRequestLocator}</user_request_locator>`);
 

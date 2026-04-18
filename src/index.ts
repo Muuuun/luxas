@@ -49,7 +49,7 @@ if (existsSync(join(browserUseDir, "browser-use")) && !process.env.PATH?.include
   process.env.PATH = `${browserUseDir}:${process.env.PATH}`;
 }
 import { registerProject, updateProjectAfterRun, loadProjects } from "./memory.js";
-import { ORIGINAL_REQUEST_HEADER } from "./utils.js";
+import { ORIGINAL_REQUEST_HEADER, deriveProjectTitle } from "./utils.js";
 
 
 const args = process.argv.slice(2);
@@ -445,17 +445,10 @@ async function initProject(dir: string, prompt?: string) {
   const researchFile = join(dir, "RESEARCH.md");
 
   if (prompt) {
-    // Preserve the user's prompt verbatim so downstream agents (brain, PI)
-    // always see the ground-truth ask — not just the PI-synthesized plan
-    // which may amplify scope.
-    console.log("Generating RESEARCH.md from prompt...");
-    const plan = await generateResearchGoal(prompt);
-    if (!plan.trim() || !/^#\s*Research Goal\b/m.test(plan)) {
-      console.error("PI returned an invalid plan (empty or missing '# Research Goal' header). Aborting init.");
-      process.exit(1);
-    }
-    writeFileSync(researchFile, renderResearchDoc(prompt, plan));
-    console.log(`Created ${researchFile} (PI-generated from prompt)`);
+    // Verbatim — scope derivation is the brain's job (literature-grounded),
+    // not init-time opus's (training-data-grounded).
+    writeFileSync(researchFile, renderResearchDoc(prompt));
+    console.log(`Created ${researchFile} (verbatim user prompt)`);
   } else if (!existsSync(researchFile)) {
     writeFileSync(researchFile, "# Research Goal\n\nDescribe your research goal here.\n");
     console.log(`Created ${researchFile}`);
@@ -480,93 +473,21 @@ async function initProject(dir: string, prompt?: string) {
 }
 
 /**
- * Assemble the final RESEARCH.md: user's prompt verbatim at the top (fenced in
- * a blockquote so any markdown it contains — headings, horizontal rules, code
- * fences — can't corrupt the surrounding document structure), followed by the
- * PI-synthesized plan. Downstream agents treat the Original User Request
- * section as the authoritative deliverable spec; the plan may have amplified
- * scope and should be cross-checked against the verbatim request.
+ * The prompt goes in a blockquote so any markdown inside it (headings, code
+ * fences, horizontal rules) can't corrupt the document structure. A title
+ * line on top gives memory.ts a name for the cross-project registry.
  */
-function renderResearchDoc(userPrompt: string, piPlan: string): string {
+function renderResearchDoc(userPrompt: string): string {
+  const title = deriveProjectTitle(userPrompt, 80);
   const quoted = userPrompt.trim().split("\n").map(l => l.length ? `> ${l}` : ">").join("\n");
   return [
+    `# ${title}`,
+    "",
     ORIGINAL_REQUEST_HEADER,
     "",
-    "_The following block is the user's verbatim input. It is the ground truth for what the user asked for. The PI-synthesized plan below may drift — if it does, the request wins._",
+    "_The block below is the user's verbatim input. It is the ground truth for what the user asked for. Brain derives scope from this + literature._",
     "",
     quoted,
     "",
-    "---",
-    "",
-    piPlan.trim(),
-    "",
   ].join("\n");
-}
-
-async function generateResearchGoal(prompt: string): Promise<string> {
-  const { getModel, completeSimple } = await import("@mariozechner/pi-ai");
-  const { getApiKey } = await import("./auth.js");
-
-  const model = getModel("anthropic" as any, "claude-opus-4-6" as any);
-  const apiKey = await getApiKey("anthropic");
-  if (!apiKey) {
-    console.error("No API key available. Set ANTHROPIC_API_KEY environment variable.");
-    process.exit(1);
-  }
-
-  const systemPrompt = `You are a Principal Investigator (PI) — a senior professor defining a research agenda for an autonomous research agent.
-
-Given a topic or idea from the user, write a research plan that will guide the agent's research. The agent will:
-- Search and read academic papers
-- Run computational experiments
-- Write a LaTeX report
-
-Your plan must be specific enough to guide autonomous execution, but broad enough to allow the agent to discover unexpected directions. **Do not amplify scope** beyond what the user asked: if the user asked a narrow question, plan a narrow investigation. The user's verbatim request will be preserved separately in the RESEARCH.md; you do not need to restate it.
-
-**CRITICAL — Language rule**: The research agent determines the report language from the RESEARCH.md language.
-- Default: write the plan in the same language as the user's input. Chinese input → Chinese plan → Chinese report.
-- Exception: if the user explicitly requests a specific output language (e.g., "用英文写" or "write in English"), follow that instruction.
-- Never silently translate the user's input into English when they didn't ask for it.
-
-Output format — write ONLY the plan body, no explanations, no preamble, starting directly at "# Research Goal":
-
-# Research Goal
-
-[1-2 sentence high-level objective]
-
-## Scope
-
-[What's in scope and what's explicitly out of scope]
-
-## Key Questions
-
-[Numbered list of specific questions to answer]
-
-## Methodology
-
-[What approach should the agent take? Literature survey only? Experiments needed? What kind?]
-
-## Expected Deliverables
-
-[What should the final report contain?]
-
-## Target Venue
-
-[Suggest an appropriate journal/conference for the report format, e.g. "Nature Reviews Physics" for a review, "NeurIPS" for ML, etc.]`;
-
-  const response = await completeSimple(model, {
-    systemPrompt,
-    messages: [{
-      role: "user",
-      content: [{ type: "text", text: prompt }],
-      timestamp: Date.now(),
-    }],
-    tools: [],
-  }, {
-    maxTokens: 2048,
-    apiKey,
-  } as any);
-
-  const { extractTextContent } = await import("./utils.js");
-  return extractTextContent(response.content);
 }

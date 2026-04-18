@@ -12,7 +12,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync } from "node:fs";
 import { join, basename } from "node:path";
 import { homedir } from "node:os";
-import { readFileSafe } from "./utils.js";
+import { readFileSafe, deriveProjectTitle } from "./utils.js";
 
 const SISYPHUS_DIR = join(homedir(), ".sisyphus");
 const PROJECTS_FILE = join(SISYPHUS_DIR, "projects.json");
@@ -60,10 +60,8 @@ export function registerProject(projectDir: string): ProjectEntry {
   const existing = projects.find(p => p.path === projectDir);
   if (existing) return existing;
 
-  // Read project name from RESEARCH.md first line
   const research = readFileSafe(join(projectDir, "RESEARCH.md"));
-  const firstLine = research.split("\n").find(l => l.trim().length > 0) ?? "Untitled";
-  const name = firstLine.replace(/^#+\s*/, "").slice(0, 120);
+  const name = deriveProjectTitle(research);
 
   const entry: ProjectEntry = {
     path: projectDir,
@@ -101,10 +99,8 @@ export function updateProjectAfterRun(
   // Generate summary from project notes
   entry.summary = generateProjectSummary(projectDir);
 
-  // Re-read name in case RESEARCH.md was updated
   const research = readFileSafe(join(projectDir, "RESEARCH.md"));
-  const firstLine = research.split("\n").find(l => l.trim().length > 0) ?? entry.name;
-  entry.name = firstLine.replace(/^#+\s*/, "").slice(0, 120);
+  entry.name = deriveProjectTitle(research) || entry.name;
 
   projects[idx] = entry;
   saveProjects(projects);
