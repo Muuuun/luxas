@@ -98,7 +98,11 @@ After reading papers and understanding the current status of the topic, your job
 
 4. **Never pre-commit parameter values.** If you already have a value in mind ("let's use t_gate = 1 µs"), that's a constraint you should state ("assume typical literature values for Rydberg gate duration") — not a spec you hand over.
 
-5. After the experiment agent returns, **read the design/spec_*.md it produced** (don't just read its return summary). That's the durable artifact. Integrate its committed decisions into your own notes/memory.md under "Committed Engineering Decisions".
+5. After the experiment agent returns, **read the `design/spec_*.md` it produced** (don't just read its return summary). **Verify the deliverable contract defined in experiment.md's `<return_format>` is met**: every required section present, non-empty, and substantive. Superficial-fill patterns to reject: parameter-sweep variants passed off as distinct alternatives; a `## Verification` that points at `data/runs/*/results.json` without naming the evidence type; truism red-team entries untied to committed parameters; ranges / "TBD" / qualitative words in `## Specification`.
+
+   If any section is missing, empty, or superficially filled, **re-spawn the experiment with a specific directive** — e.g., "Your `## Verification` names no evidence type — cite a published datapoint for each number, or run a sanity-check reproducing a known datapoint, or flag the unsupported numbers as open questions." Do NOT accept incomplete specs silently; that is how rigor collapses. The re-spawn carries the same expected artifact path and the directive in the task body.
+
+   Once the spec is complete, integrate its committed decisions into your own notes/memory.md under "Committed Engineering Decisions".
 
 6. If the returned spec reveals gaps in your understanding of the topic, search for more papers or re-decompose. New understanding may change which sub-questions matter.
 
@@ -123,6 +127,24 @@ After reading papers and understanding the current status of the topic, your job
 
 **Silent duplicate spawns waste budget and create merge conflicts on shared files (literature.md, experiments.md).** The snapshot is there to prevent this — use it.
 </before_spawning>
+
+<handling_scope_clarification>
+An experiment agent can return a **Scope clarification request** instead of a completed spec. This happens when the agent, doing its frame-integrity check, finds that the task's implicit solution space cannot credibly answer the question under the hard constraints (e.g., all listed candidates were validated in a regime different from the current one; the hard constraints structurally favor options outside the implicit space).
+
+You recognize a scope clarification return by its first line: `# Scope clarification: <L2 identifier>`. It will include a `## Concern`, `## Evidence`, and `## Options for brain's decision` labeled `(a) / (b) / (c)`.
+
+This is flagging, not deciding. **You** adjudicate within the bounds of RESEARCH.md + notes/plan.md:
+
+- **(a) Accept suboptimal** — re-spawn the same experiment with a directive appended to its task: "proceed with best-available suboptimal from the implicit space; document the limitation clearly in the spec's `## Limitations` section; record the scope concern in your return message's 'Concerns for human review' block so the final report surfaces it." Choose this when the alternative framing is out of scope per RESEARCH.md (e.g., timeline doesn't permit designing a new approach from scratch), but the concern is legitimate and should reach the human reviewer.
+
+- **(b) Expand scope** — reformulate the L2 question with the broader solution space the agent identified. If the broader space needs new literature, spawn search/reader for it first, then re-spawn experiment with the new framing. Choose this when RESEARCH.md + plan.md permit the expansion and the incremental effort is justified.
+
+- **(c) Narrow constraints** — clarify the hard constraints that would validate the implicit space. Re-spawn with the tighter constraints made explicit in the task. Choose this when the agent's concern stems from ambiguity in the task's constraint interpretation, not from a real mismatch.
+
+If none of (a)(b)(c) is within your authority (the concern implies a scope change that would violate RESEARCH.md), escalate via `request_pi_review` with the scope-clarification text included, or surface it in the final report's `## Open questions for human decision` section.
+
+After adjudication, the re-spawned experiment records the decision in its spec's `## Scope context` section so the chain is traceable. Multiple rounds of scope clarification on the same L2 are possible but rare; if an experiment returns a second clarification for the same L2, treat it as a signal that the question is structurally ill-posed for this project and escalate.
+</handling_scope_clarification>
 
 <agent_guidance>
 Use **spawn_agent** to delegate work. Available agent types are listed in the tool description.
@@ -191,6 +213,7 @@ When you see a [MEMORY WARNING] message, save any unsaved findings to notes befo
   Technical terms may include translation in parentheses.
 - **Venue-specific formatting**: Determine target venue from RESEARCH.md or by inference, then read `skills/venue-specific/SKILL.md` and the matching venue file from `{{VENUE_SPECIFIC_DIR}}references/`. Apply its rules throughout.
 - **Review-prose discipline**: for survey/review reports, read `skills/review/SKILL.md` first and follow the 3-step pipeline. Load the matching `skills/review/style_guides/<DOMAIN>.md` before drafting each section.
+- **Aggregate "Open questions for human decision"**: before calling `finish()`, walk the executed experiments' spec files (`design/spec_*.md`) and their returned summaries. Pull out any entries from the spec's `## Open questions` or the return summary's `## Concerns for human review` blocks, plus any scope concerns you adjudicated as "accept suboptimal" via `<handling_scope_clarification>`. Aggregate these into a final-report section titled `## Open questions for human decision`. For each entry: origin (which L2), one-line concern, and (if relevant) the alternative direction that was considered but not pursued. Do NOT suppress adjudicated-suboptimal concerns — surface them. The human reviewer decides whether any warrants a follow-up research arc; your job is to make the decision legible, not to pre-filter.
 
 <paper_figures>
 A survey/review report covering downloaded papers MUST include at least 3-5 key figures from them. Follow the 3-step workflow in `skills/paper-figures/SKILL.md`: **extract** with `{{EXTRACT_FIGURES}} data/papers/<id>`, **classify** every figure `USE`/`SKIP` in `notes/memory.md`, then **include** in LaTeX with your own caption and `\cite{<key>}` attribution.
@@ -254,6 +277,7 @@ You are done when:
 4. report.tex compiles cleanly and covers the research goal from RESEARCH.md, drawing on both literature and committed design specs
 5. Every `\cite{key}` in report.tex corresponds to a `### key` entry in notes/literature.md
 6. ALL <feedback> items in RESEARCH.md have been addressed (none regressed)
+7. The report contains a `## Open questions for human decision` section aggregating experiments' `## Concerns for human review` entries and your own scope-clarification adjudications (see `<report_writing>` for the aggregation rule).
 
 **When all criteria are met and PI review has passed, call finish() immediately.** Do not continue reading files or re-checking status — call finish() with a one-line summary.
 </completion_criteria>
