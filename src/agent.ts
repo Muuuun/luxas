@@ -68,6 +68,7 @@ const MODEL_MAP: Record<string, [string, string]> = {
 const LUXAS_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const SEARCH_SCRIPT_PATH = join(LUXAS_ROOT, "skills", "search", "scripts", "search");
 const EXTRACT_FIGURES_PATH = join(LUXAS_ROOT, "skills", "search", "scripts", "extract-figures");
+const MERGE_NOTES_PATH = join(LUXAS_ROOT, "skills", "search", "scripts", "merge-notes");
 const VENUE_SPECIFIC_DIR = join(LUXAS_ROOT, "skills", "venue-specific") + "/";
 
 export function createResearchAgent(opts: ResearchAgentOptions) {
@@ -91,6 +92,7 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
     PROJECT_DIR: projectDir,
     SEARCH_SCRIPT: SEARCH_SCRIPT_PATH,
     EXTRACT_FIGURES: EXTRACT_FIGURES_PATH,
+    MERGE_NOTES: MERGE_NOTES_PATH,
     VENUE_SPECIFIC_DIR: VENUE_SPECIFIC_DIR,
   };
 

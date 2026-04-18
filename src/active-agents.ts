@@ -8,7 +8,7 @@
  * Maintained by harness code only (not LLM).
  */
 
-import { readFileSync, writeFileSync, renameSync, statSync, mkdirSync, closeSync, openSync, utimesSync } from "node:fs";
+import { readFileSync, writeFileSync, renameSync, statSync, mkdirSync, closeSync, openSync, unlinkSync, utimesSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { extractTextContent } from "./utils.js";
 
@@ -53,16 +53,62 @@ function saveRegistry(agentDir: string, agents: ActiveAgent[]): void {
   renameSync(tmp, path); // atomic replace
 }
 
+// Exclusive-file lock around load-mutate-save. Without this, two sub-agents
+// calling markDone/markFailed in overlapping windows would both read the old
+// registry and both save their own update — last writer wins, the other
+// update vanishes. Lock file is auto-reclaimed if older than STALE_MS (a
+// crashed sub-agent would otherwise orphan it); the stale-unlink itself is
+// racy (two waiters can both judge stale) but the next openSync(wx) serializes
+// them — at most one wins, others see EEXIST and retry.
+const LOCK_SLEEP_BUF = new Int32Array(new SharedArrayBuffer(4));
+
+function withRegistryLock(agentDir: string, fn: (agents: ActiveAgent[]) => void): void {
+  mkdirSync(agentDir, { recursive: true });
+  const lockPath = registryPath(agentDir) + ".lock";
+  const MAX_RETRIES = 30;
+  const SLEEP_MS = 50;
+  const STALE_MS = 10_000;
+
+  let fd: number | null = null;
+  for (let i = 0; i < MAX_RETRIES; i++) {
+    try {
+      fd = openSync(lockPath, "wx");
+      break;
+    } catch (e: any) {
+      if (e.code !== "EEXIST") throw e;
+      try {
+        const st = statSync(lockPath);
+        if (Date.now() - st.mtimeMs > STALE_MS) {
+          try { unlinkSync(lockPath); } catch { /* another waiter got there first */ }
+          continue;
+        }
+      } catch { /* lock vanished between catch and stat — just retry */ }
+      Atomics.wait(LOCK_SLEEP_BUF, 0, 0, SLEEP_MS);
+    }
+  }
+  if (fd === null) {
+    throw new Error(`active-agents: failed to acquire ${lockPath} after ${MAX_RETRIES * SLEEP_MS}ms`);
+  }
+
+  try {
+    const agents = loadRegistry(agentDir);
+    fn(agents);
+    saveRegistry(agentDir, agents);
+  } finally {
+    try { closeSync(fd); } catch {}
+    try { unlinkSync(lockPath); } catch {}
+  }
+}
+
 export function addAgent(agentDir: string, agent: ActiveAgent): void {
-  const agents = loadRegistry(agentDir);
-  // Deduplicate by id (defensive)
-  const filtered = agents.filter(a => a.id !== agent.id);
-  // Infer expected_artifact from task if not provided
   if (agent.expected_artifact === undefined) {
     agent.expected_artifact = extractExpectedArtifact(agent.task);
   }
-  filtered.push(agent);
-  saveRegistry(agentDir, filtered);
+  withRegistryLock(agentDir, (agents) => {
+    const idx = agents.findIndex(a => a.id === agent.id);
+    if (idx >= 0) agents.splice(idx, 1);
+    agents.push(agent);
+  });
 }
 
 /**
@@ -100,30 +146,32 @@ export function extractExpectedArtifact(task: string): string {
 }
 
 export function removeAgent(agentDir: string, agentId: string): void {
-  const agents = loadRegistry(agentDir);
-  saveRegistry(agentDir, agents.filter(a => a.id !== agentId));
+  withRegistryLock(agentDir, (agents) => {
+    const idx = agents.findIndex(a => a.id === agentId);
+    if (idx >= 0) agents.splice(idx, 1);
+  });
 }
 
 /** Mark a sub-agent as done with frozen result (called by subagent-runner, not brain). */
 export function markDone(agentDir: string, agentId: string, result: string): void {
-  const agents = loadRegistry(agentDir);
-  const agent = agents.find(a => a.id === agentId);
-  if (agent) {
-    agent.status = "done";
-    agent.result = result.slice(0, 50_000);
-    saveRegistry(agentDir, agents);
-  }
+  withRegistryLock(agentDir, (agents) => {
+    const agent = agents.find(a => a.id === agentId);
+    if (agent) {
+      agent.status = "done";
+      agent.result = result.slice(0, 50_000);
+    }
+  });
 }
 
 /** Mark a sub-agent as failed (called by subagent-runner on error). */
 export function markFailed(agentDir: string, agentId: string, error: string): void {
-  const agents = loadRegistry(agentDir);
-  const agent = agents.find(a => a.id === agentId);
-  if (agent) {
-    agent.status = "failed";
-    agent.result = error.slice(0, 5_000);
-    saveRegistry(agentDir, agents);
-  }
+  withRegistryLock(agentDir, (agents) => {
+    const agent = agents.find(a => a.id === agentId);
+    if (agent) {
+      agent.status = "failed";
+      agent.result = error.slice(0, 5_000);
+    }
+  });
 }
 
 function heartbeatPath(agentDir: string, agentId: string): string {

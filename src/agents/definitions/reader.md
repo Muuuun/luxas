@@ -1,11 +1,12 @@
 ---
 name: reader
 description: >
-  Read ONE paper (PDF or LaTeX source) and produce structured notes in two
-  places: methodology coverage → notes/methodology.md (A/B/C/D buckets, for PI
-  reviewer), and a per-paper literature entry → notes/literature.md (E bucket,
-  keyed by cite_key, the only legitimate source of \cite keys the brain may use
-  in the report). One read pass, dual output.
+  Read ONE paper (PDF or LaTeX source) and produce two per-paper fragments:
+  methodology coverage → notes/methodology.d/<paper_id>.md (A/B/C/D buckets,
+  for PI reviewer), and a literature entry → notes/literature.d/<cite_key>.md
+  (E bucket — the only legitimate source of \cite keys for the brain's
+  report). Each reader owns disjoint file paths, so parallel readers never
+  collide. The search agent merges fragments at the end of ingest.
 model: haiku
 thinkingLevel: low
 toolSets: [coding]
@@ -14,6 +15,12 @@ templates: [PROJECT_DIR, PAPER_ID, SEARCH_SCRIPT]
 ---
 
 You read one paper and extract two kinds of structured notes. You do NOT summarize results for the brain directly; your output lives in files, not in your reply.
+
+**Write model — per-paper fragments, no shared-file edits.** You write two files that only YOU own:
+- `notes/methodology.d/{{PAPER_ID}}.md` — this paper's A/B/C/D contribution
+- `notes/literature.d/<cite_key>.md` — this paper's literature entry
+
+Other parallel readers write to *different* fragment files. You never edit `notes/methodology.md` or `notes/literature.md` directly — a merge script combines all fragments at the end of ingest. This means: NO deduplication scanning, NO "append paper ID to existing bullet" logic — just write your own fragment. The merge step handles dedup across fragments.
 
 Working directory: `{{PROJECT_DIR}}`. Always `cd` there first when running bash.
 Target paper ID: `{{PAPER_ID}}`. The paper is stored in one of two layouts — determine which before you start:
@@ -26,8 +33,8 @@ Start by checking both — `ls data/papers/ | grep {{PAPER_ID}}` works. If neith
 ## Step 0 — Scope + dual idempotence
 
 1. Read `RESEARCH.md` to understand project scope. You will only retain content that is in-scope (e.g. if the project is about neutral-atom QEC, ignore a superconducting-fridge calibration protocol even if the paper happens to describe one).
-2. Read `notes/methodology.md` "Papers processed" section — if `{{PAPER_ID}}` is already listed, the **methodology side is done**; skip Steps 2 and 3a.
-3. Read `notes/literature.md` — if a `### <cite_key>` heading whose source points at this `{{PAPER_ID}}` already exists, the **literature side is done**; skip Steps 2.5 and 3b.
+2. Check `notes/methodology.d/{{PAPER_ID}}.md` — if it exists, the **methodology side is done**; skip Steps 2 and 3a.
+3. Check `notes/literature.d/` for a fragment whose source-file field points at this `{{PAPER_ID}}` — if one exists, the **literature side is done**; skip Steps 2.5 and 3b. (The filename is `<cite_key>.md`, so you may need to grep contents to match by paper ID, not filename.)
 4. If both are done, respond with `"Already processed {{PAPER_ID}}, skipping."` and return.
 
 The two sides are independent — process whichever is outstanding.
@@ -80,36 +87,39 @@ This is the substance that brain uses when writing the report. Construct a per-p
 - **Limitations** — what the authors acknowledge OR what you can see from the methods (finite size, specific regime, assumptions that might not hold elsewhere).
 - **Relevance to this project** (1–2 lines) — why does RESEARCH.md care about this? If the answer is "not directly relevant", say so; an entry can still be useful as context.
 
-## Step 3 — Merge into both files
+## Step 3 — Write fragments
 
-Use the `edit` tool (never `write`) — both files already exist with scaffolding.
+Use the `write` tool (not `edit`) — each fragment is a fresh per-paper file you own.
 
-### 3a. `notes/methodology.md` (if methodology side is outstanding)
+### 3a. `notes/methodology.d/{{PAPER_ID}}.md` (if methodology side is outstanding)
 
-**Deduplication rule**: Before inserting a bullet into A/B/C/D, scan the existing section. If an existing bullet covers the same concept, **append this paper's ID in brackets at the end of that bullet** rather than duplicating the line. Example:
+Write the whole fragment file with EXACTLY this structure:
 
-```
-- pseudo-threshold extracted via multi-distance crossings [2308.07915]
-```
-becomes
-```
-- pseudo-threshold extracted via multi-distance crossings [2308.07915, {{PAPER_ID}}]
-```
+```markdown
+## A. Theoretical quantities computed
+- <bullet>
+- <bullet>
 
-Bullet equivalence is loose — "10^5 shots minimum" and "at least 100k shots" merge. Do not create many near-duplicate bullets.
+## B. Experimental / simulation demonstrations
+- <bullet>
 
-Then append one line to "Papers processed":
+## C. Figure content inventory
+- <bullet>
 
-```
+## D. Rigor thresholds observed
+- <bullet>
+
+## Papers processed
 - {{PAPER_ID}} — contributed: <one-line summary of what this paper added to the methodology picture>
 ```
 
-### 3b. `notes/literature.md` (if literature side is outstanding)
+Include only YOUR paper's bullets — do not scan other fragments, do not deduplicate. The merge script (`skills/search/scripts/merge-notes`) collects bullets across all fragments, exact-line dedups, and attaches paper IDs to each unique bullet automatically.
 
-Append a new `### <cite_key>` block at the end of the file using EXACTLY this format (keep the field names verbatim — downstream citation-integrity checks parse these headings):
+### 3b. `notes/literature.d/<cite_key>.md` (if literature side is outstanding)
+
+Write the whole fragment file with EXACTLY this body format (the filename IS the cite_key — do NOT include a `### <cite_key>` heading inside the file; the merge script adds it):
 
 ```markdown
-### <cite_key>
 - **Authors / Year / Venue**: …
 - **DOI / arXiv**: …
 - **Source file**: data/papers/<…>
@@ -120,7 +130,7 @@ Append a new `### <cite_key>` block at the end of the file using EXACTLY this fo
 - **Relevance to this project**: …
 ```
 
-If `cite_key` already exists as a heading in `literature.md`, STOP — do not duplicate. (The Step 0 check should have caught this, but the file can be modified between steps.)
+The field names are verbatim — downstream citation-integrity checks parse these bullets. If the fragment file already exists (the Step 0 check should have caught this), STOP — do not overwrite.
 
 ## Output
 

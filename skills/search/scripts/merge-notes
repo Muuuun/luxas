@@ -1,0 +1,161 @@
+#!/usr/bin/env node
+/**
+ * merge-notes — concatenate per-paper fragments into the shared notes files.
+ *
+ *   notes/literature.d/<cite_key>.md  →  notes/literature.md
+ *   notes/methodology.d/<paper_id>.md →  notes/methodology.md
+ *
+ * Readers write their own per-paper fragment (disjoint file paths, zero
+ * write-conflict risk). This script runs once at the end of the search
+ * agent's ingest procedure and produces the canonical merged files.
+ *
+ * Usage:
+ *   merge-notes                       (CWD = project root, or LUXAS_PROJECT_DIR)
+ *   merge-notes <projectDir>
+ *
+ * Idempotent. Overwrites the merged outputs each run.
+ *
+ * Deduplication strategy for methodology.md:
+ *   A/B/C/D bullets dedup by *exact* line match. When duplicates collide,
+ *   paper IDs from all contributors are collected into one bracketed list at
+ *   the end of the bullet: "- foo bar  [id1, id2, id3]". Loose-semantic
+ *   dedup ("10^5 shots" ≈ "at least 100k shots") is punted to the LLM-driven
+ *   notes-compaction pass (src/notes-compaction.ts) which runs at 8KB.
+ */
+
+import { readdirSync, readFileSync, writeFileSync, mkdirSync, statSync } from "node:fs";
+import { join, basename } from "node:path";
+
+const projectDir = process.argv[2] || process.env.LUXAS_PROJECT_DIR || process.cwd();
+
+function listFragments(dir) {
+  try {
+    return readdirSync(dir)
+      .filter(f => f.endsWith(".md"))
+      .map(f => ({ name: f.slice(0, -3), path: join(dir, f) }));
+  } catch (e) {
+    if (e.code === "ENOENT") return [];
+    throw e;
+  }
+}
+
+// ── literature.md ────────────────────────────────────────────────
+// One ### <cite_key> block per fragment. Filename is cite_key.
+function mergeLiterature() {
+  const fragDir = join(projectDir, "notes", "literature.d");
+  const outPath = join(projectDir, "notes", "literature.md");
+  const frags = listFragments(fragDir);
+  frags.sort((a, b) => a.name.localeCompare(b.name));
+
+  const parts = ["# Literature Notes", "", "_Merged from `notes/literature.d/`. Do not edit directly — edits are overwritten by search agent's merge step. Edit the per-paper fragments instead._", ""];
+  for (const frag of frags) {
+    const body = readFileSync(frag.path, "utf-8").trim();
+    parts.push(`### ${frag.name}`);
+    parts.push("");
+    parts.push(body);
+    parts.push("");
+  }
+  writeFileSync(outPath, parts.join("\n"));
+  return frags.length;
+}
+
+// ── methodology.md ───────────────────────────────────────────────
+// Fragments are per-paper, each containing A/B/C/D sections + a single
+// "Papers processed" line. Merge collects bullets per section, dedups by
+// exact line match, and attaches a [id1, id2, ...] tag listing every paper
+// that contributed that bullet.
+const SECTION_RE = /^##+\s+([A-D])\.\s+/;
+const PAPERS_PROCESSED_RE = /^##+\s+Papers processed\b/i;
+
+function parseFragment(text, paperId) {
+  const sections = { A: [], B: [], C: [], D: [] };
+  const papersProcessed = [];  // Lines under "Papers processed" — caller provides paperId context
+  let current = null;
+  let inPapers = false;
+  for (const line of text.split("\n")) {
+    const sm = line.match(SECTION_RE);
+    if (sm) { current = sm[1]; inPapers = false; continue; }
+    if (PAPERS_PROCESSED_RE.test(line)) { current = null; inPapers = true; continue; }
+    if (current) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith("-")) sections[current].push(trimmed);
+    } else if (inPapers) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith("-")) papersProcessed.push(trimmed);
+    }
+  }
+  // If the fragment forgot its "Papers processed" entry, synthesize one from the filename
+  if (papersProcessed.length === 0) papersProcessed.push(`- ${paperId} — (no summary provided)`);
+  return { sections, papersProcessed };
+}
+
+// Strip any trailing [id1, id2, ...] tag from a bullet so equal bullets merge
+// regardless of which paper IDs a fragment wrote.
+function canonicalBullet(line) {
+  return line.replace(/\s*\[[^\]]*\]\s*$/, "").trim();
+}
+
+function mergeMethodology() {
+  const fragDir = join(projectDir, "notes", "methodology.d");
+  const outPath = join(projectDir, "notes", "methodology.md");
+  const frags = listFragments(fragDir);
+
+  const byCanon = { A: new Map(), B: new Map(), C: new Map(), D: new Map() };
+  const papersProcessed = [];
+
+  for (const frag of frags) {
+    const text = readFileSync(frag.path, "utf-8");
+    const parsed = parseFragment(text, frag.name);
+    const totalBullets = parsed.sections.A.length + parsed.sections.B.length + parsed.sections.C.length + parsed.sections.D.length;
+    if (totalBullets === 0) {
+      console.warn(`merge-notes: ${frag.name} has no A/B/C/D bullets — reader may have failed to extract methodology`);
+    }
+    for (const section of ["A", "B", "C", "D"]) {
+      for (const bullet of parsed.sections[section]) {
+        const key = canonicalBullet(bullet);
+        if (!key) continue;
+        if (!byCanon[section].has(key)) byCanon[section].set(key, new Set());
+        byCanon[section].get(key).add(frag.name);
+      }
+    }
+    papersProcessed.push(...parsed.papersProcessed);
+  }
+
+  const headers = {
+    A: "## A. Theoretical quantities computed",
+    B: "## B. Experimental / simulation demonstrations",
+    C: "## C. Figure content inventory",
+    D: "## D. Rigor thresholds observed",
+  };
+
+  const parts = ["# Methodology Coverage", "",
+    "_Merged from `notes/methodology.d/`. Do not edit directly — edits are overwritten by search agent's merge step. Edit the per-paper fragments instead._", ""];
+  let totalBullets = 0;
+  for (const section of ["A", "B", "C", "D"]) {
+    parts.push(headers[section]);
+    parts.push("");
+    const entries = Array.from(byCanon[section].entries()).sort((a, b) => a[0].localeCompare(b[0]));
+    for (const [bullet, ids] of entries) {
+      const idList = Array.from(ids).sort().join(", ");
+      parts.push(`${bullet}  [${idList}]`);
+      totalBullets++;
+    }
+    parts.push("");
+  }
+
+  // Dedup + sort "Papers processed" lines
+  const uniq = Array.from(new Set(papersProcessed)).sort();
+  parts.push("## Papers processed");
+  parts.push("");
+  parts.push(...uniq);
+  parts.push("");
+
+  writeFileSync(outPath, parts.join("\n"));
+  return { fragments: frags.length, bullets: totalBullets, papers: uniq.length };
+}
+
+// ── main ────────────────────────────────────────────────────────
+mkdirSync(join(projectDir, "notes"), { recursive: true });
+const litCount = mergeLiterature();
+const methStats = mergeMethodology();
+console.log(`merged ${litCount} literature fragments, ${methStats.fragments} methodology fragments, ${methStats.bullets} unique bullets, ${methStats.papers} papers processed.`);

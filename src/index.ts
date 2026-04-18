@@ -8,6 +8,7 @@
  *   luxas status [project-dir]           Show project status
  *   luxas init [project-dir]             Initialize a new project
  *   luxas init [project-dir] --prompt "..." Generate RESEARCH.md from a topic
+ *   luxas init [project-dir] --prompt-file <path> Read prompt from a file (use this for multi-line input)
  *   luxas list                           List all projects
  *   luxas figures [project-dir]          Re-audit and re-render figures
  *          [--figure NAME]               Target one figure only (e.g. --figure 1)
@@ -71,6 +72,8 @@ for (let i = 1; i < args.length; i++) {
     directive = args[++i];
   } else if (args[i] === "--prompt" && args[i + 1]) {
     initPrompt = args[++i];
+  } else if (args[i] === "--prompt-file" && args[i + 1]) {
+    initPrompt = readFileSync(args[++i], "utf-8");
   } else if (args[i] === "--figure" && args[i + 1]) {
     figureTarget = args[++i];
   } else if (args[i] === "--audit-only") {
