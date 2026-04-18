@@ -23,7 +23,6 @@ import { execSync } from "node:child_process";
 import { join, isAbsolute, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getDefinition, resolvePrompt } from "./agents/registry.js";
-import { resolveContextBuilder } from "./agents/context-builders.js";
 import { spawnAgent } from "./agents/spawn.js";
 import { ensureMethodologyFile, ensureLiteratureFile } from "./methodology.js";
 import { buildResearchTools } from "./tools/index.js";
@@ -96,34 +95,34 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
     VENUE_SPECIFIC_DIR: VENUE_SPECIFIC_DIR,
   };
 
-  // Layer 1: System Prompt — brain.md + smelt patches (absolutely static per session)
+  // System prompt: brain.md + smelt patches + semi-static per-project context
+  // (RESEARCH.md + skills + lessons.md), merged into a single cache-pinned block.
+  //
+  // Cache-budget arithmetic: Anthropic allows at most 4 cache_control breakpoints
+  // per request. The conversation trailer (research_snapshot) gets one auto-pin
+  // from pi-ai; we add one in injectSnapshot to cache conversation history; that
+  // leaves one for the system prompt. Splitting L1/L2 into two pins would buy
+  // nothing worth the slot — both change rarely, and history-end caching pays
+  // more in a long session than an L1-only partial hit when L2 invalidates.
+  //
+  // L3-style execution-state content (active_agents, completed_artifacts,
+  // plan_status) lives in the trailer snapshot now — see context.ts.
   const brainDef = getDefinition("brain");
-  let layer1 = resolvePrompt(brainDef, templateVars);
+  let systemText = resolvePrompt(brainDef, templateVars);
 
-  // AgentSmelt Phase 2: apply high-confidence prompt patches at strategic positions
   const smeltPatches = readPatches(DEFAULT_BASE_DIR, "brain");
   if (smeltPatches.length > 0) {
-    layer1 = applyPatches(layer1, smeltPatches, "brain");
+    systemText = applyPatches(systemText, smeltPatches, "brain");
   }
 
-  // Layer 2: semi-static context (RESEARCH.md + skills + lessons.md).
-  // Split into its own cache-pinned block so an occasional lessons.md edit
-  // invalidates only Layer 2 while Layer 1 core-rules cache stays warm.
-  const layer2 = buildSemiStaticSystemLayer(projectDir);
-
-  // Layer 3: execution-state snapshot (active sub-agents, completed artifacts,
-  // plan.md status). Its cacheControl breakpoint keeps L1+L2 warm when Layer 3
-  // is rebuilt on state change.
-  const buildLayer3 = resolveContextBuilder(brainDef.contextBuilder);
-  const initialLayer3 = buildLayer3 ? buildLayer3(projectDir) : "";
+  const semiStatic = buildSemiStaticSystemLayer(projectDir);
+  if (semiStatic) {
+    systemText = systemText + "\n\n" + semiStatic;
+  }
 
   const systemPrompt: TextContent[] = [
-    { type: "text", text: layer1, cacheControl: { type: "ephemeral" } },
+    { type: "text", text: systemText, cacheControl: { type: "ephemeral" } },
   ];
-  if (layer2) {
-    systemPrompt.push({ type: "text", text: layer2, cacheControl: { type: "ephemeral" } });
-  }
-  const layer3Index = initialLayer3 ? systemPrompt.push({ type: "text", text: initialLayer3, cacheControl: { type: "ephemeral" } }) - 1 : -1;
 
   // Reminder system — event-driven, per-turn quality nudges
   const reminders = new ReminderRegistry();
@@ -273,24 +272,6 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
   });
   nameAgent(agent, "brain", "brain");
 
-  function rebuildLayer3IfChanged(reason: string): boolean {
-    if (!buildLayer3 || layer3Index < 0) return false;
-    const state = agent.state as { systemPrompt: TextContent[] | string };
-    if (!Array.isArray(state.systemPrompt)) return false;
-    const fresh = buildLayer3(projectDir);
-    if (fresh === state.systemPrompt[layer3Index].text) return false;
-    // In-place element mutation (NOT `state.systemPrompt = next`): pi-agent-core
-    // captures `currentContext.systemPrompt` as a shared array reference at
-    // runLoop start (agent.js:477, agent-loop.js:43) and never re-reads it.
-    // Reassigning the field on _state breaks the shared reference, so the
-    // currently-running prompt cycle would keep seeing the stale Layer 3.
-    // Mutating the element preserves the reference and propagates immediately
-    // to the next streamAssistantResponse call.
-    state.systemPrompt[layer3Index] = { type: "text", text: fresh, cacheControl: { type: "ephemeral" } };
-    bus.emit({ type: "layer3_rebuilt", reason, at: new Date().toISOString() });
-    return true;
-  }
-
   // Wire deferred refs now that agent exists
   setParentAgent(agent);     // enables background spawn_agent with steer()
   finishCallback = () => agent.abort();
@@ -329,18 +310,6 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
       const toolCalls = (event.message?.content ?? [])
         .filter((b: any) => b.type === "toolCall" || b.type === "tool_use").length;
       bus.emit({ type: "turn_end", message: event.message, toolCalls });
-
-      // Brain editing notes/plan.md is the only brain-side action that changes
-      // Layer 3's rendered output. design/ and data/runs/ changes come from
-      // sub-agents and are picked up by the harvest-loop rebuild below.
-      const editedPlan = (event.message?.content ?? []).some((b: any) => {
-        if (b.type !== "toolCall" && b.type !== "tool_use") return false;
-        const tool = b.name || b.toolName;
-        if (tool !== "write" && tool !== "edit") return false;
-        const args = b.arguments || b.input || {};
-        return args.path === "notes/plan.md";
-      });
-      if (editedPlan) rebuildLayer3IfChanged("brain edited notes/plan.md");
     }
     // Persist new messages + harness state to Session DAG after each completed turn
     if (event.type === "turn_end") {
@@ -397,11 +366,6 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
               removeAgent(agentDir, a.id);
               harvested++;
             }
-          }
-          // Layer 3 trigger: if any sub-agent was harvested, the active-agents
-          // list + potentially completed-artifacts set changed → rebuild.
-          if (harvested > 0) {
-            rebuildLayer3IfChanged(`harvested ${harvested} sub-agent(s)`);
           }
         } catch {}
       }

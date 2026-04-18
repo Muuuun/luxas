@@ -9,7 +9,6 @@ model: opus
 thinkingLevel: high
 toolSets: [coding, report, spawn]
 safetyWrapper: brain
-contextBuilder: brain
 canSpawn: true
 allowedSpawn: [search, reader, worker, experiment, math, reviewer, fixer, illustrator]
 templates: [PROJECT_DIR, SEARCH_SCRIPT, EXTRACT_FIGURES, VENUE_SPECIFIC_DIR]

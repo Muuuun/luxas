@@ -155,19 +155,17 @@ function buildExperimentContext(projectDir: string): string {
   ].join("\n");
 }
 
-// Brain's Layer 3 — execution-state snapshot mutated on sub-agent harvest
-// or notes/plan.md edit. Must stay deterministic over equal state: any
-// timestamp or counter baked into the output would defeat the equality
-// short-circuit in rebuildLayer3IfChanged and force a cache miss per rebuild.
+// Brain's execution-state snapshot — emitted as part of the per-turn trailer
+// (see context.ts). Must stay deterministic over equal state so when two
+// consecutive turns happen to have identical active-agents + artifacts state,
+// the trailer string is byte-identical and the Anthropic cache can hit.
 function buildBrainContext(projectDir: string, _extra?: Record<string, any>): string {
   const agentDir = join(projectDir, ".agent");
   const registry = loadRegistry(agentDir);
   const running = registry.filter((a) => a.status === "running");
 
-  // NOTE: no timestamp or other turn-varying content embedded here — any
-  // per-call delta would poison rebuildLayer3IfChanged's equality short-circuit
-  // and force an Anthropic re-encode on every trigger. Rebuild events are
-  // traced via bus.emit(layer3_rebuilt).
+  // No timestamps or elapsed counters — a turn-varying delta poisons the
+  // equal-state invariant and forces an Anthropic re-encode every turn.
   return [
     renderActiveAgents(running),
     renderCompletedArtifacts(projectDir),

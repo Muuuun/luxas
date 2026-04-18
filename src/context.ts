@@ -11,6 +11,7 @@ import { readFileSafe, smartTruncate } from "./utils.js";
 import { findUnprocessedPapers, methodologyPath } from "./methodology.js";
 import { join, dirname } from "node:path";
 import { compactNotesIfNeeded } from "./notes-compaction.js";
+import { resolveContextBuilder } from "./agents/context-builders.js";
 import { createCompactionTransform, getContextWindow } from "./compaction/create-transform.js";
 import type { TokenTap } from "./compaction/token-tap.js";
 import type { Model } from "@mariozechner/pi-ai";
@@ -176,16 +177,15 @@ export function buildContextTransformer(opts: ContextTransformerOptions): Contex
 /**
  * Inject research snapshot into messages as a trailing user message.
  *
- * Cache strategy: pi-ai places cache_control breakpoints on (1) system prompt
- * and (2) the last user message. We add a THIRD breakpoint on the last
- * conversation message before the snapshot. This creates three cache segments:
+ * Cache budget (Anthropic max = 4 breakpoints per request):
+ *   1. system prompt (one merged block, pinned in agent.ts)
+ *   2. last message BEFORE the snapshot (pinned here) — caches the growing
+ *      conversation history so it survives turn-over-turn snapshot deltas
+ *   3. snapshot trailer (auto-pinned by pi-ai on the last user message)
  *
- *   [System Prompt + breakpoint]     → segment 1: stable, cached ✓
- *   [Messages 1..N + breakpoint]     → segment 2: stable history, cached ✓
- *   [Snapshot + breakpoint(pi-ai)]   → segment 3: changes each turn, small miss
- *
- * Without the middle breakpoint, segments 1→2 are one block that includes
- * the changing snapshot, causing a full cache miss every turn.
+ * Skipping pin #2 would make every snapshot change invalidate the entire
+ * conversation history (expensive once the session is >20 turns). Pinning
+ * inside the history segment keeps that block cache-warm.
  *
  * Safety: transformContext output is ephemeral (used for one LLM call, never
  * persisted to agent state). Anthropic API accepts consecutive user messages.
@@ -193,9 +193,6 @@ export function buildContextTransformer(opts: ContextTransformerOptions): Contex
 function injectSnapshot(messages: any[], snapshot: string): any[] {
   if (messages.length <= 2) return messages;
 
-  // Add cache breakpoint to the last message BEFORE snapshot,
-  // so conversation history becomes a stable cacheable segment.
-  // Deep-clone the last message to avoid mutating persisted agent state.
   const result = [...messages];
   const lastMsg = result[result.length - 1];
   if (Array.isArray(lastMsg.content) && lastMsg.content.length > 0) {
@@ -231,11 +228,16 @@ function buildResearchSnapshot(opts: ContextTransformerOptions): string {
   // invalidated when the date rolls over mid-run.
   parts.push(`<today>${new Date().toISOString().slice(0, 10)}</today>`);
 
-  // NOTE: <research_goal>, skills list, and <lessons_learned> moved to the
-  // semi-static system-prompt layer (Layer 2) — see buildSemiStaticSystemLayer.
-  // They're read-mostly and belong in a block that stays cache-stable.
-  // What remains below is the volatile trailer that legitimately changes
-  // between turns (notes written by sub-agents, disk state, bg agent status).
+  // Execution-state snapshot (active sub-agents, completed artifacts, plan
+  // status). Formerly a dedicated cache-pinned system layer (L3); moved here
+  // because it changes at the same tempo as the other trailer content, and
+  // the cache budget is tight enough that a separate pin per section would
+  // overrun Anthropic's 4-breakpoint limit.
+  const brainSnapshot = resolveContextBuilder("brain");
+  if (brainSnapshot) {
+    const brainBlock = brainSnapshot(projectDir).trim();
+    if (brainBlock) parts.push(brainBlock);
+  }
 
   // Literature state
   const lit = readFileSafe(join(projectDir, "notes", "literature.md"));
