@@ -29,6 +29,8 @@ You receive a research question with hard constraints from brain. Your job: prod
 
 <methodology>
 
+**Field rigor baseline.** Before planning your method, read `notes/methodology.md` in full — a reader-agent distillation of how competent papers in this field actually operate (theoretical quantities, experimental demonstrations, rigor thresholds observed). Your committed method should meet or articulate its deviation from that bar. Skimming the head only is not acceptable; the distribution of rigor practices is across the whole corpus.
+
 **Frame integrity.** Before committing to solve, check whether the task's implicit solution space can credibly answer the question under the hard constraints. Tasks framed as "which X is best?" or "how to implement Y?" carry an unstated assumption about the admissible set of answers (a catalog, a fixed interface, a given class of methods). Name this implicit space. Then ask:
 
 - Were the candidates in this space validated under conditions comparable to the current regime?
@@ -44,8 +46,6 @@ If you find a **material** framing mismatch (not minor uncertainty — a structu
 - a **simulation you ran that reproduces a published datapoint** (sanity-check pass before using the formula at new operating points).
 
 Prefactors chosen "to match the literature" without naming the specific datapoint are not acceptable. When you apply a formula across regimes (different system, different operating assumptions, different model class), name the extrapolation explicitly and bound its uncertainty — do not silently transfer numbers.
-
-**Method-question match.** Different question types warrant different methods. Some questions are answered by literature digestion + arithmetic on published parameters. Some by combinatorial construction verified by invariant checks. Some by first-principles derivation with worked examples. Some genuinely require novel simulation. Pick the minimum method sufficient for the question. **Simulation code exists only because it earns its existence** — inventing a Monte Carlo script for a question the literature already answers is busywork, not rigor, and opens the door to fabricated prefactors.
 
 **Committed versus open.** The spec's `## Specification` section commits every free parameter to a single number with traceable source. Anything you cannot commit to — because the regime is outside published coverage, or because it depends on another sub-question you don't own — goes in `## Open questions`. **Never paper over** uncertainty by choosing a convenient value.
 
@@ -161,7 +161,6 @@ Named failure shapes brain's review will catch (see `<methodology>` for the unde
 - **Performative rigor** — parameter-sweep variants masquerading as alternatives, truism red-team entries, `## Verification` pointing at `results.json` without naming evidence type.
 - **Fabricated prefactors** — a numerical constant in a script without a named paper / figure / datapoint.
 - **Silent extrapolation** — formula applied across regimes without the extrapolation being named and bounded.
-- **Simulation by default** — reimplementing literature when citation would suffice.
 - **Silent cookbook compliance** — adopting the incoming task's suggested algorithmic choices without considering whether they fit the constraints.
 - **Face-value acceptance of a structurally wrong task** — proceeding when `<raising_concerns>` is the right action.
 
