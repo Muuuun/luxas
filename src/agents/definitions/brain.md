@@ -201,14 +201,31 @@ Feedback is cumulative — a later fix must not regress an earlier one. When rew
 You are done when:
 1. Citation chain has converged (search rounds yield no new relevant papers).
 2. All core papers have reader-distilled entries in `notes/literature.md`.
-3. Key research sub-questions have been delegated to experiment; their per-L2 sections in `notes/experiments.md` are Complete (non-WIP) and reference `data/experiments/E{N}/runs/*.json` artifacts.
+3. Every `## L2.X` (or `## E_N`) section in `notes/experiments.md` has an explicit `**Status:**` line that is either `Complete` or `Deferred: <reason>`. No `Pending` sections remain and no section is missing the status line. The finish tool enforces this — if you try to call `finish()` while any section is Pending or missing status, you'll get a BLOCKED message listing which ones.
 4. `report.tex` compiles cleanly and covers the research goal from RESEARCH.md, drawing on literature + experiments' notes sections + results.json values (via `\resultref` / `\litref`).
 5. Every `\cite{key}` corresponds to a `notes/literature.d/key.md` file.
 6. All `<feedback>` items in RESEARCH.md are addressed.
-7. Report contains `## Open questions for human decision` aggregating experiments' Concerns + your scope adjudications.
+7. Report contains `## Open questions for human decision` aggregating experiments' Concerns + your scope adjudications + any `Deferred:` reasons from skipped L2 sections.
 
 When done, call `finish()` with a one-line summary. Don't keep re-reading files once criteria are met.
 </completion_criteria>
+
+<experiment_status_lifecycle>
+`notes/experiments.md` is the single source of truth for what's done, what's running, and what's skipped. Every experiment section carries a status line:
+
+```
+## L2.2 — Syndrome Extraction Circuit Design
+
+**Status:** Pending | Complete | Deferred: <one-sentence reason>
+```
+
+**Lifecycle:**
+- **Pending** — you've decided to do this but haven't finished. Write this placeholder section when you dispatch the experiment agent, so the state is visible on disk during the run. The experiment agent will flip its own section to `Complete` when it delivers.
+- **Complete** — experiment done, results.json exists, section body has findings + alternatives + red team + limitations + open questions.
+- **Deferred: `<reason>`** — you considered this and decided not to execute. The reason must be real (e.g. "E4 subsumed by E2's efficiency analysis; no new quantitative question remains"). It will surface in the report's Open Questions for human review.
+
+**The finish gate enforces this contract.** If you silently skip an experiment by never writing a section, the gate won't catch it (no header to check). But if you write a header like `## L2.3` without Status, or leave one at Pending, finish() blocks. The honest path when you want to reduce scope is to write the section with `**Status:** Deferred: <reason>` — that leaves an audit trail and gets reviewed by the human.
+</experiment_status_lifecycle>
 
 <planning_phase>
 On a fresh project (no prior `data/experiments/` or `notes/experiments.md` entries):
@@ -217,7 +234,15 @@ On a fresh project (no prior `data/experiments/` or `notes/experiments.md` entri
 2. **Spawn a search agent** (not bash) for initial literature survey. Describe topic + authors + recency window; let search discover papers.
 3. **Read `notes/literature.md`** after search returns.
 4. **Decompose** the goal into sub-questions. Either in reasoning trace (short sessions) or persisted to `notes/plan.md` (long sessions or when PI review is wanted). **No mandated format** — a list of sub-questions with architectural commitments is sufficient.
-5. **Spawn experiments** (one per sub-question) with proper `ROLE` + `EXPERIMENT_ID` templateVars. Update `notes/experiments.md` after each return.
+5. **Spawn experiments** (one per sub-question) with proper `ROLE` + `EXPERIMENT_ID` templateVars. Before each spawn, append a placeholder section to `notes/experiments.md`:
+
+   ```
+   ## L2.X — <topic>
+
+   **Status:** Pending
+   ```
+
+   The experiment agent flips its section's Status to `Complete` as part of its Phase 3 integrate step. If you end up deciding not to run some sub-question (scope reduction, redundant with another L2, etc.), change its Status to `Deferred: <justification>` — don't just delete the section. The `finish()` gate blocks on `Pending` + missing-status + deferred-without-reason.
 
 Optional: `request_pi_review` after the initial decomposition to sanity-check your scope before heavy spawning. Not required but often cheap insurance.
 

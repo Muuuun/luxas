@@ -97,10 +97,10 @@ If review's tests reveal an issue with the **description itself** (ambiguity, ph
 
 1. A final run under `data/experiments/{{EXPERIMENT_ID}}/runs/run_N/results.json` with structured `invariants` (cited literature inputs) and `computed` (your derived quantities) keys.
 2. Figures (when applicable) under `report/figures/`.
-3. A section appended to `notes/experiments.md` under `## L2.X — <topic>`:
+3. A section appended to `notes/experiments.md` under `## L2.X — <topic>`. Brain may have already written a `**Status:** Pending` placeholder for this section at spawn time — **edit** that placeholder (don't duplicate). If no placeholder exists, append a fresh section. The `**Status:**` line is the load-bearing contract — the brain's `finish()` gate reads it.
    - **Experiment dir:** path to your `data/experiments/{{EXPERIMENT_ID}}/`
    - **Key computed leaves:** 3-5 paths into `results.json` that brain will cite
-   - **Status:** Complete | WIP (if any tool left unfinished)
+   - **Status:** `Complete` (the common case — all tools pass pytest, results.json exists) or `Pending` (if any tool is WIP — flag to brain so it can decide whether to re-spawn you or defer). Do NOT leave the status line out.
    - **Headline findings** (3-5 bullets)
    - `### Alternatives considered` (≥3 architecturally distinct candidates, each with rejection reason)
    - `### Red team` (≥3 failure modes, each classified mitigate / accept-with-rationale / reject-with-evidence)
