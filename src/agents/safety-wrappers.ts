@@ -57,6 +57,15 @@ interface SafetyOptions {
    * Unset = no read-path restriction.
    */
   allowedReadRoots?: string[];
+  /**
+   * If set, write/edit to paths matching any of these regex patterns returns
+   * BLOCKED. Intent: force role separation — e.g. the experiment agent must
+   * delegate script/test authorship to tool_impl/tool_review sub-agents rather
+   * than writing those files directly. Patterns match against project-relative
+   * forward-slash paths. The block message is appended so the agent knows why
+   * and which sub-agent to spawn instead.
+   */
+  forbiddenWritePatterns?: { pattern: RegExp; reason: string }[];
 }
 
 /** Detect content-shape errors from upstream pi-coding-agent edit tool. */
@@ -152,6 +161,7 @@ function wrapEdit(
   tracker: ReadTracker,
   projectDir: string,
   protectedAbs: Set<string>,
+  forbiddenWritePatterns: { pattern: RegExp; reason: string }[],
 ) {
   const origExecute = tool.execute;
   return {
@@ -163,6 +173,12 @@ function wrapEdit(
 
       if (protectedAbs.has(abs)) {
         return blocked(`${p} is protected and cannot be edited by this agent.`);
+      }
+
+      for (const { pattern, reason } of forbiddenWritePatterns) {
+        if (pattern.test(p)) {
+          return blocked(`Edit of ${p} is forbidden for this agent. ${reason}`);
+        }
       }
 
       const entry = tracker.get(abs);
@@ -249,6 +265,7 @@ function wrapWrite(
   projectDir: string,
   protectedAbs: Set<string>,
   opts: SafetyOptions,
+  forbiddenWritePatterns: { pattern: RegExp; reason: string }[],
 ) {
   const origExecute = tool.execute;
   return {
@@ -259,6 +276,12 @@ function wrapWrite(
 
       if (protectedAbs.has(abs)) {
         return blocked(`${p} is protected and cannot be written by this agent.`);
+      }
+
+      for (const { pattern, reason } of forbiddenWritePatterns) {
+        if (pattern.test(p)) {
+          return blocked(`Write of ${p} is forbidden for this agent. ${reason}`);
+        }
       }
 
       if (opts.writeOnExistingPolicy === "block") {
@@ -310,10 +333,12 @@ function createSafetyWrapper(opts: SafetyOptions): SafetyWrapper {
         })
       : null;
 
+    const forbiddenWritePatterns = opts.forbiddenWritePatterns ?? [];
+
     return tools.map((tool: any) => {
       if (tool.name === "read")  return wrapRead(tool, tracker, projectDir, allowedReadAbs);
-      if (tool.name === "edit")  return wrapEdit(tool, tracker, projectDir, protectedAbs);
-      if (tool.name === "write") return wrapWrite(tool, tracker, projectDir, protectedAbs, opts);
+      if (tool.name === "edit")  return wrapEdit(tool, tracker, projectDir, protectedAbs, forbiddenWritePatterns);
+      if (tool.name === "write") return wrapWrite(tool, tracker, projectDir, protectedAbs, opts, forbiddenWritePatterns);
       return tool;
     });
   };
@@ -348,9 +373,28 @@ export const wrapBrainTools: SafetyWrapper = createSafetyWrapper({
   writeOnExistingPolicy: "block",
 });
 
+// V5 role enforcement: experiment is the orchestrator/integrator. It must
+// delegate impl and test authorship to tool_impl / tool_review sub-agents so
+// the same LLM session isn't both designing the tool semantics and grading
+// itself (the self-circular failure mode V5 exists to break). Direct writes
+// to scripts/ and tests/ under any experiment dir are blocked at the tool
+// layer, because prior runs showed the prompt alone was insufficient — the
+// agent narrated "Phase 2 — Implementation:" and then wrote directly anyway.
+const V5_ROLE_ENFORCEMENT = [
+  {
+    pattern: /^data\/experiments\/[^\/]+\/scripts\//,
+    reason: "Impl files live in scripts/ and are written exclusively by tool_impl sub-agents. Spawn spawn_agent(agent=\"tool_impl\", ...) with a tool description instead.",
+  },
+  {
+    pattern: /^data\/experiments\/[^\/]+\/tests\//,
+    reason: "Test files live in tests/ and are written exclusively by tool_review sub-agents (independent from impl, for self-circular-verification protection). Spawn spawn_agent(agent=\"tool_review\", ...) with the tool description instead.",
+  },
+];
+
 export const wrapExperimentTools: SafetyWrapper = createSafetyWrapper({
   protectedFiles: REPORT_SURFACE,
   writeOnExistingPolicy: "block",
+  forbiddenWritePatterns: V5_ROLE_ENFORCEMENT,
 });
 
 // Tool sub-agents are description-driven — they don't need to read literature,
