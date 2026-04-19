@@ -27,6 +27,7 @@ You write ONE pytest test file for one tool. Your test is derived from the descr
 - WRITE: `data/experiments/{{EXPERIMENT_ID}}/tests/test_{{TOOL_NAME}}.py` and a small `conftest.py` for path setup if needed
 - READ: the tool description (given in your task) + function signature from `data/experiments/{{EXPERIMENT_ID}}/scripts/{{TOOL_NAME}}.py` if it exists
 - RUN: `python -m pytest tests/test_<name>.py -v --tb=short` to confirm parse + imports work
+- INSTALL: you have bash with permission to install any package (`pip install`, `cargo add`, `conda install`, `apt install`) if your ground-truth recomputation needs a specialized library. Use the same methodology class the description calls for — if description says "Monte Carlo sample N shots", your oracle also samples (possibly at smaller N for test speed, explicitly bounded by CI or statistical tolerance); don't substitute a closed-form approximation as the oracle.
 
 <workflow>
 
