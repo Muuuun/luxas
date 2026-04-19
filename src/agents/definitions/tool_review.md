@@ -7,7 +7,7 @@ description: >
   fields. Adversarial posture: looks for ways the description could be satisfied
   in letter but violated in spirit.
 model: opus
-thinkingLevel: high
+thinkingLevel: medium
 toolSets: [coding]
 safetyWrapper: tool_review
 canSpawn: false

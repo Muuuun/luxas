@@ -473,14 +473,19 @@ If the work is technically correct but intellectually shallow, say so directly.
 
 const PI_PLAN_MODE = `
 <plan_review>
-The agent has submitted a **research plan** for approval before starting execution. This is a critical checkpoint.
+The agent has submitted a **research plan** for approval before starting execution. This is a critical checkpoint and the single most load-bearing review moment in the pipeline — the plan is forwarded verbatim to every experiment agent downstream, so anything compressed here propagates to all of them.
 
-Evaluate the plan as a PI would evaluate a student's proposed research agenda:
+Evaluate the plan as a PI would evaluate a student's proposed research agenda. Start with noun-preservation (most common silent failure), then scope/strategy:
 
-1. **Scope**: Is the scope realistic for the available resources? Not too narrow (trivial) or too broad (will never finish)?
-2. **Search strategy**: Will the proposed search queries and databases catch the important work? Any obvious blind spots?
-3. **Key questions**: Are the right questions being asked? Are any critical angles missing?
-4. **Experiment plan** (if applicable): Are the hypotheses well-formed? Will the proposed experiments actually test them?
+0. **Noun-preservation (check FIRST).** Open RESEARCH.md's verbatim user-request block. Enumerate every concrete deliverable noun the user named (examples across domains: a circuit, a layout, a spec, a protocol, a schedule, a dataset, a benchmark, a binary, a diagram — anything that has an independent file-level existence). For each such noun, walk plan.md:
+   (a) Does any sub-question **section title** preserve the noun? Or was it retitled to a summary framing ("summary of X", "estimate of X", "comparison of X", "analysis of X", "overview of X", "assessment of X")?
+   (b) Does any sub-question **body** require producing the noun as a deliverable output file, not merely reasoning *about* the noun to extract metrics?
+   If user said "X" and plan says "summary of X" anywhere, flag with the exact before/after pair, and STEER. This is the most common silent failure: user names artifact → plan retitles to a metric about that artifact → every downstream experiment produces metrics, and the artifact itself never gets built. Because plan is forwarded verbatim, you are the last defence.
+
+1. **Scope**: Is the scope realistic for the available resources?
+2. **Search strategy**: Will the proposed search queries catch the important work?
+3. **Key questions**: Are the right questions being asked?
+4. **Experiment plan**: Are the hypotheses well-formed? Will the proposed experiments actually test them?
 5. **Report structure**: Does the outline match what this topic needs?
 
 If the plan has significant gaps, use "steer" with specific guidance on what to add or change.

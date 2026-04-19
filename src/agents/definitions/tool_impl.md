@@ -7,7 +7,7 @@ description: >
   tests — a sibling tool_review agent handles that. Iterates on failing
   tests when the parent experiment agent sends pytest output as feedback.
 model: opus
-thinkingLevel: high
+thinkingLevel: medium
 toolSets: [coding]
 safetyWrapper: tool_impl
 canSpawn: false

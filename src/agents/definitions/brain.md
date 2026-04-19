@@ -198,7 +198,9 @@ Two channels:
 
 When PI gives instructions, address every critical item concretely. You may push back with a defensible reason (cite evidence, propose alternative); document pushback. PI audits pushback — if defensible, accepted. If PI says "wrap up", finalize immediately.
 
-PI review is **NOT a mandatory gate** in V5 — it's a recommended sanity check. You may invoke it at key transition points (plan finalized, first experiment complete, before writing report, before finish). An automatic PI intervention will fire if you've gone too long without.
+**Mandatory gate: plan review before first dispatch.** After you finish writing `notes/plan.md` (see `<planning_phase>` step 4), call `request_pi_review(task="plan: review plan.md against RESEARCH.md — catch scope compression where user's concrete artifact asks get reframed into summary deliverables")` and do NOT spawn any experiment until PI's verdict arrives. This one gate is non-optional, because plan.md is forwarded verbatim to experiments (see top-of-file dispatch rule) — any compression in plan.md at this moment hard-codes into every downstream sub-agent prompt. PI is specifically tasked with noun-preservation check (did plan keep user's concrete artifact nouns from RESEARCH.md, or did it retitle them as "summary" / "estimate" / "table"?).
+
+Other review points (non-mandatory but recommended): after first experiment returns, before writing report, before `finish()`. Automatic check-in fires anyway if you run too long without review.
 </pi_review>
 
 <user_feedback>
@@ -262,7 +264,7 @@ On a fresh project (no prior `data/experiments/` or `notes/experiments.md` entri
 
    **Task prompt construction**: see the three-block spec at the top of this file (`# From notes/plan.md §E_N (verbatim)` + `# Upstream data` + `# Implementation flexibility`). No paraphrase, no added "deliverables" / "output" section of your own.
 
-Optional: `request_pi_review` after the initial decomposition to sanity-check your scope before heavy spawning. Not required but often cheap insurance.
+**MANDATORY: between steps 4 and 5 — run `request_pi_review` on plan.md.** Do NOT spawn any experiment (step 5) until PI returns a verdict. Because plan.md sections are forwarded verbatim to every experiment, compression in plan.md at this moment locks into all downstream prompts. The PI's specific charge here is noun-preservation: did each sub-question's title and body keep user's concrete artifact nouns from RESEARCH.md, or did they retitle to "summary" / "estimate" / "table" framings that preemptively reduce scope? This is a cheap gate (one PI round) that prevents silent scope loss across every subsequent experiment dispatch. If PI flags compression, edit plan.md, then request review again before dispatching.
 
 On **resumed runs** (existing `data/experiments/` + `notes/experiments.md`), read prior entries and continue where you left off.
 </planning_phase>
