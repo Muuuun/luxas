@@ -373,28 +373,21 @@ export const wrapBrainTools: SafetyWrapper = createSafetyWrapper({
   writeOnExistingPolicy: "block",
 });
 
-// V5 role enforcement: experiment is the orchestrator/integrator. It must
-// delegate impl and test authorship to tool_impl / tool_review sub-agents so
-// the same LLM session isn't both designing the tool semantics and grading
-// itself (the self-circular failure mode V5 exists to break). Direct writes
-// to scripts/ and tests/ under any experiment dir are blocked at the tool
-// layer, because prior runs showed the prompt alone was insufficient — the
-// agent narrated "Phase 2 — Implementation:" and then wrote directly anyway.
-const V5_ROLE_ENFORCEMENT = [
-  {
-    pattern: /^data\/experiments\/[^\/]+\/scripts\//,
-    reason: "Impl files live in scripts/ and are written exclusively by tool_impl sub-agents. Spawn spawn_agent(agent=\"tool_impl\", ...) with a tool description instead.",
-  },
-  {
-    pattern: /^data\/experiments\/[^\/]+\/tests\//,
-    reason: "Test files live in tests/ and are written exclusively by tool_review sub-agents (independent from impl, for self-circular-verification protection). Spawn spawn_agent(agent=\"tool_review\", ...) with the tool description instead.",
-  },
-];
-
+// V5 impl/review split is now enforced by: (1) spawn_agent tool being
+// available to background experiments (see subagent-runner.ts), and (2)
+// the <role_separation> + <scope_boundary> prompt blocks in experiment.md.
+// A previous commit added a tool-layer write block here to "force" the
+// split, but the real issue was that background experiments literally had
+// no spawn_agent tool — the block made the agent fall through to bash
+// heredoc workarounds (cat > path.py << EOF), creating a bypass surface.
+// With spawn_agent actually available, prompt + tool availability at the
+// right layer is sufficient; the block is redundant and has been removed.
+// The `forbiddenWritePatterns` option on createSafetyWrapper is left in
+// place for future use cases where a real role-separation constraint
+// can't be expressed as prompt guidance alone.
 export const wrapExperimentTools: SafetyWrapper = createSafetyWrapper({
   protectedFiles: REPORT_SURFACE,
   writeOnExistingPolicy: "block",
-  forbiddenWritePatterns: V5_ROLE_ENFORCEMENT,
 });
 
 // Tool sub-agents are description-driven — they don't need to read literature,

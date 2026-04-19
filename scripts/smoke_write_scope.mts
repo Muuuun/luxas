@@ -1,15 +1,18 @@
 #!/usr/bin/env tsx
 /**
- * Smoke: V5 role-enforcement write guard.
+ * Smoke: wrapper write/edit permissions across the three agent roles.
  *
- * Confirms wrapExperimentTools blocks write/edit to scripts/ and tests/
- * under any experiment dir, while still allowing writes to:
- *   - runs/run_N/results.json (Phase 3 integration output)
- *   - notes/experiments.md (L2 analysis section)
- *   - report/figures/ (Phase 3 figures)
- * tool_impl / tool_review wrappers remain free to write to their own
- * scripts/ or tests/ dirs respectively — those are the sub-agents that
- * V5 forces experiment to delegate to.
+ * V5 impl/review split is enforced by (1) spawn_agent availability in
+ * background agents (see subagent-runner.ts) + (2) prompt guidance
+ * (role_separation + scope_boundary blocks in experiment.md). The tool
+ * layer does NOT block experiment writes to scripts/ or tests/ —
+ * prompt + tool availability is the right layer for role guidance.
+ *
+ * What this smoke pins down:
+ *   - experiment can write anywhere except REPORT_SURFACE protected files
+ *   - tool_impl / tool_review are blocked from REPORT_SURFACE and
+ *     NOTES_LEDGER (cross-cutting protected files)
+ *   - writeOnExistingPolicy blocks write on pre-existing files (use edit)
  */
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -57,16 +60,21 @@ async function test(label: string, wrapper: any, templateVars: Record<string, st
   }
 }
 
-// experiment: must NOT write to scripts/ or tests/ in any experiment dir,
-// but CAN write to runs/, notes/, report/, and new files elsewhere
+// experiment: tool layer does NOT block role-separation paths. Role
+// enforcement is handled by prompt + spawn_agent tool availability.
+// Only REPORT_SURFACE files are protected against experiment writes.
 await test("wrapExperimentTools", wrapExperimentTools, { EXPERIMENT_ID: "E_test" }, {
-  "data/experiments/E_test/scripts/foo.py": "blocked",
-  "data/experiments/E_test/tests/test_foo.py": "blocked",
-  "data/experiments/E_test/tests/conftest.py": "blocked",
-  "data/experiments/E_other/scripts/bar.py": "blocked",
+  "data/experiments/E_test/scripts/foo.py": "ok",
+  "data/experiments/E_test/tests/test_foo.py": "ok",
+  "data/experiments/E_test/tests/conftest.py": "ok",
+  "data/experiments/E_other/scripts/bar.py": "ok",
   "data/experiments/E_test/runs/run_1/results.json": "ok",
   "notes/experiments.md": "ok",
   "report/figures/e1_comparison.png": "ok",
+  "RESEARCH.md": "blocked",
+  "report.tex": "blocked",
+  "references.bib": "blocked",
+  "notes/literature.md": "blocked",
 });
 
 // tool_impl: CAN write scripts/ in its own experiment (per read-scope + no
@@ -82,20 +90,11 @@ await test("wrapToolReviewTools", wrapToolReviewTools, { EXPERIMENT_ID: "E_test"
   "notes/experiments.md": "blocked",
 });
 
-// Edit tool also honors forbidden patterns (pre-existing file created below)
-writeFileSync(join(dir, "data/experiments/E_test/scripts/existing.py"), "# seed");
-console.log("\n[wrapExperimentTools — edit on scripts/]");
-{
-  const wrapped = wrapExperimentTools([fakeEdit], dir, { EXPERIMENT_ID: "E_test" });
-  const edit = wrapped.find((t: any) => t.name === "edit")!;
-  const r = await edit.execute("1", { path: "data/experiments/E_test/scripts/existing.py" });
-  assert(r.content[0].text.startsWith("BLOCKED"), "edit scripts/*.py blocked for experiment");
-}
 
 rmSync(dir, { recursive: true, force: true });
 
 if (failures === 0) {
-  console.log("\nPASS — V5 role-enforcement write guards hold");
+  console.log("\nPASS — wrapper write permissions per role are correct");
   process.exit(0);
 } else {
   console.log(`\n${failures} failure(s)`);
