@@ -41,11 +41,14 @@ import { installUsageTracking, readUsageTotals } from "./usage-log.js";
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
 import type { PIVerdict } from "./pi-agent.js";
 
-// Default Anthropic prompt-cache TTL to 1h. Luxas runs span hours with idle
-// gaps between agents — the 5-min default expires mid-run and forces full
-// re-caching on every cold spawn. 1h costs 2× per write but is amortized
-// over 12× more reuse. Override with PI_CACHE_RETENTION=short.
-process.env.PI_CACHE_RETENTION ||= "long";
+// Default Anthropic prompt-cache TTL to 5m. Empirically on Luxas runs the
+// cacheWrite/cacheRead ratio sits near 1:1 (mutable L3 + shifting context
+// snapshots force frequent re-writes), so the 1h premium rarely amortizes —
+// large writes with few reads overpay for the extended TTL. Gaps between
+// brain turns are almost always < 5m because foreground spawns resume
+// quickly. Override with PI_CACHE_RETENTION=long for workloads with proven
+// long idle gaps (e.g. many >15min brain-side gaps).
+process.env.PI_CACHE_RETENTION ||= "short";
 
 export interface ResearchAgentOptions {
   projectDir: string;

@@ -24,9 +24,9 @@ import { cleanMessagesForModel } from "./transform.js";
 import { installUsageTracking } from "./usage-log.js";
 import { createSpawnToolFactory } from "./tools/spawn-agent.js";
 
-// Match agent.ts: default Anthropic prompt-cache TTL to 1h.
+// Match agent.ts: default Anthropic prompt-cache TTL to 5m.
 // Subagents are separate processes, so the env var must be set here too.
-process.env.PI_CACHE_RETENTION ||= "long";
+process.env.PI_CACHE_RETENTION ||= "short";
 
 // ── Parse args ──────────────────────────────────────
 
