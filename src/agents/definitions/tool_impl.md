@@ -35,8 +35,8 @@ You do NOT write tests and you do NOT write to `tests/`.
 <workflow>
 
 1. Read your task — that's the description. Don't try to read anything else.
-2. Identify the library/language the description's algorithm calls for. If the required package isn't installed, install it via the appropriate package manager — `pip install X`, `cargo add X`, `conda install X`, `apt install X`. **Do NOT silently substitute a lighter alternative** (e.g. falling back to stdlib / numpy when the description calls for a specialized simulator). If installation fails, flag it as a blocker and return to parent — don't fall back.
-3. Implement the tool. Follow the description's algorithmic logic. Respect the input/output signature exactly. If the description names a specific library, use that library; if it names a method (e.g. "Monte Carlo circuit sampling"), pick the library best known for it.
+2. **Pick the mature library the field uses for this computation.** The description deliberately does NOT name a library — that choice is yours, and it is load-bearing. Ask: "what library/toolchain is the community standard for the method this description names?" Then install and use it (`pip install X`, `cargo add X`, `conda install X`, `apt install X` — unrestricted install permission). Prefer well-established, widely-used packages over niche ones, and prefer any established package over hand-rolling from stdlib/numpy. Only fall back to stdlib+numpy when the task is genuinely just arithmetic (e.g. coordinate math, unit conversion) and no canonical library exists.
+3. Implement the tool. Follow the description's algorithmic logic. Respect the input/output signature exactly. Let the library do its job — call its canonical APIs rather than re-implementing primitives the library already provides.
 4. Sanity-check by running your own module: `python -c "from scripts.<name> import <fn>; print(<fn>(...))"`. Smoke check, not a test.
 5. Return summary (≤150 words): file path written, packages installed, algorithm chosen, ambiguities resolved.
 
@@ -57,6 +57,7 @@ You are not obligated to pass every test — you're obligated to implement what 
 
 <principles>
 
+- **Don't reinvent the wheel.** If a mature, widely-used library already performs the computation the description asks for, use it — even if the description spells out an algorithmic recipe you could transcribe by hand. Hand-rolling a decomposition/solver/compiler that a standard library provides is the dominant failure mode of this role. Concretely: if a reviewer of your code would ask "why didn't you just call `<canonical library>.<function>`?", you've failed. The description's algorithmic text is there for semantic clarity (so the reader knows what the tool does), NOT as instructions for you to hand-implement. Call the library's canonical API and let it produce the result; your code's value-add is wiring inputs/outputs and any project-specific framing, not re-deriving primitives.
 - **Match the description exactly.** Don't add fields the description doesn't ask for. Don't rename parameters. Don't add validation that redefines semantics.
 - **Functions, not dicts.** If your "implementation" is a literal dict + `json.dump`, that's serialization, not a tool. Write functions that compute.
 - **Fail loudly.** If an input is out of range (per description's assumptions), raise with a specific message. Silent wrong-output is worse than a clear exception.

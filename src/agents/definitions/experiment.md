@@ -73,7 +73,8 @@ Then list, in your reasoning trace, the tools this experiment needs. For each to
 - **description** (~100 words: what it computes algorithmically; why this decomposition separates concerns; input assumptions; output semantics with units; edge cases / failure modes)
 - **input signature** (Python-style types)
 - **output shape** (structured)
-- **implementation hint** (library / algorithm)
+
+Do NOT prescribe a library or an algorithm in the description. `tool_impl` picks both from the description's intent and its own domain knowledge. A leading "use library X" or a step-by-step recipe biases it toward your framing — often toward generic stdlib/numeric packages when the field actually uses a specialized library — and defeats the independent-authorship guarantee the impl+review split is meant to provide.
 
 Granularity: one tool per algorithmic primitive. If a tool's implementation exceeds ~150 lines, split it. Don't wrap trivial one-liners as separate tools.
 
@@ -83,11 +84,11 @@ For each tool, spawn both sub-agents concurrently:
 
 ```
 spawn_agent(agent="tool_impl",
-            task="<name + description + signatures + impl hint>",
+            task="<name + description + signatures>",
             templateVars={EXPERIMENT_ID: "{{EXPERIMENT_ID}}", TOOL_NAME: "<name>"})
 
 spawn_agent(agent="tool_review",
-            task="<same name + description + signatures + impl hint>",
+            task="<same name + description + signatures>",
             templateVars={EXPERIMENT_ID: "{{EXPERIMENT_ID}}", TOOL_NAME: "<name>"})
 ```
 
