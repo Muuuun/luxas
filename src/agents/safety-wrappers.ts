@@ -287,17 +287,50 @@ export const wrapBrainTools: SafetyWrapper = createSafetyWrapper({
   writeOnExistingPolicy: "block",
 });
 
-// experiment owns engineering-design artifacts under design/ and may use
-// notes/memory.md as a scratchpad. Blocked from rewriting the report,
-// references, literature notes, and experiments log — those stay with the
-// brain / reader / review pipeline.
+// experiment owns per-experiment artifacts under data/experiments/<id>/ and
+// appends per-L2 sections to notes/experiments.md (V5: notes/experiments.md
+// is now the analysis ledger replacing design/spec_*.md). Blocked from
+// rewriting RESEARCH.md, the report, references, and literature notes.
 export const wrapExperimentTools: SafetyWrapper = createSafetyWrapper({
   protectedFiles: [
     "RESEARCH.md",
     "report.tex",
     "references.bib",
     "notes/literature.md",
+  ],
+  writeOnExistingPolicy: "block",
+});
+
+// tool_impl writes Python modules under data/experiments/<id>/scripts/.
+// Does not write tests, notes, or report. Per-experiment-directory
+// enforcement is left to the prompt (safety wrapper lacks EXPERIMENT_ID
+// from templateVars); this wrapper just blocks the obvious cross-cutting
+// files.
+export const wrapToolImplTools: SafetyWrapper = createSafetyWrapper({
+  protectedFiles: [
+    "RESEARCH.md",
+    "report.tex",
+    "references.bib",
+    "notes/literature.md",
     "notes/experiments.md",
+    "notes/memory.md",
+    "notes/plan.md",
+  ],
+  writeOnExistingPolicy: "block",
+});
+
+// tool_review writes pytest files under data/experiments/<id>/tests/. Same
+// cross-cutting blocks as tool_impl; additionally must NOT write to
+// scripts/ (prompt enforces; wrapper lacks path-glob granularity).
+export const wrapToolReviewTools: SafetyWrapper = createSafetyWrapper({
+  protectedFiles: [
+    "RESEARCH.md",
+    "report.tex",
+    "references.bib",
+    "notes/literature.md",
+    "notes/experiments.md",
+    "notes/memory.md",
+    "notes/plan.md",
   ],
   writeOnExistingPolicy: "block",
 });
@@ -307,6 +340,8 @@ export const wrapExperimentTools: SafetyWrapper = createSafetyWrapper({
 const SAFETY_WRAPPERS: Record<string, SafetyWrapper> = {
   brain: wrapBrainTools,
   experiment: wrapExperimentTools,
+  tool_impl: wrapToolImplTools,
+  tool_review: wrapToolReviewTools,
 };
 
 export function resolveSafetyWrapper(name: string | undefined): SafetyWrapper | undefined {
