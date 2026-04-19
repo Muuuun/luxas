@@ -10,11 +10,13 @@
  *   - Block write-on-existing (force edit over write)
  *   - Fresh-excerpt recovery on edit failure (delegated to edit-recovery.ts)
  *
- * Two preset wrappers:
- *   - wrapBrainTools     — protects RESEARCH.md only
- *   - wrapExperimentTools — protects RESEARCH.md, report.tex, references.bib, notes/*.md
+ * Preset wrappers (one per agent role that writes to the project):
+ *   - wrapBrainTools       — brain can write anywhere except RESEARCH.md
+ *   - wrapExperimentTools  — plus report/bib/literature guards
+ *   - wrapToolImplTools    — experiment sub-agent: scripts only, no ledger
+ *   - wrapToolReviewTools  — experiment sub-agent: tests only, no ledger
  *
- * Both share the same factory (createSafetyWrapper) and tracker semantics.
+ * All share the same factory (createSafetyWrapper) and tracker semantics.
  *
  * I/O is fully async (fs/promises) so the wrapper doesn't block parallel
  * tool execution that pi-agent-core schedules with toolExecution: "parallel".
@@ -276,62 +278,47 @@ function createSafetyWrapper(opts: SafetyOptions): SafetyWrapper {
   };
 }
 
+// ── Protected-file groups ────────────────────────────────────────────────
+//
+// Hierarchy: brain owns the most; experiment can still append to its ledger;
+// tool sub-agents touch only their experiment's scripts/ or tests/ subdir.
+// Per-experiment-dir enforcement is prompt-side only — the wrapper lacks
+// EXPERIMENT_ID from templateVars and can't do path-glob granularity.
+
+const REPORT_SURFACE = [
+  "RESEARCH.md",
+  "report.tex",
+  "references.bib",
+  "notes/literature.md",
+];
+
+const NOTES_LEDGER = [
+  "notes/experiments.md",
+  "notes/memory.md",
+  "notes/plan.md",
+];
+
 // ── Preset wrappers ──────────────────────────────────────────────────────
 
 export const wrapBrainTools: SafetyWrapper = createSafetyWrapper({
-  // Brain owns notes/, report/, references.bib — only RESEARCH.md is sacred.
   protectedFiles: ["RESEARCH.md"],
-  // Brain.md prompt says "ALWAYS use edit, NEVER use write to overwrite" —
-  // enforce that at runtime. If brain genuinely needs to overwrite, it can
-  // delete the file via bash first.
+  // Brain.md says "ALWAYS use edit, NEVER use write to overwrite" — enforce
+  // at runtime. If brain needs to overwrite, it can delete via bash first.
   writeOnExistingPolicy: "block",
 });
 
-// experiment owns per-experiment artifacts under data/experiments/<id>/ and
-// appends per-L2 sections to notes/experiments.md (V5: notes/experiments.md
-// is now the analysis ledger replacing design/spec_*.md). Blocked from
-// rewriting RESEARCH.md, the report, references, and literature notes.
 export const wrapExperimentTools: SafetyWrapper = createSafetyWrapper({
-  protectedFiles: [
-    "RESEARCH.md",
-    "report.tex",
-    "references.bib",
-    "notes/literature.md",
-  ],
+  protectedFiles: REPORT_SURFACE,
   writeOnExistingPolicy: "block",
 });
 
-// tool_impl writes Python modules under data/experiments/<id>/scripts/.
-// Does not write tests, notes, or report. Per-experiment-directory
-// enforcement is left to the prompt (safety wrapper lacks EXPERIMENT_ID
-// from templateVars); this wrapper just blocks the obvious cross-cutting
-// files.
 export const wrapToolImplTools: SafetyWrapper = createSafetyWrapper({
-  protectedFiles: [
-    "RESEARCH.md",
-    "report.tex",
-    "references.bib",
-    "notes/literature.md",
-    "notes/experiments.md",
-    "notes/memory.md",
-    "notes/plan.md",
-  ],
+  protectedFiles: [...REPORT_SURFACE, ...NOTES_LEDGER],
   writeOnExistingPolicy: "block",
 });
 
-// tool_review writes pytest files under data/experiments/<id>/tests/. Same
-// cross-cutting blocks as tool_impl; additionally must NOT write to
-// scripts/ (prompt enforces; wrapper lacks path-glob granularity).
 export const wrapToolReviewTools: SafetyWrapper = createSafetyWrapper({
-  protectedFiles: [
-    "RESEARCH.md",
-    "report.tex",
-    "references.bib",
-    "notes/literature.md",
-    "notes/experiments.md",
-    "notes/memory.md",
-    "notes/plan.md",
-  ],
+  protectedFiles: [...REPORT_SURFACE, ...NOTES_LEDGER],
   writeOnExistingPolicy: "block",
 });
 

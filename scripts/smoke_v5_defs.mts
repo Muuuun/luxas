@@ -26,10 +26,8 @@ for (const name of checked) {
   console.log(`${name.padEnd(14)} model=${d.model.padEnd(8)} canSpawn=${String(d.canSpawn).padEnd(5)} allowedSpawn=${JSON.stringify(d.allowedSpawn ?? null).padEnd(50)} safety=${swTag} context=${cbTag} templates=${JSON.stringify(d.templates)}`);
 }
 
-// Check cross-references: experiment should allow tool_impl + tool_review spawn
 const exp = defs.get("experiment")!;
-const want = new Set(["tool_impl", "tool_review"]);
-for (const n of want) {
+for (const n of ["tool_impl", "tool_review"]) {
   if (!exp.allowedSpawn?.includes(n)) {
     console.log(`FAIL experiment.allowedSpawn missing: ${n}`);
     failures++;
@@ -37,7 +35,7 @@ for (const n of want) {
 }
 
 if (failures === 0) {
-  console.log("\n18/18 style PASS — all V5 agent defs load & wire up cleanly");
+  console.log(`\nPASS — ${checked.length} V5 agent defs load & wire up cleanly`);
   process.exit(0);
 } else {
   console.log(`\n${failures} failure(s)`);

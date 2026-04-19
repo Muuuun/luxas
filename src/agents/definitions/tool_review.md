@@ -9,7 +9,6 @@ description: >
 model: opus
 thinkingLevel: high
 toolSets: [coding]
-contextBuilder: null
 safetyWrapper: tool_review
 canSpawn: false
 templates: [PROJECT_DIR, EXPERIMENT_ID, TOOL_NAME]
