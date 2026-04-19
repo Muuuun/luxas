@@ -22,6 +22,7 @@ import { getApiKey } from "./auth.js";
 import { extractTextContent } from "./utils.js";
 import { cleanMessagesForModel } from "./transform.js";
 import { installUsageTracking } from "./usage-log.js";
+import { createSpawnToolFactory } from "./tools/spawn-agent.js";
 
 // Match agent.ts: default Anthropic prompt-cache TTL to 1h.
 // Subagents are separate processes, so the env var must be set here too.
@@ -88,7 +89,13 @@ async function main() {
       }
     }
 
-    // Build agent from definition (reuses the same logic as in-process spawnAgent)
+    // Build agent from definition (reuses the same logic as in-process spawnAgent).
+    // Background agents that declare `canSpawn: true` (notably experiment under V5)
+    // need their own spawn_agent tool so they can delegate to tool_impl/tool_review.
+    // Without createSpawnTool, buildAgentFromDefinition silently omits the spawn
+    // tool — the agent then can't follow V5's impl+review split and falls back to
+    // bash heredoc workarounds (observed on qLDPC bg-2 E3 run, 2026-04-19).
+    const makeSpawnTool = createSpawnToolFactory(projectDir, getApiKey);
     const spawnOpts: SpawnAgentOptions = {
       name: args.agent,
       prompt: args.task,
@@ -99,6 +106,7 @@ async function main() {
       },
       getApiKey,
       parentAgentId: args.id.split(".").slice(0, -1).join(".") || "brain",
+      createSpawnTool: makeSpawnTool,
     };
 
     const { agent, agentId, definition, tokenTap } = buildAgentFromDefinition(spawnOpts);
