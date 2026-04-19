@@ -120,7 +120,7 @@ export function buildAgentFromDefinition(opts: SpawnAgentOptions): BuiltAgent {
   // 4. Apply safety wrapper if defined
   const wrapper = resolveSafetyWrapper(def.safetyWrapper);
   if (wrapper) {
-    tools = wrapper(tools, opts.projectDir);
+    tools = wrapper(tools, opts.projectDir, opts.templateVars);
   }
 
   // 5. Add tool overrides (e.g., PI verdict tool)

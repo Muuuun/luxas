@@ -34,7 +34,7 @@ import { extractTextContent } from "../utils.js";
 
 // ── Types ────────────────────────────────────────────────────────────────
 
-export type SafetyWrapper = (tools: any[], projectDir: string) => any[];
+export type SafetyWrapper = (tools: any[], projectDir: string, templateVars?: Record<string, string>) => any[];
 
 interface ReadEntry {
   /** mtimeMs of the file at the moment it was read (or written/edited). */
@@ -50,6 +50,13 @@ interface SafetyOptions {
   protectedFiles: string[];
   /** "block" → reject write on existing file. "allow_as_read" → permit, count as read. */
   writeOnExistingPolicy: "block" | "allow_as_read";
+  /**
+   * If set, the read tool will only succeed for paths under one of these roots.
+   * Paths are project-relative and support `{{VAR}}` templating resolved from
+   * the spawn's templateVars (e.g. `data/experiments/{{EXPERIMENT_ID}}`).
+   * Unset = no read-path restriction.
+   */
+  allowedReadRoots?: string[];
 }
 
 /** Detect content-shape errors from upstream pi-coding-agent edit tool. */
@@ -91,14 +98,35 @@ async function safeReadFile(absPath: string): Promise<string | null> {
 
 // ── Tool wrappers ────────────────────────────────────────────────────────
 
-function wrapRead(tool: any, tracker: ReadTracker, projectDir: string) {
+function wrapRead(
+  tool: any,
+  tracker: ReadTracker,
+  projectDir: string,
+  allowedReadRoots: string[] | null,
+) {
   const origExecute = tool.execute;
   return {
     ...tool,
     execute: async (id: string, params: any, signal?: any) => {
+      const p = getPathArg(params);
+
+      // Read-scope check: enforced before the underlying tool runs so nothing
+      // leaks even through symlinks — we compare resolved absolute paths.
+      if (allowedReadRoots && p) {
+        const abs = resolve(projectDir, p);
+        const ok = allowedReadRoots.some((root) => abs === root || abs.startsWith(root + "/"));
+        if (!ok) {
+          const rel = allowedReadRoots.map((r) => r.replace(projectDir + "/", "")).join(", ");
+          return blocked(
+            `Read of ${p} is outside your allowed scope. ` +
+            `You may only read files under: ${rel}. ` +
+            `Your task description is the spec — don't hunt literature.`
+          );
+        }
+      }
+
       const result = await origExecute(id, params, signal);
       if (result?.isError === true) return result;
-      const p = getPathArg(params);
       if (!p) return result;
       const abs = resolve(projectDir, p);
       const mtime = await safeMtime(abs);
@@ -260,7 +288,7 @@ function wrapWrite(
 // ── Factory ──────────────────────────────────────────────────────────────
 
 function createSafetyWrapper(opts: SafetyOptions): SafetyWrapper {
-  return (tools, projectDir) => {
+  return (tools, projectDir, templateVars = {}) => {
     // One tracker per wrapper instance — closure-scoped, lives as long as
     // the agent that owns these tool instances.
     const tracker: ReadTracker = new Map();
@@ -269,8 +297,21 @@ function createSafetyWrapper(opts: SafetyOptions): SafetyWrapper {
     // (which would false-positive on names like `evilRESEARCH.md`).
     const protectedAbs = new Set(opts.protectedFiles.map((f) => resolve(projectDir, f)));
 
+    // Resolve {{VAR}} templates in allowedReadRoots using the caller's
+    // templateVars; any var that isn't substituted remains literal, which
+    // resolves to a nonexistent path and fails closed (no reads allowed).
+    const allowedReadAbs = opts.allowedReadRoots
+      ? opts.allowedReadRoots.map((r) => {
+          let resolved = r;
+          for (const [k, v] of Object.entries(templateVars)) {
+            resolved = resolved.replaceAll(`{{${k}}}`, v);
+          }
+          return resolve(projectDir, resolved);
+        })
+      : null;
+
     return tools.map((tool: any) => {
-      if (tool.name === "read")  return wrapRead(tool, tracker, projectDir);
+      if (tool.name === "read")  return wrapRead(tool, tracker, projectDir, allowedReadAbs);
       if (tool.name === "edit")  return wrapEdit(tool, tracker, projectDir, protectedAbs);
       if (tool.name === "write") return wrapWrite(tool, tracker, projectDir, protectedAbs, opts);
       return tool;
@@ -312,13 +353,21 @@ export const wrapExperimentTools: SafetyWrapper = createSafetyWrapper({
   writeOnExistingPolicy: "block",
 });
 
+// Tool sub-agents are description-driven — they don't need to read literature,
+// notes, or other experiments. Hard-scope their reads to the single experiment
+// directory so a wandering agent can't re-read paper sources to second-guess
+// the description.
+const EXPERIMENT_READ_SCOPE = ["data/experiments/{{EXPERIMENT_ID}}"];
+
 export const wrapToolImplTools: SafetyWrapper = createSafetyWrapper({
   protectedFiles: [...REPORT_SURFACE, ...NOTES_LEDGER],
+  allowedReadRoots: EXPERIMENT_READ_SCOPE,
   writeOnExistingPolicy: "block",
 });
 
 export const wrapToolReviewTools: SafetyWrapper = createSafetyWrapper({
   protectedFiles: [...REPORT_SURFACE, ...NOTES_LEDGER],
+  allowedReadRoots: EXPERIMENT_READ_SCOPE,
   writeOnExistingPolicy: "block",
 });
 
