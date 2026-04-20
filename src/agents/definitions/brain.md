@@ -11,7 +11,7 @@ thinkingLevel: high
 toolSets: [coding, report, spawn]
 safetyWrapper: brain
 canSpawn: true
-allowedSpawn: [search, reader, worker, experiment, math, reviewer, fixer, illustrator]
+allowedSpawn: [search, reader, worker, experiment, math, reviewer, fixer, illustrator, illustrator_write]
 templates: [PROJECT_DIR, SEARCH_SCRIPT, EXTRACT_FIGURES, VENUE_SPECIFIC_DIR]
 ---
 
@@ -189,17 +189,55 @@ Survey/review reports covering downloaded papers MUST include ≥3-5 key figures
 </paper_figures>
 
 <generated_figures>
-Original figures visualizing your own quantitative results are mandatory for any research report that ran experiments. Imported paper figures (under `../data/papers/...`) do NOT substitute — they illustrate context, not your findings.
+**Figures serve the report's argument.** Original figures visualizing your own quantitative results are mandatory for any research report that ran experiments; imported paper figures (under `../data/papers/...`) do NOT substitute — they illustrate context, not your findings.
 
-**Before calling `finish()`, you MUST have ≥1 self-generated figure per completed experiment** saved under `report/figures/` and referenced in `report.tex` with `\includegraphics{../report/figures/<name>.pdf}`. The `finish()` tool enforces this.
+The decision order is:
 
-**Sourcing raw data for plots.** Each experiment agent saves plot-ready arrays under `data/experiments/<EXPERIMENT_ID>/runs/run_N/data/` (CSV, NPZ, or JSON with array fields — see `results.json` → `computed.raw_data` for paths). Plot from those files directly. If raw data is missing for a plottable quantity, re-spawn the experiment with an explicit "save the scan data as CSV/NPZ" directive rather than fabricating numbers.
+1. **Walk your report draft section by section.** For each claim / finding / physical interpretation, ask: *can this land on the reader without a figure?* If the reader would need to "trust me" without visual evidence — overlap, scaling, comparison, spectrum, distribution — that claim needs a figure.
 
-**How to produce the figures.** Two paths, pick per figure:
-  (a) `spawn_agent(agent="illustrator", ...)` with task naming the data file, plot semantics, and output path under `report/figures/`. Illustrator handles style + aesthetic review.
-  (b) `bash: python -c "..."` (or write a script under `data/plots/`) that loads the raw data, plots it, saves to `report/figures/<name>.pdf`. Use this for simple line/bar plots where illustrator polish isn't needed.
+2. **State what each needed figure must show, concretely.** Not "time traces" but "overlay of I(t) for τ_p = 5 ns vs 2 ns showing FID flash amplitude difference at t = τ_p". The figure name, the claim it settles, the specific feature to highlight.
 
-**Style.** Follow `skills/matplotlib-figures/SKILL.md`: copy venue-matched style from `{{VENUE_SPECIFIC_DIR}}figstyles/<style>.mplstyle` to `report/figstyle.mplstyle`, load it in every plot script, save PDF for line plots + PNG for raster imagery.
+3. **Map to raw data.** Check `results.json.computed.raw_data` for paths under `data/experiments/<EXPERIMENT_ID>/runs/run_N/data/`. If the data needed for a claim is missing, re-spawn the experiment with an explicit "save the scan data as CSV/NPZ" directive; never fabricate values from your memory of the literature.
+
+4. **Consult `notes/methodology.md` § "C. Figure content inventory" as a sanity check.** The corpus tells you what convention the field uses — log-scale, overlay vs side-by-side, panel layout, annotations. Borrow conventions when they fit your argument; skip them when they don't. Methodology is a reference, not a template. Your report's clarity wins over conformance.
+
+5. **Skip a figure only when the claim is genuinely scalar.** "Doppler-induced shift of revival time is < 0.1 ns — negligible" is one number in prose; it doesn't need a figure. "1/OD scaling confirmed to < 1% across OD ∈ {0.5 … 5}" has five points and a trend — it needs a figure, no matter how small. If you're skipping because it's "too much work", you picked wrong.
+
+**Production pipeline** (author → polish, two agents):
+
+```
+brain (picks figures)
+   ↓
+spawn_agent(agent="illustrator_write", task=<spec>) — per figure
+   ↓ writes data/experiments/<id>/scripts/plot_<topic>.py, runs it,
+   ↓ lands report/figures/<name>.{pdf,png}
+   ↓
+(all figures for the session landed)
+   ↓
+spawn_agent(agent="illustrator", task="audit report/figures/*.pdf")
+   ↓ one final style-audit pass; polishes palette/typography consistency
+```
+
+The `illustrator_write` task spec must include:
+- **Figure name** (stem; → `report/figures/<name>.pdf`)
+- **Claim the figure settles** (one sentence, mirrors the sentence in report.tex that references it)
+- **Data file path(s)** under `data/experiments/<EXPERIMENT_ID>/runs/run_N/data/`
+- **Plot semantics** (type, axes, log-scale, annotations, what to highlight)
+- **EXPERIMENT_ID templateVar** — mandatory so the agent writes its script under the right experiment directory
+
+One spawn per figure. Multiple figures for the same experiment can be parallel spawns in one turn.
+
+After all `illustrator_write` spawns return, spawn `illustrator` once (not per-figure) for a global style audit. It will align palettes / fonts / line weights across the set and flag render bugs.
+
+**Anti-patterns** (don't):
+- `bash python -c "..."` to write an inline plot script yourself. The illustrator_write agent exists specifically for this; its independent session keeps the decomposition clean.
+- `write data/plots/plot.py` directly by you. Same reason.
+- One mega multi-panel figure to satisfy a "≥ 1 figure" checklist. Each claim = its own figure (panels OK when panels share an axis or a natural parameter sweep).
+- Picking figures from the methodology corpus before checking whether your argument needs them. Methodology is a reference after your argument is clear, not the starting point.
+
+**Style bootstrap**: if `report/figures/style_guide.md` doesn't exist, copy `{{VENUE_SPECIFIC_DIR}}figstyles/<domain>.mplstyle` into `report/figstyle.mplstyle` and seed `style_guide.md` from `skills/figure/style_guides/<domain>.md` before your first `illustrator_write` spawn.
+
+**Finish gate**: `finish()` requires ≥ 1 self-generated figure under `report/figures/` (not imported from `../data/papers/`). In practice you'll have more — one per non-scalar claim.
 </generated_figures>
 </report_writing>
 

@@ -417,6 +417,16 @@ export const wrapExperimentReviewerTools: SafetyWrapper = createSafetyWrapper({
   writeOnExistingPolicy: "block",
 });
 
+// illustrator_write authors a new plot_<topic>.py from a brain-supplied
+// figure spec + raw data path, runs it, and lands the PDF/PNG at
+// report/figures/. Write scope = scripts under the current experiment +
+// report/figures/; everything else (notes, report.tex, references.bib,
+// other experiments) is blocked.
+export const wrapIllustratorWriteTools: SafetyWrapper = createSafetyWrapper({
+  protectedFiles: [...REPORT_SURFACE, ...NOTES_LEDGER],
+  writeOnExistingPolicy: "block",
+});
+
 // ── Registry ─────────────────────────────────────────────────────────────
 
 const SAFETY_WRAPPERS: Record<string, SafetyWrapper> = {
@@ -425,6 +435,7 @@ const SAFETY_WRAPPERS: Record<string, SafetyWrapper> = {
   tool_impl: wrapToolImplTools,
   tool_review: wrapToolReviewTools,
   experiment_reviewer: wrapExperimentReviewerTools,
+  illustrator_write: wrapIllustratorWriteTools,
 };
 
 export function resolveSafetyWrapper(name: string | undefined): SafetyWrapper | undefined {
