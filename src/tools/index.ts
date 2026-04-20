@@ -2,7 +2,7 @@
  * Tool index — assembles all research tools for the brain agent.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { Agent } from "@mariozechner/pi-agent-core";
 import { createReportTools } from "./report.js";
@@ -58,6 +58,34 @@ export function parseExperimentSections(text: string): ExperimentSection[] {
   }
   flush();
   return sections;
+}
+
+/**
+ * Parse the most recent PI verdict from `reviews/pi_feedback.md`. PI rewrites
+ * the file each review with a top-level `## Verdict: <continue|steer|stop>`
+ * line; older verdicts may be present in the file body if the model appended
+ * rather than overwrote. We take the LAST match so stale earlier verdicts
+ * never outvote the most recent.
+ *
+ * Returns null if the file is missing, unreadable, or has no parseable verdict.
+ */
+export function parseLatestPIVerdict(projectDir: string):
+  | { verdict: "continue" | "steer" | "stop"; reviewPath: string; reviewMtimeMs: number }
+  | null
+{
+  const p = join(projectDir, "reviews", "pi_feedback.md");
+  let content: string;
+  let mtimeMs: number;
+  try {
+    content = readFileSync(p, "utf-8");
+    mtimeMs = statSync(p).mtimeMs;
+  } catch {
+    return null;
+  }
+  const matches = [...content.matchAll(/##\s*Verdict:\s*(continue|steer|stop)\b/gi)];
+  if (matches.length === 0) return null;
+  const last = matches[matches.length - 1][1].toLowerCase() as "continue" | "steer" | "stop";
+  return { verdict: last, reviewPath: p, reviewMtimeMs: mtimeMs };
 }
 
 export interface ToolCallbacks {
@@ -177,6 +205,62 @@ export function buildResearchTools(
         }
         if (selfGen.length === 0 && includes.length === 0) {
           return { content: [{ type: "text" as const, text: `Cannot finish: report.tex contains zero figures. Every research report needs ≥1 self-generated figure under report/figures/ visualising experiment results. See brain.md <generated_figures>.` }] };
+        }
+      }
+
+      // PI verdict gate. PI's role in the loop is explicit adversarial review;
+      // if PI's latest verdict is STEER, the agent has unresolved instructions
+      // and is not allowed to self-declare the work done. This gate was absent
+      // from 2026-03-21 (original finish tool, 14ef477) through 2026-04-20
+      // (commit a37273f figure gate) — brain could address any subset of a
+      // STEER's instructions and call finish() uncontested. Observed on
+      // inbox_B6Bk_xVQ2503: PI returned STEER with 4 priorities, brain
+      // partially addressed P1+P2, skipped P3+P4, called finish() and shipped.
+      //
+      // Dead-loop avoidance — three mechanisms, layered:
+      //
+      //  1. Pushback escape. Brain may disagree with PI defensibly: write
+      //     reviews/pi_pushback.md with a reasoned argument AFTER reading
+      //     the latest review; if that file's mtime exceeds pi_feedback.md's,
+      //     the gate allows finish() through. This is the "documented
+      //     dissent" exit — PI keeps the authority to flag issues, brain
+      //     keeps the authority to override with written justification.
+      //
+      //  2. Clear error message. The block text names the EXACT two paths
+      //     forward (address + re-review, or write pushback). Brain seeing
+      //     the same message on repeated calls has the instruction set
+      //     unchanged; it will not wander into the "retry same tool"
+      //     trap the old block-retry loops did.
+      //
+      //  3. maxTurns cap (default 500, src/agent.ts). Any true runaway
+      //     kills the process via process.exit(1). Bounded damage.
+      //
+      // continue/stop verdicts pass through; stop explicitly means "wrap up
+      // and ship" so finish is the right call.
+      const piVerdict = parseLatestPIVerdict(projectDir);
+      if (piVerdict && piVerdict.verdict === "steer") {
+        const pushbackPath = join(projectDir, "reviews", "pi_pushback.md");
+        let pushbackFresh = false;
+        try {
+          const pushbackMtimeMs = statSync(pushbackPath).mtimeMs;
+          pushbackFresh = pushbackMtimeMs > piVerdict.reviewMtimeMs;
+        } catch { /* pushback file missing — not fresh */ }
+        if (!pushbackFresh) {
+          return { content: [{ type: "text" as const, text:
+            `Cannot finish: latest PI verdict in reviews/pi_feedback.md is STEER ` +
+            `(unresolved instructions). Two paths forward, pick one:\n\n` +
+            `  (a) Address PI's instructions, then call request_pi_review again. ` +
+            `PI must return verdict=continue or verdict=stop before finish() is ` +
+            `allowed.\n\n` +
+            `  (b) If any instruction is genuinely non-actionable or you have ` +
+            `defensible disagreement, write reviews/pi_pushback.md with a ` +
+            `reasoned argument (cite specific feedback items, give your counter-` +
+            `reasoning, note what you will NOT do and why). Once that file's ` +
+            `mtime is newer than reviews/pi_feedback.md, finish() is allowed ` +
+            `through — PI's authority is advisory, not a veto.\n\n` +
+            `Do NOT retry finish() without taking one of these paths; the ` +
+            `block will repeat identically.`
+          }] };
         }
       }
 

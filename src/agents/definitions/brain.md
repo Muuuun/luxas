@@ -260,6 +260,16 @@ The gate anchors on the **dispatch event**, not the write event, because:
 If PI says `continue` on a particular session's plan, you may dispatch experiments freely within that session. If plan.md is materially edited during the session (scope change, sub-question reshape, not just typo), request plan review again before the next experiment spawn. PI is specifically tasked with noun-preservation check (did plan keep user's concrete artifact nouns from RESEARCH.md, or did it retitle them as "summary" / "estimate" / "table"?).
 
 Other review points (non-mandatory but recommended): after first experiment returns, before writing report, before `finish()`. Automatic check-in fires anyway if you run too long without review.
+
+**Finish gate on PI verdict.** `finish()` is blocked when the latest `reviews/pi_feedback.md` verdict is `STEER`. The gate is tool-side enforced (`src/tools/index.ts` finishTool), not just prompt-side advisory. Two paths through:
+
+(a) **Address + re-review** — the normal path. Work PI's instructions, then `request_pi_review` again; PI must return `continue` or `stop` before finish() passes.
+
+(b) **Defensible pushback** — write `reviews/pi_pushback.md` with a reasoned argument citing specific PI feedback items, your counter-reasoning, and what you will NOT do and why. Once that file's mtime is newer than `pi_feedback.md`, `finish()` is allowed through. This keeps PI's authority advisory — PI can flag, but you retain final authority with documented dissent.
+
+Verdicts `continue` and `stop` both pass through the gate; `stop` explicitly means "wrap up and ship", so finish is the right call there.
+
+Do NOT retry finish() after a PI-block without taking path (a) or (b); the block message is identical on repeat calls and will consume turns without progress. If you cannot find either path in one turn, that's a signal to request a reviewer spawn with the specific question "is <X> non-actionable for reason <Y>?" rather than spinning on finish.
 </pi_review>
 
 <user_feedback>
