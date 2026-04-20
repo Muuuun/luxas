@@ -278,7 +278,81 @@ export function createSpawnAgentTool(
       }
 
       // ── Foreground mode (default) ──
-      const result = await spawnAgent({ ...baseOpts, prompt: taskList[0] });
+      const initialTask = taskList[0];
+      let result = await spawnAgent({ ...baseOpts, prompt: initialTask });
+
+      // Auto-review loop: after any foreground experiment completes, spawn
+      // the experiment_reviewer to audit its L2 section + results + cited
+      // literature. If the reviewer votes revise, re-run the experiment
+      // with the feedback injected as a follow-up task. Bounded at 3
+      // iterations to cap cost. Replaces the old self-written "### Red
+      // team" section — the independent-auditor pattern (same as the
+      // tool_impl / tool_review split) prevents template-filling
+      // self-deflection.
+      if (params.agent === "experiment" && result.success) {
+        const experimentId = mergedTemplateVars.EXPERIMENT_ID;
+        if (experimentId) {
+          const MAX_REVIEW_ITERATIONS = 3;
+          for (let round = 1; round <= MAX_REVIEW_ITERATIONS; round++) {
+            const reviewResult = await spawnAgent({
+              name: "experiment_reviewer",
+              projectDir,
+              templateVars: { ...mergedTemplateVars },
+              prompt:
+                `Audit the completed experiment with EXPERIMENT_ID=${experimentId}. ` +
+                `Read the matching L2 section in notes/experiments.md, its ` +
+                `data/experiments/${experimentId}/runs/run_N/results.json, the referenced ` +
+                `raw_data files, and the cited literature fragments under notes/literature.d/. ` +
+                `Return a VERDICT: satisfied or VERDICT: revise with actionable FEEDBACK per ` +
+                `your system prompt.`,
+              getApiKey,
+              parentAgentId: `${parentAgentId ?? "brain"}.experiment-review-${round}`,
+              depth: (depth ?? 0) + 1,
+              createSpawnTool: makeSpawnTool,
+            });
+
+            const verdictText = reviewResult.output ?? "";
+            const satisfied = /VERDICT:\s*satisfied/i.test(verdictText);
+            if (satisfied) {
+              result = {
+                ...result,
+                output:
+                  result.output +
+                  `\n\n---\n[experiment_reviewer round ${round}: SATISFIED]`,
+              };
+              break;
+            }
+
+            // Extract FEEDBACK block (machine contract with reviewer).
+            const feedbackMatch = verdictText.match(/FEEDBACK:\s*([\s\S]*?)$/i);
+            const feedback = feedbackMatch ? feedbackMatch[1].trim() : verdictText.trim();
+
+            if (round === MAX_REVIEW_ITERATIONS) {
+              result = {
+                ...result,
+                output:
+                  result.output +
+                  `\n\n---\n[experiment_reviewer round ${round}: REVISE but iteration cap reached — accepting current state with open issues]\n\nOutstanding reviewer feedback:\n${feedback}`,
+              };
+              break;
+            }
+
+            // Re-run the experiment with feedback as a follow-up task.
+            // Tell the experiment agent explicitly to iterate on existing
+            // artifacts rather than start fresh.
+            const revisionTask =
+              `# Revision round ${round} — experiment_reviewer voted REVISE.\n\n` +
+              `Your previous run's L2 section + results.json have been audited. ` +
+              `Address these issues, iterating on existing data/experiments/${experimentId}/ ` +
+              `artifacts (scripts, tests, runs/). Do NOT start from scratch; reuse or extend.\n\n` +
+              `## Reviewer feedback\n\n${feedback}\n\n` +
+              `## Original task (for reference)\n\n${initialTask}`;
+            result = await spawnAgent({ ...baseOpts, prompt: revisionTask });
+            if (!result.success) break;
+          }
+        }
+      }
+
       return {
         content: [{ type: "text" as const, text: result.output }],
         details: { elapsed: result.elapsed, success: result.success },

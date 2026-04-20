@@ -408,6 +408,15 @@ export const wrapToolReviewTools: SafetyWrapper = createSafetyWrapper({
   writeOnExistingPolicy: "block",
 });
 
+// experiment_reviewer audits a completed experiment by reading its L2
+// section, results.json, raw data, and cited literature. Never writes —
+// returns its verdict as tool output. Read scope is broad (needs notes/
+// and data/experiments/<id>/) but write is fully blocked.
+export const wrapExperimentReviewerTools: SafetyWrapper = createSafetyWrapper({
+  protectedFiles: [...REPORT_SURFACE, ...NOTES_LEDGER],
+  writeOnExistingPolicy: "block",
+});
+
 // ── Registry ─────────────────────────────────────────────────────────────
 
 const SAFETY_WRAPPERS: Record<string, SafetyWrapper> = {
@@ -415,6 +424,7 @@ const SAFETY_WRAPPERS: Record<string, SafetyWrapper> = {
   experiment: wrapExperimentTools,
   tool_impl: wrapToolImplTools,
   tool_review: wrapToolReviewTools,
+  experiment_reviewer: wrapExperimentReviewerTools,
 };
 
 export function resolveSafetyWrapper(name: string | undefined): SafetyWrapper | undefined {

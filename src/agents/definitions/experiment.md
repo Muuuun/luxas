@@ -115,9 +115,10 @@ If review's tests reveal an issue with the **description itself** (ambiguity, ph
    - **Status:** `Complete` (the common case — all tools pass pytest, results.json exists) or `Pending` (if any tool is WIP — flag to brain so it can decide whether to re-spawn you or defer). Do NOT leave the status line out.
    - **Headline findings** (3-5 bullets)
    - `### Alternatives considered` (≥3 architecturally distinct candidates, each with rejection reason)
-   - `### Red team` (≥3 failure modes, each classified mitigate / accept-with-rationale / reject-with-evidence)
    - `### Limitations`
    - `### Open questions` (include explicit "Concerns for human review" here — brain aggregates these into the final report)
+
+   Do NOT write a `### Red team` section yourself. An independent `experiment_reviewer` sub-agent is auto-spawned by the harness after you return, reads your L2 section + `results.json` + raw data + cited literature, and votes satisfied / revise. Self-review was observed to regress into template-filling and MITIGATE-away classifications; the independent-auditor pattern (same rationale as `tool_impl` / `tool_review` split) is the fix. You'll receive revise feedback (if any) as a follow-up task message telling you what to fix — iterate on existing `data/experiments/{{EXPERIMENT_ID}}/` artifacts, don't restart from scratch.
 
 **Do NOT write `design/spec_*.md`.** The standalone spec format is deprecated; everything lives under `data/experiments/{{EXPERIMENT_ID}}/` + the notes section.
 
