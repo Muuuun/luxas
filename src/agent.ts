@@ -62,7 +62,13 @@ export interface ResearchAgentOptions {
   model?: string;              // "sonnet" | "opus" | "haiku" (default: opus)
   thinkingLevel?: ThinkingLevel;
   maxCostUsd?: number;
-  maxDurationMs?: number;
+  /**
+   * Turn-count budget. Process exits with code 1 on exceed (not block). See
+   * the turn_end subscriber below for the kill path. Default 500 — typical
+   * runs use 50-200; a stuck brain loop burns 500 turns in ~10 min capping
+   * damage at ~$4 opus / $0.40 haiku.
+   */
+  maxTurns?: number;
   piFallbackInterval?: number; // auto PI review after N steps without check-in (default 50, 0 to disable)
   onPIVerdict?: (verdict: PIVerdict, toolCallCount: number) => void;
 }
@@ -83,6 +89,8 @@ const VENUE_SPECIFIC_DIR = join(LUXAS_ROOT, "skills", "venue-specific") + "/";
 export function createResearchAgent(opts: ResearchAgentOptions) {
   // Enforce absolute projectDir — all tools depend on this
   const projectDir = isAbsolute(opts.projectDir) ? opts.projectDir : resolve(opts.projectDir);
+
+  const maxTurns = opts.maxTurns ?? 500;
 
   if (process.platform === "darwin") {
     try {
@@ -208,7 +216,6 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
   const hooks = buildResearchHooks({
     projectDir,
     maxCostUsd: opts.maxCostUsd,
-    maxDurationMs: opts.maxDurationMs,
     reminders,
     bus,
     usageLogPath,
@@ -379,6 +386,22 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
       // end_turns while bg is still running, the orphan is recovered on
       // next `luxas run` via the restore path below.
       turnCount++;
+
+      // Turn-count kill-switch. Kill the process (not block tools) because
+      // a `{block: true}` return from hooks.before just tells brain "tool
+      // rejected", and brain emits another tool call = another full LLM
+      // turn billed. Budget-exhaustion has no recovery; `process.exit(1)`
+      // is the only way to stop runaway cost. Observed 2026-04-20: a
+      // wall-clock-based block-retry loop burned ~$70 before detection.
+      if (turnCount > maxTurns) {
+        console.error(
+          `\n[FATAL] Turn budget exceeded: ${turnCount} > ${maxTurns}. ` +
+          `Killing process to stop runaway cost. ` +
+          `Re-run with a larger maxTurns if this was intentional.\n`,
+        );
+        process.exit(1);
+      }
+
       try {
         const active = loadRegistry(agentDir);
         for (const a of active) {

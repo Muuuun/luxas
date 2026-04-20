@@ -65,7 +65,13 @@ export interface StateEntry extends EntryBase {
   inputTokens: number;
   outputTokens: number;
   lastContextTokens: number;
-  startTime: number;
+  /**
+   * Legacy field — older checkpoints persist a wall-clock startTime. No
+   * current reader uses it (the 8h wall-clock limit was removed after it
+   * killed a session on resume across a > 8h gap). Left optional for
+   * backward compat only.
+   */
+  startTime?: number;
   piStopped: boolean;
   piToolCalls: number;
   piLastReviewAt: number;

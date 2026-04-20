@@ -13,8 +13,7 @@ import type { ReminderRegistry } from "./reminders.js";
 import type { ExtensionBus } from "./extensions.js";
 
 export interface ResearchOptions {
-  maxCostUsd?: number;       // Cost limit in USD (default: 50)
-  maxDurationMs?: number;    // Time limit in ms (default: 8 hours)
+  maxCostUsd?: number;       // Cost limit in USD. On exceed, process exits.
   projectDir: string;
   usageLogPath?: string;     // Path to usage.log (default: .agent/usage.log)
   reminders?: ReminderRegistry;
@@ -32,7 +31,6 @@ export interface ResearchOptions {
     inputTokens?: number;
     outputTokens?: number;
     lastContextTokens?: number;
-    startTime?: number;
     piStopped?: boolean;
   };
 }
@@ -43,9 +41,7 @@ export interface CostTracker {
 
 export function buildResearchHooks(opts: ResearchOptions) {
   const init = opts.initialState;
-  const startTime = init?.startTime ?? Date.now();
   const maxCost = opts.maxCostUsd ?? Infinity;  // No default cost limit; pass --max-cost to set one
-  const maxDuration = opts.maxDurationMs ?? 8 * 60 * 60 * 1000;
   const logFile = join(opts.projectDir, ".agent", "log.jsonl");
 
   // Ensure log directory exists
@@ -93,22 +89,25 @@ export function buildResearchHooks(opts: ResearchOptions) {
       return { block: true, reason: `PI verdict is STOP. Only finalization tools (read, write, edit, compile_latex) are allowed. Tool "${name}" is blocked.` };
     }
 
-    // 3. Cost limit (reads from usage.log — single source of truth)
+    // 3. Cost limit (reads from usage.log — single source of truth).
+    // On exceed, kill the process directly — returning {block: true} only
+    // rejects the tool call, which feeds the reason back to the model as a
+    // tool result; the model then emits another tool call in a new LLM
+    // turn, which blocks again, and each block is one full paid turn.
+    // That observed-failure mode burned ~$70 on 2026-04-20 before being
+    // caught. `process.exit(1)` is non-swallowable and stops the bleed.
     if (maxCost < Infinity) {
       const totals = readUsageTotals(usageLogPath);
       if (totals.cost > maxCost) {
-        return { block: true, reason: `Cost limit reached: $${totals.cost.toFixed(2)} / $${maxCost}` };
+        console.error(
+          `\n[FATAL] Cost limit exceeded: $${totals.cost.toFixed(2)} > $${maxCost}. ` +
+          `Killing process.\n`,
+        );
+        process.exit(1);
       }
     }
 
-    // 4. Time limit
-    const elapsed = Date.now() - startTime;
-    if (elapsed > maxDuration) {
-      const hours = (maxDuration / 3600000).toFixed(1);
-      return { block: true, reason: `Time limit reached: ${hours}h` };
-    }
-
-    // 5. Rate limiting for API tools
+    // 4. Rate limiting for API tools
     const rateLimit = rateLimits[name];
     if (rateLimit) {
       const lastCall = lastCallTime[name] ?? 0;
@@ -227,7 +226,6 @@ export function buildResearchHooks(opts: ResearchOptions) {
       inputTokens: totals.inputTokens,
       outputTokens: totals.outputTokens,
       lastContextTokens: tracker.lastContextTokens,
-      startTime,
       piStopped,
     };
   };
