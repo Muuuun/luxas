@@ -12,7 +12,7 @@
  *   citation-integrity reminder can compare them against \cite{} in report.tex.
  */
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join, basename, extname } from "node:path";
 import { ARXIV_ID_RE, readFileSafe } from "./utils.js";
 
@@ -103,47 +103,6 @@ export function findUnprocessedPapers(projectDir: string): string[] {
   const method = readFileSafe(methodologyPath(projectDir));
   const processed = parseProcessedLedger(method);
   return present.filter(id => !processed.has(id));
-}
-
-/**
- * Reconcile `notes/methodology.md` "## Papers processed" with the reader's
- * fragment directory. Called by the harness after any reader agent completes
- * (see `spawnAgent` in `src/agents/spawn.ts`). Without this, brain-driven
- * reader spawns (which bypass the search agent's final MERGE_NOTES step)
- * leave the ledger stale, causing `findUnprocessedPapers` to re-flag the
- * paper and brain to re-spawn the reader in a loop.
- *
- * Idempotent: no-op if every fragment id is already in the ledger. Atomic
- * tmpfile+rename write tolerates parallel readers — last writer wins, next
- * call picks up any missed ids.
- */
-export function syncProcessedLedger(projectDir: string): void {
-  const fragDir = join(projectDir, "notes", "methodology.d");
-  let fragmentIds: string[];
-  try {
-    fragmentIds = readdirSync(fragDir)
-      .filter(n => n.endsWith(".md"))
-      .map(n => basename(n, ".md"))
-      .sort();
-  } catch { return; }
-  if (fragmentIds.length === 0) return;
-
-  ensureMethodologyFile(projectDir);
-  const path = methodologyPath(projectDir);
-  const content = readFileSync(path, "utf-8");
-  const existing = parseProcessedLedger(content);
-  const missing = fragmentIds.filter(id => !existing.has(id));
-  if (missing.length === 0) return;
-
-  const bullets = missing.map(id => `- ${id}\n`).join("");
-  const sectionRe = /(##\s*Papers processed\s*\n)/;
-  const updated = sectionRe.test(content)
-    ? content.replace(sectionRe, `$1${bullets}`)
-    : content.trimEnd() + `\n\n## Papers processed\n${bullets}`;
-
-  const tmp = path + ".tmp";
-  writeFileSync(tmp, updated);
-  renameSync(tmp, path);
 }
 
 // ── Literature notes (owned by reader agent) ────────────────────────────────

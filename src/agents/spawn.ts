@@ -8,7 +8,9 @@ import { Agent } from "@mariozechner/pi-agent-core";
 import { nameAgent } from "agentsmelt";
 import { getModel } from "@mariozechner/pi-ai";
 import { mkdirSync, appendFileSync } from "node:fs";
-import { join } from "node:path";
+import { execFileSync } from "node:child_process";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createCompactionTransform, getContextWindow } from "../compaction/create-transform.js";
 import type { TokenTap } from "../compaction/token-tap.js";
 import { extractTextContent } from "../utils.js";
@@ -16,7 +18,18 @@ import { getDefinition, resolvePrompt, type AgentDefinition } from "./registry.j
 import { resolveToolSets } from "./tool-sets.js";
 import { resolveContextBuilder } from "./context-builders.js";
 import { resolveSafetyWrapper } from "./safety-wrappers.js";
-import { syncProcessedLedger } from "../methodology.js";
+
+// Path to the canonical merge-notes script (same path logic as the
+// MERGE_NOTES template var in src/agent.ts). Invoked after every reader
+// completes so notes/literature.md and notes/methodology.md stay in sync
+// with their per-paper fragment directories — without this, the search
+// agent's final MERGE_NOTES step is the only sync point and brain-driven
+// reader spawns leave both aggregates stale (retry loops and cite-key
+// orphan false-positives).
+const MERGE_NOTES_SCRIPT = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..", "..", "skills", "search", "scripts", "merge-notes",
+);
 
 // ── Model map ────────────────────────────────────────
 
@@ -217,13 +230,21 @@ export async function spawnAgent(opts: SpawnAgentOptions): Promise<SpawnAgentRes
     // 12. Run
     await agent.prompt(opts.prompt);
 
-    // Reader post-hook: sync notes/methodology.d/ fragments into the
-    // methodology.md "Papers processed" ledger so findUnprocessedPapers
-    // stops flagging the paper next turn. Without this, brain-driven
-    // reader spawns (which bypass search's final MERGE_NOTES step) leave
-    // the ledger stale and brain re-spawns the reader in a loop.
+    // Reader post-hook: rebuild notes/methodology.md + notes/literature.md
+    // from their per-paper fragment dirs so both aggregates stay fresh
+    // after any single reader spawn. Without this, brain-driven readers
+    // (which bypass search's final MERGE_NOTES step) leave the ledgers
+    // stale — findUnprocessedPapers retry-loops on methodology.md, and
+    // the citation-integrity reminder flags cite_keys as orphan against
+    // literature.md even when the fragment exists. merge-notes is
+    // idempotent and atomic, ~50ms.
     if (opts.name === "reader") {
-      try { syncProcessedLedger(opts.projectDir); } catch {}
+      try {
+        execFileSync("node", [MERGE_NOTES_SCRIPT, opts.projectDir], {
+          stdio: "pipe",
+          timeout: 10_000,
+        });
+      } catch { /* merge failure must not fail the spawn */ }
     }
 
     // 13. Extract output
