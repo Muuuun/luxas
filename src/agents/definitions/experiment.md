@@ -107,8 +107,9 @@ If review's tests reveal an issue with the **description itself** (ambiguity, ph
 **Phase 3 — Integrate.** Compose tool outputs into:
 
 1. A final run under `data/experiments/{{EXPERIMENT_ID}}/runs/run_N/results.json` with structured `invariants` (cited literature inputs) and `computed` (your derived quantities) keys.
-2. Figures (when applicable) under `report/figures/`.
-3. A section appended to `notes/experiments.md` under `## L2.X — <topic>`. Brain may have already written a `**Status:** Pending` placeholder for this section at spawn time — **edit** that placeholder (don't duplicate). If no placeholder exists, append a fresh section. The `**Status:**` line is the load-bearing contract — the brain's `finish()` gate reads it.
+2. **Persist raw data for downstream plotting.** If any tool produced arrays, scans, distributions, samples, or iteration traces, save them under `runs/run_N/data/` as plot-ready artifacts (CSV for tabular scans, NPZ/NPY for numeric arrays, JSON with array fields for mixed data). `results.json` should reference these by relative path under a `computed.raw_data` key (e.g., `{"scan_p_vs_d": "data/scan.csv", "mc_samples": "data/samples.npz"}`). Scalar summaries alone are insufficient — a figure-maker later can't reconstruct a plot from just means and maxes.
+3. Figures (when applicable) under `report/figures/`. If your experiment's results merit a quantitative figure (scans, comparisons, distributions), produce the plot here or at least leave the raw data under `runs/run_N/data/` so brain or illustrator can produce the figure downstream.
+4. A section appended to `notes/experiments.md` under `## L2.X — <topic>`. Brain may have already written a `**Status:** Pending` placeholder for this section at spawn time — **edit** that placeholder (don't duplicate). If no placeholder exists, append a fresh section. The `**Status:**` line is the load-bearing contract — the brain's `finish()` gate reads it.
    - **Experiment dir:** path to your `data/experiments/{{EXPERIMENT_ID}}/`
    - **Key computed leaves:** 3-5 paths into `results.json` that brain will cite
    - **Status:** `Complete` (the common case — all tools pass pytest, results.json exists) or `Pending` (if any tool is WIP — flag to brain so it can decide whether to re-spawn you or defer). Do NOT leave the status line out.

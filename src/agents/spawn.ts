@@ -16,6 +16,7 @@ import { getDefinition, resolvePrompt, type AgentDefinition } from "./registry.j
 import { resolveToolSets } from "./tool-sets.js";
 import { resolveContextBuilder } from "./context-builders.js";
 import { resolveSafetyWrapper } from "./safety-wrappers.js";
+import { syncProcessedLedger } from "../methodology.js";
 
 // ── Model map ────────────────────────────────────────
 
@@ -185,6 +186,22 @@ export async function spawnAgent(opts: SpawnAgentOptions): Promise<SpawnAgentRes
     const convPath = join(convDir, `${agentId}.jsonl`);
     let lastSavedMsgCount = 0;
 
+    // Write a spawn_init marker before any turn fires. Guarantees the parent
+    // jsonl exists even if agent.prompt() throws synchronously or the first
+    // turn_end's appendFileSync fails (observed: ghost agents where only
+    // sub-agent files existed, parent was never created). If this write
+    // itself fails, let it propagate — the spawn is already doomed and the
+    // stack trace is diagnostically valuable. Not wrapped in the silencing
+    // catch below on purpose.
+    appendFileSync(convPath, JSON.stringify({
+      type: "spawn_init",
+      agentId,
+      agent: opts.name,
+      task: opts.prompt.slice(0, 2000),
+      parentAgentId: opts.parentAgentId,
+      timestamp: Date.now(),
+    }) + "\n");
+
     agent.subscribe((event: any) => {
       if (event.type === "turn_end") {
         try {
@@ -199,6 +216,15 @@ export async function spawnAgent(opts: SpawnAgentOptions): Promise<SpawnAgentRes
 
     // 12. Run
     await agent.prompt(opts.prompt);
+
+    // Reader post-hook: sync notes/methodology.d/ fragments into the
+    // methodology.md "Papers processed" ledger so findUnprocessedPapers
+    // stops flagging the paper next turn. Without this, brain-driven
+    // reader spawns (which bypass search's final MERGE_NOTES step) leave
+    // the ledger stale and brain re-spawns the reader in a loop.
+    if (opts.name === "reader") {
+      try { syncProcessedLedger(opts.projectDir); } catch {}
+    }
 
     // 13. Extract output
     const messages = agent.state.messages;

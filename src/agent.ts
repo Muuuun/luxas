@@ -50,6 +50,13 @@ import type { PIVerdict } from "./pi-agent.js";
 // long idle gaps (e.g. many >15min brain-side gaps).
 process.env.PI_CACHE_RETENTION ||= "short";
 
+// Parallel reader batches (the search-agent sweep pattern) fan out to 40+
+// concurrent child_process.spawn calls, each adding SIGTERM/SIGINT cleanup
+// listeners to the parent process. Node's default max is 10, which triggers
+// a MaxListenersExceededWarning. The warning is benign but noisy and masks
+// real listener leaks. Raise the cap once, at the brain entry point.
+process.setMaxListeners(200);
+
 export interface ResearchAgentOptions {
   projectDir: string;
   model?: string;              // "sonnet" | "opus" | "haiku" (default: opus)
@@ -257,6 +264,24 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
     initialPreviousSummary: session.getCompactionSummary() ?? undefined,
   });
 
+  // Optional payload capture for cache-behavior diagnosis.
+  // Enable via LUXAS_CAPTURE_PAYLOADS=1; writes each outbound request body to
+  // .agent/payloads/<seq>.json so successive turns can be byte-diffed.
+  const payloadCapture = process.env.LUXAS_CAPTURE_PAYLOADS === "1"
+    ? (() => {
+        const dir = join(projectDir, ".agent", "payloads");
+        mkdirSync(dir, { recursive: true });
+        let seq = 0;
+        return (payload: unknown, _model: unknown) => {
+          try {
+            const n = String(++seq).padStart(4, "0");
+            writeFileSync(join(dir, `${n}_${Date.now()}.json`), JSON.stringify(payload, null, 2));
+          } catch {}
+          return undefined;
+        };
+      })()
+    : undefined;
+
   // Assemble Agent
   const agent = new Agent({
     initialState: {
@@ -272,6 +297,7 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
     beforeToolCall: hooks.before,
     afterToolCall: hooks.after,
     getApiKey,
+    onPayload: payloadCapture,
   });
   nameAgent(agent, "brain", "brain");
 
@@ -345,33 +371,34 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
         // Swallow other errors (e.g. empty-message filter edge cases)
       }
 
-      // Harvest completed/dead background sub-agents every 5 turns
+      // Per-turn harvest: deliver done/failed background results while brain
+      // is actively working. When brain has NO foreground work, it should
+      // call the `idle` tool instead of end_turning — idle blocks with zero
+      // LLM cost until backgrounds complete, then returns results as tool
+      // output (see src/tools/index.ts idleTool). If brain forgets idle and
+      // end_turns while bg is still running, the orphan is recovered on
+      // next `luxas run` via the restore path below.
       turnCount++;
-      if (turnCount % 5 === 0) {
-        try {
-          const active = loadRegistry(agentDir);
-          let harvested = 0;
-          for (const a of active) {
-            if (a.status === "done" && a.result) {
-              agent.steer({
-                role: "user",
-                content: `[Background Agent Complete: ${a.name} ✓]\nTask: ${a.task}\n\n${a.result.slice(0, 30_000)}`,
-                timestamp: Date.now(),
-              });
-              removeAgent(agentDir, a.id);
-              harvested++;
-            } else if (a.status === "failed") {
-              agent.steer({
-                role: "user",
-                content: `[Background Agent Failed: ${a.name} ✗]\nTask: ${a.task}\n\n${a.result ?? "Unknown error"}`,
-                timestamp: Date.now(),
-              });
-              removeAgent(agentDir, a.id);
-              harvested++;
-            }
+      try {
+        const active = loadRegistry(agentDir);
+        for (const a of active) {
+          if (a.status === "done" && a.result) {
+            agent.steer({
+              role: "user",
+              content: `[Background Agent Complete: ${a.name} ✓]\nTask: ${a.task}\n\n${a.result.slice(0, 30_000)}`,
+              timestamp: Date.now(),
+            });
+            removeAgent(agentDir, a.id);
+          } else if (a.status === "failed") {
+            agent.steer({
+              role: "user",
+              content: `[Background Agent Failed: ${a.name} ✗]\nTask: ${a.task}\n\n${a.result ?? "Unknown error"}`,
+              timestamp: Date.now(),
+            });
+            removeAgent(agentDir, a.id);
           }
-        } catch {}
-      }
+        }
+      } catch {}
     }
   });
 

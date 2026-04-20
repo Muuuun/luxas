@@ -28,6 +28,12 @@ import { createSpawnToolFactory } from "./tools/spawn-agent.js";
 // Subagents are separate processes, so the env var must be set here too.
 process.env.PI_CACHE_RETENTION ||= "short";
 
+// Match agent.ts: raise the SIGTERM/SIGINT listener cap so parallel
+// sub-spawns (e.g. experiment fanning out to tool_impl + tool_review) don't
+// trigger MaxListenersExceededWarning. Each subagent runs in its own process
+// so the cap applies per process independently.
+process.setMaxListeners(200);
+
 // ── Parse args ──────────────────────────────────────
 
 function parseArgs(): { agent: string; task: string; project: string; id: string; session: string; "template-vars"?: string; resume?: boolean } {

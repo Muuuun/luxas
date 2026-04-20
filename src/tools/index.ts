@@ -10,6 +10,7 @@ import { createInitReportTool } from "./init-report.js";
 import { createCodingToolsForProject } from "./coding.js";
 import { createSpawnAgentTool, getActiveBackgroundAgents } from "./spawn-agent.js";
 import { wrapBrainTools } from "../agents/safety-wrappers.js";
+import { loadRegistry, removeAgent, isAlive, markFailed } from "../active-agents.js";
 
 /**
  * Parse `## L2.X` / `## E_N` experiment sections from notes/experiments.md
@@ -160,6 +161,25 @@ export function buildResearchTools(
       if (!existsSync(pdfPath)) {
         return { content: [{ type: "text" as const, text: `Cannot finish: report/report.pdf does not exist. Compile the report first with compile_latex, then call finish again.` }] };
       }
+
+      // Figure gate: require ≥1 self-generated figure (under report/figures/,
+      // not imported from ../data/papers/). Without this, brain tends to ship
+      // text-with-paper-imports and skip visualising its own quantitative
+      // results. Deferred: <reason> in notes/experiments.md escape hatch is
+      // available if every experiment was genuinely non-plottable.
+      const reportTexPath = join(projectDir, "report/report.tex");
+      if (existsSync(reportTexPath)) {
+        const tex = readFileSync(reportTexPath, "utf-8");
+        const includes = [...tex.matchAll(/\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}/g)].map(m => m[1]);
+        const selfGen = includes.filter(p => !p.includes("/data/papers/") && !p.includes("data/papers/"));
+        if (selfGen.length === 0 && includes.length > 0) {
+          return { content: [{ type: "text" as const, text: `Cannot finish: report.tex has ${includes.length} figure(s), all imported from data/papers/. Reports with experiments must include ≥1 self-generated figure visualising your own quantitative results. See brain.md <generated_figures>: sourcing raw data from data/experiments/*/runs/*/data/, spawn illustrator or run a plot script to produce report/figures/<name>.pdf, then include it in report.tex.` }] };
+        }
+        if (selfGen.length === 0 && includes.length === 0) {
+          return { content: [{ type: "text" as const, text: `Cannot finish: report.tex contains zero figures. Every research report needs ≥1 self-generated figure under report/figures/ visualising experiment results. See brain.md <generated_figures>.` }] };
+        }
+      }
+
       callbacks?.onFinish?.();
       return { content: [{ type: "text" as const, text: `Research complete: ${args.summary}` }] };
     },
@@ -167,11 +187,100 @@ export function buildResearchTools(
 
   const initReport = createInitReportTool(projectDir);
 
+  // idle tool — brain calls this after dispatching background agents when it
+  // has no foreground work. Blocks on the harness side (poll active-agents.json
+  // at 2s cadence) — zero LLM turns while waiting. Returns all bg results as
+  // a single tool output when every running bg has transitioned to done/failed,
+  // so brain processes them in one follow-up turn instead of per-nudge.
+  //
+  // Stale heartbeats (subagent-runner crashed without markFailed) are flipped
+  // to "failed" here so they harvest instead of blocking forever.
+  const idleTool = {
+    name: "idle",
+    description:
+      "Suspend your turn-taking until ALL running background agents complete, " +
+      "with zero LLM cost during the wait. Harness polls the registry every 2s " +
+      "and returns all completions as this tool's output in one blob. Call this " +
+      "after `spawn_agent(background=true)` when you have no foreground work " +
+      "to do. Returns immediately if no background agents are running.",
+    parameters: {
+      type: "object" as const,
+      properties: {
+        timeout_ms: {
+          type: "number" as const,
+          description: "Max wait duration before giving up. Default 600000 (10 minutes). On timeout, any still-running agents are listed; they remain in the registry for next-turn harvest.",
+        },
+      },
+    },
+    execute: async (args: { timeout_ms?: number }) => {
+      const agentDir = join(projectDir, ".agent");
+      const timeout = args.timeout_ms ?? 600_000;
+      const start = Date.now();
+      const pollMs = 2000;
+
+      // Grace period: brain commonly calls idle() in the same assistant turn
+      // as spawn_agent(background=true), and pi-agent-core runs tools in
+      // parallel. The spawn's synchronous addAgent() may not complete before
+      // idle's first loadRegistry() reads the file — observed live as a race
+      // where idle returned "no bg running" within 8s of brain's dispatch.
+      // 500ms settles the race; indistinguishable from no-op on real idles.
+      await new Promise(r => setTimeout(r, 500));
+
+      // Zombie detection: mark an agent failed only when it's been running
+      // long enough to have produced a heartbeat. subagent-runner touches
+      // heartbeat at startup + every 30s; startup itself can take 5-10s
+      // (node loads tsx + pi-agent-core + agent def). Without the
+      // startedAt grace, a freshly-spawned agent has no heartbeat file yet
+      // and would be falsely labelled zombie on the first poll.
+      const ZOMBIE_GRACE_MS = 90_000;
+      while (Date.now() - start < timeout) {
+        const active = loadRegistry(agentDir);
+        for (const a of active) {
+          if (
+            a.status === "running"
+            && Date.now() - a.startedAt > ZOMBIE_GRACE_MS
+            && !isAlive(agentDir, a.id, 60_000)
+          ) {
+            markFailed(agentDir, a.id, "heartbeat stale — process died without updating status");
+          }
+        }
+        const stillRunning = loadRegistry(agentDir).filter(a => a.status === "running");
+        if (stillRunning.length === 0) break;
+        await new Promise(resolve => setTimeout(resolve, pollMs));
+      }
+
+      const active = loadRegistry(agentDir);
+      const harvested: string[] = [];
+      for (const a of active) {
+        if (a.status === "done" && a.result) {
+          harvested.push(`[Background Agent Complete: ${a.name} ✓]\nTask: ${a.task}\n\n${a.result}`);
+          removeAgent(agentDir, a.id);
+        } else if (a.status === "failed") {
+          harvested.push(`[Background Agent Failed: ${a.name} ✗]\nTask: ${a.task}\n\n${a.result ?? "Unknown error"}`);
+          removeAgent(agentDir, a.id);
+        }
+      }
+
+      const remaining = loadRegistry(agentDir).filter(a => a.status === "running");
+      let body: string;
+      if (harvested.length === 0 && remaining.length === 0) {
+        body = "No background agents were running.";
+      } else if (remaining.length > 0) {
+        body = `Timeout (${timeout}ms) reached with ${remaining.length} agent(s) still running: ${remaining.map(a => a.id).join(", ")}.`;
+        if (harvested.length > 0) body += `\n\nHarvested ${harvested.length}:\n\n` + harvested.join("\n\n---\n\n");
+      } else {
+        body = `${harvested.length} background agent(s) completed:\n\n` + harvested.join("\n\n---\n\n");
+      }
+      return { content: [{ type: "text" as const, text: body }] };
+    },
+  };
+
   const tools = [
     ...reportTools,
     initReport,
     ...codingTools,
     spawnTool,
+    idleTool,
     finishTool,
   ];
 

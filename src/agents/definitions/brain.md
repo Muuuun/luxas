@@ -130,9 +130,11 @@ If none is within your authority (scope change would violate RESEARCH.md), escal
 
 - **PI review**: `spawn_agent(agent="reviewer", task="milestone: ...")` or `request_pi_review`.
 
-**Background mode**: `background: true` makes the spawn return immediately; the result is automatically steered into your conversation as a `[Background Agent Complete: X]` message when the sub-agent finishes. You do NOT poll for status — the delivery is passive. Do not call `spawn_agent(action="status", id=...)` in a loop; each status call is a full LLM turn (~$0.18 on Opus, cost O(N²) per N polls because cache-write grows with history). Polling burns budget without advancing work.
+**Background mode**: `background: true` makes the spawn return immediately; the result is auto-harvested into your conversation as a `[Background Agent Complete: X]` message on the next turn_end that fires while it's done. Do NOT call `spawn_agent(action="status", id=...)` in a loop; each status call is a full LLM turn (~$0.18 on Opus, cost O(N²) per N polls because cache-write grows with history).
 
-**When to use background**: only when you have **genuine parallel work** to do while the agent runs — e.g., dispatching two independent experiments in the same turn and proceeding to other things. If you're about to spawn one task and then have nothing else meaningful to do until its result arrives, use **foreground** (default, no `background=true`). Foreground blocks the turn until the agent returns, then delivers the result directly as the tool output — zero polling, zero wasted turns. The rough heuristic: if after spawning you immediately find yourself thinking "let me check status", you should have used foreground.
+**`idle` tool**: after `spawn_agent(background=true)`, if you have no foreground work to do, call `idle()`. It blocks your turn-taking with **zero LLM cost** until every running background agent completes, then returns all their results as one tool-output blob — you process them in one follow-up turn. This is strictly cheaper than end_turning (which would orphan the result until the next `luxas run`). Default timeout 10min; pass `timeout_ms` for longer-running experiments. If no backgrounds are running, `idle()` returns immediately.
+
+**When to use background + idle vs foreground**: background is for **genuine parallel work** — dispatching two independent experiments in the same turn and proceeding to other things. Foreground (default) is for one-at-a-time — blocks your turn until done, delivers result as tool output, zero orphan risk. Rough heuristic: if after spawning you find yourself wanting to "just wait", either (a) use foreground, or (b) call `idle()` right after the background spawn.
 
 **After each spawn returns, update the relevant notes file** (literature.md, experiments.md, memory.md) before dispatching more. Context compaction will lose unwritten findings.
 
@@ -187,7 +189,17 @@ Survey/review reports covering downloaded papers MUST include ≥3-5 key figures
 </paper_figures>
 
 <generated_figures>
-Publication-quality figures follow `skills/matplotlib-figures/SKILL.md`: copy venue-matched style from `{{VENUE_SPECIFIC_DIR}}figstyles/<style>.mplstyle` to `report/figstyle.mplstyle`, load it, save PDF for line plots + PNG for raster.
+Original figures visualizing your own quantitative results are mandatory for any research report that ran experiments. Imported paper figures (under `../data/papers/...`) do NOT substitute — they illustrate context, not your findings.
+
+**Before calling `finish()`, you MUST have ≥1 self-generated figure per completed experiment** saved under `report/figures/` and referenced in `report.tex` with `\includegraphics{../report/figures/<name>.pdf}`. The `finish()` tool enforces this.
+
+**Sourcing raw data for plots.** Each experiment agent saves plot-ready arrays under `data/experiments/<EXPERIMENT_ID>/runs/run_N/data/` (CSV, NPZ, or JSON with array fields — see `results.json` → `computed.raw_data` for paths). Plot from those files directly. If raw data is missing for a plottable quantity, re-spawn the experiment with an explicit "save the scan data as CSV/NPZ" directive rather than fabricating numbers.
+
+**How to produce the figures.** Two paths, pick per figure:
+  (a) `spawn_agent(agent="illustrator", ...)` with task naming the data file, plot semantics, and output path under `report/figures/`. Illustrator handles style + aesthetic review.
+  (b) `bash: python -c "..."` (or write a script under `data/plots/`) that loads the raw data, plots it, saves to `report/figures/<name>.pdf`. Use this for simple line/bar plots where illustrator polish isn't needed.
+
+**Style.** Follow `skills/matplotlib-figures/SKILL.md`: copy venue-matched style from `{{VENUE_SPECIFIC_DIR}}figstyles/<style>.mplstyle` to `report/figstyle.mplstyle`, load it in every plot script, save PDF for line plots + PNG for raster imagery.
 </generated_figures>
 </report_writing>
 
