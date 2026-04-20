@@ -6,7 +6,7 @@ description: >
   to data/experiments/<EXPERIMENT_ID>/scripts/<TOOL_NAME>.py. Does NOT write
   tests — a sibling tool_review agent handles that. Iterates on failing
   tests when the parent experiment agent sends pytest output as feedback.
-model: opus
+model: sonnet
 thinkingLevel: medium
 toolSets: [coding]
 safetyWrapper: tool_impl
