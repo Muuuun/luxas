@@ -3,10 +3,13 @@
  * appended to an agent's system prompt at spawn time.
  */
 
-import { readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
-import { readFileSafe, smartTruncate, listFilesRecursive, ORIGINAL_REQUEST_HEADER } from "../utils.js";
+import {
+  readFileSafe, smartTruncate, listFilesRecursive, ORIGINAL_REQUEST_HEADER,
+  md5OrNull, parseAuditFrontmatter, extractFrontmatterBlock,
+} from "../utils.js";
 import { loadRegistry, type ActiveAgent } from "../active-agents.js";
 
 export type ContextBuilder = (projectDir: string, extra?: Record<string, any>) => string;
@@ -319,50 +322,6 @@ ${smartTruncate(method, 4000)}
 // value — avoids re-auditing figures that already converged in a prior
 // reviewer session. See <figure_finalize_loop> Step 0 in reviewer.md.
 
-function md5OrNull(fullPath: string): string | null {
-  try {
-    return createHash("md5").update(readFileSync(fullPath)).digest("hex");
-  } catch {
-    return null;
-  }
-}
-
-interface Frontmatter {
-  status?: string;
-  audited_at?: string;
-  style_guide_md5?: string;
-  canonical_figures?: Record<string, string>;
-  plot_scripts?: Record<string, string>;
-}
-
-// Fixed-schema parser (js-yaml is not a dep). Tolerates tabs/CRLF; indented
-// entries under `canonical_figures:` / `plot_scripts:` go into the
-// corresponding map, everything else is a top-level scalar.
-function parseFrontmatter(block: string): Frontmatter {
-  const out: Frontmatter = {};
-  let section: "canonical_figures" | "plot_scripts" | null = null;
-  for (const raw of block.replace(/\r/g, "").split("\n")) {
-    if (!raw.trim() || raw.trimStart().startsWith("#")) continue;
-    const indented = /^[\t ]/.test(raw);
-    if (!indented) {
-      section = null;
-      const m = raw.match(/^(\w+)\s*:\s*(.*)$/);
-      if (!m) continue;
-      const [, key, value] = m;
-      if (key === "canonical_figures" || key === "plot_scripts") {
-        section = key;
-        out[key] = {};
-      } else if (value && (key === "status" || key === "audited_at" || key === "style_guide_md5")) {
-        out[key] = value.trim().replace(/^["']|["']$/g, "");
-      }
-    } else if (section) {
-      const m = raw.match(/^[\t ]+(.+?)\s*:\s*(.+)$/);
-      if (m) out[section]![m[1].trim()] = m[2].trim();
-    }
-  }
-  return out;
-}
-
 function buildFigureConvergenceBlock(projectDir: string): string {
   // Visual convergence covers TWO orthogonal audits:
   //   illustrator_notes.md — figure-internal (palette / axes / spines / etc.)
@@ -372,7 +331,7 @@ function buildFigureConvergenceBlock(projectDir: string): string {
   const illustratorPath = join(projectDir, "reviews", "illustrator_notes.md");
   const typesetterPath = join(projectDir, "reviews", "typesetter_notes.md");
   const reportPdfPath = join(projectDir, "report", "report.pdf");
-  const reportPdfExists = md5OrNull(reportPdfPath) !== null;
+  const reportPdfExists = existsSync(reportPdfPath);
 
   const illustratorRaw = readFileSafe(illustratorPath);
   const typesetterRaw = readFileSafe(typesetterPath);
@@ -386,9 +345,9 @@ function buildFigureConvergenceBlock(projectDir: string): string {
   let illustratorAt = "unknown";
   const drift: string[] = [];
   if (illustratorRaw) {
-    const m = illustratorRaw.match(/^---\n([\s\S]*?)\n---\n/);
-    if (m) {
-      const fm = parseFrontmatter(m[1]);
+    const block = extractFrontmatterBlock(illustratorRaw);
+    if (block) {
+      const fm = parseAuditFrontmatter(block);
       illustratorAt = fm.audited_at ?? "unknown";
       if (fm.status !== "all-clear") {
         drift.push(`illustrator_notes.md: prior-audit-had-issues`);
@@ -410,27 +369,25 @@ function buildFigureConvergenceBlock(projectDir: string): string {
     drift.push(`illustrator_notes.md: missing`);
   }
 
-  // Parse typesetter side — only required if report.pdf exists
+  // Parse typesetter side — only required if report.pdf exists. Hash the
+  // PDF at most once (used for the freshness compare; not used for the
+  // existence probe, which is a cheap existsSync above).
   let typesetterOK = false;
   let typesetterAt = "unknown";
   if (reportPdfExists) {
     if (typesetterRaw) {
-      const m = typesetterRaw.match(/^---\n([\s\S]*?)\n---\n/);
-      if (m) {
-        const fm = parseFrontmatter(m[1]);
+      const block = extractFrontmatterBlock(typesetterRaw);
+      if (block) {
+        const fm = parseAuditFrontmatter(block);
         typesetterAt = fm.audited_at ?? "unknown";
         if (fm.status !== "all-clear") {
           drift.push(`typesetter_notes.md: prior-audit-had-issues`);
+        } else if (!fm.report_pdf_md5) {
+          drift.push(`typesetter_notes.md: missing report_pdf_md5`);
+        } else if (md5OrNull(reportPdfPath) !== fm.report_pdf_md5) {
+          drift.push(`report/report.pdf: changed since typesetter audit`);
         } else {
-          const recordedPdfMd5 = (fm as any).report_pdf_md5;
-          const currentPdfMd5 = md5OrNull(reportPdfPath);
-          if (typeof recordedPdfMd5 !== "string") {
-            drift.push(`typesetter_notes.md: missing report_pdf_md5`);
-          } else if (currentPdfMd5 !== recordedPdfMd5) {
-            drift.push(`report/report.pdf: changed since typesetter audit`);
-          } else {
-            typesetterOK = true;
-          }
+          typesetterOK = true;
         }
       } else {
         drift.push(`typesetter_notes.md: no frontmatter`);

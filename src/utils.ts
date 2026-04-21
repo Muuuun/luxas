@@ -3,6 +3,7 @@
  */
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 
 export function sleep(ms: number): Promise<void> {
@@ -67,6 +68,78 @@ export function extractTextContent(content: any[]): string {
     .filter((c: any) => c.type === "text")
     .map((c: any) => c.text)
     .join("\n");
+}
+
+/** md5 of a file's contents, hex. Returns null if the file is unreadable. */
+export function md5OrNull(path: string): string | null {
+  try {
+    return createHash("md5").update(readFileSync(path)).digest("hex");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Frontmatter shape for the YAML headers written by illustrator and
+ * typesetter into reviews/*.md. Top-level scalars + two map sections;
+ * unknown keys are ignored. The audit-cache (figure_convergence) and
+ * the finish-gate both parse from this shape — keep the schema in sync
+ * with reviews/illustrator_notes.md and reviews/typesetter_notes.md.
+ */
+export interface AuditFrontmatter {
+  status?: string;
+  audited_at?: string;
+  style_guide_md5?: string;
+  report_pdf_md5?: string;
+  report_tex_md5?: string;
+  page_count?: string;
+  canonical_figures?: Record<string, string>;
+  plot_scripts?: Record<string, string>;
+}
+
+const FRONTMATTER_SCALAR_KEYS = new Set([
+  "status", "audited_at", "style_guide_md5",
+  "report_pdf_md5", "report_tex_md5", "page_count",
+]);
+
+/**
+ * Parse the YAML envelope (`---\n...\n---`) from the start of a file.
+ * Returns the inner block text, or null if no envelope is present.
+ */
+export function extractFrontmatterBlock(src: string): string | null {
+  const m = src.match(/^---\n([\s\S]*?)\n---/);
+  return m ? m[1] : null;
+}
+
+/**
+ * Fixed-schema parser for the audit notes frontmatter (js-yaml is not a
+ * dep). Tolerates tabs/CRLF; indented entries under `canonical_figures:`
+ * / `plot_scripts:` go into the corresponding map, top-level scalars from
+ * FRONTMATTER_SCALAR_KEYS are extracted, everything else is ignored.
+ */
+export function parseAuditFrontmatter(block: string): AuditFrontmatter {
+  const out: AuditFrontmatter = {};
+  let section: "canonical_figures" | "plot_scripts" | null = null;
+  for (const raw of block.replace(/\r/g, "").split("\n")) {
+    if (!raw.trim() || raw.trimStart().startsWith("#")) continue;
+    const indented = /^[\t ]/.test(raw);
+    if (!indented) {
+      section = null;
+      const m = raw.match(/^(\w+)\s*:\s*(.*)$/);
+      if (!m) continue;
+      const [, key, value] = m;
+      if (key === "canonical_figures" || key === "plot_scripts") {
+        section = key;
+        out[key] = {};
+      } else if (value && FRONTMATTER_SCALAR_KEYS.has(key)) {
+        (out as any)[key] = value.trim().replace(/^["']|["']$/g, "");
+      }
+    } else if (section) {
+      const m = raw.match(/^[\t ]+(.+?)\s*:\s*(.+)$/);
+      if (m) out[section]![m[1].trim()] = m[2].trim();
+    }
+  }
+  return out;
 }
 
 /**
