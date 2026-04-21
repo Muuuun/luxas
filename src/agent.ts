@@ -17,7 +17,7 @@ import {
   nameAgent, createSmeltReminderProvider,
   readPatches, applyPatches, DEFAULT_BASE_DIR,
 } from "agentsmelt";
-import { getModel, type TextContent } from "@mariozechner/pi-ai";
+import { getModel, streamSimple, type TextContent } from "@mariozechner/pi-ai";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { join, isAbsolute, resolve, dirname } from "node:path";
@@ -290,6 +290,20 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
     : undefined;
 
   // Assemble Agent
+  //
+  // streamFn wrapper: force toolChoice: "any" on every API call. Closes a
+  // silent-exit failure mode in pi-agent-core where the brain sometimes returns
+  // a response with thinking blocks only (no text, no tool_use) with stopReason
+  // "stop" (model voluntarily stops) or "length" (max_tokens truncated). The
+  // loop in agent-loop.js:112-113 exits as soon as `toolCalls.length === 0`,
+  // so these malformed responses silently terminate the session. Forcing
+  // tool_choice=any at the provider level guarantees every response contains a
+  // tool_use block, eliminating Case B (observed 2× with opus 4.6 in one
+  // session) and biasing the model toward emitting tool_use earlier within the
+  // token budget (mitigates Case A, observed 1× with sonnet). Sisyphus's
+  // workflow is entirely tool-driven (read/edit/bash/spawn_agent/finish/
+  // request_pi_review) — there is no legitimate agent turn that returns
+  // text-only, so this constraint does not break any expected behavior.
   const agent = new Agent({
     initialState: {
       systemPrompt,
@@ -305,6 +319,7 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
     afterToolCall: hooks.after,
     getApiKey,
     onPayload: payloadCapture,
+    streamFn: (m, ctx, opts) => streamSimple(m, ctx, { ...opts, toolChoice: "any" } as any),
   });
   nameAgent(agent, "brain", "brain");
 

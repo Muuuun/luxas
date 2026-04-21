@@ -6,7 +6,7 @@
 
 import { Agent } from "@mariozechner/pi-agent-core";
 import { nameAgent } from "agentsmelt";
-import { getModel } from "@mariozechner/pi-ai";
+import { getModel, streamSimple } from "@mariozechner/pi-ai";
 import { mkdirSync, appendFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join, dirname } from "node:path";
@@ -166,6 +166,12 @@ export function buildAgentFromDefinition(opts: SpawnAgentOptions): BuiltAgent {
   });
 
   // 9. Create agent
+  // streamFn wrapper: force toolChoice: "any" — see detailed note in src/agent.ts
+  // (brain agent). Same rationale applies to every sub-agent (reader, experiment,
+  // tool_impl, tool_review, reviewer, illustrator, math, etc.): a thinking-only
+  // or length-truncated response with no tool_use silently terminates the
+  // sub-agent via pi-agent-core's `toolCalls.length === 0` exit. Forcing
+  // tool_use at the provider level eliminates this failure mode uniformly.
   const agent = new Agent({
     initialState: {
       systemPrompt: fullPrompt,
@@ -175,6 +181,7 @@ export function buildAgentFromDefinition(opts: SpawnAgentOptions): BuiltAgent {
     },
     getApiKey: opts.getApiKey,
     transformContext,
+    streamFn: (m, ctx, o) => streamSimple(m, ctx, { ...o, toolChoice: "any" } as any),
   });
   nameAgent(agent, agentId, def.name);
   (agent as any).__smeltParent = opts.parentAgentId;
