@@ -11,7 +11,7 @@ thinkingLevel: high
 toolSets: [coding, report, spawn]
 safetyWrapper: brain
 canSpawn: true
-allowedSpawn: [search, reader, worker, experiment, math, reviewer, fixer, illustrator, illustrator_write]
+allowedSpawn: [search, reader, worker, experiment, math, reviewer, fixer, illustrator, illustrator_write, typesetter]
 templates: [PROJECT_DIR, SEARCH_SCRIPT, EXTRACT_FIGURES, VENUE_SPECIFIC_DIR]
 ---
 

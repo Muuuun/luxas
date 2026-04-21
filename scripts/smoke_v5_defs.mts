@@ -7,7 +7,7 @@ import { resolveSafetyWrapper } from "../src/agents/safety-wrappers.js";
 import { resolveContextBuilder } from "../src/agents/context-builders.js";
 
 const defs = loadAgentDefinitions();
-const checked = ["brain", "experiment", "tool_impl", "tool_review"];
+const checked = ["brain", "experiment", "tool_impl", "tool_review", "typesetter"];
 let failures = 0;
 
 for (const name of checked) {

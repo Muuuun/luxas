@@ -3,6 +3,7 @@
  */
 
 import { existsSync, readFileSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type { Agent } from "@mariozechner/pi-agent-core";
 import { createReportTools } from "./report.js";
@@ -69,6 +70,16 @@ export function parseExperimentSections(text: string): ExperimentSection[] {
  *
  * Returns null if the file is missing, unreadable, or has no parseable verdict.
  */
+/** md5 of a file's contents, hex. Returns null if the file is unreadable. */
+function computeFileMd5(path: string): string | null {
+  try {
+    const buf = readFileSync(path);
+    return createHash("md5").update(buf).digest("hex");
+  } catch {
+    return null;
+  }
+}
+
 export function parseLatestPIVerdict(projectDir: string):
   | { verdict: "continue" | "steer" | "stop"; reviewPath: string; reviewMtimeMs: number }
   | null
@@ -237,6 +248,80 @@ export function buildResearchTools(
       //
       // continue/stop verdicts pass through; stop explicitly means "wrap up
       // and ship" so finish is the right call.
+      // Document-level layout audit gate. Pairs with illustrator
+      // (figure-internal) and reviewer (content) on orthogonal axes. The
+      // typesetter agent rasterizes report.pdf and reads each page image to
+      // catch layout failures (figure floating to wrong page, caption
+      // split, overflow, missing-file red boxes) that no other actor in
+      // the pipeline sees. Without this, layout regressions ship silently
+      // — observed live on inbox_B6Bk_xVQ2503: figure floated 30+ source-
+      // lines below first \ref, no agent flagged it.
+      //
+      // Gate semantics:
+      //  - reviews/typesetter_notes.md must exist with parseable YAML
+      //    frontmatter
+      //  - status: all-clear (else block with typesetter's issue list)
+      //  - report_pdf_md5 in frontmatter must equal current md5(report.pdf)
+      //    (stale audit, e.g. PDF recompiled after audit, blocks)
+      //  - if file missing entirely: tell brain to spawn typesetter
+      //
+      // No pushback escape — layout is mechanical; a `[fail]` is a real
+      // bug, not a judgment call. If the audit is wrong, fix the audit
+      // (re-run typesetter), don't override.
+      const typesetterPath = join(projectDir, "reviews", "typesetter_notes.md");
+      if (existsSync(typesetterPath)) {
+        const typesetterSrc = readFileSync(typesetterPath, "utf-8");
+        const fmMatch = typesetterSrc.match(/^---\n([\s\S]*?)\n---/);
+        if (!fmMatch) {
+          return { content: [{ type: "text" as const, text:
+            `Cannot finish: reviews/typesetter_notes.md exists but has no ` +
+            `YAML frontmatter. Re-spawn typesetter to regenerate with proper ` +
+            `frontmatter (status, report_pdf_md5, page_count, pages_audited).`
+          }] };
+        }
+        const fm = fmMatch[1];
+        const statusLine = fm.match(/^status:\s*(\S+)/m);
+        const recordedMd5 = fm.match(/^report_pdf_md5:\s*([0-9a-f]+)/m);
+        if (!statusLine || !recordedMd5) {
+          return { content: [{ type: "text" as const, text:
+            `Cannot finish: reviews/typesetter_notes.md frontmatter is ` +
+            `missing required keys (status, report_pdf_md5). Re-spawn typesetter.`
+          }] };
+        }
+        const status = statusLine[1].toLowerCase();
+        if (status !== "all-clear") {
+          // Extract the Summary section so brain sees the actionable issues
+          const summaryMatch = typesetterSrc.match(/##\s*Summary\s*\n+([\s\S]*?)(?=\n##|\n---|\s*$)/);
+          const summary = summaryMatch ? summaryMatch[1].trim() : "(no Summary section)";
+          return { content: [{ type: "text" as const, text:
+            `Cannot finish: reviews/typesetter_notes.md status is "${status}" ` +
+            `(not all-clear). Address the layout issues then re-spawn ` +
+            `typesetter to regenerate the audit.\n\n` +
+            `Summary from typesetter_notes.md:\n${summary}`
+          }] };
+        }
+        // Freshness: PDF must not have changed since the audit.
+        const currentPdfMd5 = computeFileMd5(pdfPath);
+        if (currentPdfMd5 && currentPdfMd5 !== recordedMd5[1]) {
+          return { content: [{ type: "text" as const, text:
+            `Cannot finish: reviews/typesetter_notes.md audited a different ` +
+            `report.pdf (recorded md5 ${recordedMd5[1].slice(0, 12)}…, ` +
+            `current ${currentPdfMd5.slice(0, 12)}…). Re-spawn typesetter ` +
+            `to audit the current PDF.`
+          }] };
+        }
+      } else {
+        return { content: [{ type: "text" as const, text:
+          `Cannot finish: reviews/typesetter_notes.md is missing. Document-` +
+          `level layout has not been audited. Spawn typesetter:\n\n` +
+          `  spawn_agent(agent="typesetter", task="Audit report/report.pdf ` +
+          `page-by-page for layout issues per your prompt. Write reviews/` +
+          `typesetter_notes.md.", background=false)\n\n` +
+          `Once it returns status: all-clear (and the PDF hasn't been ` +
+          `recompiled since), finish() is allowed.`
+        }] };
+      }
+
       const piVerdict = parseLatestPIVerdict(projectDir);
       if (piVerdict && piVerdict.verdict === "steer") {
         const pushbackPath = join(projectDir, "reviews", "pi_pushback.md");

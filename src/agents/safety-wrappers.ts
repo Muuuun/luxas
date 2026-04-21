@@ -427,6 +427,16 @@ export const wrapIllustratorWriteTools: SafetyWrapper = createSafetyWrapper({
   writeOnExistingPolicy: "block",
 });
 
+// typesetter rasterizes report/report.pdf and reads each page image to
+// audit document-level layout (figure floating, caption placement,
+// overflow, missing-file boxes). Writes only its notes file +
+// scratch rasterized pages under reviews/. Cannot touch the report
+// surface or notes ledger.
+export const wrapTypesetterTools: SafetyWrapper = createSafetyWrapper({
+  protectedFiles: [...REPORT_SURFACE, ...NOTES_LEDGER],
+  writeOnExistingPolicy: "block",
+});
+
 // ── Registry ─────────────────────────────────────────────────────────────
 
 const SAFETY_WRAPPERS: Record<string, SafetyWrapper> = {
@@ -436,6 +446,7 @@ const SAFETY_WRAPPERS: Record<string, SafetyWrapper> = {
   tool_review: wrapToolReviewTools,
   experiment_reviewer: wrapExperimentReviewerTools,
   illustrator_write: wrapIllustratorWriteTools,
+  typesetter: wrapTypesetterTools,
 };
 
 export function resolveSafetyWrapper(name: string | undefined): SafetyWrapper | undefined {

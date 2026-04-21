@@ -364,30 +364,89 @@ function parseFrontmatter(block: string): Frontmatter {
 }
 
 function buildFigureConvergenceBlock(projectDir: string): string {
-  const notesPath = join(projectDir, "reviews", "illustrator_notes.md");
-  const raw = readFileSafe(notesPath);
-  if (!raw) return `<figure_convergence>none</figure_convergence>`;
+  // Visual convergence covers TWO orthogonal audits:
+  //   illustrator_notes.md — figure-internal (palette / axes / spines / etc.)
+  //   typesetter_notes.md  — document-level layout (floats / captions / overflow)
+  // "converged" requires BOTH all-clear AND every recorded md5 still matches.
+  // If typesetter audit is missing but report.pdf exists, the loop must run.
+  const illustratorPath = join(projectDir, "reviews", "illustrator_notes.md");
+  const typesetterPath = join(projectDir, "reviews", "typesetter_notes.md");
+  const reportPdfPath = join(projectDir, "report", "report.pdf");
+  const reportPdfExists = md5OrNull(reportPdfPath) !== null;
 
-  const m = raw.match(/^---\n([\s\S]*?)\n---\n/);
-  if (!m) return `<figure_convergence>none</figure_convergence>`;
+  const illustratorRaw = readFileSafe(illustratorPath);
+  const typesetterRaw = readFileSafe(typesetterPath);
 
-  const fm = parseFrontmatter(m[1]);
-  if (fm.status !== "all-clear") {
-    return `<figure_convergence>stale reason="prior-audit-had-issues"</figure_convergence>`;
+  if (!illustratorRaw && (!reportPdfExists || !typesetterRaw)) {
+    return `<figure_convergence>none</figure_convergence>`;
   }
 
+  // Parse illustrator side
+  let illustratorOK = false;
+  let illustratorAt = "unknown";
   const drift: string[] = [];
-  const check = (rel: string, expected: string) => {
-    const cur = md5OrNull(join(projectDir, rel));
-    if (cur === null) drift.push(`${rel}: missing`);
-    else if (cur !== expected) drift.push(`${rel}: changed`);
-  };
-  if (fm.style_guide_md5) check("report/figures/style_guide.md", fm.style_guide_md5);
-  for (const [rel, h] of Object.entries(fm.canonical_figures ?? {})) check(rel, h);
-  for (const [rel, h] of Object.entries(fm.plot_scripts ?? {})) check(rel, h);
+  if (illustratorRaw) {
+    const m = illustratorRaw.match(/^---\n([\s\S]*?)\n---\n/);
+    if (m) {
+      const fm = parseFrontmatter(m[1]);
+      illustratorAt = fm.audited_at ?? "unknown";
+      if (fm.status !== "all-clear") {
+        drift.push(`illustrator_notes.md: prior-audit-had-issues`);
+      } else {
+        const check = (rel: string, expected: string) => {
+          const cur = md5OrNull(join(projectDir, rel));
+          if (cur === null) drift.push(`${rel}: missing`);
+          else if (cur !== expected) drift.push(`${rel}: changed`);
+        };
+        if (fm.style_guide_md5) check("report/figures/style_guide.md", fm.style_guide_md5);
+        for (const [rel, h] of Object.entries(fm.canonical_figures ?? {})) check(rel, h);
+        for (const [rel, h] of Object.entries(fm.plot_scripts ?? {})) check(rel, h);
+        illustratorOK = drift.length === 0;
+      }
+    } else {
+      drift.push(`illustrator_notes.md: no frontmatter`);
+    }
+  } else {
+    drift.push(`illustrator_notes.md: missing`);
+  }
 
-  if (drift.length === 0) {
-    return `<figure_convergence>converged audited_at="${fm.audited_at ?? "unknown"}"</figure_convergence>`;
+  // Parse typesetter side — only required if report.pdf exists
+  let typesetterOK = false;
+  let typesetterAt = "unknown";
+  if (reportPdfExists) {
+    if (typesetterRaw) {
+      const m = typesetterRaw.match(/^---\n([\s\S]*?)\n---\n/);
+      if (m) {
+        const fm = parseFrontmatter(m[1]);
+        typesetterAt = fm.audited_at ?? "unknown";
+        if (fm.status !== "all-clear") {
+          drift.push(`typesetter_notes.md: prior-audit-had-issues`);
+        } else {
+          const recordedPdfMd5 = (fm as any).report_pdf_md5;
+          const currentPdfMd5 = md5OrNull(reportPdfPath);
+          if (typeof recordedPdfMd5 !== "string") {
+            drift.push(`typesetter_notes.md: missing report_pdf_md5`);
+          } else if (currentPdfMd5 !== recordedPdfMd5) {
+            drift.push(`report/report.pdf: changed since typesetter audit`);
+          } else {
+            typesetterOK = true;
+          }
+        }
+      } else {
+        drift.push(`typesetter_notes.md: no frontmatter`);
+      }
+    } else {
+      drift.push(`typesetter_notes.md: missing (report.pdf exists, layout unaudited)`);
+    }
+  } else {
+    // No PDF compiled yet: typesetter audit not required for convergence,
+    // but illustrator side still has to be clean for the cache to fire.
+    typesetterOK = true;
+  }
+
+  if (illustratorOK && typesetterOK) {
+    const at = reportPdfExists ? `${illustratorAt} (typesetter ${typesetterAt})` : illustratorAt;
+    return `<figure_convergence>converged audited_at="${at}"</figure_convergence>`;
   }
   return `<figure_convergence>stale reason="${drift.join("; ")}"</figure_convergence>`;
 }
