@@ -27,6 +27,12 @@ export interface SafetyConfig {
   protectedFiles?: string[];
   /** Restrict read scope; supports `{{VAR}}` templating. Undefined = no restriction. */
   allowedReadRoots?: string[];
+  /**
+   * Positive whitelist for writes/edits. Paths outside every listed root
+   * are rejected. Supports `{{VAR}}` templating (resolved at wrap time).
+   * Undefined = no positive whitelist (still subject to protectedFiles blocklist).
+   */
+  allowedWriteRoots?: string[];
   /** "block" = reject write on existing (force edit); "allow_as_read" = permit. */
   writeOnExistingPolicy?: "block" | "allow_as_read";
 }
@@ -161,6 +167,7 @@ function buildSafetyConfig(fields: Record<string, any>, filename: string): Safet
     presets,
     protectedFiles: maybeList(block.protectedFiles),
     allowedReadRoots: maybeList(block.allowedReadRoots),
+    allowedWriteRoots: maybeList(block.allowedWriteRoots),
     writeOnExistingPolicy: policy === "block" || policy === "allow_as_read" ? policy : undefined,
   };
 }

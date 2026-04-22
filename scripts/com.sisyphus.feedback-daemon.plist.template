@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  macOS LaunchAgent template for scripts/feedback_daemon.mts.
+
+  Install:
+    1. Edit the two `__PLACEHOLDER__` values below (sisyphus root + log dir)
+    2. `cp com.sisyphus.feedback-daemon.plist.template \
+        ~/Library/LaunchAgents/com.sisyphus.feedback-daemon.plist`
+    3. `launchctl load ~/Library/LaunchAgents/com.sisyphus.feedback-daemon.plist`
+    4. Verify: `launchctl list | grep sisyphus`
+    5. Logs at the StandardErrorPath / StandardOutPath you configured.
+
+  Uninstall:
+    launchctl unload ~/Library/LaunchAgents/com.sisyphus.feedback-daemon.plist
+    rm ~/Library/LaunchAgents/com.sisyphus.feedback-daemon.plist
+
+  KeepAlive restarts the daemon if it dies. RunAtLoad starts it when you
+  load the plist (and again after machine reboot / login). The daemon polls
+  the inbox every 30s and does nothing if no vote has been written.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.sisyphus.feedback-daemon</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/env</string>
+        <string>npx</string>
+        <string>tsx</string>
+        <string>__SISYPHUS_ROOT__/scripts/feedback_daemon.mts</string>
+        <string>__SISYPHUS_ROOT__</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__SISYPHUS_ROOT__</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>__LOG_DIR__/feedback_daemon.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>__LOG_DIR__/feedback_daemon.err.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>

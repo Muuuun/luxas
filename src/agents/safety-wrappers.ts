@@ -57,6 +57,12 @@ interface SafetyOptions {
    */
   allowedReadRoots?: string[];
   /**
+   * If set, write/edit paths must resolve under one of these roots. Same
+   * templating rules as allowedReadRoots. Unset = no write-path whitelist
+   * (blocklist via protectedFiles still applies).
+   */
+  allowedWriteRoots?: string[];
+  /**
    * If set, write/edit to paths matching any of these regex patterns returns
    * BLOCKED. Intent: force role separation — e.g. the experiment agent must
    * delegate script/test authorship to tool_impl/tool_review sub-agents rather
@@ -122,8 +128,7 @@ function wrapRead(
       // leaks even through symlinks — we compare resolved absolute paths.
       if (allowedReadRoots && p) {
         const abs = resolve(projectDir, p);
-        const ok = allowedReadRoots.some((root) => abs === root || abs.startsWith(root + "/"));
-        if (!ok) {
+        if (!withinRoots(abs, allowedReadRoots)) {
           const rel = allowedReadRoots.map((r) => r.replace(projectDir + "/", "")).join(", ");
           return blocked(
             `Read of ${p} is outside your allowed scope. ` +
@@ -160,6 +165,7 @@ function wrapEdit(
   tracker: ReadTracker,
   projectDir: string,
   protectedAbs: Set<string>,
+  allowedWriteAbs: string[] | null,
   forbiddenWritePatterns: { pattern: RegExp; reason: string }[],
 ) {
   const origExecute = tool.execute;
@@ -172,6 +178,10 @@ function wrapEdit(
 
       if (protectedAbs.has(abs)) {
         return blocked(`${p} is protected and cannot be edited by this agent.`);
+      }
+
+      if (allowedWriteAbs && !withinRoots(abs, allowedWriteAbs)) {
+        return blocked(allowedWriteMessage(p, allowedWriteAbs, projectDir));
       }
 
       for (const { pattern, reason } of forbiddenWritePatterns) {
@@ -263,6 +273,7 @@ function wrapWrite(
   tracker: ReadTracker,
   projectDir: string,
   protectedAbs: Set<string>,
+  allowedWriteAbs: string[] | null,
   opts: SafetyOptions,
   forbiddenWritePatterns: { pattern: RegExp; reason: string }[],
 ) {
@@ -275,6 +286,10 @@ function wrapWrite(
 
       if (protectedAbs.has(abs)) {
         return blocked(`${p} is protected and cannot be written by this agent.`);
+      }
+
+      if (allowedWriteAbs && !withinRoots(abs, allowedWriteAbs)) {
+        return blocked(allowedWriteMessage(p, allowedWriteAbs, projectDir));
       }
 
       for (const { pattern, reason } of forbiddenWritePatterns) {
@@ -321,19 +336,41 @@ function createSafetyWrapper(opts: SafetyOptions): SafetyWrapper {
 
     // Any {{VAR}} that isn't substituted remains literal, which resolves to a
     // nonexistent path and fails closed (no reads allowed) — see expandTemplate.
-    const allowedReadAbs = opts.allowedReadRoots
-      ? opts.allowedReadRoots.map((r) => resolve(projectDir, expandTemplate(r, templateVars)))
-      : null;
+    const allowedReadAbs = resolveScopeRoots(opts.allowedReadRoots, projectDir, templateVars);
+    const allowedWriteAbs = resolveScopeRoots(opts.allowedWriteRoots, projectDir, templateVars);
 
     const forbiddenWritePatterns = opts.forbiddenWritePatterns ?? [];
 
     return tools.map((tool: any) => {
       if (tool.name === "read")  return wrapRead(tool, tracker, projectDir, allowedReadAbs);
-      if (tool.name === "edit")  return wrapEdit(tool, tracker, projectDir, protectedAbs, forbiddenWritePatterns);
-      if (tool.name === "write") return wrapWrite(tool, tracker, projectDir, protectedAbs, opts, forbiddenWritePatterns);
+      if (tool.name === "edit")  return wrapEdit(tool, tracker, projectDir, protectedAbs, allowedWriteAbs, forbiddenWritePatterns);
+      if (tool.name === "write") return wrapWrite(tool, tracker, projectDir, protectedAbs, allowedWriteAbs, opts, forbiddenWritePatterns);
       return tool;
     });
   };
+}
+
+function withinRoots(abs: string, roots: string[]): boolean {
+  return roots.some((root) => abs === root || abs.startsWith(root + "/"));
+}
+
+// Any {{VAR}} that isn't substituted remains literal, which resolves to a
+// nonexistent path and fails closed — see expandTemplate in utils.ts.
+function resolveScopeRoots(
+  roots: string[] | undefined,
+  projectDir: string,
+  templateVars: Record<string, string>,
+): string[] | null {
+  if (!roots) return null;
+  return roots.map((r) => resolve(projectDir, expandTemplate(r, templateVars)));
+}
+
+function allowedWriteMessage(p: string, roots: string[], projectDir: string): string {
+  const rel = roots.map((r) => r.replace(projectDir + "/", "")).join(", ");
+  return (
+    `Write/edit of ${p} is outside your allowed write scope. ` +
+    `You may only write under: ${rel}.`
+  );
 }
 
 // ── Universal declarative entry point ───────────────────────────────────
@@ -358,6 +395,7 @@ export function buildSafetyWrapper(
   return createSafetyWrapper({
     protectedFiles: [...presetPaths, ...(config.protectedFiles ?? [])],
     allowedReadRoots: config.allowedReadRoots,
+    allowedWriteRoots: config.allowedWriteRoots,
     // Default "block" is fail-secure: forgetting the field in frontmatter
     // shouldn't silently relax write-overwrite on protected files.
     writeOnExistingPolicy: config.writeOnExistingPolicy ?? "block",

@@ -18,7 +18,9 @@
  */
 
 import { existsSync, readFileSync, readdirSync, mkdirSync, writeFileSync, renameSync } from "node:fs";
-import { execSync } from "node:child_process";
+import { execSync, spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { dirname } from "node:path";
 import { join, resolve } from "node:path";
 import { Agent } from "@mariozechner/pi-agent-core";
 import { Type } from "@sinclair/typebox";
@@ -422,8 +424,10 @@ function archiveIfFinished(dir: string) {
   if (!finished) return;
 
   const ts = new Date().toISOString().replace(/[:.]/g, "-");
+  let donePath: string | undefined;
   if (existsSync(checkpointFile)) {
-    renameSync(checkpointFile, checkpointFile.replace(".jsonl", `.done-${ts}.jsonl`));
+    donePath = checkpointFile.replace(".jsonl", `.done-${ts}.jsonl`);
+    renameSync(checkpointFile, donePath);
   }
   const feedbackPath = join(dir, "reviews", "pi_feedback.md");
   if (existsSync(feedbackPath)) {
@@ -433,6 +437,27 @@ function archiveIfFinished(dir: string) {
     renameSync(logJsonl, logJsonl.replace(".jsonl", `.done-${ts}.jsonl`));
   }
   console.log(`  ⟳ Previous session finished — starting fresh (archived)`);
+
+  // Fire-and-forget the meta-agent post-session hook. Runs reflect_light
+  // against the just-frozen jsonl, bumps the deep-review counter, and
+  // possibly schedules a deep review — all in the background. Detached so
+  // the new session doesn't wait; ignore failures entirely (hook is
+  // best-effort and must never block the research run).
+  if (donePath) {
+    try {
+      const moduleDir = dirname(fileURLToPath(import.meta.url));
+      const sisyphusRoot = resolve(moduleDir, "..");
+      const hookScript = join(sisyphusRoot, "scripts/post_session_hook.mts");
+      if (existsSync(hookScript)) {
+        const child = spawn("npx", ["tsx", hookScript, donePath, sisyphusRoot], {
+          detached: true,
+          stdio: "ignore",
+          cwd: sisyphusRoot,
+        });
+        child.unref();
+      }
+    } catch { /* hook failure must not break the main flow */ }
+  }
 }
 
 async function initProject(dir: string, prompt?: string) {

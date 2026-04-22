@@ -88,6 +88,12 @@ export interface SpawnAgentOptions {
    * Only used when `def.spawn.enabled` is true.
    */
   createSpawnTool?: (parentId: string, depth: number, allowedTypes?: string[]) => any;
+  /**
+   * Override for agent-definition lookup. Default is the production registry's
+   * getDefinition. Meta-agents pass `getMetaDefinition` here so the same
+   * spawn machinery drives both layers without a forked spawn module.
+   */
+  resolveDefinition?: (name: string) => AgentDefinition;
 }
 
 export interface SpawnAgentResult {
@@ -106,7 +112,7 @@ export interface BuiltAgent {
 }
 
 export function buildAgentFromDefinition(opts: SpawnAgentOptions): BuiltAgent {
-  const def = getDefinition(opts.name);
+  const def = (opts.resolveDefinition ?? getDefinition)(opts.name);
 
   // Give every spawn a unique id. Explicit instanceIndex (parallel batch)
   // stays `-0`, `-1`, … for predictability; otherwise fall back to a short
