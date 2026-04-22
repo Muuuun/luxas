@@ -10,7 +10,8 @@ import { createReportTools } from "./report.js";
 import { createInitReportTool } from "./init-report.js";
 import { createCodingToolsForProject } from "./coding.js";
 import { createSpawnAgentTool, getActiveBackgroundAgents } from "./spawn-agent.js";
-import { wrapBrainTools } from "../agents/safety-wrappers.js";
+import { buildSafetyWrapper } from "../agents/safety-wrappers.js";
+import { getDefinition } from "../agents/registry.js";
 import { loadRegistry, removeAgent, isAlive, markFailed } from "../active-agents.js";
 
 /**
@@ -99,10 +100,15 @@ export function buildResearchTools(
   getApiKey: (provider: string) => Promise<string | undefined> | string | undefined,
   callbacks?: ToolCallbacks,
 ): { tools: any[]; setParentAgent: (agent: Agent) => void } {
-  // Brain coding tools are wrapped with read-tracking + edit safety guards.
-  // This enforces read-before-edit, mtime-based stale detection, partial-read
-  // coverage, and fresh-excerpt recovery on edit failure. See safety-wrappers.ts.
-  const codingTools = wrapBrainTools(createCodingToolsForProject(projectDir), projectDir);
+  // Brain coding tools are wrapped with read-tracking + edit safety guards
+  // declared in brain.md. The wrapper is load-bearing (RESEARCH.md protection,
+  // read-before-edit) — missing safety config is a misconfiguration, not a
+  // fallback case, so we fail fast rather than returning raw tools.
+  const brainWrapper = buildSafetyWrapper(getDefinition("brain").safety);
+  if (!brainWrapper) {
+    throw new Error("brain.md must declare a `safety:` block — top-level brain tools cannot run unwrapped.");
+  }
+  const codingTools = brainWrapper(createCodingToolsForProject(projectDir), projectDir, templateVars);
   const reportTools = createReportTools(projectDir);
 
   // Deferred parent agent ref — set after Agent is constructed (needed for background steer)

@@ -11,8 +11,8 @@ description: >
 model: sonnet
 thinkingLevel: medium
 toolSets: [coding, figure-gen]
-safetyWrapper: typesetter
-canSpawn: false
+safety: { presets: [research_brief, report_surface, notes_ledger], writeOnExistingPolicy: block }
+spawn: { enabled: false }
 templates: [PROJECT_DIR]
 ---
 

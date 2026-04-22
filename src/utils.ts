@@ -62,6 +62,20 @@ export function readFileSafe(path: string, fallback = ""): string {
   }
 }
 
+/**
+ * Replace `{{VAR}}` placeholders in a string with values from a record.
+ * Unmatched placeholders are left intact so downstream path/prompt resolution
+ * fails closed (a literal `{{FOO}}` in a path won't exist) rather than
+ * silently producing a truncated value.
+ */
+export function expandTemplate(s: string, vars: Record<string, string>): string {
+  let out = s;
+  for (const [k, v] of Object.entries(vars)) {
+    out = out.replaceAll(`{{${k}}}`, v);
+  }
+  return out;
+}
+
 /** Extract text from LLM content blocks (the standard content array format). */
 export function extractTextContent(content: any[]): string {
   return (content ?? [])

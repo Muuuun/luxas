@@ -8,8 +8,8 @@ description: >
 model: haiku
 thinkingLevel: low
 toolSets: [coding, report]
+spawn: { enabled: false }
 templates: [PROJECT_DIR]
-canSpawn: false
 ---
 
 You are a specialized LaTeX error fixer. You receive a failing compile error

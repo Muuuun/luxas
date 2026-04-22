@@ -10,7 +10,7 @@ description: >
 model: haiku
 thinkingLevel: low
 toolSets: [coding]
-canSpawn: false
+spawn: { enabled: false }
 templates: [PROJECT_DIR, PAPER_ID, SEARCH_SCRIPT]
 ---
 

@@ -17,11 +17,17 @@
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  wrapExperimentTools,
-  wrapToolImplTools,
-  wrapToolReviewTools,
-} from "../src/agents/safety-wrappers.js";
+import { buildSafetyWrapper, type SafetyWrapper } from "../src/agents/safety-wrappers.js";
+import { getDefinition } from "../src/agents/registry.js";
+
+function wrapperFor(name: string): SafetyWrapper {
+  const wrap = buildSafetyWrapper(getDefinition(name).safety);
+  if (!wrap) throw new Error(`${name}.md must declare a safety config for this smoke to run`);
+  return wrap;
+}
+const wrapExperimentTools = wrapperFor("experiment");
+const wrapToolImplTools = wrapperFor("tool_impl");
+const wrapToolReviewTools = wrapperFor("tool_review");
 
 const dir = mkdtempSync(join(tmpdir(), "smoke-write-scope-"));
 mkdirSync(join(dir, "data/experiments/E_test/scripts"), { recursive: true });

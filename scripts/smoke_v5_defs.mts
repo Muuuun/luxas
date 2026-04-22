@@ -3,7 +3,7 @@
  * Smoke: V5 agent definitions load and resolve wrappers/builders.
  */
 import { loadAgentDefinitions } from "../src/agents/registry.js";
-import { resolveSafetyWrapper } from "../src/agents/safety-wrappers.js";
+import { buildSafetyWrapper } from "../src/agents/safety-wrappers.js";
 import { resolveContextBuilder } from "../src/agents/context-builders.js";
 
 const defs = loadAgentDefinitions();
@@ -17,19 +17,19 @@ for (const name of checked) {
     failures++;
     continue;
   }
-  const sw = resolveSafetyWrapper(d.safetyWrapper);
+  const sw = buildSafetyWrapper(d.safety);
   const cb = resolveContextBuilder(d.contextBuilder);
-  const swTag = d.safetyWrapper ? (sw ? "OK" : "MISSING") : "(none)";
+  const swTag = d.safety ? (sw ? "OK" : "MISSING") : "(none)";
   const cbTag = d.contextBuilder ? (cb ? "OK" : "MISSING") : "(none)";
-  if (d.safetyWrapper && !sw) failures++;
+  if (d.safety && !sw) failures++;
   if (d.contextBuilder && !cb) failures++;
-  console.log(`${name.padEnd(14)} model=${d.model.padEnd(8)} canSpawn=${String(d.canSpawn).padEnd(5)} allowedSpawn=${JSON.stringify(d.allowedSpawn ?? null).padEnd(50)} safety=${swTag} context=${cbTag} templates=${JSON.stringify(d.templates)}`);
+  console.log(`${name.padEnd(14)} model=${d.model.padEnd(8)} spawn.enabled=${String(d.spawn.enabled).padEnd(5)} spawn.allowedTypes=${JSON.stringify(d.spawn.allowedTypes ?? null).padEnd(50)} safety=${swTag} context=${cbTag} templates=${JSON.stringify(d.templates)}`);
 }
 
 const exp = defs.get("experiment")!;
 for (const n of ["tool_impl", "tool_review"]) {
-  if (!exp.allowedSpawn?.includes(n)) {
-    console.log(`FAIL experiment.allowedSpawn missing: ${n}`);
+  if (!exp.spawn.allowedTypes?.includes(n)) {
+    console.log(`FAIL experiment.spawn.allowedTypes missing: ${n}`);
     failures++;
   }
 }

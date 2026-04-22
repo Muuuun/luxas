@@ -11,7 +11,11 @@
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { wrapToolImplTools } from "../src/agents/safety-wrappers.js";
+import { buildSafetyWrapper } from "../src/agents/safety-wrappers.js";
+import { getDefinition } from "../src/agents/registry.js";
+
+const wrapToolImplTools = buildSafetyWrapper(getDefinition("tool_impl").safety);
+if (!wrapToolImplTools) throw new Error("tool_impl.md must declare a safety config for this smoke to run");
 
 const dir = mkdtempSync(join(tmpdir(), "smoke-read-scope-"));
 mkdirSync(join(dir, "notes"));

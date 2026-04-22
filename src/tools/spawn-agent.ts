@@ -35,8 +35,8 @@ export function createSpawnToolFactory(
   projectDir: string,
   getApiKey: (provider: string) => Promise<string | undefined> | string | undefined,
 ) {
-  return (parentId: string, childDepth: number, childAllowedSpawn?: string[]) =>
-    createSpawnAgentTool(projectDir, {}, getApiKey, parentId, childDepth, undefined, childAllowedSpawn);
+  return (parentId: string, childDepth: number, childAllowedTypes?: string[]) =>
+    createSpawnAgentTool(projectDir, {}, getApiKey, parentId, childDepth, undefined, childAllowedTypes);
 }
 
 export function createSpawnAgentTool(
@@ -48,13 +48,13 @@ export function createSpawnAgentTool(
   /** Reference to the parent Agent instance — needed for steer() on background completion */
   parentAgent?: AgentType,
   /** If set, restricts which sub-agent names this parent may spawn. */
-  allowedSpawn?: string[],
+  allowedTypes?: string[],
 ) {
   const agentDir = join(projectDir, ".agent");
   const luxasRoot = join(dirname(fileURLToPath(import.meta.url)), "../..");
   const allAgents = listAgentDescriptions();
-  const agents = allowedSpawn
-    ? allAgents.filter(a => allowedSpawn.includes(a.name))
+  const agents = allowedTypes
+    ? allAgents.filter(a => allowedTypes.includes(a.name))
     : allAgents;
   const agentCatalog = agents
     .map(a => `- **${a.name}**: ${a.description}${a.canSpawn ? " (can spawn sub-agents)" : ""}`)
@@ -89,11 +89,12 @@ export function createSpawnAgentTool(
 
   /**
    * Factory for creating a spawn_agent tool scoped to a specific parent.
-   * Used by spawn.ts when canSpawn=true to give sub-agents their own spawn tool.
+   * Used by spawn.ts when the parent's `spawn.enabled` is true to give
+   * sub-agents their own spawn tool.
    */
-  function makeSpawnTool(parentId: string, childDepth: number, childAllowedSpawn?: string[]): any {
+  function makeSpawnTool(parentId: string, childDepth: number, childAllowedTypes?: string[]): any {
     // Sub-agents don't get background capability (no parentAgent ref to steer)
-    return createSpawnAgentTool(projectDir, templateVars, getApiKey, parentId, childDepth, undefined, childAllowedSpawn);
+    return createSpawnAgentTool(projectDir, templateVars, getApiKey, parentId, childDepth, undefined, childAllowedTypes);
   }
 
   return {
@@ -172,10 +173,10 @@ export function createSpawnAgentTool(
         };
       }
 
-      // Enforce allowedSpawn restriction (if parent is scoped)
-      if (allowedSpawn && !allowedSpawn.includes(params.agent)) {
+      // Enforce allowedTypes restriction (if parent is scoped)
+      if (allowedTypes && !allowedTypes.includes(params.agent)) {
         return {
-          content: [{ type: "text" as const, text: `Agent "${params.agent}" is not in this agent's allowedSpawn list. Allowed: ${allowedSpawn.join(", ")}.` }],
+          content: [{ type: "text" as const, text: `spawn_agent: agent "${params.agent}" is not whitelisted for this parent. Allowed: ${allowedTypes.join(", ")}.` }],
           details: { success: false },
         };
       }

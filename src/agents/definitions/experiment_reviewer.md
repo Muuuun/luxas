@@ -11,8 +11,8 @@ description: >
 model: opus
 thinkingLevel: medium
 toolSets: [coding]
-safetyWrapper: experiment_reviewer
-canSpawn: false
+safety: { presets: [research_brief, report_surface, notes_ledger], writeOnExistingPolicy: block }
+spawn: { enabled: false }
 templates: [PROJECT_DIR, EXPERIMENT_ID]
 ---
 

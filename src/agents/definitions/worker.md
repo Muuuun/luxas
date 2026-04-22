@@ -6,7 +6,7 @@ description: >
 model: sonnet
 thinkingLevel: medium
 toolSets: [coding]
-canSpawn: false
+spawn: { enabled: false }
 templates: [PROJECT_DIR]
 ---
 

@@ -8,8 +8,7 @@ model: opus
 thinkingLevel: medium
 toolSets: [pi]
 contextBuilder: reviewer
-canSpawn: true
-allowedSpawn: [illustrator]
+spawn: { enabled: true, allowedTypes: [illustrator] }
 templates: []
 ---
 

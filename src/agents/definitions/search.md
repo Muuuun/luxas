@@ -9,7 +9,7 @@ description: >
 model: sonnet
 thinkingLevel: medium
 toolSets: [coding, spawn]
-canSpawn: true
+spawn: { enabled: true }
 templates: [PROJECT_DIR, SEARCH_SCRIPT, MERGE_NOTES]
 ---
 

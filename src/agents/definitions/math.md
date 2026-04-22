@@ -9,7 +9,7 @@ description: >
 model: gpt-5.2
 thinkingLevel: high
 toolSets: [coding, wolfram]
-canSpawn: false
+spawn: { enabled: false }
 templates: [PROJECT_DIR]
 ---
 

@@ -9,8 +9,11 @@ description: >
 model: sonnet
 thinkingLevel: medium
 toolSets: [coding]
-safetyWrapper: tool_review
-canSpawn: false
+safety:
+  presets: [research_brief, report_surface, notes_ledger]
+  allowedReadRoots: ["data/experiments/{{EXPERIMENT_ID}}"]
+  writeOnExistingPolicy: block
+spawn: { enabled: false }
 templates: [PROJECT_DIR, EXPERIMENT_ID, TOOL_NAME]
 ---
 

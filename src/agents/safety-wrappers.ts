@@ -10,13 +10,10 @@
  *   - Block write-on-existing (force edit over write)
  *   - Fresh-excerpt recovery on edit failure (delegated to edit-recovery.ts)
  *
- * Preset wrappers (one per agent role that writes to the project):
- *   - wrapBrainTools       — brain can write anywhere except RESEARCH.md
- *   - wrapExperimentTools  — plus report/bib/literature guards
- *   - wrapToolImplTools    — experiment sub-agent: scripts only, no ledger
- *   - wrapToolReviewTools  — experiment sub-agent: tests only, no ledger
- *
- * All share the same factory (createSafetyWrapper) and tracker semantics.
+ * Per-agent safety is driven by each agent's `.md` frontmatter — see
+ * `SafetyConfig` in registry.ts. `buildSafetyWrapper(config)` compiles that
+ * config into a SafetyWrapper; the internal `createSafetyWrapper` factory
+ * applies the runtime tracker + enforcement.
  *
  * I/O is fully async (fs/promises) so the wrapper doesn't block parallel
  * tool execution that pi-agent-core schedules with toolExecution: "parallel".
@@ -30,7 +27,9 @@
 import { stat, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { findOldTextLine, freshExcerptError } from "./edit-recovery.js";
-import { extractTextContent } from "../utils.js";
+import { SAFETY_PRESETS } from "./safety-presets.js";
+import { expandTemplate, extractTextContent } from "../utils.js";
+import type { SafetyConfig } from "./registry.js";
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -320,17 +319,10 @@ function createSafetyWrapper(opts: SafetyOptions): SafetyWrapper {
     // (which would false-positive on names like `evilRESEARCH.md`).
     const protectedAbs = new Set(opts.protectedFiles.map((f) => resolve(projectDir, f)));
 
-    // Resolve {{VAR}} templates in allowedReadRoots using the caller's
-    // templateVars; any var that isn't substituted remains literal, which
-    // resolves to a nonexistent path and fails closed (no reads allowed).
+    // Any {{VAR}} that isn't substituted remains literal, which resolves to a
+    // nonexistent path and fails closed (no reads allowed) — see expandTemplate.
     const allowedReadAbs = opts.allowedReadRoots
-      ? opts.allowedReadRoots.map((r) => {
-          let resolved = r;
-          for (const [k, v] of Object.entries(templateVars)) {
-            resolved = resolved.replaceAll(`{{${k}}}`, v);
-          }
-          return resolve(projectDir, resolved);
-        })
+      ? opts.allowedReadRoots.map((r) => resolve(projectDir, expandTemplate(r, templateVars)))
       : null;
 
     const forbiddenWritePatterns = opts.forbiddenWritePatterns ?? [];
@@ -344,116 +336,31 @@ function createSafetyWrapper(opts: SafetyOptions): SafetyWrapper {
   };
 }
 
-// ── Protected-file groups ────────────────────────────────────────────────
+// ── Universal declarative entry point ───────────────────────────────────
 //
-// Hierarchy: brain owns the most; experiment can still append to its ledger;
-// tool sub-agents touch only their experiment's scripts/ or tests/ subdir.
-// Per-experiment-dir enforcement is prompt-side only — the wrapper lacks
-// EXPERIMENT_ID from templateVars and can't do path-glob granularity.
+// Called by buildAgentFromDefinition with the `.md`-declared SafetyConfig.
+// Preset names are expanded against SAFETY_PRESETS; `{{VAR}}` placeholders
+// inside presets, protectedFiles, and allowedReadRoots are expanded by the
+// underlying createSafetyWrapper at wrap time against the spawn's templateVars.
 
-const REPORT_SURFACE = [
-  "RESEARCH.md",
-  "report.tex",
-  "references.bib",
-  "notes/literature.md",
-];
+export function buildSafetyWrapper(
+  config: SafetyConfig | undefined,
+): SafetyWrapper | undefined {
+  if (!config) return undefined;
 
-const NOTES_LEDGER = [
-  "notes/experiments.md",
-  "notes/memory.md",
-  "notes/plan.md",
-];
+  // Preset names have already been validated at parse time (see buildSafetyConfig
+  // in registry.ts). Unknown names here silently contribute no paths rather than
+  // double-logging the same error.
+  const presetPaths = (config.presets ?? []).flatMap((name) =>
+    SAFETY_PRESETS[name as keyof typeof SAFETY_PRESETS] ?? [],
+  );
 
-// ── Preset wrappers ──────────────────────────────────────────────────────
-
-export const wrapBrainTools: SafetyWrapper = createSafetyWrapper({
-  protectedFiles: ["RESEARCH.md"],
-  // Brain.md says "ALWAYS use edit, NEVER use write to overwrite" — enforce
-  // at runtime. If brain needs to overwrite, it can delete via bash first.
-  writeOnExistingPolicy: "block",
-});
-
-// V5 impl/review split is now enforced by: (1) spawn_agent tool being
-// available to background experiments (see subagent-runner.ts), and (2)
-// the <role_separation> + <scope_boundary> prompt blocks in experiment.md.
-// A previous commit added a tool-layer write block here to "force" the
-// split, but the real issue was that background experiments literally had
-// no spawn_agent tool — the block made the agent fall through to bash
-// heredoc workarounds (cat > path.py << EOF), creating a bypass surface.
-// With spawn_agent actually available, prompt + tool availability at the
-// right layer is sufficient; the block is redundant and has been removed.
-// The `forbiddenWritePatterns` option on createSafetyWrapper is left in
-// place for future use cases where a real role-separation constraint
-// can't be expressed as prompt guidance alone.
-export const wrapExperimentTools: SafetyWrapper = createSafetyWrapper({
-  protectedFiles: REPORT_SURFACE,
-  writeOnExistingPolicy: "block",
-});
-
-// Tool sub-agents are description-driven — they don't need to read literature,
-// notes, or other experiments. Hard-scope their reads to the single experiment
-// directory so a wandering agent can't re-read paper sources to second-guess
-// the description.
-const EXPERIMENT_READ_SCOPE = ["data/experiments/{{EXPERIMENT_ID}}"];
-
-export const wrapToolImplTools: SafetyWrapper = createSafetyWrapper({
-  protectedFiles: [...REPORT_SURFACE, ...NOTES_LEDGER],
-  allowedReadRoots: EXPERIMENT_READ_SCOPE,
-  writeOnExistingPolicy: "block",
-});
-
-export const wrapToolReviewTools: SafetyWrapper = createSafetyWrapper({
-  protectedFiles: [...REPORT_SURFACE, ...NOTES_LEDGER],
-  allowedReadRoots: EXPERIMENT_READ_SCOPE,
-  writeOnExistingPolicy: "block",
-});
-
-// experiment_reviewer audits a completed experiment by reading its L2
-// section, results.json, raw data, and cited literature. Never writes —
-// returns its verdict as tool output. Read scope is broad (needs notes/
-// and data/experiments/<id>/) but write is fully blocked.
-export const wrapExperimentReviewerTools: SafetyWrapper = createSafetyWrapper({
-  protectedFiles: [...REPORT_SURFACE, ...NOTES_LEDGER],
-  writeOnExistingPolicy: "block",
-});
-
-// illustrator_write authors a new plot_<topic>.py from a brain-supplied
-// figure spec + raw data path, runs it, and lands the PDF/PNG at
-// report/figures/. Write scope = scripts under the current experiment +
-// report/figures/; everything else (notes, report.tex, references.bib,
-// other experiments) is blocked.
-export const wrapIllustratorWriteTools: SafetyWrapper = createSafetyWrapper({
-  protectedFiles: [...REPORT_SURFACE, ...NOTES_LEDGER],
-  writeOnExistingPolicy: "block",
-});
-
-// typesetter rasterizes report/report.pdf and reads each page image to
-// audit document-level layout (figure floating, caption placement,
-// overflow, missing-file boxes). Writes only its notes file +
-// scratch rasterized pages under reviews/. Cannot touch the report
-// surface or notes ledger.
-export const wrapTypesetterTools: SafetyWrapper = createSafetyWrapper({
-  protectedFiles: [...REPORT_SURFACE, ...NOTES_LEDGER],
-  writeOnExistingPolicy: "block",
-});
-
-// ── Registry ─────────────────────────────────────────────────────────────
-
-const SAFETY_WRAPPERS: Record<string, SafetyWrapper> = {
-  brain: wrapBrainTools,
-  experiment: wrapExperimentTools,
-  tool_impl: wrapToolImplTools,
-  tool_review: wrapToolReviewTools,
-  experiment_reviewer: wrapExperimentReviewerTools,
-  illustrator_write: wrapIllustratorWriteTools,
-  typesetter: wrapTypesetterTools,
-};
-
-export function resolveSafetyWrapper(name: string | undefined): SafetyWrapper | undefined {
-  if (!name) return undefined;
-  return SAFETY_WRAPPERS[name];
+  return createSafetyWrapper({
+    protectedFiles: [...presetPaths, ...(config.protectedFiles ?? [])],
+    allowedReadRoots: config.allowedReadRoots,
+    // Default "block" is fail-secure: forgetting the field in frontmatter
+    // shouldn't silently relax write-overwrite on protected files.
+    writeOnExistingPolicy: config.writeOnExistingPolicy ?? "block",
+  });
 }
 
-export function registerSafetyWrapper(name: string, wrapper: SafetyWrapper): void {
-  SAFETY_WRAPPERS[name] = wrapper;
-}

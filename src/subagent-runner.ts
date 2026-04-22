@@ -95,12 +95,11 @@ async function main() {
       }
     }
 
-    // Build agent from definition (reuses the same logic as in-process spawnAgent).
-    // Background agents that declare `canSpawn: true` (notably experiment under V5)
-    // need their own spawn_agent tool so they can delegate to tool_impl/tool_review.
-    // Without createSpawnTool, buildAgentFromDefinition silently omits the spawn
-    // tool — the agent then can't follow V5's impl+review split and falls back to
-    // bash heredoc workarounds (observed on qLDPC bg-2 E3 run, 2026-04-19).
+    // Background agents that declare `spawn.enabled: true` need their own
+    // spawn_agent tool so they can delegate to children. Without createSpawnTool,
+    // buildAgentFromDefinition silently omits the spawn tool — the agent then
+    // falls back to bash heredoc workarounds (observed on qLDPC bg-2 E3 run,
+    // 2026-04-19).
     const makeSpawnTool = createSpawnToolFactory(projectDir, getApiKey);
     const spawnOpts: SpawnAgentOptions = {
       name: args.agent,

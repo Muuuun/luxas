@@ -10,9 +10,8 @@ model: opus
 thinkingLevel: high
 toolSets: [coding]
 contextBuilder: experiment
-safetyWrapper: experiment
-canSpawn: true
-allowedSpawn: [tool_impl, tool_review, math, reader]
+safety: { presets: [research_brief, report_surface], writeOnExistingPolicy: block }
+spawn: { enabled: true, allowedTypes: [tool_impl, tool_review, math, reader] }
 templates: [PROJECT_DIR, ROLE, EXPERIMENT_ID]
 ---
 

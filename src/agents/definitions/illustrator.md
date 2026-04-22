@@ -10,7 +10,7 @@ description: >
 model: sonnet
 thinkingLevel: high
 toolSets: [coding, figure-gen]
-canSpawn: false
+spawn: { enabled: false }
 templates: [PROJECT_DIR]
 ---
 

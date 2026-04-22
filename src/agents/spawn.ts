@@ -17,7 +17,7 @@ import { extractTextContent } from "../utils.js";
 import { getDefinition, resolvePrompt, type AgentDefinition } from "./registry.js";
 import { resolveToolSets } from "./tool-sets.js";
 import { resolveContextBuilder } from "./context-builders.js";
-import { resolveSafetyWrapper } from "./safety-wrappers.js";
+import { buildSafetyWrapper } from "./safety-wrappers.js";
 
 // Path to the canonical merge-notes script (same path logic as the
 // MERGE_NOTES template var in src/agent.ts). Invoked after every reader
@@ -85,9 +85,9 @@ export interface SpawnAgentOptions {
   instanceIndex?: number;
   /**
    * Factory for the spawn_agent tool — injected by spawn-agent.ts to avoid circular imports.
-   * Only used when the definition has canSpawn: true.
+   * Only used when `def.spawn.enabled` is true.
    */
-  createSpawnTool?: (parentId: string, depth: number, allowedSpawn?: string[]) => any;
+  createSpawnTool?: (parentId: string, depth: number, allowedTypes?: string[]) => any;
 }
 
 export interface SpawnAgentResult {
@@ -132,7 +132,7 @@ export function buildAgentFromDefinition(opts: SpawnAgentOptions): BuiltAgent {
   let tools = resolveToolSets(def.toolSets, opts.projectDir);
 
   // 4. Apply safety wrapper if defined
-  const wrapper = resolveSafetyWrapper(def.safetyWrapper);
+  const wrapper = buildSafetyWrapper(def.safety);
   if (wrapper) {
     tools = wrapper(tools, opts.projectDir, opts.templateVars);
   }
@@ -142,9 +142,9 @@ export function buildAgentFromDefinition(opts: SpawnAgentOptions): BuiltAgent {
     tools = [...tools, ...opts.toolOverrides];
   }
 
-  // 6. If canSpawn and within depth limit, inject spawn_agent tool for recursion
-  if (def.canSpawn && depth < MAX_SPAWN_DEPTH && opts.createSpawnTool) {
-    const spawnTool = opts.createSpawnTool(agentId, depth + 1, def.allowedSpawn);
+  // 6. Spawn tool (gated on the definition + global depth cap)
+  if (def.spawn.enabled && depth < MAX_SPAWN_DEPTH && opts.createSpawnTool) {
+    const spawnTool = opts.createSpawnTool(agentId, depth + 1, def.spawn.allowedTypes);
     tools = [...tools, spawnTool];
   }
 

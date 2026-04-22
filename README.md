@@ -193,7 +193,7 @@ Fourteen agent types ship by default. All definitions live in `src/agents/defini
 | **reviewer** | Opus (medium) | Adversarial PI. Reads project state, challenges findings on content, runs the `figure_finalize_loop` (illustrator + typesetter) before any `stop` verdict. Returns `continue` / `steer` / `stop` to `reviews/pi_feedback.md`. |
 | **fixer** | Haiku (low) | Mechanical LaTeX compile-error fixer. Single-edit + recompile loop. Brain delegates here instead of burning Opus tokens on syntax debugging. |
 
-The brain can spawn most of them; sub-brains are allowed up to depth 2. Each spawn declares its `allowedSpawn` list in frontmatter (e.g. `experiment` can only spawn `[tool_impl, tool_review, math, reader]`).
+The brain can spawn most of them; sub-brains are allowed up to depth 2. Each agent declares its `spawn.allowedTypes` list in frontmatter (e.g. `experiment` can only spawn `[tool_impl, tool_review, math, reader]`).
 
 ---
 

@@ -6,10 +6,30 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import yaml from "js-yaml";
+import { expandTemplate } from "../utils.js";
+import { SAFETY_PRESETS } from "./safety-presets.js";
 
 const DEFINITIONS_DIR = join(dirname(fileURLToPath(import.meta.url)), "definitions");
 
 // ── Types ────────────────────────────────────────────
+
+export interface SpawnConfig {
+  enabled: boolean;
+  /** Undefined = any registered agent type is allowed. */
+  allowedTypes?: string[];
+}
+
+export interface SafetyConfig {
+  /** Names from SAFETY_PRESETS — resolved at wrapper-build time. */
+  presets?: string[];
+  /** Additional project-relative paths beyond those from presets. */
+  protectedFiles?: string[];
+  /** Restrict read scope; supports `{{VAR}}` templating. Undefined = no restriction. */
+  allowedReadRoots?: string[];
+  /** "block" = reject write on existing (force edit); "allow_as_read" = permit. */
+  writeOnExistingPolicy?: "block" | "allow_as_read";
+}
 
 export interface AgentDefinition {
   name: string;
@@ -18,10 +38,9 @@ export interface AgentDefinition {
   thinkingLevel: string;            // "off" | "low" | "medium" | "high"
   toolSets: string[];               // resolved via tool-sets registry
   contextBuilder?: string;          // function name in context-builders registry
-  safetyWrapper?: string;           // function name in safety-wrappers registry
   templates: string[];              // declared template variable names
-  canSpawn: boolean;                // can this agent spawn sub-agents?
-  allowedSpawn?: string[];          // if set, restricts which sub-agent names can be spawned
+  spawn: SpawnConfig;
+  safety?: SafetyConfig;            // undefined = no wrapping (raw tools)
   systemPromptTemplate: string;     // markdown body with {{VAR}} placeholders
 }
 
@@ -34,15 +53,17 @@ let cache: Map<string, AgentDefinition> | null = null;
 export function loadAgentDefinitions(): Map<string, AgentDefinition> {
   if (cache) return cache;
 
-  cache = new Map();
+  const defs = new Map<string, AgentDefinition>();
   const files = readdirSync(DEFINITIONS_DIR).filter(f => f.endsWith(".md"));
 
   for (const file of files) {
     const raw = readFileSync(join(DEFINITIONS_DIR, file), "utf-8");
     const def = parseAgentDefinition(raw, file);
-    if (def) cache.set(def.name, def);
+    if (def) defs.set(def.name, def);
   }
 
+  validateSpawnGraph(defs);
+  cache = defs;
   return cache;
 }
 
@@ -54,11 +75,7 @@ export function getDefinition(name: string): AgentDefinition {
 }
 
 export function resolvePrompt(def: AgentDefinition, vars: Record<string, string>): string {
-  let prompt = def.systemPromptTemplate;
-  for (const [key, value] of Object.entries(vars)) {
-    prompt = prompt.replaceAll(`{{${key}}}`, value);
-  }
-  return prompt;
+  return expandTemplate(def.systemPromptTemplate, vars);
 }
 
 export function listAgentDescriptions(): Array<{ name: string; description: string; canSpawn: boolean }> {
@@ -66,7 +83,7 @@ export function listAgentDescriptions(): Array<{ name: string; description: stri
   return [...defs.values()].map(d => ({
     name: d.name,
     description: d.description,
-    canSpawn: d.canSpawn,
+    canSpawn: d.spawn.enabled,
   }));
 }
 
@@ -84,91 +101,122 @@ function parseAgentDefinition(raw: string, filename: string): AgentDefinition | 
     return null;
   }
 
-  const [, frontmatter, body] = match;
-  const fields = parseSimpleYaml(frontmatter);
+  const [, frontmatterText, body] = match;
+
+  let fields: Record<string, any>;
+  try {
+    const parsed = yaml.load(frontmatterText);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      console.error(`Agent file ${filename}: frontmatter did not parse as a YAML mapping`);
+      return null;
+    }
+    fields = parsed as Record<string, any>;
+  } catch (err: any) {
+    console.error(`Agent file ${filename}: YAML parse error — ${err?.message ?? err}`);
+    return null;
+  }
 
   const name = fields.name;
-  if (!name) {
+  if (!name || typeof name !== "string") {
     console.error(`Agent file ${filename}: missing required field 'name'`);
     return null;
   }
 
   return {
     name,
-    description: fields.description ?? "",
-    model: fields.model ?? "inherit",
-    thinkingLevel: fields.thinkingLevel ?? "medium",
-    toolSets: parseYamlArray(fields.toolSets),
-    contextBuilder: fields.contextBuilder === "null" ? undefined : fields.contextBuilder,
-    safetyWrapper: fields.safetyWrapper === "null" ? undefined : fields.safetyWrapper,
-    templates: parseYamlArray(fields.templates),
-    canSpawn: fields.canSpawn === "true" || fields.canSpawn === true,
-    allowedSpawn: fields.allowedSpawn ? parseYamlArray(fields.allowedSpawn) : undefined,
+    description: typeof fields.description === "string" ? fields.description : "",
+    model: typeof fields.model === "string" ? fields.model : "inherit",
+    thinkingLevel: typeof fields.thinkingLevel === "string" ? fields.thinkingLevel : "medium",
+    toolSets: asStringArray(fields.toolSets),
+    contextBuilder: asOptionalString(fields.contextBuilder),
+    templates: asStringArray(fields.templates),
+    spawn: buildSpawnConfig(fields, filename),
+    safety: buildSafetyConfig(fields, filename),
     systemPromptTemplate: body.trim(),
   };
 }
 
-/**
- * Minimal YAML parser — handles simple key: value and key: [array] patterns.
- * Not a full YAML parser; sufficient for frontmatter.
- */
-function parseSimpleYaml(yaml: string): Record<string, any> {
-  const result: Record<string, any> = {};
-  const lines = yaml.split("\n");
-  let currentKey = "";
-  let currentValue = "";
-  let inMultiline = false;
-
-  for (const line of lines) {
-    if (inMultiline) {
-      if (line.match(/^\S/) && line.includes(":")) {
-        // New key starts — save accumulated multiline value
-        result[currentKey] = currentValue.trim();
-        inMultiline = false;
-        // Fall through to process this line as a new key
-      } else {
-        currentValue += "\n" + line;
-        continue;
+function buildSafetyConfig(fields: Record<string, any>, filename: string): SafetyConfig | undefined {
+  const block = fields.safety;
+  if (block == null) return undefined;
+  if (typeof block !== "object" || Array.isArray(block)) {
+    console.error(`Agent file ${filename}: 'safety' must be a mapping — got ${Array.isArray(block) ? "array" : typeof block}`);
+    return undefined;
+  }
+  const maybeList = (v: unknown) => (v == null ? undefined : asStringArray(v));
+  const policy = block.writeOnExistingPolicy;
+  if (policy !== undefined && policy !== "block" && policy !== "allow_as_read") {
+    console.error(`Agent file ${filename}: 'safety.writeOnExistingPolicy' must be "block" or "allow_as_read" — got ${JSON.stringify(policy)}`);
+  }
+  const presets = maybeList(block.presets);
+  if (presets) {
+    const known = Object.keys(SAFETY_PRESETS);
+    for (const name of presets) {
+      if (!(name in SAFETY_PRESETS)) {
+        console.error(`Agent file ${filename}: unknown safety preset "${name}". Available: ${known.join(", ")}`);
       }
     }
-
-    const keyMatch = line.match(/^(\w+):\s*(.*)/);
-    if (!keyMatch) continue;
-
-    const [, key, value] = keyMatch;
-
-    if (value === ">") {
-      // YAML folded scalar
-      currentKey = key;
-      currentValue = "";
-      inMultiline = true;
-    } else if (value === "|") {
-      // YAML literal scalar
-      currentKey = key;
-      currentValue = "";
-      inMultiline = true;
-    } else {
-      result[key] = value.trim();
-    }
   }
-
-  if (inMultiline) {
-    result[currentKey] = currentValue.trim();
-  }
-
-  return result;
+  return {
+    presets,
+    protectedFiles: maybeList(block.protectedFiles),
+    allowedReadRoots: maybeList(block.allowedReadRoots),
+    writeOnExistingPolicy: policy === "block" || policy === "allow_as_read" ? policy : undefined,
+  };
 }
 
-function parseYamlArray(value: any): string[] {
-  if (!value || value === "null" || value === "[]") return [];
-  if (typeof value === "string") {
-    // Handle [a, b, c] format
-    const match = value.match(/^\[(.+)\]$/);
-    if (match) {
-      return match[1].split(",").map(s => s.trim());
-    }
-    return [value];
+function buildSpawnConfig(fields: Record<string, any>, filename: string): SpawnConfig {
+  const block = fields.spawn;
+  if (block == null) return { enabled: false };
+  if (typeof block !== "object" || Array.isArray(block)) {
+    console.error(`Agent file ${filename}: 'spawn' must be a mapping — got ${Array.isArray(block) ? "array" : typeof block}`);
+    return { enabled: false };
   }
-  if (Array.isArray(value)) return value;
+  if (block.enabled !== undefined && typeof block.enabled !== "boolean") {
+    console.error(`Agent file ${filename}: 'spawn.enabled' must be a boolean — got ${typeof block.enabled}`);
+  }
+  return {
+    enabled: block.enabled === true,
+    allowedTypes: block.allowedTypes == null ? undefined : asStringArray(block.allowedTypes),
+  };
+}
+
+/**
+ * DFS the spawn graph and throw on the first cycle found. Undeclared
+ * `allowedTypes` (i.e. "allow any registered type") contributes no static
+ * edges — cycles through such nodes are caught at runtime by the ancestor
+ * chain check, not here.
+ */
+export function validateSpawnGraph(defs: Map<string, AgentDefinition>): void {
+  const state = new Map<string, "visiting" | "done">();
+
+  function dfs(name: string, path: string[]): void {
+    if (state.get(name) === "visiting") {
+      const cycle = [...path.slice(path.indexOf(name)), name].join(" → ");
+      throw new Error(
+        `Spawn cycle detected: ${cycle}. Remove the offending entry from one agent's allowedTypes.`,
+      );
+    }
+    if (state.get(name) === "done") return;
+    state.set(name, "visiting");
+    const children = defs.get(name)?.spawn.allowedTypes ?? [];
+    for (const child of children) {
+      if (defs.has(child)) dfs(child, [...path, name]);
+    }
+    state.set(name, "done");
+  }
+
+  for (const name of defs.keys()) dfs(name, []);
+}
+
+/** Coerce a YAML value to a string array; non-arrays become []. */
+function asStringArray(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map((v) => String(v));
+  if (typeof value === "string") return [value];
   return [];
+}
+
+/** Return the value if it's a string, otherwise undefined. */
+function asOptionalString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
 }
