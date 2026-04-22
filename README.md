@@ -21,7 +21,7 @@ Hand Luxas a research topic in `RESEARCH.md`. It will crawl the literature, down
 
 > *"Il faut imaginer Sisyphe heureux."* — Albert Camus
 
-[Quick Start](#quick-start) · [How It Works](#how-it-works) · [Agents](#agents) · [Stateless Harness](#stateless-harness) · [Safety](#safety) · [FAQ](#faq)
+[Quick Start](#quick-start) · [How It Works](#how-it-works) · [Agent Definitions](#agent-definitions) · [Agents](#agents) · [Safety](#safety) · [FAQ](#faq)
 
 </div>
 
@@ -120,7 +120,7 @@ Luxas vendors four [pi-mono](https://github.com/badlogic/pi-mono) packages (`pi-
 | **1 — System prompt** | `src/agents/definitions/brain.md` | Three cache-controlled blocks: L1 = brain methodology body + smelt patches (1h cache), L2 = RESEARCH.md + skills + lessons (cache), L3 = `<active_agents>` + `<completed_artifacts>` + `<plan_status>` (mutable, in-place rebuild on sub-agent harvest / plan edit). |
 | **2 — Tools** | `src/tools/` | Coding (`read`/`write`/`edit`/`bash`), `compile_latex`, `init_report`, `spawn_agent`, `idle`, `request_pi_review`, `figure-gen` (`generate_raster_component`, `compile_tikz`, `extract_pdf_figures`), `wolfram`, `finish`. |
 | **3 — Context transform** | `src/context.ts` + `src/agents/context-builders.ts` | Per-agent dynamic context injection. Brain gets a research snapshot + a `<figure_convergence>` tag (re-hashed from `illustrator_notes.md` + `typesetter_notes.md` per turn, so the reviewer can short-circuit redundant audits). Two-stage compaction: 60K char warning → 80K hard compress with summary carry-over. |
-| **4 — Hooks** | `src/hooks.ts` | Write-protects `RESEARCH.md`, enforces cost limit (process.exit(1) on exceed), rate-limits search APIs, appends every tool call to `log.jsonl`, snapshots brain state on every `turn_end`. |
+| **4 — Hooks** | `src/hooks.ts` | Write-protects `RESEARCH.md`, enforces cost limit (`process.exit(1)` on exceed), rate-limits search APIs, appends every tool call to `log.jsonl`, snapshots brain state on every `turn_end`. |
 | **5 — PI fallback monitor** | `src/pi-agent.ts` | Schedules the `reviewer` sub-agent on a step-count fallback (every 50 turns without a brain-triggered review) and on milestone tool calls. The reviewer agent itself lives in `src/agents/definitions/reviewer.md` — Opus persona that reads project state, runs the `figure_finalize_loop`, and submits a `continue` / `steer` / `stop` verdict to `reviews/pi_feedback.md`. |
 
 ### Stateless harness
@@ -133,20 +133,6 @@ Luxas vendors four [pi-mono](https://github.com/badlogic/pi-mono) packages (`pi-
 - **Session log** — `log.jsonl` is append-only; `checkpoint.jsonl` is the replayable working memory. On a fresh `luxas run`, a finished session is archived (`.done-<timestamp>.jsonl`) and the next run starts clean.
 
 The philosophy is: prompt is code, `.md` files are long-term memory, `checkpoint.jsonl` is working memory, and the report is the artifact. Every layer of state has a file on disk.
-
-### Generic `spawn_agent`
-
-A single `spawn_agent` tool reads the agent catalog from `src/agents/definitions/*.md` and dispatches by name. Adding a new agent is one `.md` file — frontmatter declares the model, thinking level, tool-sets, safety wrapper, template variables, allowed sub-spawns, and whether it can spawn further sub-agents.
-
-```ts
-spawn_agent({ agent: "experiment", task: "Run 1000 MCMC samples on the Ising model at T=2.0",
-              templateVars: { EXPERIMENT_ID: "E1_ising_mcmc" } })
-spawn_agent({ agent: "search",     task: "Find recent work on energy-based models post-2024" })
-spawn_agent({ agent: "fixer",      task: "compile_latex failed with 'undefined control sequence \\foo'" })
-spawn_agent({ agent: "worker",     tasks: [...parallelTasks], background: true })
-```
-
-Three execution modes: **foreground** (blocks brain, returns result), **parallel** (`tasks: []` — N instances run concurrently, brain blocks on all), **background** (`background: true` — agent runs detached, result steered into brain on next harvest). The brain is hard-locked from calling `finish` while background agents are still running.
 
 ### V5 experiment workflow (Design → Impl + Review → Integrate)
 
@@ -168,13 +154,93 @@ When the reviewer is about to vote `stop`, it first runs the `<figure_finalize_l
 4. Spawn one `typesetter` to rasterize `report/report.pdf` page by page and write `reviews/typesetter_notes.md` (document-level: figure floats vs first `\ref`, caption integrity, column overflow, missing-file red boxes).
 5. Loop only breaks when **both** notes files report `status: all-clear`. Layout issues (which `illustrator` cannot fix) fold into PI's steer feedback for brain to address in the LaTeX source.
 
-The `<figure_convergence>` tag in the reviewer's context is computed from both notes files plus a re-hash of every recorded artifact (figures, plot scripts, style guide, `report.pdf`). If `converged`, the loop short-circuits — re-auditing unchanged artifacts is pure waste.
+The `<figure_convergence>` tag in the reviewer's context is computed from both notes files plus a re-hash of every recorded artifact. If `converged`, the loop short-circuits — re-auditing unchanged artifacts is pure waste.
+
+---
+
+## Agent Definitions
+
+Every agent lives in `src/agents/definitions/*.md`. Each file is YAML frontmatter (the config) + markdown body (the system prompt). **TypeScript interprets the frontmatter; it never hard-codes per-agent behaviour**. Adding an agent, changing permissions, or restricting its spawn reach is one `.md` edit.
+
+### Example: `tool_impl.md` frontmatter
+
+```yaml
+---
+name: tool_impl
+description: >
+  Writes impl scripts from a tool description, blind to the test agent.
+model: sonnet
+thinkingLevel: medium
+toolSets: [coding]
+templates: [PROJECT_DIR, EXPERIMENT_ID, TOOL_NAME]
+
+spawn:
+  enabled: false
+
+safety:
+  presets: [research_brief, report_surface, notes_ledger]
+  allowedReadRoots: ["data/experiments/{{EXPERIMENT_ID}}"]
+  writeOnExistingPolicy: block
+---
+
+You write ONE Python tool from its description...
+```
+
+### Frontmatter schema
+
+| Field | Meaning |
+|---|---|
+| `name` | Unique identifier used by `spawn_agent` |
+| `description` | Shown in the `spawn_agent` catalog that parent agents see |
+| `model` | `opus` / `sonnet` / `haiku` / `gpt-5.2` / `inherit` |
+| `thinkingLevel` | `off` / `low` / `medium` / `high` |
+| `toolSets` | Names from `src/agents/tool-sets.ts` (`coding`, `report`, `pi`, `wolfram`, `figure-gen`) |
+| `contextBuilder` | Optional — name of a dynamic-context builder in `src/agents/context-builders.ts` |
+| `templates` | Variable names the prompt body references as `{{VAR}}` |
+| `spawn.enabled` | `true` = this agent can spawn sub-agents; `false` = leaf |
+| `spawn.allowedTypes` | Whitelist of child agent types. Omit = allow any registered type |
+| `safety.presets` | Names from `src/agents/safety-presets.ts` — groups of protected paths |
+| `safety.protectedFiles` | Additional paths beyond those from presets |
+| `safety.allowedReadRoots` | Restrict read scope (supports `{{VAR}}` templates). Omit = no restriction |
+| `safety.writeOnExistingPolicy` | `block` (force `edit`) or `allow_as_read` (default: `block`) |
+
+### Safety presets (`src/agents/safety-presets.ts`)
+
+| Preset | Paths |
+|---|---|
+| `research_brief` | `RESEARCH.md` |
+| `report_surface` | `report.tex`, `references.bib`, `notes/literature.md` |
+| `notes_ledger` | `notes/experiments.md`, `notes/memory.md`, `notes/plan.md` |
+| `experiment_scope` | `data/experiments/{{EXPERIMENT_ID}}` |
+
+An agent composes presets to express its surface: `tool_impl` uses `[research_brief, report_surface, notes_ledger]` to block everything the experiment owns, then `allowedReadRoots` to scope it to its own experiment's dir.
+
+### Load-time validation
+
+Two checks run when `loadAgentDefinitions` parses the `.md` files:
+
+- **Preset names** — unknown `safety.presets` entries hard-fail with filename context (typos don't silently degrade protection).
+- **Spawn graph** — `validateSpawnGraph` runs DFS over the `spawn.allowedTypes` edges across all agents. A declared cycle throws at startup, not at runtime, with the full path (`brain → experiment → brain`).
+
+### Spawn semantics
+
+```ts
+spawn_agent({ agent: "experiment", task: "Run 1000 MCMC samples on the Ising model at T=2.0",
+              templateVars: { EXPERIMENT_ID: "E1_ising_mcmc" } })
+spawn_agent({ agent: "search",     task: "Find recent work on energy-based models post-2024" })
+spawn_agent({ agent: "fixer",      task: "compile_latex failed with 'undefined control sequence \\foo'" })
+spawn_agent({ agent: "worker",     tasks: [...parallelTasks], background: true })
+```
+
+Three execution modes: **foreground** (blocks brain, returns result), **parallel** (`tasks: []` — N instances run concurrently, brain blocks on all), **background** (`background: true` — agent runs detached, result steered into brain on next harvest). The brain is hard-locked from calling `finish` while background agents are still running.
+
+Sub-agent spawn depth is globally capped at **2** (`MAX_SPAWN_DEPTH` in `spawn.ts`).
 
 ---
 
 ## Agents
 
-Fourteen agent types ship by default. All definitions live in `src/agents/definitions/` as YAML-frontmatter + markdown files.
+Fourteen agent types ship by default.
 
 | Agent | Model | Role |
 |---|---|---|
@@ -188,18 +254,16 @@ Fourteen agent types ship by default. All definitions live in `src/agents/defini
 | **experiment_reviewer** | Opus (medium) | Auto-spawned post-experiment. Reads the L2.X section, results, raw data, cited literature; verdict `satisfied` / `revise`. |
 | **math** | OpenAI o3 | Symbolic derivation — integrals, ODEs/PDEs, Taylor expansions, dimensional analysis. Wolfram Engine via `wolframscript`; sympy fallback. |
 | **illustrator** | Sonnet (high) | Visual designer with zero domain expertise. Two modes: **audit** (read figures + style guide, write `illustrator_notes.md` with 12-item checklist) and **generate** (edit `data/scripts/plot_*.py` in place + rerun, or pgfplots / hybrid Nano Banana + TikZ for schematics). |
-| **illustrator_write** | Sonnet (medium) | Domain-aware first-pass plot script author. Reads raw NPZ/CSV from a run dir, writes `plot_<topic>.py`, runs it, lands the PDF + PNG at `report/figures/`. Bridges raw data → first-draft plot before `illustrator` polishes. |
+| **illustrator_write** | Sonnet (medium) | Domain-aware first-pass plot script author. Reads raw NPZ/CSV from a run dir, writes `plot_<topic>.py`, runs it, lands the PDF + PNG at `report/figures/`. |
 | **typesetter** | Sonnet (medium) | Document-level layout auditor. Rasterizes `report.pdf` via pdftoppm, reads each page image, writes `reviews/typesetter_notes.md`. Catches what `illustrator` cannot: figure floats, caption splits, column overflow, missing-file red boxes, orphan headings. Strictly orthogonal to `illustrator` (figures) and `reviewer` (content). |
 | **reviewer** | Opus (medium) | Adversarial PI. Reads project state, challenges findings on content, runs the `figure_finalize_loop` (illustrator + typesetter) before any `stop` verdict. Returns `continue` / `steer` / `stop` to `reviews/pi_feedback.md`. |
 | **fixer** | Haiku (low) | Mechanical LaTeX compile-error fixer. Single-edit + recompile loop. Brain delegates here instead of burning Opus tokens on syntax debugging. |
-
-The brain can spawn most of them; sub-brains are allowed up to depth 2. Each agent declares its `spawn.allowedTypes` list in frontmatter (e.g. `experiment` can only spawn `[tool_impl, tool_review, math, reader]`).
 
 ---
 
 ## Tools
 
-Tool visibility is per-agent, controlled by `toolSets` in each agent definition.
+Tool visibility is per-agent, controlled by `toolSets` in each `.md` definition.
 
 **Brain tools** (`src/tools/index.ts`):
 
@@ -211,7 +275,7 @@ Tool visibility is per-agent, controlled by `toolSets` in each agent definition.
 | `spawn_agent` | Generic agent spawner (foreground / parallel / background) |
 | `idle` | Block on running background agents at zero LLM cost; harness polls the registry and returns all completions in one tool output |
 | `request_pi_review` | Brain-triggered milestone review (alternative to the step-count fallback in `pi-agent.ts`) |
-| `finish` | Marks research complete. Blocked unless: `report.pdf` exists, ≥1 self-generated figure, no `Pending` experiment sections, no missing experiment status, no background agents running, PI verdict ≠ `steer` (or pushback fresher than feedback), `typesetter_notes.md` status `all-clear` with matching `report_pdf_md5`. |
+| `finish` | Marks research complete — gated on the full finish-gate stack (see [Safety](#safety)) |
 
 **Sub-agent-only tool-sets** (`src/agents/tool-sets.ts`):
 
@@ -266,7 +330,7 @@ Luxas borrows the pre-compaction memory flush from OpenClaw, but stays file-base
 
 ## Safety
 
-Every constraint is a hook, a tool guard, or a finish-gate — not a prompt-level instruction. The brain cannot talk its way out of them.
+Every constraint is a hook, a tool guard, a frontmatter-declared scope, or a finish-gate — not a prompt-level instruction. The brain cannot talk its way out of them.
 
 | Limit | Default | Enforced by |
 |---|---|---|
@@ -274,16 +338,25 @@ Every constraint is a hook, a tool guard, or a finish-gate — not a prompt-leve
 | Max LLM turns per run | 500 — `process.exit(1)` on exceed (replaced wall-clock 8h limit; observed $70 burn from a stuck retry loop) | `agent.ts` |
 | PI review fallback interval | every 50 turns without a brain-triggered review | `pi-agent.ts` |
 | Max sub-agent spawn depth | 2 | `agents/spawn.ts` |
+| Spawn graph acyclicity | declared cycles throw at startup | `agents/registry.ts::validateSpawnGraph` |
 | Max compaction failures before abort | 3 | `context.ts` |
-| `RESEARCH.md` | write-protected | `hooks.ts` |
-| Brain write policy | block-on-existing-via-`write` (force `edit`); read-before-edit enforced with mtime staleness + fresh-excerpt recovery | `agents/safety-wrappers.ts` |
-| `experiment` write scope | report surface (`report.tex`, `references.bib`, `notes/literature.md`) blocked; can write `notes/experiments.md`, `notes/memory.md`, `data/experiments/**` | `agents/safety-wrappers.ts` |
-| `tool_impl` / `tool_review` read scope | hard-scoped to `data/experiments/{{EXPERIMENT_ID}}/`; cannot read other experiments or papers | `agents/safety-wrappers.ts` |
-| `illustrator_write` / `illustrator` write scope | `report/figures/`, `data/experiments/*/scripts/plot_*.py`; report surface + notes ledger blocked | `agents/safety-wrappers.ts` |
-| `typesetter` write scope | `reviews/typesetter_notes.md` + scratch `reviews/typesetter_pages/`; cannot touch report or notes | `agents/safety-wrappers.ts` |
-| `finish` gate stack | (a) no background agents running, (b) every L2.X section is `Complete` or `Deferred:<reason>`, (c) `report.pdf` exists, (d) ≥1 self-generated figure, (e) `typesetter_notes.md` status `all-clear` + `report_pdf_md5` matches live PDF, (f) PI verdict ≠ `steer` (or `pi_pushback.md` mtime > `pi_feedback.md` mtime) | `tools/index.ts` |
+| `RESEARCH.md` | write-protected (via `safety.presets: [research_brief]`) | declared in every writing agent's `.md` |
+| Per-agent write scope | `safety.presets` + `safety.protectedFiles`; default `writeOnExistingPolicy: block` (forces `edit` over `write`) | compiled by `buildSafetyWrapper` from each agent's `.md` |
+| Per-agent read scope | `safety.allowedReadRoots` with `{{VAR}}` templating (e.g. `tool_impl` / `tool_review` scoped to `data/experiments/{{EXPERIMENT_ID}}/`) | compiled by `buildSafetyWrapper` |
+| `finish` gate stack | (a) no background agents running, (b) every `## L2.X` section is `Complete` or `Deferred:<reason>`, (c) `report.pdf` exists, (d) ≥1 self-generated figure, (e) `typesetter_notes.md` status `all-clear` + `report_pdf_md5` matches live PDF, (f) PI verdict ≠ `steer` (or `pi_pushback.md` mtime > `pi_feedback.md` mtime) | `tools/index.ts` |
 
 The `finish` tool is the only clean exit. Anything else is a crash, and the stateless harness is designed to survive crashes. The PI-pushback escape exists so brain can defensibly disagree with PI without entering a dead loop — it must produce written justification fresher than the disputed feedback, and `maxTurns` caps any true runaway at bounded damage.
+
+**The write scopes the table calls out are not TS code** — they live in the agent's own `.md` frontmatter. For example, `tool_impl.md` declares:
+
+```yaml
+safety:
+  presets: [research_brief, report_surface, notes_ledger]
+  allowedReadRoots: ["data/experiments/{{EXPERIMENT_ID}}"]
+  writeOnExistingPolicy: block
+```
+
+`buildSafetyWrapper` compiles that declaration into the runtime tool-layer checks. Changing what an agent can write or read is an `.md` edit; `safety-wrappers.ts` has no agent names in it.
 
 ---
 
@@ -316,17 +389,15 @@ luxas/
 │   ├── transform.ts                ← cross-model message cleaning on resume
 │   ├── edit-recovery.ts            ← fresh-excerpt recovery on edit failure
 │   ├── messages.ts                 ← message helpers
-│   ├── extensions.ts / utils.ts    ← misc
+│   ├── utils.ts                    ← expandTemplate + misc helpers
 │   ├── agents/
-│   │   ├── definitions/            ← brain.md, search.md, reader.md, worker.md,
-│   │   │                              experiment.md, tool_impl.md, tool_review.md,
-│   │   │                              experiment_reviewer.md, math.md, illustrator.md,
-│   │   │                              illustrator_write.md, typesetter.md, reviewer.md, fixer.md
-│   │   ├── registry.ts             ← loads + caches agent definitions
-│   │   ├── spawn.ts                ← buildAgentFromDefinition + reader post-hook (merge-notes)
+│   │   ├── definitions/            ← the 14 agent .md files (name + schema + prompt)
+│   │   ├── registry.ts             ← js-yaml parse + AgentDefinition + validateSpawnGraph + cache
+│   │   ├── spawn.ts                ← buildAgentFromDefinition (assembles agent from .md config)
 │   │   ├── tool-sets.ts            ← named tool-set factories (coding / report / pi / wolfram / figure-gen)
 │   │   ├── context-builders.ts     ← per-agent dynamic context (brain L3 + figure_convergence)
-│   │   └── safety-wrappers.ts      ← runtime tool safety constraints (per-agent write scopes)
+│   │   ├── safety-presets.ts       ← named path groups (research_brief / report_surface / notes_ledger / experiment_scope)
+│   │   └── safety-wrappers.ts      ← buildSafetyWrapper + createSafetyWrapper runtime enforcement
 │   ├── tools/
 │   │   ├── index.ts                ← finish-gate stack + idle + brain tool assembly
 │   │   ├── spawn-agent.ts          ← generic agent spawner + post-experiment reviewer loop
@@ -345,7 +416,7 @@ luxas/
 │   ├── memory/                     ← cross-project memory protocol
 │   ├── matplotlib-figures/         ← style guides + worked examples
 │   └── paper-figures/              ← reference figures by domain
-├── scripts/                        ← smoke tests (smoke_v5_defs, smoke_typesetter, …)
+├── scripts/                        ← smoke tests (smoke_v5_defs, smoke_typesetter, smoke_spawn_cycle_static, …)
 ├── schemas/                        ← JSON schemas for state files
 └── monitor/                        ← log-watching helpers
 ```
@@ -374,8 +445,11 @@ luxas/
 **What is Luxas in one sentence?**
 A stateless, file-backed harness that drives Claude (and friends) through a multi-hour, multi-agent research pipeline from topic to compiled PDF, with adversarial self-review at content / figure-internal / PDF-layout layers and crash-recoverable state.
 
+**How do I add a new agent?**
+Drop a new `.md` into `src/agents/definitions/`. Declare `model`, `thinkingLevel`, `toolSets`, `templates`, `spawn`, and (if it writes to the project) `safety`. No TypeScript changes — `validateSpawnGraph` sanity-checks the graph on next startup and the new agent is immediately visible to `spawn_agent`.
+
 **How is this different from a single long Claude Code session?**
-Claude Code is one agent in one terminal. Luxas is a brain that spawns fourteen kinds of sub-agents (search / reader / worker / experiment / tool_impl / tool_review / experiment_reviewer / math / illustrator / illustrator_write / typesetter / reviewer / fixer / sub-brain) as detached processes, routes each to a different model, enforces safety limits via hooks rather than prompts, maintains file-based notes across compaction, applies a deterministic finish-gate stack, and survives its own crashes.
+Claude Code is one agent in one terminal. Luxas is a brain that spawns fourteen kinds of sub-agents (search / reader / worker / experiment / tool_impl / tool_review / experiment_reviewer / math / illustrator / illustrator_write / typesetter / reviewer / fixer / sub-brain) as detached processes, routes each to a different model, enforces safety limits via hooks and declarative frontmatter rather than prompts, maintains file-based notes across compaction, applies a deterministic finish-gate stack, and survives its own crashes.
 
 **Why split `tool_impl` and `tool_review` instead of letting the experiment write both?**
 Because letting one agent write impl + tests is the classic self-circular failure mode — the impl redefines a field's semantics so its own self-reported value passes its own assertion. Observed live: `max_pair_distance_um` got redefined as post-move distance = 0; tests passed; the tool was wrong. The blind-author split (tool_impl reads only the description; tool_review reads only the description; pytest is the only ground truth) blocks this.
