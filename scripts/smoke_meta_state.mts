@@ -58,6 +58,12 @@ assert(inboxLocked(), "lock acquired");
 releaseInboxLock();
 assert(!inboxLocked(), "lock released");
 
+// Stale-lock reaping: forge a lockfile with a PID that cannot exist.
+// inboxLocked() must detect the dead owner and reap the file.
+writeFileSync(paths.inboxLock, `dead_owner\n2000-01-01T00:00:00Z\n999999\n`);
+assert(!inboxLocked(), "stale lock from dead PID auto-reaped");
+assert(!existsSync(paths.inboxLock), "stale lockfile was unlinked during reap");
+
 // Observation log rotation
 writeFileSync(paths.observations, `{"pattern":"test"}\n`);
 writeFileSync(paths.support, `{"ts":"now"}\n`);

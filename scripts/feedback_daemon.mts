@@ -84,13 +84,17 @@ function handleCurrentVote(): void {
   // Use !== so clock-skew or FS-resolution edge cases (mtime regressing)
   // still trigger a re-read instead of getting stuck.
   if (mt !== 0 && mt === lastMtime.get(votePath)) return;
-  lastMtime.set(votePath, mt);
+
+  let shouldTriggerEvolution = false;
 
   acquireInboxLock("feedback_daemon:current");
   try {
     const vote = parseVote(readFileSync(votePath, "utf-8"), ["a", "b", "tie"]);
     if (!vote) {
       console.error(`[feedback_daemon] VOTE.md touched but no valid vote — waiting`);
+      // Record so we don't re-log every 30s; user's next save bumps mtime
+      // and we re-parse naturally.
+      lastMtime.set(votePath, mt);
       return;
     }
 
@@ -126,15 +130,21 @@ function handleCurrentVote(): void {
     }
 
     archiveInboxSlot("current", outcome);
+    // File is gone after archive; drop the mtime entry so a fresh VOTE.md
+    // written seconds later (possibly with a close mtime) still triggers.
+    lastMtime.delete(votePath);
+
     const n = bumpVoteCounter();
     console.error(`[feedback_daemon] vote_counter = ${n} / ${EVOLUTION_TRIGGER_VOTES}`);
-
-    if (n >= EVOLUTION_TRIGGER_VOTES) {
-      triggerEvolution();
-    }
+    shouldTriggerEvolution = n >= EVOLUTION_TRIGGER_VOTES;
   } finally {
     releaseInboxLock();
   }
+
+  // Defer until after the lock release: evolve_harness re-enters this same
+  // lock via withMetaWorktree; holding it here would wedge every trigger
+  // permanently as lock_conflict.
+  if (shouldTriggerEvolution) triggerEvolution();
 }
 
 function handleEvolutionVote(): void {
@@ -145,11 +155,11 @@ function handleEvolutionVote(): void {
   // Use !== so clock-skew or FS-resolution edge cases (mtime regressing)
   // still trigger a re-read instead of getting stuck.
   if (mt !== 0 && mt === lastMtime.get(votePath)) return;
-  lastMtime.set(votePath, mt);
 
   const vote = parseVote(readFileSync(votePath, "utf-8"), ["approve", "reject"]);
   if (!vote) {
     console.error(`[feedback_daemon] evolution VOTE.md touched but no valid vote — waiting`);
+    lastMtime.set(votePath, mt);
     return;
   }
   console.error(`[feedback_daemon] evolution vote: ${vote}`);
@@ -162,6 +172,7 @@ function handleEvolutionVote(): void {
     deleteBranchIfExists(sisyphusRoot, EVOLUTION_BRANCH);
     archiveInboxSlot("evolution", "rejected");
   }
+  lastMtime.delete(votePath);
   // Reset vote counter regardless of outcome — either way, the 10-vote cycle
   // has been processed.
   resetVoteCounter();
@@ -188,9 +199,10 @@ function triggerEvolution(): void {
 console.error(`[feedback_daemon] started. watching ${paths.inboxDir} (poll ${POLL_INTERVAL_MS / 1000}s)`);
 
 function tick(): void {
+  // Each handler owns its own try/finally for the lock. Don't release here:
+  // an early throw (pre-acquire) would otherwise steal another process's lock.
   try { handleCurrentVote(); } catch (err: any) {
     console.error(`[feedback_daemon] handleCurrentVote error: ${err?.message ?? err}`);
-    releaseInboxLock();
   }
   try { handleEvolutionVote(); } catch (err: any) {
     console.error(`[feedback_daemon] handleEvolutionVote error: ${err?.message ?? err}`);

@@ -58,14 +58,18 @@ const result = await withMetaWorktree(
       throw new Error(`reflect agent failed with status ${reflectRes.status}`);
     }
 
+    // Reflect consumed the observations. Rotate + reset NOW, not at the tail
+    // of the success path: if A/B throws below, we still want counter cleared
+    // so we don't re-invoke this (expensive opus) agent on every next session.
+    rotateObservationLogs();
+    resetRunCounter();
+
     const diff = git(worktree, "status", "--porcelain", "src/agents/definitions", "skills");
     const hasDiff = diff.trim().length > 0;
     console.error(`[reflect_harness] working-tree diff: ${hasDiff ? "yes" : "no"}`);
 
     if (!hasDiff) {
       console.error("[reflect_harness] evidence-only update, PROPOSAL.md saved by agent. skipping A/B.");
-      rotateObservationLogs();
-      resetRunCounter();
       return;
     }
 
@@ -92,8 +96,6 @@ const result = await withMetaWorktree(
       );
     }
 
-    rotateObservationLogs();
-    resetRunCounter();
     console.error(`[reflect_harness] done. Inbox pending at ${paths.inboxCurrent}`);
   },
 );

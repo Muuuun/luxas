@@ -17,7 +17,7 @@ import {
   releaseInboxLock,
   type MetaPaths,
 } from "./state.js";
-import { git, removeWorktree } from "./git-helpers.js";
+import { git, gitTry, removeWorktree } from "./git-helpers.js";
 
 export interface WorktreeOptions {
   /** Label recorded in the lock file. Appears in debug output. */
@@ -42,6 +42,10 @@ export async function withMetaWorktree(
   acquireInboxLock(opts.lockOwner);
 
   const worktree = mkdtempSync(join(tmpdir(), opts.worktreePrefix));
+  // Reap registrations whose working dirs were deleted out-of-band (previous
+  // harness SIGKILLed before its own finally ran). Without this, a stale
+  // entry holding meta/pending or meta/evolution blocks later branch -D.
+  gitTry(sisyphusRoot, "worktree", "prune");
   git(sisyphusRoot, "worktree", "add", "--detach", worktree, opts.base ?? "main");
 
   try {

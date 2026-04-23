@@ -146,13 +146,39 @@ export function rotateObservationLogs(): { observations: string; support: string
 // progress and releases after merge/discard. The harness refuses to update
 // current/ while the lock file exists.
 
+/**
+ * Returns true only if the lockfile exists AND the PID written into it is
+ * still alive. A SIGKILL or power loss on the owner would otherwise wedge
+ * every harness/daemon permanently; we auto-reap here.
+ *
+ * PID wrap-around (same PID recycled to a different process) is accepted as
+ * a rare false-positive — worst case is one extra polling cycle deferred.
+ */
 export function inboxLocked(): boolean {
-  return existsSync(getMetaPaths().inboxLock);
+  const p = getMetaPaths().inboxLock;
+  let raw: string;
+  try { raw = readFileSync(p, "utf-8"); }
+  catch (err: any) {
+    if (err?.code === "ENOENT") return false;
+    throw err;
+  }
+  const parts = raw.split("\n");
+  const pid = Number(parts[2]);
+  if (Number.isFinite(pid) && pid > 0 && !processAlive(pid)) {
+    console.error(`[meta-state] reaping stale inbox lock from dead PID ${pid} (owner: ${parts[0]})`);
+    try { unlinkSync(p); } catch {}
+    return false;
+  }
+  return true;
+}
+
+function processAlive(pid: number): boolean {
+  try { process.kill(pid, 0); return true; } catch { return false; }
 }
 
 export function acquireInboxLock(owner: string): void {
   const p = getMetaPaths().inboxLock;
-  writeFileSync(p, `${owner}\n${new Date().toISOString()}\n`);
+  writeFileSync(p, `${owner}\n${new Date().toISOString()}\n${process.pid}\n`);
 }
 
 export function releaseInboxLock(): void {

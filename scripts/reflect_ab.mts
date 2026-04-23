@@ -51,6 +51,22 @@ if (!sisyphusRoot || !pendingBranch) {
 const paths = ensureMetaDirs();
 const benchDir = join(sisyphusRoot, "benchmarks");
 
+// Keep the a/b/tie vocabulary in rationale-only cases so the daemon's vote
+// parser doesn't need a second schema. Convention: A = accept proposal (merge
+// pending), B = keep old (discard), tie = B.
+function writeRationaleOnlyVote(header: string, body: string): void {
+  mkdirSync(paths.inboxCurrent, { recursive: true });
+  const assign: Record<string, { A: "main" | "pending"; B: "main" | "pending" }> = {
+    __rationale_only__: { A: "pending", B: "main" },
+  };
+  writeFileSync(join(paths.inboxCurrent, ".assign.json"), JSON.stringify(assign, null, 2));
+  writeFileSync(
+    join(paths.inboxCurrent, "VOTE.md"),
+    `# ${header}\n\n${body}\n\nchoice: \n\n` +
+    `(\`A\` = accept proposal (merge meta/pending), \`B\` = reject, \`tie\` = reject)\n`,
+  );
+}
+
 function emitNoBenchmarksNote(reason: string): void {
   mkdirSync(paths.inboxCurrent, { recursive: true });
   writeFileSync(
@@ -61,19 +77,9 @@ function emitNoBenchmarksNote(reason: string): void {
     `Populate \`${benchDir}\` with subdirectories each containing a RESEARCH.md\n` +
     `to restore the paired A/B workflow on the next deep review.\n`,
   );
-  // Keep the a/b/tie vocabulary even in the rationale-only case so the
-  // daemon's vote parser doesn't need a second schema. Convention here:
-  // A = accept proposal (merge pending), B = keep old (discard), tie = B.
-  const assign: Record<string, { A: "main" | "pending"; B: "main" | "pending" }> = {
-    __rationale_only__: { A: "pending", B: "main" },
-  };
-  writeFileSync(join(paths.inboxCurrent, ".assign.json"), JSON.stringify(assign, null, 2));
-  writeFileSync(
-    join(paths.inboxCurrent, "VOTE.md"),
-    `# Vote (rationale-only, no A/B PDFs)\n\n` +
-    `No benchmark PDFs available. Read PROPOSAL.md and decide on the proposal's plausibility.\n\n` +
-    `choice: \n\n` +
-    `(\`A\` = accept proposal (merge meta/pending), \`B\` = reject, \`tie\` = reject)\n`,
+  writeRationaleOnlyVote(
+    "Vote (rationale-only, no A/B PDFs)",
+    "No benchmark PDFs available. Read PROPOSAL.md and decide on the proposal's plausibility.",
   );
 }
 
@@ -203,6 +209,15 @@ if (paired > 0) {
     `Read both, decide which is better overall, and write your choice below.\n\n` +
     `choice: \n\n` +
     `(valid values: \`A\`, \`B\`, \`tie\`. Daemon watches this file and merges/discards on save.)\n`,
+  );
+} else {
+  // Benchmarks existed but all replicates failed — no PDFs paired. Falling
+  // through without writing .assign.json would let the daemon decode every
+  // non-tie vote as "rejected" (both tallies stay 0).
+  writeRationaleOnlyVote(
+    "Vote (rationale-only — A/B runs failed)",
+    `Benchmarks existed but all ${benches.length} × ${AB_REPLICATES} × 2 Sisyphus runs failed to produce PDFs.\n` +
+    `Read PROPOSAL.md and decide on the proposal's plausibility.`,
   );
 }
 
