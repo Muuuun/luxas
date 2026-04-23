@@ -27,7 +27,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   ensureMetaDirs,
@@ -80,6 +80,11 @@ function handleCurrentVote(): void {
   const votePath = join(paths.inboxCurrent, "VOTE.md");
   if (!existsSync(votePath)) return;
 
+  // If a prior merge attempt produced a conflict, don't loop-retry every 30s
+  // until the user resolves manually and deletes the marker.
+  const conflictPath = join(paths.inboxCurrent, "MERGE_CONFLICT.md");
+  if (existsSync(conflictPath)) return;
+
   const mt = mtimeOrZero(votePath);
   // Use !== so clock-skew or FS-resolution edge cases (mtime regressing)
   // still trigger a re-read instead of getting stuck.
@@ -122,7 +127,22 @@ function handleCurrentVote(): void {
       outcome = "tie";
     } else if (pendingWins > mainWins) {
       console.error(`[feedback_daemon] merging ${PENDING_BRANCH} into main`);
-      mergeBranchToMain(sisyphusRoot, PENDING_BRANCH);
+      try {
+        mergeBranchToMain(sisyphusRoot, PENDING_BRANCH);
+      } catch (err: any) {
+        const msg = err?.message ?? String(err);
+        console.error(`[feedback_daemon] merge failed: ${msg}`);
+        writeFileSync(
+          conflictPath,
+          `# Merge conflict — pending → main\n\n` +
+          `The daemon tried to merge \`${PENDING_BRANCH}\` into \`main\` after your vote and git reported a conflict:\n\n` +
+          `\`\`\`\n${msg}\n\`\`\`\n\n` +
+          `Resolve manually (e.g. \`git checkout main && git merge --no-ff ${PENDING_BRANCH}\` and fix conflicts), then\n` +
+          `delete this file to unblock the daemon. Re-save VOTE.md after resolving if you want the merge retried.\n`,
+        );
+        lastMtime.set(votePath, mt);
+        return;
+      }
       outcome = "merged";
     } else {
       deleteBranchIfExists(sisyphusRoot, PENDING_BRANCH);
@@ -151,31 +171,53 @@ function handleEvolutionVote(): void {
   const votePath = join(paths.inboxEvolution, "VOTE.md");
   if (!existsSync(votePath)) return;
 
+  const conflictPath = join(paths.inboxEvolution, "MERGE_CONFLICT.md");
+  if (existsSync(conflictPath)) return;
+
   const mt = mtimeOrZero(votePath);
   // Use !== so clock-skew or FS-resolution edge cases (mtime regressing)
   // still trigger a re-read instead of getting stuck.
   if (mt !== 0 && mt === lastMtime.get(votePath)) return;
 
-  const vote = parseVote(readFileSync(votePath, "utf-8"), ["approve", "reject"]);
-  if (!vote) {
-    console.error(`[feedback_daemon] evolution VOTE.md touched but no valid vote — waiting`);
-    lastMtime.set(votePath, mt);
-    return;
-  }
-  console.error(`[feedback_daemon] evolution vote: ${vote}`);
+  acquireInboxLock("feedback_daemon:evolution");
+  try {
+    const vote = parseVote(readFileSync(votePath, "utf-8"), ["approve", "reject"]);
+    if (!vote) {
+      console.error(`[feedback_daemon] evolution VOTE.md touched but no valid vote — waiting`);
+      lastMtime.set(votePath, mt);
+      return;
+    }
+    console.error(`[feedback_daemon] evolution vote: ${vote}`);
 
-  if (vote === "approve") {
-    console.error(`[feedback_daemon] merging ${EVOLUTION_BRANCH} into main`);
-    mergeBranchToMain(sisyphusRoot, EVOLUTION_BRANCH);
-    archiveInboxSlot("evolution", "merged");
-  } else {
-    deleteBranchIfExists(sisyphusRoot, EVOLUTION_BRANCH);
-    archiveInboxSlot("evolution", "rejected");
+    if (vote === "approve") {
+      console.error(`[feedback_daemon] merging ${EVOLUTION_BRANCH} into main`);
+      try {
+        mergeBranchToMain(sisyphusRoot, EVOLUTION_BRANCH);
+      } catch (err: any) {
+        const msg = err?.message ?? String(err);
+        console.error(`[feedback_daemon] evolution merge failed: ${msg}`);
+        writeFileSync(
+          conflictPath,
+          `# Merge conflict — evolution → main\n\n` +
+          `Tried to merge \`${EVOLUTION_BRANCH}\` into \`main\` after your approve vote and got:\n\n` +
+          `\`\`\`\n${msg}\n\`\`\`\n\n` +
+          `Resolve manually, then delete this file. Re-save VOTE.md to retry.\n`,
+        );
+        lastMtime.set(votePath, mt);
+        return;
+      }
+      archiveInboxSlot("evolution", "merged");
+    } else {
+      deleteBranchIfExists(sisyphusRoot, EVOLUTION_BRANCH);
+      archiveInboxSlot("evolution", "rejected");
+    }
+    lastMtime.delete(votePath);
+    // Reset vote counter regardless of outcome — either way, the 10-vote cycle
+    // has been processed.
+    resetVoteCounter();
+  } finally {
+    releaseInboxLock();
   }
-  lastMtime.delete(votePath);
-  // Reset vote counter regardless of outcome — either way, the 10-vote cycle
-  // has been processed.
-  resetVoteCounter();
 }
 
 function triggerEvolution(): void {
@@ -187,10 +229,17 @@ function triggerEvolution(): void {
   const r = spawnSync(
     "npx",
     ["tsx", join(sisyphusRoot, "scripts/evolve_harness.mts"), sisyphusRoot],
-    { stdio: "inherit", cwd: sisyphusRoot },
+    // Opus + rationale-only (no A/B) → order of minutes, not hours. 30min cap
+    // so a stalled LLM can't freeze the daemon's poll loop indefinitely
+    // (spawnSync is blocking; signals don't interrupt it).
+    { stdio: "inherit", cwd: sisyphusRoot, timeout: 30 * 60_000 },
   );
   if (r.status !== 0) {
-    console.error(`[feedback_daemon] evolve_harness failed with status ${r.status}`);
+    if (r.signal === "SIGTERM") {
+      console.error(`[feedback_daemon] evolve_harness timed out after 30min — killed`);
+    } else {
+      console.error(`[feedback_daemon] evolve_harness failed with status ${r.status}`);
+    }
   }
 }
 

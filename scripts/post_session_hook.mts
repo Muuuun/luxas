@@ -46,6 +46,16 @@ if (!existsSync(join(sisyphusRoot, "src/meta-agents"))) {
 
 const paths = ensureMetaDirs();
 
+// Check the lock BEFORE reflect_light runs: if reflect_harness is already
+// executing, reflect_light's append to observations.jsonl would race against
+// reflect's read, and the just-appended line would be rotated into archive
+// without ever being consumed. Skipping this session's observation is a
+// cheaper loss than silently-dropped evidence.
+if (inboxLocked()) {
+  console.error(`[post-session-hook] inbox locked — skipping reflect_light + deep review this session`);
+  process.exit(0);
+}
+
 // ── 1. Run reflect_light against the just-finished session ────────────────
 
 const lightVars = {
@@ -65,7 +75,9 @@ const lightResult = spawnSync(
     JSON.stringify(lightVars),
     `Classify session at ${sessionJsonl}. Append to observations or support jsonl per your workflow.`,
   ],
-  { stdio: "inherit", cwd: sisyphusRoot },
+  // Haiku + low thinking: ≤20 turns budget. 5min hard cap prevents an API
+  // stall from hanging this fire-and-forget hook indefinitely.
+  { stdio: "inherit", cwd: sisyphusRoot, timeout: 5 * 60_000 },
 );
 if (lightResult.status !== 0) {
   console.error(`reflect_light failed with status ${lightResult.status}`);
@@ -79,17 +91,15 @@ console.error(`[post-session-hook] run_counter = ${n} / ${DEEP_REVIEW_EVERY_N_SE
 
 if (n < DEEP_REVIEW_EVERY_N_SESSIONS) process.exit(0);
 
-// Deep review gated: never fire if user is mid-vote on existing pending.
-if (inboxLocked()) {
-  console.error(`[post-session-hook] inbox locked (user voting) — deferring deep review`);
-  process.exit(0);
-}
-
 console.error(`[post-session-hook] threshold reached — invoking reflect_harness (deep)`);
 const deepResult = spawnSync(
   "npx",
   ["tsx", join(sisyphusRoot, "scripts/reflect_harness.mts"), sisyphusRoot],
-  { stdio: "inherit", cwd: sisyphusRoot },
+  // Opus-high-thinking reflect + up to 30 A/B Sisyphus runs. 2h bound is
+  // generous but finite — beyond this assume stall and let the next session
+  // retry via its own hook. The harness itself releases the inbox lock on
+  // stdlib-cleanup so even a kill won't permanently wedge (stale-PID reaper).
+  { stdio: "inherit", cwd: sisyphusRoot, timeout: 2 * 60 * 60_000 },
 );
 
 if (deepResult.status === 0) {

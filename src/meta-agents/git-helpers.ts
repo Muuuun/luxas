@@ -73,8 +73,11 @@ export function mergeBranchToMain(cwd: string, branch: string): void {
 export function removeWorktree(cwd: string, worktreePath: string): void {
   try {
     git(cwd, "worktree", "remove", "--force", worktreePath);
-  } catch {
-    // Let the caller deal with any residual path — we've done what we can
-    // without risking rm -rf on a bad path from a failure mode upstream.
+  } catch (err: any) {
+    // Don't throw — cleanup must not mask the caller's real failure — but DO
+    // log: a corrupted worktree registration that `git worktree prune` can't
+    // reap (path still exists but broken) would otherwise silently block the
+    // next harness's branch -D.
+    console.error(`[git-helpers] removeWorktree(${worktreePath}) failed: ${err?.message ?? err}`);
   }
 }

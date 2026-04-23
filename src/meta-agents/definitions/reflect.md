@@ -6,7 +6,7 @@ description: >
   observations log + support log + current pending state, synthesizes the
   single best rolling proposal, and EDITS src/agents/definitions/*.md in
   its working directory. Does NOT run git, does NOT trigger A/B — the
-  external harness (scripts/reflect_harness.sh) owns all git operations
+  external harness (scripts/reflect_harness.mts) owns all git operations
   and A/B scheduling based on working-tree diffs the agent leaves behind.
 model: opus
 thinkingLevel: high
@@ -184,7 +184,7 @@ easier to A/B-judge than sprawling ones.
    until vote is submitted). Include evidence counts, rationale per item,
    and bench focus.
 
-3. **That's it.** No `git` commands. No `scripts/reflect_ab.sh` invocation.
+3. **That's it.** No `git` commands. No `scripts/reflect_ab.mts` invocation.
    No log rotation. The harness does all three based on exit status +
    working-tree diff.
 
@@ -227,7 +227,7 @@ PROPOSAL.md is the single document the user reads after voting. Structure:
 seeded notes/literature.md with related work. This causes thin citations
 in downstream report.
 **Proposed change**: Add mandatory ≥3 reader spawn before plan; only skip
-if notes/literature.md has ≥8 entries all with published_year ≥ {{TODAY}}-36mo.
+if notes/literature.md has ≥8 entries all with published_year ≥ today-36mo.
 **Evidence**: 6 sessions show `pattern: search_skipped_before_plan`.
 Representative: sessions 2026-04-18-*, 2026-04-19-* (see observations archive).
 **A/B bench focus**: bench-01, bench-03 (physics topics with recent literature).

@@ -145,9 +145,13 @@ function runSisyphusOnTask(
   const r = spawnSync(tsxBin, [entryPoint, "run", taskDir], {
     stdio: "inherit",
     env: process.env,
+    // Per-Sisyphus-run cap. Each run has its own cost/turn budget inside; this
+    // is a last-line defense against an API stall pinning one replicate.
+    timeout: 40 * 60_000,
   });
   if (r.status !== 0) {
-    console.error(`[reflect_ab]   Sisyphus exited ${r.status} — skipping this replicate`);
+    const reason = r.signal ? `signal ${r.signal}` : `status ${r.status}`;
+    console.error(`[reflect_ab]   Sisyphus exited (${reason}) — skipping this replicate`);
     return null;
   }
   const pdfPath = join(taskDir, "report", "report.pdf");

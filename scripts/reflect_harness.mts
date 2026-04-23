@@ -15,7 +15,6 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   resetRunCounter,
@@ -52,10 +51,12 @@ const result = await withMetaWorktree(
         JSON.stringify(deepVars),
         "Deep review. Consolidate accumulated observations; update rolling pending; edit src/agents/definitions/*.md in this worktree if the diff should change.",
       ],
-      { stdio: "inherit", cwd: sisyphusRoot },
+      // Opus + high thinking on up-to-all-observation synthesis. 45min cap
+      // lets a complex clustering run finish; beyond that assume stall.
+      { stdio: "inherit", cwd: sisyphusRoot, timeout: 45 * 60_000 },
     );
     if (reflectRes.status !== 0) {
-      throw new Error(`reflect agent failed with status ${reflectRes.status}`);
+      throw new Error(`reflect agent failed with status ${reflectRes.status}${reflectRes.signal ? ` (signal ${reflectRes.signal})` : ""}`);
     }
 
     // Reflect consumed the observations. Rotate + reset NOW, not at the tail
@@ -82,18 +83,13 @@ const result = await withMetaWorktree(
     const abRes = spawnSync(
       "npx",
       ["tsx", join(sisyphusRoot, "scripts/reflect_ab.mts"), sisyphusRoot, PENDING_BRANCH],
-      { stdio: "inherit", cwd: sisyphusRoot },
+      // N_benches × 3 replicates × 2 sides full Sisyphus runs. 90min cap is
+      // per-A/B-harness, not per-run; each Sisyphus invocation has its own
+      // budget inside (see reflect_ab.mts).
+      { stdio: "inherit", cwd: sisyphusRoot, timeout: 90 * 60_000 },
     );
     if (abRes.status !== 0) {
-      throw new Error(`A/B run failed (status ${abRes.status}); branch left in place but inbox may be incomplete`);
-    }
-
-    const votePath = join(paths.inboxCurrent, "VOTE.md");
-    if (!existsSync(votePath)) {
-      writeFileSync(votePath,
-        `# Vote\n\nCompare A.pdf and B.pdf side by side. Write your choice on the line below: one of \`A\`, \`B\`, or \`tie\`. Daemon will detect the edit and merge/discard automatically.\n\n` +
-        `choice: \n`
-      );
+      throw new Error(`A/B run failed (status ${abRes.status}${abRes.signal ? `, signal ${abRes.signal}` : ""}); branch left in place but inbox may be incomplete`);
     }
 
     console.error(`[reflect_harness] done. Inbox pending at ${paths.inboxCurrent}`);
