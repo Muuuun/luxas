@@ -103,6 +103,24 @@ If tests fail, send the full pytest output to `tool_impl` via SendMessage (the a
 
 If review's tests reveal an issue with the **description itself** (ambiguity, physically impossible constraint, missing semantics), pause the loop and refine the tool description — not the impl. Then re-spawn both.
 
+<subagent_exit_handling strict="true">
+`spawn_agent` results may include a structured suffix like:
+
+```
+[sub-agent exit: stopReason=length, filesTouched=2, toolCalls=4]
+  touched: write:data/experiments/.../scripts/foo.py, edit:data/experiments/.../scripts/foo.py
+  partial (first 500 chars): ...
+```
+
+No suffix means the sub-agent ended normally (`stopReason=stop`). Any suffix is a control signal:
+
+- `stopReason=length`: the sub-agent hit max output after the harness already tried automatic recovery. Do **not** blindly re-spawn the same broad task. If `filesTouched>0`, treat it as partial progress: read the touched files from disk, run the relevant tests, then issue a smaller follow-up task naming exactly the missing function, failing test, or file segment. If `filesTouched=0` or no touched list is shown, assume no usable artifact landed; reduce scope before retrying (e.g. ask first for imports + function signatures + `NotImplementedError`, then fill one function body per follow-up).
+- `stopReason=error` or `stopReason=killed`: do not assume the artifact is valid. If touched files are listed, read them and run tests before deciding whether to continue. If no usable artifact exists, re-spawn with a narrower task or mark the tool WIP after the revision cap.
+- `stopReason=unknown`: verify from disk and tests. Treat the textual output as advisory, not proof of completion.
+
+For all non-stop exits, prefer **incremental continuation over restart**. Preserve any good files already written, avoid duplicate sibling scripts/tests, and keep the 3 impl-revision cap per tool.
+</subagent_exit_handling>
+
 **Phase 3 — Integrate.** Compose tool outputs into:
 
 1. A final run under `data/experiments/{{EXPERIMENT_ID}}/runs/run_N/results.json` with structured `invariants` (cited literature inputs) and `computed` (your derived quantities) keys.
