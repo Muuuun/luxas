@@ -163,6 +163,17 @@ export interface AuthoritativeArtifactsProviderOptions {
  * Read plan/memory/methodology/etc. from disk at compact time and insert
  * them as attachment messages — independent of summary fidelity, so the
  * agent's plan never gets compressed into "user wanted to do stuff".
+ *
+ * Known limitation (non-blocker): this provider does NOT currently check
+ * whether the brain-level snapshot (src/context.ts buildSemiStaticSystemLayer
+ * / research_snapshot trailer) already includes the same path. For agents
+ * where both mechanisms fire — mostly the brain itself today, though it
+ * uses buildContextTransformer rather than buildAgentFromDefinition — this
+ * means methodology.md / literature.md / experiments.md can appear both
+ * in the snapshot and in the carry-forward attachment after compact. Impact
+ * is token redundancy (bounded by the truncateTo tiers), not correctness.
+ * A future optimization could dedup by comparing the attachment's sourcePath
+ * against a list of paths the snapshot is known to cover.
  */
 export function createAuthoritativeArtifactsProvider(
   opts: AuthoritativeArtifactsProviderOptions,
