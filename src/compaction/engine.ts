@@ -228,7 +228,29 @@ export class ContextPacker<TMessage> {
         }) ?? []
       : [];
 
-    let rebuilt = [carryforward, ...preamble, ...retained];
+    // Phase 3b — carry-forward attachments (recent files, plan/memory).
+    // Inserted between preamble and retained so the compact metadata
+    // (carryforward + preamble) stays adjacent while attachments sit next
+    // to the preserved user tail.
+    const attachments: TMessage[] = [];
+    const providers = this.options.attachmentProviders ?? [];
+    if (providers.length > 0) {
+      const ctx = { trigger, removedCount: removable.length };
+      for (const provider of providers) {
+        try {
+          const msgs = await provider(ctx);
+          if (msgs && msgs.length > 0) attachments.push(...msgs);
+        } catch (err: any) {
+          // Attachment failure must not block the compact itself — the
+          // summary + retained tail are already the fallback.
+          console.error(
+            `[context-packer] attachment provider threw: ${err?.message ?? err}`,
+          );
+        }
+      }
+    }
+
+    let rebuilt = [carryforward, ...preamble, ...attachments, ...retained];
     const integrityOutcome = repairMessageIntegrity(
       rebuilt,
       this.options.adapter,

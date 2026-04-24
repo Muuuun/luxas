@@ -22,6 +22,7 @@ import type {
   SummarizerSettings,
   ToolPrunePolicy,
 } from "./types.js";
+import type { AttachmentProvider } from "./attachments.js";
 
 /** Extract contextWindow from a Model, avoiding raw `as any` casts at call sites. */
 export function getContextWindow(model: Model<any>): number | undefined {
@@ -39,6 +40,14 @@ export interface CompactionTransformOptions {
   summarizer?: Partial<Omit<SummarizerSettings, "model" | "apiKey">>;
   callbacks?: PackingCallbacks<any>;
   ledger?: CarryforwardLedger;
+  /**
+   * Phase 3b carry-forward attachment providers. Each is invoked once per
+   * successful compact; their output is spliced into the rebuilt message
+   * array between the compact preamble and the retained tail. See
+   * src/compaction/attachments.ts for the standard providers
+   * (createRecentFilesProvider, createAuthoritativeArtifactsProvider).
+   */
+  attachmentProviders?: AttachmentProvider<any>[];
 }
 
 export interface CompactionTransformResult {
@@ -63,6 +72,7 @@ export function createCompactionTransform(
     snip: opts.snip,
     callbacks: opts.callbacks,
     ledger: opts.ledger,
+    attachmentProviders: opts.attachmentProviders,
   };
 
   const packer = new ContextPacker(packerOpts);

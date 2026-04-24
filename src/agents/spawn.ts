@@ -19,6 +19,15 @@ import { resolveToolSets } from "./tool-sets.js";
 import { resolveContextBuilder } from "./context-builders.js";
 import { buildSafetyWrapper, type SafetyRuntimeHooks } from "./safety-wrappers.js";
 import { classifyThrownStopReason, type SubAgentExit, type SubAgentStopReason, type FileTouchRecord } from "../active-agents.js";
+import {
+  createFileContextCache,
+  type FileContextCache,
+} from "./file-context-cache.js";
+import {
+  createRecentFilesProvider,
+  createAuthoritativeArtifactsProvider,
+  listAuthoritativeArtifactPaths,
+} from "../compaction/attachments.js";
 
 // Path to the canonical merge-notes script (same path logic as the
 // MERGE_NOTES template var in src/agent.ts). Invoked after every reader
@@ -129,6 +138,26 @@ export interface BuiltAgent {
   agentId: string;
   definition: AgentDefinition;
   tokenTap: TokenTap;
+  /**
+   * Per-agent file-context cache populated via safety-wrapper hooks on
+   * every successful read/write/edit. Consumed by the compaction
+   * transform's recent-files attachment provider, but exposed here so
+   * external callers can inspect session-scoped file state if needed.
+   */
+  fileContextCache: FileContextCache;
+}
+
+// ── Runtime-hook composition ────────────────────────────────────────
+
+/** Combine several SafetyRuntimeHooks instances into one; undefined entries ignored. */
+function mergeRuntimeHooks(
+  ...hooks: (SafetyRuntimeHooks | undefined)[]
+): SafetyRuntimeHooks {
+  const defined = hooks.filter((h): h is SafetyRuntimeHooks => !!h);
+  return {
+    onFileTouched: (e) => { for (const h of defined) h.onFileTouched?.(e); },
+    onFileContextEntry: (e) => { for (const h of defined) h.onFileContextEntry?.(e); },
+  };
 }
 
 export function buildAgentFromDefinition(opts: SpawnAgentOptions): BuiltAgent {
@@ -157,10 +186,20 @@ export function buildAgentFromDefinition(opts: SpawnAgentOptions): BuiltAgent {
   // 3. Build tools from tool-sets
   let tools = resolveToolSets(def.toolSets, opts.projectDir);
 
-  // 4. Apply safety wrapper if defined
+  // 4. Apply safety wrapper if defined.
+  // Create a per-run FileContextCache and wire it into the wrapper's
+  // onFileContextEntry hook. The same cache feeds the compaction
+  // transform's recent-files attachment provider (step 8) — one cache,
+  // two consumers (safety enforcement + compaction carry-forward).
+  const fileContextCache = createFileContextCache();
+  const fileContextHooks: SafetyRuntimeHooks = {
+    onFileContextEntry: ({ absPath, entry }) => { fileContextCache.set(absPath, entry); },
+  };
+  const mergedHooks = mergeRuntimeHooks(opts.runtimeHooks, fileContextHooks);
+
   const wrapper = buildSafetyWrapper(def.safety);
   if (wrapper) {
-    tools = wrapper(tools, opts.projectDir, opts.templateVars, opts.runtimeHooks);
+    tools = wrapper(tools, opts.projectDir, opts.templateVars, mergedHooks);
   }
 
   // 5. Add tool overrides (e.g., PI verdict tool)
@@ -184,11 +223,28 @@ export function buildAgentFromDefinition(opts: SpawnAgentOptions): BuiltAgent {
     }
   }
 
-  // 8. Build compaction transform (universal — every agent gets context compaction)
+  // 8. Build compaction transform (universal — every agent gets context
+  // compaction). Attachment providers are the Phase 3b carry-forward path:
+  //   - recent files come from the fileContextCache populated by the
+  //     safety wrapper's hooks above
+  //   - authoritative artifacts (plan.md/memory.md/methodology.md/…) are
+  //     read from disk at compact time so they survive lossy summary
+  //
+  // Paths covered by authoritative providers are excluded from the recent-
+  // files provider so the same file doesn't appear twice in the rebuilt
+  // conversation.
+  const authoritativePaths = listAuthoritativeArtifactPaths(opts.projectDir);
   const { transformContext, tokenTap } = createCompactionTransform({
     model,
     getApiKey: opts.getApiKey,
     thresholds: { windowLimit: getContextWindow(model) },
+    attachmentProviders: [
+      createRecentFilesProvider(fileContextCache, {
+        projectDir: opts.projectDir,
+        excludePaths: authoritativePaths,
+      }),
+      createAuthoritativeArtifactsProvider({ projectDir: opts.projectDir }),
+    ],
   });
 
   // 9. Create agent
@@ -225,7 +281,7 @@ export function buildAgentFromDefinition(opts: SpawnAgentOptions): BuiltAgent {
   // 10. Install token tracking (feeds packer with precise token counts after first turn)
   tokenTap.install(agent);
 
-  return { agent, agentId, definition: def, tokenTap };
+  return { agent, agentId, definition: def, tokenTap, fileContextCache };
 }
 
 // ── Length-truncation recovery (B-level outer retry controller) ────

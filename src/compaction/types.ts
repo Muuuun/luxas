@@ -172,6 +172,19 @@ export interface ContextPackerOptions<TMessage> {
   refillWindowSteps?: number;
   refillLimit?: number;
   condenseFailureLimit?: number;
+  /**
+   * Post-compact attachment providers (Phase 3b). Each provider is invoked
+   * once per successful compact; their output is inserted between the
+   * compact's preamble and the retained tail:
+   *
+   *   rebuilt = [carryforward, ...preamble, ...attachments, ...retained]
+   *
+   * Providers are expected to produce attachment-style user messages
+   * (see src/compaction/attachments.ts for concrete shapes). A throwing
+   * provider is isolated — its output is skipped but the compact still
+   * completes.
+   */
+  attachmentProviders?: import("./attachments.js").AttachmentProvider<TMessage>[];
 }
 
 export interface RunPackingInput<TMessage> {
