@@ -31,22 +31,35 @@ import { SAFETY_PRESETS } from "./safety-presets.js";
 import { expandTemplate, extractTextContent } from "../utils.js";
 import type { SafetyConfig } from "./registry.js";
 import type { FileTouchRecord } from "../active-agents.js";
+import {
+  createFileContextCache,
+  FILE_CONTEXT_MAX_ENTRY_BYTES,
+  type FileContextCache,
+  type FileContextEntry,
+} from "./file-context-cache.js";
 
 // ── Types ────────────────────────────────────────────────────────────────
 
 /**
  * Observer callbacks fired by the safety wrapper at well-defined tool
- * milestones. Currently exposes only `onFileTouched` (post-success write/edit).
- * A future FileContextSink will extend this to cover `onRead` with content
- * capture for compaction carry-forward — kept minimal now so this interface
- * doesn't accidentally absorb the content-cache design.
+ * milestones.
+ *
+ * - `onFileTouched` fires on successful write/edit and is the narrow
+ *   "the agent modified a file" signal consumed by the PR-1 SubAgentExit
+ *   collector.
+ * - `onFileContextEntry` fires on successful read/write/edit with the full
+ *   cache entry (content, mtime, range, via). Phase 3b agent-level
+ *   aggregators subscribe to this to build a compaction carry-forward
+ *   view without re-scanning disk.
  *
  * Hooks are invoked synchronously inside the wrapper's success branch (after
- * the underlying tool resolved, before the success result is returned). They
- * must not throw — the wrapper does not catch.
+ * the underlying tool resolved, before the success result is returned). A
+ * throwing hook does NOT turn the tool success into a failure — the wrapper
+ * isolates exceptions (see notifyFileTouched / notifyFileContextEntry).
  */
 export interface SafetyRuntimeHooks {
   onFileTouched?: (event: FileTouchRecord) => void;
+  onFileContextEntry?: (event: { absPath: string; entry: FileContextEntry }) => void;
 }
 
 export type SafetyWrapper = (
@@ -56,14 +69,11 @@ export type SafetyWrapper = (
   hooks?: SafetyRuntimeHooks,
 ) => any[];
 
-interface ReadEntry {
-  /** mtimeMs of the file at the moment it was read (or written/edited). */
-  mtimeAtRead: number;
-  /** Inclusive 1-indexed line range actually covered. Undefined = full read. */
-  range?: { start: number; end: number };
-}
-
-type ReadTracker = Map<string, ReadEntry>;
+// The cache is the FileContextCache from ./file-context-cache.ts. Legacy
+// ReadTracker / ReadEntry types were renamed into FileContextCache /
+// FileContextEntry with additional fields (content, touchedAt, via) that
+// Phase 3b compaction carry-forward consumes. The enforcement logic below
+// uses only mtimeMs + range, so adding content is purely additive.
 
 interface SafetyOptions {
   /** Project-relative paths that block edit/write entirely. Resolved at construction. */
@@ -135,9 +145,10 @@ async function safeReadFile(absPath: string): Promise<string | null> {
 
 function wrapRead(
   tool: any,
-  tracker: ReadTracker,
+  cache: FileContextCache,
   projectDir: string,
   allowedReadRoots: string[] | null,
+  hooks: SafetyRuntimeHooks | undefined,
 ) {
   const origExecute = tool.execute;
   return {
@@ -167,7 +178,13 @@ function wrapRead(
       if (mtime === null) return result;
 
       const fullRead = !params.offset && !params.limit;
-      const entry: ReadEntry = { mtimeAtRead: mtime };
+      const at = Date.now();
+      const entry: FileContextEntry = {
+        mtimeMs: mtime,
+        touchedAt: at,
+        via: "read",
+        content: extractReadContent(result),
+      };
       if (!fullRead) {
         const start = params.offset ?? 1;
         const end = params.limit
@@ -175,15 +192,43 @@ function wrapRead(
           : Number.MAX_SAFE_INTEGER;
         entry.range = { start, end };
       }
-      tracker.set(abs, entry);
+      cache.set(abs, entry);
+      notifyFileContextEntry(hooks, abs, entry);
       return result;
     },
   };
 }
 
+/**
+ * Pull the text payload from a pi-coding-agent Read tool result. The tool
+ * returns { content: [{ type:"text", text }], details? } (or image blocks
+ * for binary files). We only cache text — images get undefined, with the
+ * range annotation still set so Phase 3b attachments know this was a read
+ * even if content is absent. Strips trailing "[Showing lines X-Y of Z…]"
+ * banners the tool adds when truncating — they're for the model, not for
+ * cache replay.
+ */
+function extractReadContent(result: any): string | undefined {
+  const blocks = result?.content;
+  if (!Array.isArray(blocks)) return undefined;
+  for (const b of blocks) {
+    if (b && typeof b === "object" && b.type === "text" && typeof b.text === "string") {
+      return stripTruncationBanner(b.text);
+    }
+  }
+  return undefined;
+}
+
+function stripTruncationBanner(text: string): string {
+  // Match the shape that pi-coding-agent's read.js appends on truncation:
+  //   "\n\n[Showing lines 1-500 of 1234. Use offset=501 to continue.]"
+  // or "\n\n[1234 more lines in file. Use offset=N to continue.]"
+  return text.replace(/\n\n\[(?:Showing lines|Line \d+ is |\d+ more lines in file).*?\]\s*$/s, "");
+}
+
 function wrapEdit(
   tool: any,
-  tracker: ReadTracker,
+  cache: FileContextCache,
   projectDir: string,
   protectedAbs: Set<string>,
   allowedWriteAbs: string[] | null,
@@ -212,7 +257,7 @@ function wrapEdit(
         }
       }
 
-      const entry = tracker.get(abs);
+      const entry = cache.get(abs);
       if (!entry) {
         return blocked(
           `You must read ${p} with the read tool before editing it. ` +
@@ -224,10 +269,10 @@ function wrapEdit(
       if (currentMtime === null) {
         return blocked(`${p} no longer exists or is unreadable.`);
       }
-      if (currentMtime > entry.mtimeAtRead + MTIME_TOLERANCE_MS) {
+      if (currentMtime > entry.mtimeMs + MTIME_TOLERANCE_MS) {
         return blocked(
           `${p} was modified after you last read it ` +
-          `(mtime ${entry.mtimeAtRead.toFixed(0)} → ${currentMtime.toFixed(0)}). ` +
+          `(mtime ${entry.mtimeMs.toFixed(0)} → ${currentMtime.toFixed(0)}). ` +
           `Re-read the file before editing — your oldText is likely stale.`
         );
       }
@@ -279,11 +324,29 @@ function wrapEdit(
         throw new Error(enriched);
       }
 
-      // Success: bump tracker mtime to the new disk mtime so the next edit on
+      // Success: bump cache mtime to the new disk mtime so the next edit on
       // the same file (in the same diff region) doesn't trip the mtime check.
+      // Also refresh content from disk — params.oldText/newText only describe
+      // a patch, not the final file; reading back is the authoritative capture.
+      // Size-capped: above FILE_CONTEXT_MAX_ENTRY_BYTES the entry keeps only
+      // mtime/range/via with content undefined.
       const newMtime = await safeMtime(abs);
       if (newMtime !== null) {
-        tracker.set(abs, { ...entry, mtimeAtRead: newMtime });
+        const at = Date.now();
+        const postContent = await readContentForCache(abs);
+        const updated: FileContextEntry = {
+          ...entry,
+          mtimeMs: newMtime,
+          touchedAt: at,
+          via: "edit",
+          content: postContent,
+          // A successful full-file edit means we now know the whole file, not
+          // a partial range — drop any prior range flag so Phase 3b treats
+          // this as full content.
+          range: undefined,
+        };
+        cache.set(abs, updated);
+        notifyFileContextEntry(hooks, abs, updated);
       }
       notifyFileTouched(hooks, abs, "edit");
       return result;
@@ -291,9 +354,20 @@ function wrapEdit(
   };
 }
 
+/** Read a file's content for caching. Returns undefined above the byte cap. */
+async function readContentForCache(absPath: string): Promise<string | undefined> {
+  try {
+    const stats = await stat(absPath);
+    if (stats.size > FILE_CONTEXT_MAX_ENTRY_BYTES) return undefined;
+    return await readFile(absPath, "utf-8");
+  } catch {
+    return undefined;
+  }
+}
+
 function wrapWrite(
   tool: any,
-  tracker: ReadTracker,
+  cache: FileContextCache,
   projectDir: string,
   protectedAbs: Set<string>,
   allowedWriteAbs: string[] | null,
@@ -333,12 +407,25 @@ function wrapWrite(
       }
 
       const result = await origExecute(id, params, signal);
-      // After successful write, tracker considers the file "freshly read" —
-      // the agent knows its content because they just wrote it.
+      // After successful write, cache considers the file "freshly read" —
+      // the agent knows its content because they just wrote it. params.content
+      // is the authoritative source; store it (up to the size cap) instead
+      // of re-reading disk.
       if (result?.isError !== true) {
         const newMtime = await safeMtime(abs);
         if (newMtime !== null) {
-          tracker.set(abs, { mtimeAtRead: newMtime });
+          const written: unknown = params.content;
+          const content = typeof written === "string" && written.length <= FILE_CONTEXT_MAX_ENTRY_BYTES
+            ? written
+            : undefined;
+          const entry: FileContextEntry = {
+            mtimeMs: newMtime,
+            touchedAt: Date.now(),
+            via: "write",
+            content,
+          };
+          cache.set(abs, entry);
+          notifyFileContextEntry(hooks, abs, entry);
         }
         notifyFileTouched(hooks, abs, "write");
       }
@@ -365,13 +452,28 @@ function notifyFileTouched(
   }
 }
 
+function notifyFileContextEntry(
+  hooks: SafetyRuntimeHooks | undefined,
+  absPath: string,
+  entry: FileContextEntry,
+): void {
+  const cb = hooks?.onFileContextEntry;
+  if (!cb) return;
+  try {
+    cb({ absPath, entry });
+  } catch (err) {
+    console.error(`[safety-wrappers] onFileContextEntry hook threw: ${(err as any)?.message ?? err}`);
+  }
+}
+
 // ── Factory ──────────────────────────────────────────────────────────────
 
 function createSafetyWrapper(opts: SafetyOptions): SafetyWrapper {
   return (tools, projectDir, templateVars = {}, hooks) => {
-    // One tracker per wrapper instance — closure-scoped, lives as long as
-    // the agent that owns these tool instances.
-    const tracker: ReadTracker = new Map();
+    // One cache per wrapper instance — closure-scoped, lives as long as
+    // the agent that owns these tool instances. Holds both the enforcement
+    // state (mtime, range) and the Phase 3b content-carry-forward payload.
+    const cache: FileContextCache = createFileContextCache();
     // Resolve protected files to absolute paths once at construction so the
     // hot path can use exact set membership instead of suffix matching
     // (which would false-positive on names like `evilRESEARCH.md`).
@@ -385,9 +487,9 @@ function createSafetyWrapper(opts: SafetyOptions): SafetyWrapper {
     const forbiddenWritePatterns = opts.forbiddenWritePatterns ?? [];
 
     return tools.map((tool: any) => {
-      if (tool.name === "read")  return wrapRead(tool, tracker, projectDir, allowedReadAbs);
-      if (tool.name === "edit")  return wrapEdit(tool, tracker, projectDir, protectedAbs, allowedWriteAbs, forbiddenWritePatterns, hooks);
-      if (tool.name === "write") return wrapWrite(tool, tracker, projectDir, protectedAbs, allowedWriteAbs, opts, forbiddenWritePatterns, hooks);
+      if (tool.name === "read")  return wrapRead(tool, cache, projectDir, allowedReadAbs, hooks);
+      if (tool.name === "edit")  return wrapEdit(tool, cache, projectDir, protectedAbs, allowedWriteAbs, forbiddenWritePatterns, hooks);
+      if (tool.name === "write") return wrapWrite(tool, cache, projectDir, protectedAbs, allowedWriteAbs, opts, forbiddenWritePatterns, hooks);
       return tool;
     });
   };
