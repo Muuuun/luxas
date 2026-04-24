@@ -71,7 +71,21 @@ export interface PackingCallbacks<TMessage> {
 export interface ToolPrunePolicy {
   keepRecentToolOutputs?: number;
   placeholderText?: string;
+  /**
+   * Whitelist of tools whose old outputs may be replaced with a placeholder.
+   * When omitted, DEFAULT_PRUNABLE_TOOL_NAMES applies (read/bash/grep/glob).
+   * Pre-Phase 3c, an omitted/empty list was interpreted as "prune anything"
+   * — a latent bug that would have clobbered stateful tool results like
+   * spawn_agent / write / edit once Phase 3b started relying on history.
+   */
   eligibleToolNames?: Iterable<string>;
+  /**
+   * Hard blacklist. Tools listed here are NEVER pruned, even if they appear
+   * in `eligibleToolNames`. Defaults to NEVER_PRUNE_TOOL_NAMES (stateful
+   * tools whose text payload carries agent-visible artifacts: spawn_agent,
+   * request_pi_review, finish, write, edit).
+   */
+  neverPruneToolNames?: Iterable<string>;
   minimumCharsToReplace?: number;
 }
 
