@@ -9,7 +9,7 @@
  */
 
 import { readFileSync, writeFileSync, renameSync, statSync, mkdirSync, closeSync, openSync, unlinkSync, utimesSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { join, dirname, relative } from "node:path";
 import { extractTextContent } from "./utils.js";
 
 /**
@@ -24,8 +24,7 @@ import { extractTextContent } from "./utils.js";
  *   "killed"  — signal-aborted (pi-ai "aborted"; SIGTERM/SIGINT to subagent-runner,
  *               or parent calling agent.abort() on foreground)
  *   "unknown" — captured no reliable stopReason. Do NOT fake "length" here —
- *               downstream recovery logic in PR-2+ depends on "length" being
- *               truthful. PR-1 only promises best-effort capture
+ *               downstream recovery logic depends on "length" being truthful
  */
 export type SubAgentStopReason = "stop" | "length" | "error" | "killed" | "unknown";
 
@@ -40,9 +39,9 @@ export interface FileTouchRecord {
  * `result` by markDone/markFailed, consumed by parent harvest to decide
  * how to react (continue, retry with changed scope, fail up the stack).
  *
- * Best-effort only in PR-1: filesTouched may be empty on SIGKILL/crash,
- * stopReason may be "unknown" when pi-agent-core doesn't surface the
- * underlying provider signal. Reliable "length" detection is PR-2 scope.
+ * Best-effort: filesTouched may be empty on SIGKILL/crash, stopReason may
+ * be "unknown" when pi-agent-core doesn't surface the underlying provider
+ * signal.
  */
 export interface SubAgentExit {
   stopReason: SubAgentStopReason;
@@ -52,6 +51,18 @@ export interface SubAgentExit {
   toolCallCount: number;           // assistant-message toolCall blocks seen
   lastContextTokens?: number;      // from tokenTap if available
   endedAt: string;                 // ISO-8601
+}
+
+/**
+ * Classify a thrown error (from buildAgentFromDefinition or agent.prompt)
+ * into the SubAgentStopReason vocabulary. Pure — callable from any catch.
+ * AbortError / "aborted" in the message indicates a signal-initiated stop
+ * (SIGINT/SIGTERM to the runner, or parent calling agent.abort()).
+ */
+export function classifyThrownStopReason(err: unknown): SubAgentStopReason {
+  const msg = (err as any)?.message ?? String(err);
+  const name = (err as any)?.name;
+  return name === "AbortError" || /aborted/i.test(msg) ? "killed" : "error";
 }
 
 export interface ActiveAgent {
@@ -238,33 +249,47 @@ function truncateExitForStorage(exit: SubAgentExit): SubAgentExit {
  * "stop" happy path (no noise for normal completions). For length/error/killed
  * the tag tells a parent agent enough to pick a retry policy without parsing
  * the full exit object.
+ *
+ * `projectDir` is used to render touched file paths as project-relative; if
+ * omitted, falls back to the last two path segments.
  */
-export function formatExitHint(exit: SubAgentExit | undefined): string {
+export function formatExitHint(exit: SubAgentExit | undefined, projectDir?: string): string {
   if (!exit) return "";
   if (exit.stopReason === "stop") return "";
+
   const bits: string[] = [`stopReason=${exit.stopReason}`];
+  if (exit.filesTouched.length > 0) bits.push(`filesTouched=${exit.filesTouched.length}`);
+  if (exit.toolCallCount > 0) bits.push(`toolCalls=${exit.toolCallCount}`);
+
+  const header = `\n\n[sub-agent exit: ${bits.join(", ")}]`;
+
+  let touchedSuffix = "";
   if (exit.filesTouched.length > 0) {
-    bits.push(`filesTouched=${exit.filesTouched.length}`);
+    const rel = (p: string) => {
+      if (projectDir) {
+        const r = relative(projectDir, p);
+        // path.relative returns something like "../other/foo" when p is outside
+        // projectDir — that's still more useful than the last-two-segments fallback.
+        if (r) return r;
+      }
+      return p.split("/").slice(-2).join("/");
+    };
+    const touchedList = exit.filesTouched
+      .slice(0, 5)
+      .map((t) => `${t.via}:${rel(t.path)}`)
+      .join(", ");
+    const overflow = exit.filesTouched.length > 5 ? ` (+${exit.filesTouched.length - 5} more)` : "";
+    touchedSuffix = `\n  touched: ${touchedList}${overflow}`;
   }
-  if (exit.toolCallCount > 0) {
-    bits.push(`toolCalls=${exit.toolCallCount}`);
+
+  let partialSuffix = "";
+  if (exit.partialAssistantText) {
+    const preview = exit.partialAssistantText.slice(0, 500).replace(/\n/g, " ⏎ ");
+    const ellipsis = exit.partialAssistantText.length > 500 ? "…" : "";
+    partialSuffix = `\n  partial (first 500 chars): ${preview}${ellipsis}`;
   }
-  const projectRel = (p: string) => {
-    // best-effort tail — strip everything before /data/ or /notes/ or /scripts/
-    const m = p.match(/\/(data|notes|scripts|tests)\/[^\s]+/);
-    return m ? m[0].slice(1) : p.split("/").slice(-2).join("/");
-  };
-  const touchedList = exit.filesTouched
-    .slice(0, 5)
-    .map((t) => `${t.via}:${projectRel(t.path)}`)
-    .join(", ");
-  const touchedSuffix = exit.filesTouched.length > 0
-    ? `\n  touched: ${touchedList}${exit.filesTouched.length > 5 ? ` (+${exit.filesTouched.length - 5} more)` : ""}`
-    : "";
-  const partialSuffix = exit.partialAssistantText
-    ? `\n  partial (first 500 chars): ${exit.partialAssistantText.slice(0, 500).replace(/\n/g, " ⏎ ")}${exit.partialAssistantText.length > 500 ? "…" : ""}`
-    : "";
-  return `\n\n[sub-agent exit: ${bits.join(", ")}]${touchedSuffix}${partialSuffix}`;
+
+  return `${header}${touchedSuffix}${partialSuffix}`;
 }
 
 function heartbeatPath(agentDir: string, agentId: string): string {

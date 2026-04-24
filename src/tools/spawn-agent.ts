@@ -133,14 +133,25 @@ export function createSpawnAgentTool(
         const alive = isAlive(agentDir, params.id);
         const elapsed = Math.floor((Date.now() - entry.startedAt) / 1000);
         const status = entry.status === "done" ? "done" : entry.status === "failed" ? "failed" : alive ? "running" : "dead";
-        const recent = tryExtractResult(entry.conversationFile);
+
+        // For completed agents the frozen `entry.result` + structured `entry.exit`
+        // are authoritative — they came from markDone/markFailed and reflect the
+        // terminal state. Fall back to the live conversation preview only for
+        // still-running agents (or entries with no result yet).
+        const terminalBody = (entry.status === "done" || entry.status === "failed")
+          ? (entry.result || (entry.status === "failed" ? "Unknown error" : "(no output)"))
+          : null;
+        const recent = terminalBody ?? tryExtractResult(entry.conversationFile);
+        const bodyLabel = terminalBody !== null ? "Final result" : "Last completed turn";
+
         const lines = [
           `Agent: ${entry.id}`,
           `Status: ${status} (${elapsed}s)`,
           `Task: ${entry.task}`,
-          recent ? `\nLast completed turn:\n${recent.slice(0, 5000)}` : "\nNo output yet.",
+          recent ? `\n${bodyLabel}:\n${recent.slice(0, 5000)}` : "\nNo output yet.",
         ];
-        return { content: [{ type: "text" as const, text: lines.join("\n") }], details: { success: true } };
+        const body = lines.join("\n") + formatExitHint(entry.exit, projectDir);
+        return { content: [{ type: "text" as const, text: body }], details: { success: true, exit: entry.exit } };
       }
 
       // Validate agent exists
@@ -269,7 +280,7 @@ export function createSpawnAgentTool(
         const summary = results.map((r, i) => {
           const icon = r.success ? "✓" : "✗";
           const secs = Math.floor(r.elapsed / 1000);
-          return `## Task ${i + 1} ${icon} (${secs}s)\n\n${r.output}${formatExitHint(r.exit)}`;
+          return `## Task ${i + 1} ${icon} (${secs}s)\n\n${r.output}${formatExitHint(r.exit, projectDir)}`;
         }).join("\n\n---\n\n");
 
         return {
@@ -355,7 +366,7 @@ export function createSpawnAgentTool(
       }
 
       return {
-        content: [{ type: "text" as const, text: result.output + formatExitHint(result.exit) }],
+        content: [{ type: "text" as const, text: result.output + formatExitHint(result.exit, projectDir) }],
         details: { elapsed: result.elapsed, success: result.success, exit: result.exit },
       };
     },

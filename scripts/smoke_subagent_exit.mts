@@ -178,6 +178,59 @@ check("length renders toolCalls count", hint.includes("toolCalls=7"));
 check("length renders touched list", hint.includes("write:") && hint.includes("edit:"));
 check("length renders partial snippet", hint.includes("partial (first 500 chars)"));
 
+// ── 4. Hook exception does not fail the tool call ──
+console.log("\n4. hook exception isolation");
+
+const throwingHooks = { onFileTouched: () => { throw new Error("telemetry broke"); } };
+const wrapped3 = wrapper([fakeWriteTool as any], root, {}, throwingHooks);
+let wrote3 = false;
+try {
+  const res = await wrapped3[0].execute("id-3", { path: join(root, "out3.txt"), content: "y" });
+  wrote3 = !res?.isError;
+} catch {
+  wrote3 = false;
+}
+check("tool succeeds even when hook throws", wrote3);
+check("disk write landed despite hook exception",
+  (() => { try { return readFileSync(join(root, "out3.txt"), "utf-8") === "y"; } catch { return false; } })());
+
+// ── 5. Collector dedup-on-push bounds by unique (path, via), not raw events ──
+console.log("\n5. collector dedup-on-push");
+
+// Dynamic import to access the collector helper.
+const spawnMod = await import("../src/agents/spawn.js");
+const collector = spawnMod.createSubAgentExitCollector(Date.now() - 100);
+
+// Simulate 1000 repeated writes to the same file + one edit — should collapse
+// to 1 unique record regardless of raw event count.
+for (let i = 0; i < 1000; i++) {
+  collector.runtimeHooks.onFileTouched?.({ path: join(root, "rep.txt"), via: "write", at: Date.now() + i });
+}
+const finalizedRepeat = collector.finalize("stop");
+check("1000 repeated writes collapse to 1 record",
+  finalizedRepeat.filesTouched.length === 1,
+  `got ${finalizedRepeat.filesTouched.length}`);
+
+// Simulate 600 distinct writes — should cap at MAX_UNIQUE_FILE_TOUCHES (500).
+const collector2 = spawnMod.createSubAgentExitCollector(Date.now());
+for (let i = 0; i < 600; i++) {
+  collector2.runtimeHooks.onFileTouched?.({ path: join(root, `distinct-${i}.txt`), via: "write", at: Date.now() + i });
+}
+const finalizedDistinct = collector2.finalize("stop");
+check("600 distinct writes capped at 500",
+  finalizedDistinct.filesTouched.length === 500,
+  `got ${finalizedDistinct.filesTouched.length}`);
+
+// And: after cap is reached, repeated writes to ALREADY-tracked files still update `at`.
+const firstPath = finalizedDistinct.filesTouched[0]?.path;
+if (firstPath) {
+  const newAt = Date.now() + 100_000;
+  collector2.runtimeHooks.onFileTouched?.({ path: firstPath, via: "write", at: newAt });
+  const refinalized = collector2.finalize("stop");
+  const updated = refinalized.filesTouched.find((t) => t.path === firstPath);
+  check("existing records update past cap", updated?.at === newAt, `got at=${updated?.at} expected ${newAt}`);
+}
+
 // ── Summary ──
 console.log(`\n${failures === 0 ? "OK" : `FAIL (${failures})`}`);
 process.exit(failures === 0 ? 0 : 1);

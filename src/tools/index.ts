@@ -386,7 +386,18 @@ export function buildResearchTools(
             && Date.now() - a.startedAt > ZOMBIE_GRACE_MS
             && !isAlive(agentDir, a.id, 60_000)
           ) {
-            markFailed(agentDir, a.id, "heartbeat stale — process died without updating status");
+            // Synthesize an exit record for the crashed agent so parent harvest
+            // still gets stopReason=killed rather than an undefined exit. The
+            // markFailed path that subagent-runner takes on catch() fires exit
+            // from its collector; a SIGKILL'd runner never reaches that catch,
+            // so this harness-side path is the only source of exit metadata.
+            markFailed(agentDir, a.id, "heartbeat stale — process died without updating status", {
+              stopReason: "killed",
+              filesTouched: [],
+              elapsedMs: Date.now() - a.startedAt,
+              toolCallCount: 0,
+              endedAt: new Date().toISOString(),
+            });
           }
         }
         const stillRunning = loadRegistry(agentDir).filter(a => a.status === "running");
@@ -397,11 +408,14 @@ export function buildResearchTools(
       const active = loadRegistry(agentDir);
       const harvested: string[] = [];
       for (const a of active) {
-        if (a.status === "done" && a.result) {
-          harvested.push(`[Background Agent Complete: ${a.name} ✓]\nTask: ${a.task}\n\n${a.result}${formatExitHint(a.exit)}`);
+        // Gate on status alone — empty a.result (thinking-only last message)
+        // must still be harvested, otherwise the entry leaks forever.
+        if (a.status === "done") {
+          const body = a.result || "(no output)";
+          harvested.push(`[Background Agent Complete: ${a.name} ✓]\nTask: ${a.task}\n\n${body}${formatExitHint(a.exit, projectDir)}`);
           removeAgent(agentDir, a.id);
         } else if (a.status === "failed") {
-          harvested.push(`[Background Agent Failed: ${a.name} ✗]\nTask: ${a.task}\n\n${a.result ?? "Unknown error"}${formatExitHint(a.exit)}`);
+          harvested.push(`[Background Agent Failed: ${a.name} ✗]\nTask: ${a.task}\n\n${a.result || "Unknown error"}${formatExitHint(a.exit, projectDir)}`);
           removeAgent(agentDir, a.id);
         }
       }

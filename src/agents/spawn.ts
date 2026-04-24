@@ -18,7 +18,7 @@ import { getDefinition, resolvePrompt, type AgentDefinition } from "./registry.j
 import { resolveToolSets } from "./tool-sets.js";
 import { resolveContextBuilder } from "./context-builders.js";
 import { buildSafetyWrapper, type SafetyRuntimeHooks } from "./safety-wrappers.js";
-import type { SubAgentExit, SubAgentStopReason, FileTouchRecord } from "../active-agents.js";
+import { classifyThrownStopReason, type SubAgentExit, type SubAgentStopReason, type FileTouchRecord } from "../active-agents.js";
 
 // Path to the canonical merge-notes script (same path logic as the
 // MERGE_NOTES template var in src/agent.ts). Invoked after every reader
@@ -214,7 +214,7 @@ export function buildAgentFromDefinition(opts: SpawnAgentOptions): BuiltAgent {
 // ── Completion metadata helpers ─────────────────────
 
 /**
- * Map pi-ai's stop reason vocabulary to the PR-1 SubAgentExit contract.
+ * Map pi-ai's stop reason vocabulary to the SubAgentExit contract.
  * pi-ai emits: "stop" | "length" | "toolUse" | "error" | "aborted" | undefined.
  * "toolUse" is an intermediate signal inside pi-agent-core's loop; a terminal
  * "toolUse" on the final assistant message is unexpected and mapped to
@@ -230,17 +230,57 @@ function normalizeStopReason(raw: unknown): SubAgentStopReason {
   }
 }
 
-/** Dedupe + sort file touch events for stable SubAgentExit payloads. */
-function finalizeFileTouches(events: { path: string; via: "write" | "edit"; at: number }[]): FileTouchRecord[] {
-  // One record per (path, via) keeping the latest `at`. Same file edited
-  // then written back (rare but possible) keeps both records.
-  const map = new Map<string, FileTouchRecord>();
-  for (const e of events) {
-    const key = `${e.path}\0${e.via}`;
-    const prior = map.get(key);
-    if (!prior || e.at > prior.at) map.set(key, { path: e.path, via: e.via, at: e.at });
-  }
-  return [...map.values()].sort((a, b) => a.at - b.at);
+/**
+ * Soft cap on the number of unique (path, via) records kept in memory.
+ * Bounded by unique artifacts, not raw touches — an agent that edits the
+ * same file 10k times stays at one entry, but one that writes 10k distinct
+ * files stops collecting after this many. The cap applies post-dedup so
+ * repeated writes to a single file can't squeeze out later unique artifacts.
+ */
+const MAX_UNIQUE_FILE_TOUCHES = 500;
+
+const touchKey = (path: string, via: "write" | "edit"): string => `${path}\0${via}`;
+
+/**
+ * Per-run collector for sub-agent completion metadata. Encapsulates the
+ * fileTouches buffer, hook wiring, and agent/tokenTap captures that both
+ * spawnAgent and subagent-runner need, so the call sites reduce to:
+ *
+ *     const collector = createSubAgentExitCollector(Date.now());
+ *     const { agent, tokenTap } = buildAgentFromDefinition({ ..., runtimeHooks: collector.runtimeHooks });
+ *     collector.attach(agent, tokenTap);
+ *     // ... run agent ...
+ *     const exit = collector.finalize();   // or collector.finalize(stopReason) in catch
+ */
+export interface SubAgentExitCollector {
+  readonly runtimeHooks: SafetyRuntimeHooks;
+  attach(agent: InstanceType<typeof Agent>, tokenTap: TokenTap): void;
+  finalize(overrideStopReason?: SubAgentStopReason): SubAgentExit;
+}
+
+export function createSubAgentExitCollector(t0: number): SubAgentExitCollector {
+  // Dedup-on-push: Map keyed by (path, via) with latest `at` wins. Bounds
+  // the buffer by unique artifacts, so repeated writes to the same file
+  // don't starve later unique artifacts of their slot. A file that is both
+  // written and later edited keeps two records since the key is (path, via).
+  const touches = new Map<string, FileTouchRecord>();
+  let agent: InstanceType<typeof Agent> | null = null;
+  let tokenTap: TokenTap | null = null;
+
+  return {
+    runtimeHooks: {
+      onFileTouched: (e) => {
+        const key = touchKey(e.path, e.via);
+        if (!touches.has(key) && touches.size >= MAX_UNIQUE_FILE_TOUCHES) return;
+        touches.set(key, e);
+      },
+    },
+    attach(a, t) { agent = a; tokenTap = t; },
+    finalize(overrideStopReason) {
+      const ordered = [...touches.values()].sort((a, b) => a.at - b.at);
+      return buildSubAgentExit(agent, t0, ordered, tokenTap, overrideStopReason);
+    },
+  };
 }
 
 /**
@@ -251,7 +291,7 @@ function finalizeFileTouches(events: { path: string; via: "write" | "edit"; at: 
 export function buildSubAgentExit(
   agent: InstanceType<typeof Agent> | null,
   t0: number,
-  fileTouches: { path: string; via: "write" | "edit"; at: number }[],
+  fileTouches: FileTouchRecord[],
   tokenTap: TokenTap | null,
   overrideStopReason?: SubAgentStopReason,
 ): SubAgentExit {
@@ -289,7 +329,9 @@ export function buildSubAgentExit(
   return {
     stopReason,
     partialAssistantText,
-    filesTouched: finalizeFileTouches(fileTouches),
+    // Input is expected to already be deduped+sorted by the collector. Direct
+    // callers that bypass the collector are responsible for normalizing.
+    filesTouched: fileTouches,
     elapsedMs: Date.now() - t0,
     toolCallCount,
     lastContextTokens: tokenTap?.lastContextTokens,
@@ -300,21 +342,11 @@ export function buildSubAgentExit(
 // ── Spawn (in-process mode) ─────────────────────────
 
 export async function spawnAgent(opts: SpawnAgentOptions): Promise<SpawnAgentResult> {
-  const t0 = Date.now();
-  const fileTouches: { path: string; via: "write" | "edit"; at: number }[] = [];
-  // Each foreground spawn allocates its own sink; multiple foreground spawns
-  // from the same parent turn (parallel mode) get independent fileTouches lists.
-  const runtimeHooks: SafetyRuntimeHooks = {
-    onFileTouched: (e) => { fileTouches.push(e); },
-  };
-
-  let builtAgent: InstanceType<typeof Agent> | null = null;
-  let builtTokenTap: TokenTap | null = null;
+  const collector = createSubAgentExitCollector(Date.now());
 
   try {
-    const { agent, agentId, tokenTap } = buildAgentFromDefinition({ ...opts, runtimeHooks });
-    builtAgent = agent;
-    builtTokenTap = tokenTap;
+    const { agent, agentId, tokenTap } = buildAgentFromDefinition({ ...opts, runtimeHooks: collector.runtimeHooks });
+    collector.attach(agent, tokenTap);
 
     // 11. Set up incremental conversation persistence (crash-safe: written per turn, not at end)
     const convDir = join(opts.projectDir, ".agent", "conversations");
@@ -382,18 +414,14 @@ export async function spawnAgent(opts: SpawnAgentOptions): Promise<SpawnAgentRes
     // Usage tracking is handled automatically by the provider-level wrapper
     // (installUsageTracking in usage-log.ts). No manual accumulation needed.
 
-    const exit = buildSubAgentExit(agent, t0, fileTouches, tokenTap);
+    const exit = collector.finalize();
     return { output: output.slice(0, 50_000), elapsed: exit.elapsedMs, success: true, exit };
 
   } catch (err: any) {
     const msg = err.message || String(err);
-    // Distinguish user-initiated abort (SIGINT/agent.abort()) from runtime errors.
-    // pi-agent-core's AbortError / signal.aborted flow surfaces to us as a thrown
-    // error; we map it to "killed" so the parent can distinguish "user stopped it"
-    // from "sonnet blew up".
-    const isAbort = err?.name === "AbortError" || /aborted/i.test(msg);
-    const stopReason: SubAgentStopReason = isAbort ? "killed" : "error";
-    const exit = buildSubAgentExit(builtAgent, t0, fileTouches, builtTokenTap, stopReason);
+    // classifyThrownStopReason distinguishes user-initiated abort (SIGINT/
+    // agent.abort() → "killed") from real failures ("error").
+    const exit = collector.finalize(classifyThrownStopReason(err));
     // Surface auth errors clearly
     if (msg.includes("API key") || msg.includes("authentication") || msg.includes("401") || msg.includes("getApiKey")) {
       return {

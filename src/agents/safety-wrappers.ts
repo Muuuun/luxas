@@ -30,22 +30,23 @@ import { findOldTextLine, freshExcerptError } from "./edit-recovery.js";
 import { SAFETY_PRESETS } from "./safety-presets.js";
 import { expandTemplate, extractTextContent } from "../utils.js";
 import type { SafetyConfig } from "./registry.js";
+import type { FileTouchRecord } from "../active-agents.js";
 
 // ── Types ────────────────────────────────────────────────────────────────
 
 /**
  * Observer callbacks fired by the safety wrapper at well-defined tool
- * milestones. PR-1 introduces only `onFileTouched` (post-success write/edit);
- * Phase 3 will extend this into a full FileContextSink (onRead with content,
- * per-range cache). Kept minimal on purpose — broadening now risks Phase 1
- * absorbing Phase 3's cache design.
+ * milestones. Currently exposes only `onFileTouched` (post-success write/edit).
+ * A future FileContextSink will extend this to cover `onRead` with content
+ * capture for compaction carry-forward — kept minimal now so this interface
+ * doesn't accidentally absorb the content-cache design.
  *
  * Hooks are invoked synchronously inside the wrapper's success branch (after
  * the underlying tool resolved, before the success result is returned). They
  * must not throw — the wrapper does not catch.
  */
 export interface SafetyRuntimeHooks {
-  onFileTouched?: (event: { path: string; via: "write" | "edit"; at: number }) => void;
+  onFileTouched?: (event: FileTouchRecord) => void;
 }
 
 export type SafetyWrapper = (
@@ -284,7 +285,7 @@ function wrapEdit(
       if (newMtime !== null) {
         tracker.set(abs, { ...entry, mtimeAtRead: newMtime });
       }
-      hooks?.onFileTouched?.({ path: abs, via: "edit", at: Date.now() });
+      notifyFileTouched(hooks, abs, "edit");
       return result;
     },
   };
@@ -339,11 +340,29 @@ function wrapWrite(
         if (newMtime !== null) {
           tracker.set(abs, { mtimeAtRead: newMtime });
         }
-        hooks?.onFileTouched?.({ path: abs, via: "write", at: Date.now() });
+        notifyFileTouched(hooks, abs, "write");
       }
       return result;
     },
   };
+}
+
+// Hooks are observers — a throwing telemetry callback must not turn a
+// successful disk mutation into a reported tool failure. Swallow and log;
+// caller-supplied hooks should already be defensive but this is belt-and-
+// suspenders for the mutation path specifically.
+function notifyFileTouched(
+  hooks: SafetyRuntimeHooks | undefined,
+  abs: string,
+  via: "write" | "edit",
+): void {
+  const cb = hooks?.onFileTouched;
+  if (!cb) return;
+  try {
+    cb({ path: abs, via, at: Date.now() });
+  } catch (err) {
+    console.error(`[safety-wrappers] onFileTouched hook threw: ${(err as any)?.message ?? err}`);
+  }
 }
 
 // ── Factory ──────────────────────────────────────────────────────────────

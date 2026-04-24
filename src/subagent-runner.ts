@@ -15,10 +15,9 @@
 
 import { mkdirSync, appendFileSync } from "node:fs";
 import { join, isAbsolute, resolve, dirname } from "node:path";
-import { buildAgentFromDefinition, buildSubAgentExit, type SpawnAgentOptions } from "./agents/spawn.js";
-import type { SafetyRuntimeHooks } from "./agents/safety-wrappers.js";
+import { buildAgentFromDefinition, createSubAgentExitCollector, type SpawnAgentOptions } from "./agents/spawn.js";
 import { Session, deriveState, buildSessionContext } from "./session.js";
-import { markDone, markFailed, touchHeartbeat, type SubAgentStopReason } from "./active-agents.js";
+import { markDone, markFailed, touchHeartbeat, classifyThrownStopReason } from "./active-agents.js";
 import { getApiKey } from "./auth.js";
 import { extractTextContent } from "./utils.js";
 import { cleanMessagesForModel } from "./transform.js";
@@ -80,12 +79,9 @@ async function main() {
     touchHeartbeat(agentDir, args.id);
   }, 30_000);
 
-  // Declared at function scope so the catch block can still read them when
-  // buildAgentFromDefinition / agent.prompt throws. agent and tokenTap start
-  // as null; fileTouches accumulates via the safety-wrapper hook.
-  const fileTouches: { path: string; via: "write" | "edit"; at: number }[] = [];
-  let builtAgent: any = null;
-  let builtTokenTap: any = null;
+  // Collector is declared here so the catch block can still finalize() it
+  // even when buildAgentFromDefinition / agent.prompt throws before attach().
+  const exitCollector = createSubAgentExitCollector(processStartTime);
 
   try {
     // Parse forwarded templateVars from the spawning parent (e.g. PAPER_ID for
@@ -120,16 +116,11 @@ async function main() {
       getApiKey,
       parentAgentId: args.id.split(".").slice(0, -1).join(".") || "brain",
       createSpawnTool: makeSpawnTool,
-      runtimeHooks: {
-        onFileTouched: (e: { path: string; via: "write" | "edit"; at: number }) => {
-          fileTouches.push(e);
-        },
-      } satisfies SafetyRuntimeHooks,
+      runtimeHooks: exitCollector.runtimeHooks,
     };
 
     const { agent, agentId, definition, tokenTap } = buildAgentFromDefinition(spawnOpts);
-    builtAgent = agent;
-    builtTokenTap = tokenTap;
+    exitCollector.attach(agent, tokenTap);
 
     // Resolve the actual model for cross-model message cleaning
     const modelKey = definition.model === "inherit" ? "sonnet" : definition.model;
@@ -182,27 +173,26 @@ async function main() {
     // Run
     await agent.prompt(args.task);
 
-    // Extract output
+    // Extract output. extractTextContent can return "" even when content
+    // exists (e.g., assistant message that was all thinking blocks + tool_use
+    // but no text). Normalize to the sentinel so parent harvest always sees
+    // a non-empty result — its truthy-result gate would otherwise leak this
+    // agent in the registry forever.
     const messages = agent.state.messages;
     const lastAssistant = [...messages].reverse().find(
       (m: any) => m.role === "assistant",
     ) as any;
-    const output = lastAssistant?.content
-      ? extractTextContent(lastAssistant.content)
-      : "(no output)";
+    const output = (lastAssistant?.content ? extractTextContent(lastAssistant.content) : "") || "(no output)";
 
     // Mark done in registry (with structured exit)
-    const exit = buildSubAgentExit(agent, processStartTime, fileTouches, tokenTap);
-    markDone(agentDir, args.id, output.slice(0, 50_000), exit);
+    markDone(agentDir, args.id, output.slice(0, 50_000), exitCollector.finalize());
 
   } catch (err: any) {
+    // If buildAgentFromDefinition itself threw, the collector never got an
+    // attach() call — finalize() still returns a valid SubAgentExit with
+    // "unknown" (or the override) stopReason.
     const msg = err?.message || String(err);
-    const isAbort = err?.name === "AbortError" || /aborted/i.test(msg);
-    const stopReason: SubAgentStopReason = isAbort ? "killed" : "error";
-    // If buildAgentFromDefinition itself threw, builtAgent / builtTokenTap are
-    // still null — buildSubAgentExit tolerates that.
-    const exit = buildSubAgentExit(builtAgent, processStartTime, fileTouches, builtTokenTap, stopReason);
-    markFailed(agentDir, args.id, msg, exit);
+    markFailed(agentDir, args.id, msg, exitCollector.finalize(classifyThrownStopReason(err)));
   } finally {
     clearInterval(heartbeatInterval);
   }

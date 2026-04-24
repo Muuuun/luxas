@@ -420,17 +420,21 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
       try {
         const active = loadRegistry(agentDir);
         for (const a of active) {
-          if (a.status === "done" && a.result) {
+          // Gate on status alone. An empty `a.result` (possible when a sub-agent's
+          // last assistant message was thinking-only) must not trap the entry in
+          // the registry — render a sentinel instead.
+          if (a.status === "done") {
+            const body = (a.result || "(no output)").slice(0, 30_000);
             agent.steer({
               role: "user",
-              content: `[Background Agent Complete: ${a.name} ✓]\nTask: ${a.task}\n\n${a.result.slice(0, 30_000)}${formatExitHint(a.exit)}`,
+              content: `[Background Agent Complete: ${a.name} ✓]\nTask: ${a.task}\n\n${body}${formatExitHint(a.exit, projectDir)}`,
               timestamp: Date.now(),
             });
             removeAgent(agentDir, a.id);
           } else if (a.status === "failed") {
             agent.steer({
               role: "user",
-              content: `[Background Agent Failed: ${a.name} ✗]\nTask: ${a.task}\n\n${a.result ?? "Unknown error"}${formatExitHint(a.exit)}`,
+              content: `[Background Agent Failed: ${a.name} ✗]\nTask: ${a.task}\n\n${a.result || "Unknown error"}${formatExitHint(a.exit, projectDir)}`,
               timestamp: Date.now(),
             });
             removeAgent(agentDir, a.id);
