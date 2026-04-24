@@ -94,6 +94,15 @@ interface SafetyOptions {
    */
   allowedWriteRoots?: string[];
   /**
+   * If set, bash commands that appear to write (redirect, heredoc via `>`,
+   * `tee`, `cp`/`mv`, `touch`, `sed -i`, inline `open(..., "w")`, or
+   * `writeFileSync`) to any path under these prefixes are blocked at
+   * wrap time. Guards against agents bypassing `allowedWriteRoots` via
+   * bash. Not airtight against variable-substitution evasion, but closes
+   * the "lazy bypass" path LLMs reach for first. Supports `{{VAR}}`.
+   */
+  blockedBashWriteRoots?: string[];
+  /**
    * If set, write/edit to paths matching any of these regex patterns returns
    * BLOCKED. Intent: force role separation — e.g. the experiment agent must
    * delegate script/test authorship to tool_impl/tool_review sub-agents rather
@@ -466,6 +475,158 @@ function notifyFileContextEntry(
   }
 }
 
+// ── Bash command filter ─────────────────────────────────────────────────
+//
+// The write/edit wrappers enforce allowedWriteRoots. Without a matching bash
+// filter, an agent can bypass by using `cat > path`, `tee path`, `python -c
+// "open(path, 'w')"`, etc. This wrapper regex-scans the command before
+// execution and rejects if any extracted write-target falls under a blocked
+// prefix. Not airtight against variable-substitution or encoded payloads,
+// but catches the straightforward evasion patterns LLMs reach for first.
+
+const BASH_WRITE_PATTERNS: Array<{ re: RegExp; kind: string }> = [
+  // Shell redirect: `> path`, `>> path`, `2> path` (group 1 = target)
+  { re: /(?:^|[\s;&|(`])\d*\s*>>?\s*['"]?([^\s'"<>;&|`()]+)/g, kind: "redirect" },
+  // tee / tee -a path
+  { re: /\btee\b\s+(?:-[a-zA-Z]+\s+)*['"]?([^\s'"<>;&|`()]+)/g, kind: "tee" },
+  // cp / mv / rsync — capture LAST positional arg (handles multi-source:
+  // `cp a b c destdir` as well as `cp src dst`). `install` is handled
+  // separately with a `/` constraint to avoid `apt install stim` false positives.
+  { re: /\b(?:cp|mv|rsync)\b(?:\s+(?:-[a-zA-Z]+|--[a-zA-Z-]+(?:=\S+)?))*\s+(?:\S+\s+)+?(['"]?[^\s'"<>;&|`()]+['"]?)(?=\s*(?:$|[;&|)]))/gm, kind: "cp/mv/rsync (last arg)" },
+  // install src dst — require `/` in target to avoid matching package
+  // manager invocations (`apt install X`, `pip install Y`).
+  { re: /\binstall\b(?:\s+(?:-[a-zA-Z]+|--[a-zA-Z-]+(?:=\S+)?))*\s+(?:\S+\s+)+?(['"]?[^\s'"<>;&|`()]*\/[^\s'"<>;&|`()]*['"]?)(?=\s*(?:$|[;&|)]))/gm, kind: "install" },
+  // touch path
+  { re: /\btouch\b\s+(?:-[a-zA-Z]+\s+)*['"]?([^\s'"<>;&|`()]+)/g, kind: "touch" },
+  // dd of=path
+  { re: /\bdd\b[^|;&\n]*?\bof=['"]?([^\s'"<>;&|`()]+)/g, kind: "dd of=" },
+  // sed -i … path   (terminal path on the line)
+  { re: /\bsed\b\s+(?:--in-place|-i)\b[^|;&\n]*?(?:^|\s)['"]?([^\s'"<>;&|`()]+)(?=\s*(?:$|[;&|]))/gm, kind: "sed -i" },
+  // python / any-language inline open(path, 'w|a|x')
+  { re: /open\s*\(\s*['"]([^'"]+)['"][^)]*['"][wax][a-z+]?['"][^)]*\)/g, kind: "open(w/a/x)" },
+  // pathlib Path(...).write_text / write_bytes
+  { re: /Path\s*\(\s*['"]([^'"]+)['"][^)]*\)\s*\.write_(?:text|bytes)\s*\(/g, kind: "Path.write_text/bytes" },
+  // node fs.writeFileSync(path, …)
+  { re: /\.writeFileSync?\s*\(\s*['"]([^'"]+)['"]/g, kind: "writeFileSync" },
+];
+
+function extractBashWriteTargets(cmd: string): Array<{ target: string; kind: string }> {
+  const hits: Array<{ target: string; kind: string }> = [];
+  for (const { re, kind } of BASH_WRITE_PATTERNS) {
+    re.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(cmd)) !== null) {
+      // Strip surrounding quotes that some patterns include in the capture
+      // group (e.g. the cp/mv/rsync last-arg regex). Downstream comparison
+      // is simpler if targets are always bare paths.
+      const target = (m[1] ?? "").replace(/^['"]|['"]$/g, "");
+      if (!target) continue;
+      if (target.startsWith("/dev/")) continue;
+      if (/^&\d+$/.test(target)) continue;
+      hits.push({ target, kind });
+    }
+  }
+  return hits;
+}
+
+function bashTargetHitsBlockedRoot(target: string, blockedRelPrefixes: string[]): string | null {
+  for (const prefix of blockedRelPrefixes) {
+    // Strip leading `./` for normalized comparison.
+    const t = target.replace(/^\.\//, "");
+    if (t === prefix.replace(/\/$/, "")) return prefix;
+    if (t.startsWith(prefix)) return prefix;
+    // Handles cases like "subdir/data/experiments/..." when agent `cd`d first,
+    // by looking for the prefix as an interior substring. Over-matches are
+    // safer than under-matches here — any legitimate collision would itself
+    // be a violation (the path genuinely names the blocked root).
+    if (t.includes("/" + prefix)) return prefix;
+  }
+  return null;
+}
+
+/**
+ * A bash-extracted write target is "in-project" if it resolves under
+ * projectDir. Paths outside (e.g. /tmp, /var, /dev/null, absolute paths
+ * to user's home) are treated as out-of-scope — bash to scratch dirs
+ * is legitimate, not an architectural-boundary concern.
+ *
+ * This heuristic resolves the target against projectDir. It does NOT
+ * track `cd X && ...` within the command, so a command like
+ * `cd subdir && cat > foo.py` will resolve `foo.py` as projectDir/foo.py
+ * instead of projectDir/subdir/foo.py. Acceptable for the attack model
+ * (LLMs typically write full project-relative paths); document the
+ * limitation in the wrapper's jsdoc.
+ */
+function resolveBashTarget(target: string, projectDir: string): string | null {
+  if (!target) return null;
+  // Strip surrounding quotes if any
+  const clean = target.replace(/^['"]|['"]$/g, "");
+  if (!clean) return null;
+  const abs = resolve(projectDir, clean);
+  return abs;
+}
+
+function wrapBash(
+  tool: any,
+  projectDir: string,
+  allowedWriteAbs: string[] | null,
+  blockedRootsAbs: string[] | null,
+): any {
+  const hasAllowlist = allowedWriteAbs !== null && allowedWriteAbs.length > 0;
+  const hasBlocklist = blockedRootsAbs !== null && blockedRootsAbs.length > 0;
+  if (!hasAllowlist && !hasBlocklist) return tool;
+
+  const blockedRelPrefixes = hasBlocklist
+    ? blockedRootsAbs!.map((r) => {
+        const rel = r.startsWith(projectDir + "/") ? r.slice(projectDir.length + 1) : r;
+        return rel.endsWith("/") ? rel : rel + "/";
+      })
+    : [];
+
+  const origExecute = tool.execute;
+  return {
+    ...tool,
+    execute: async (id: string, params: any, signal?: any) => {
+      const cmd: string = typeof params?.command === "string" ? params.command : "";
+      const hits = extractBashWriteTargets(cmd);
+
+      for (const { target, kind } of hits) {
+        // 1. Blocklist check (substring match on project-relative prefix —
+        //    catches both "data/experiments/..." and "./data/experiments/..."
+        //    and `cd X && > data/experiments/...` since it's a pure-string scan).
+        if (hasBlocklist) {
+          const match = bashTargetHitsBlockedRoot(target, blockedRelPrefixes);
+          if (match) {
+            return blocked(
+              `bash command attempts to ${kind} to "${target}" under protected path "${match}". ` +
+              `This bypass of allowedWriteRoots is denied. Delegate via spawn_agent to the appropriate sub-agent ` +
+              `(tool_impl for scripts/, tool_review for tests/, experiment for runs/).`,
+            );
+          }
+        }
+
+        // 2. Allowlist check: for in-project targets, require match against
+        //    allowedWriteRoots. Out-of-project targets (/tmp, /var, absolute
+        //    paths outside projectDir) are permitted — bash to scratch dirs
+        //    is legitimate. This catches the bypass class "bash writes to
+        //    a project path outside the agent's declared write scope."
+        if (hasAllowlist) {
+          const abs = resolveBashTarget(target, projectDir);
+          if (abs === null) continue;
+          const inProject = abs === projectDir || abs.startsWith(projectDir + "/");
+          if (inProject && !withinRoots(abs, allowedWriteAbs!)) {
+            return blocked(
+              `bash command attempts to ${kind} to "${target}" which is outside this agent's allowed write scope. ` +
+              allowedWriteMessage(target, allowedWriteAbs!, projectDir),
+            );
+          }
+        }
+      }
+      return origExecute(id, params, signal);
+    },
+  };
+}
+
 // ── Factory ──────────────────────────────────────────────────────────────
 
 function createSafetyWrapper(opts: SafetyOptions): SafetyWrapper {
@@ -483,6 +644,7 @@ function createSafetyWrapper(opts: SafetyOptions): SafetyWrapper {
     // nonexistent path and fails closed (no reads allowed) — see expandTemplate.
     const allowedReadAbs = resolveScopeRoots(opts.allowedReadRoots, projectDir, templateVars);
     const allowedWriteAbs = resolveScopeRoots(opts.allowedWriteRoots, projectDir, templateVars);
+    const blockedBashAbs = resolveScopeRoots(opts.blockedBashWriteRoots, projectDir, templateVars);
 
     const forbiddenWritePatterns = opts.forbiddenWritePatterns ?? [];
 
@@ -490,6 +652,7 @@ function createSafetyWrapper(opts: SafetyOptions): SafetyWrapper {
       if (tool.name === "read")  return wrapRead(tool, cache, projectDir, allowedReadAbs, hooks);
       if (tool.name === "edit")  return wrapEdit(tool, cache, projectDir, protectedAbs, allowedWriteAbs, forbiddenWritePatterns, hooks);
       if (tool.name === "write") return wrapWrite(tool, cache, projectDir, protectedAbs, allowedWriteAbs, opts, forbiddenWritePatterns, hooks);
+      if (tool.name === "bash")  return wrapBash(tool, projectDir, allowedWriteAbs, blockedBashAbs);
       return tool;
     });
   };
@@ -541,6 +704,7 @@ export function buildSafetyWrapper(
     protectedFiles: [...presetPaths, ...(config.protectedFiles ?? [])],
     allowedReadRoots: config.allowedReadRoots,
     allowedWriteRoots: config.allowedWriteRoots,
+    blockedBashWriteRoots: config.blockedBashWriteRoots,
     // Default "block" is fail-secure: forgetting the field in frontmatter
     // shouldn't silently relax write-overwrite on protected files.
     writeOnExistingPolicy: config.writeOnExistingPolicy ?? "block",

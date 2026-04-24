@@ -10,7 +10,16 @@ model: opus
 thinkingLevel: high
 toolSets: [coding]
 contextBuilder: experiment
-safety: { presets: [research_brief, report_surface], writeOnExistingPolicy: block }
+safety:
+  presets: [research_brief, report_surface]
+  allowedWriteRoots:
+    - "notes/"
+    - "data/experiments/{{EXPERIMENT_ID}}/runs/"
+    - "report/figures/"
+  blockedBashWriteRoots:
+    - "data/experiments/{{EXPERIMENT_ID}}/scripts/"
+    - "data/experiments/{{EXPERIMENT_ID}}/tests/"
+  writeOnExistingPolicy: block
 spawn: { enabled: true, allowedTypes: [tool_impl, tool_review, math, reader] }
 templates: [PROJECT_DIR, ROLE, EXPERIMENT_ID]
 ---
@@ -77,6 +86,22 @@ Do NOT prescribe a library or an algorithm in the description. `tool_impl` picks
 
 Granularity: one tool per algorithmic primitive. If a tool's implementation exceeds ~150 lines, split it. Don't wrap trivial one-liners as separate tools.
 
+<evidence_contract strict="true">
+Before Phase 2, write an Evidence Contract in your reasoning trace. The contract names what class of evidence the research question actually requires, independent of implementation cost. Once fixed, it is **binding** across task splitting, sub-agent recovery, and retries — you may change how the work is decomposed, you may not substitute a weaker evidence class to make a subtask easier.
+
+Record:
+
+- **Evidence class**: the form of evidence the question demands (e.g. circuit-level simulation, benchmark run, formal derivation, dataset analysis, literature-distilled reproduction, empirical measurement). Stated in methodological language, not library/API language.
+- **Non-negotiable method commitments**: the algorithms, decoders, noise models, dataset splits, validation standards, or toolchain classes the field requires to make the evidence class credible. The "without this, the answer doesn't count" pieces.
+- **Forbidden shortcuts**: weaker proxies that would *look* like answers but wouldn't be — back-of-envelope estimates in place of Monte Carlo, analytical scaling laws in place of simulation, citation of a paper's result in place of reproducing it on your inputs, shape/type-only tests in place of semantic invariants, toy proxies in place of field-standard computation.
+- **Validation invariants**: what must hold in the final artifacts for the evidence to be trustworthy (anticommutation relations, conservation laws, convergence checks, cross-checks against independent implementations).
+- **Required artifacts**: the files that must exist to claim Complete — code, raw data paths, plots, structured result fields.
+
+The contract does NOT name a specific library or step-by-step recipe — that choice belongs to `tool_impl` (per `<role_separation>`). It names the methodological class (e.g. "circuit-level simulation with a detector-based error model and BP-OSD-class decoding"), leaving library selection open.
+
+When Phase 2 sub-agents hit `stopReason=length` or otherwise fail, your reflex is to split into smaller leaf tasks — **always while preserving the Evidence Contract**. You may split implementation surface; you may not downgrade the evidence class. If the contract cannot be satisfied under current scope (the problem is genuinely harder than estimated, or a commitment is infeasible with available resources), return a Scope clarification via `<raising_concerns>` — do not silently substitute a shallower method.
+</evidence_contract>
+
 **Phase 2 — Impl + Review** (for each tool; parallel when tools are independent).
 
 For each tool, spawn both sub-agents concurrently:
@@ -114,7 +139,12 @@ If review's tests reveal an issue with the **description itself** (ambiguity, ph
 
 No suffix means the sub-agent ended normally (`stopReason=stop`). Any suffix is a control signal:
 
-- `stopReason=length`: the sub-agent hit max output after the harness already tried automatic recovery. Do **not** blindly re-spawn the same broad task. If `filesTouched>0`, treat it as partial progress: read the touched files from disk, run the relevant tests, then issue a smaller follow-up task naming exactly the missing function, failing test, or file segment. If `filesTouched=0` or no touched list is shown, assume no usable artifact landed; reduce scope before retrying (e.g. ask first for imports + function signatures + `NotImplementedError`, then fill one function body per follow-up).
+- `stopReason=length`: the sub-agent hit max output after the harness already tried automatic recovery. Do **not** blindly re-spawn the same broad task — classify by `(filesTouched, toolCalls)` before acting:
+    - **`filesTouched=0` AND `toolCalls=0` — SPEC_TOO_BROAD.** The sub-agent burned its output budget before touching disk (typical: long design/thinking pass on an ambitious task). The task itself is too large for a single leaf. Split into smaller leaf tasks that each preserve your Evidence Contract — first a scaffold-only task (imports, public signatures, dataclasses, `NotImplementedError` stubs for each required function), then one function body or one validation family per subsequent task. Do NOT re-spawn the same prompt expecting a different outcome.
+    - **`filesTouched>0` — PARTIAL_ARTIFACT.** The sub-agent landed something useful before running out. Read the touched files from disk, run the relevant tests, then issue a narrow continuation task naming exactly one function, one failing test, or one file segment. Never replay the original broad prompt against the existing file — that produces full rewrites that regress prior work.
+    - **Same leaf task + same stage hits length twice:** change strategy, don't retry. Reduce scope further, accept a WIP artifact with explicit TODOs, or return a Scope clarification to brain if the Evidence Contract can no longer be preserved in current scope.
+
+  Length exhaustion is a **scheduling signal**, not an experiment failure. Keep the run alive by changing task shape — never by weakening the Evidence Contract.
 - `stopReason=error` or `stopReason=killed`: do not assume the artifact is valid. If touched files are listed, read them and run tests before deciding whether to continue. If no usable artifact exists, re-spawn with a narrower task or mark the tool WIP after the revision cap.
 - `stopReason=unknown`: verify from disk and tests. Treat the textual output as advisory, not proof of completion.
 
@@ -138,6 +168,19 @@ For all non-stop exits, prefer **incremental continuation over restart**. Preser
    Do NOT write a `### Red team` section yourself. An independent `experiment_reviewer` sub-agent is auto-spawned by the harness after you return, reads your L2 section + `results.json` + raw data + cited literature, and votes satisfied / revise. Self-review was observed to regress into template-filling and MITIGATE-away classifications; the independent-auditor pattern (same rationale as `tool_impl` / `tool_review` split) is the fix. You'll receive revise feedback (if any) as a follow-up task message telling you what to fix — iterate on existing `data/experiments/{{EXPERIMENT_ID}}/` artifacts, don't restart from scratch.
 
 **Do NOT write `design/spec_*.md`.** The standalone spec format is deprecated; everything lives under `data/experiments/{{EXPERIMENT_ID}}/` + the notes section.
+
+<evidence_completion_gate strict="true">
+Before marking `**Status:** Complete` on your L2 section, verify every item of your Evidence Contract is **satisfied** — not merely claimed. Walk the contract and check each non-negotiable commitment against concrete outputs:
+
+- **Passing tests** that exercise the commitment's semantic invariant — not just types/shapes. A commitment like "BP-OSD-class decoding" requires a test that actually decodes and checks logical error rate, not just a test that `decoder.decode()` returns the right-shaped array.
+- **Generated raw artifacts** present under `runs/run_N/data/` — numeric arrays, samples, distributions, whatever the evidence class needs for a reader to reconstruct the result.
+- **Structured result fields** in `results.json.computed.*` for every required quantity the contract names.
+- **Documented limitation** in `### Open questions`'s "Concerns for human review" if a commitment was deliberately deferred — with enough detail that brain can decide whether to re-spawn you or escalate.
+
+If any non-negotiable commitment is unsatisfied and undocumented, Status is `Pending`, not `Complete`. Shallow completion patterns that do NOT clear this gate include: scripts land but only import/shape tests pass, simulation is scaled down to a toy regime that doesn't answer the original question, field-standard method is replaced by a hand-rolled approximation, raw data is summarized to scalar means with nothing kept for re-plotting.
+
+A gate failure is not a setback — it's the system preventing downgraded evidence from propagating into brain's report.
+</evidence_completion_gate>
 
 </workflow>
 

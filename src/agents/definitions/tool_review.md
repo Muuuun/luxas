@@ -12,6 +12,10 @@ toolSets: [coding]
 safety:
   presets: [research_brief, report_surface, notes_ledger]
   allowedReadRoots: ["data/experiments/{{EXPERIMENT_ID}}"]
+  allowedWriteRoots: ["data/experiments/{{EXPERIMENT_ID}}/tests/"]
+  blockedBashWriteRoots:
+    - "data/experiments/{{EXPERIMENT_ID}}/scripts/"
+    - "data/experiments/{{EXPERIMENT_ID}}/runs/"
   writeOnExistingPolicy: block
 spawn: { enabled: false }
 templates: [PROJECT_DIR, EXPERIMENT_ID, TOOL_NAME]

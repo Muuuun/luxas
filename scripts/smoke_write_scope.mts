@@ -2,17 +2,26 @@
 /**
  * Smoke: wrapper write/edit permissions across the three agent roles.
  *
- * V5 impl/review split is enforced by (1) spawn_agent availability in
- * background agents (see subagent-runner.ts) + (2) prompt guidance
- * (role_separation + scope_boundary blocks in experiment.md). The tool
- * layer does NOT block experiment writes to scripts/ or tests/ —
- * prompt + tool availability is the right layer for role guidance.
+ * V5 impl/review split is enforced at three layers:
+ *   1. spawn_agent availability — background agents can only delegate to
+ *      their declared child types.
+ *   2. Prompt guidance — role_separation + scope_boundary blocks spell out
+ *      the intent in natural language.
+ *   3. Tool-layer allowedWriteRoots — positive whitelist that hard-blocks
+ *      writes outside each agent's declared scope. This layer exists
+ *      because prompt alone was observed to fail under PI-STEER pressure:
+ *      brain / experiment agents can be pushed to bypass the architecture
+ *      ("I'll just write the script myself to save time"), and the tool
+ *      layer is the last line of defence.
  *
  * What this smoke pins down:
- *   - experiment can write anywhere except REPORT_SURFACE protected files
- *   - tool_impl / tool_review are blocked from REPORT_SURFACE and
- *     NOTES_LEDGER (cross-cutting protected files)
- *   - writeOnExistingPolicy blocks write on pre-existing files (use edit)
+ *   - experiment can write runs/, notes/, report/figures/ but NOT
+ *     scripts/ or tests/ (must delegate to tool_impl / tool_review) and
+ *     NOT other experiments' dirs.
+ *   - tool_impl can write only scripts/ in its own experiment.
+ *   - tool_review can write only tests/ in its own experiment.
+ *   - REPORT_SURFACE and cross-cutting ledgers remain protected.
+ *   - writeOnExistingPolicy blocks write on pre-existing files (use edit).
  */
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -66,14 +75,15 @@ async function test(label: string, wrapper: any, templateVars: Record<string, st
   }
 }
 
-// experiment: tool layer does NOT block role-separation paths. Role
-// enforcement is handled by prompt + spawn_agent tool availability.
-// Only REPORT_SURFACE files are protected against experiment writes.
+// experiment: tool layer enforces role separation. Writes to scripts/
+// or tests/ (tool_impl/tool_review territory) are blocked. Writes to
+// sibling experiment dirs are blocked (scope_boundary). Only the
+// experiment's own runs/, notes/, and report/figures/ are permitted.
 await test("wrapExperimentTools", wrapExperimentTools, { EXPERIMENT_ID: "E_test" }, {
-  "data/experiments/E_test/scripts/foo.py": "ok",
-  "data/experiments/E_test/tests/test_foo.py": "ok",
-  "data/experiments/E_test/tests/conftest.py": "ok",
-  "data/experiments/E_other/scripts/bar.py": "ok",
+  "data/experiments/E_test/scripts/foo.py": "blocked",       // delegate to tool_impl
+  "data/experiments/E_test/tests/test_foo.py": "blocked",    // delegate to tool_review
+  "data/experiments/E_test/tests/conftest.py": "blocked",    // delegate to tool_review
+  "data/experiments/E_other/scripts/bar.py": "blocked",      // sibling experiment out of scope
   "data/experiments/E_test/runs/run_1/results.json": "ok",
   "notes/experiments.md": "ok",
   "report/figures/e1_comparison.png": "ok",

@@ -33,6 +33,13 @@ export interface SafetyConfig {
    * Undefined = no positive whitelist (still subject to protectedFiles blocklist).
    */
   allowedWriteRoots?: string[];
+  /**
+   * bash commands that appear to write (redirect, heredoc via `>`, `tee`,
+   * `cp`/`mv`, `touch`, `sed -i`, inline `open(..., "w")`, `writeFileSync`)
+   * to any path under these prefixes are blocked. Guards against agents
+   * bypassing allowedWriteRoots via bash. Supports `{{VAR}}`.
+   */
+  blockedBashWriteRoots?: string[];
   /** "block" = reject write on existing (force edit); "allow_as_read" = permit. */
   writeOnExistingPolicy?: "block" | "allow_as_read";
 }
@@ -168,6 +175,7 @@ function buildSafetyConfig(fields: Record<string, any>, filename: string): Safet
     protectedFiles: maybeList(block.protectedFiles),
     allowedReadRoots: maybeList(block.allowedReadRoots),
     allowedWriteRoots: maybeList(block.allowedWriteRoots),
+    blockedBashWriteRoots: maybeList(block.blockedBashWriteRoots),
     writeOnExistingPolicy: policy === "block" || policy === "allow_as_read" ? policy : undefined,
   };
 }
