@@ -50,6 +50,14 @@ export interface SubAgentExit {
   elapsedMs: number;
   toolCallCount: number;           // assistant-message toolCall blocks seen
   lastContextTokens?: number;      // from tokenTap if available
+  /**
+   * Number of Phase 2 length-recovery attempts consumed before this exit.
+   * 0 or undefined when the initial prompt resolved without a length
+   * truncation. Populated by the outer recovery controller; present on both
+   * successful (stopReason="stop") recovered runs and exhausted runs
+   * (stopReason="length", attemptsUsed === MAX).
+   */
+  recoveryAttemptsUsed?: number;
   endedAt: string;                 // ISO-8601
 }
 

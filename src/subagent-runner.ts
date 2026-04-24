@@ -15,7 +15,7 @@
 
 import { mkdirSync, appendFileSync } from "node:fs";
 import { join, isAbsolute, resolve, dirname } from "node:path";
-import { buildAgentFromDefinition, createSubAgentExitCollector, type SpawnAgentOptions } from "./agents/spawn.js";
+import { buildAgentFromDefinition, createSubAgentExitCollector, createLengthRecoveryController, runWithLengthRecovery, type SpawnAgentOptions } from "./agents/spawn.js";
 import { Session, deriveState, buildSessionContext } from "./session.js";
 import { markDone, markFailed, touchHeartbeat, classifyThrownStopReason } from "./active-agents.js";
 import { getApiKey } from "./auth.js";
@@ -79,9 +79,13 @@ async function main() {
     touchHeartbeat(agentDir, args.id);
   }, 30_000);
 
-  // Collector is declared here so the catch block can still finalize() it
-  // even when buildAgentFromDefinition / agent.prompt throws before attach().
+  // Collector + recovery controller are declared here so the catch block can
+  // still finalize() when buildAgentFromDefinition / agent.prompt throws
+  // before attach(). Recovery also outlives the try because its attempt count
+  // should be reflected in the exit even if a later attempt threw.
   const exitCollector = createSubAgentExitCollector(processStartTime);
+  const lengthRecovery = createLengthRecoveryController();
+  exitCollector.attachRecovery(lengthRecovery);
 
   try {
     // Parse forwarded templateVars from the spawning parent (e.g. PAPER_ID for
@@ -117,6 +121,7 @@ async function main() {
       parentAgentId: args.id.split(".").slice(0, -1).join(".") || "brain",
       createSpawnTool: makeSpawnTool,
       runtimeHooks: exitCollector.runtimeHooks,
+      lengthRecovery,
     };
 
     const { agent, agentId, definition, tokenTap } = buildAgentFromDefinition(spawnOpts);
@@ -170,8 +175,8 @@ async function main() {
       }
     });
 
-    // Run
-    await agent.prompt(args.task);
+    // Run with automatic length-truncation recovery
+    await runWithLengthRecovery(agent, args.task, lengthRecovery);
 
     // Extract output. extractTextContent can return "" even when content
     // exists (e.g., assistant message that was all thinking blocks + tool_use

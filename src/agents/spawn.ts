@@ -101,6 +101,13 @@ export interface SpawnAgentOptions {
    * allocate their own hook instance so fileTouches are scoped to one run.
    */
   runtimeHooks?: SafetyRuntimeHooks;
+  /**
+   * Per-run length-truncation recovery state. When provided,
+   * buildAgentFromDefinition's streamFn will read maxTokensCap from the
+   * controller on every call so an outer retry loop (runWithLengthRecovery)
+   * can bump the cap between attempts.
+   */
+  lengthRecovery?: LengthRecoveryController;
 }
 
 export interface SpawnAgentResult {
@@ -191,6 +198,11 @@ export function buildAgentFromDefinition(opts: SpawnAgentOptions): BuiltAgent {
   // or length-truncated response with no tool_use silently terminates the
   // sub-agent via pi-agent-core's `toolCalls.length === 0` exit. Forcing
   // tool_use at the provider level eliminates this failure mode uniformly.
+  //
+  // If a lengthRecovery controller is attached, the streamFn reads its current
+  // maxTokensCap on every call. The outer retry loop sets LARGE_CAP on the
+  // first recovery attempt and resets to provider default afterward — the
+  // closure always sees the latest value without rebuilding the Agent.
   const agent = new Agent({
     initialState: {
       systemPrompt: fullPrompt,
@@ -200,7 +212,12 @@ export function buildAgentFromDefinition(opts: SpawnAgentOptions): BuiltAgent {
     },
     getApiKey: opts.getApiKey,
     transformContext,
-    streamFn: (m, ctx, o) => streamSimple(m, ctx, { ...o, toolChoice: "any" } as any),
+    streamFn: (m, ctx, streamOpts) => {
+      const cap = opts.lengthRecovery?.state.maxTokensCap;
+      const merged: any = { ...streamOpts, toolChoice: "any" };
+      if (cap !== undefined) merged.maxTokens = cap;
+      return streamSimple(m, ctx, merged);
+    },
   });
   nameAgent(agent, agentId, def.name);
   (agent as any).__smeltParent = opts.parentAgentId;
@@ -209,6 +226,106 @@ export function buildAgentFromDefinition(opts: SpawnAgentOptions): BuiltAgent {
   tokenTap.install(agent);
 
   return { agent, agentId, definition: def, tokenTap };
+}
+
+// ── Length-truncation recovery (B-level outer retry controller) ────
+
+/**
+ * Continuation prompt shown to the model as an isMeta user message when a
+ * response got cut off by max_tokens. Structural marker, not instructional —
+ * short on purpose so it doesn't re-program the model's behavior beyond
+ * "resume from the cut". The actual "break into smaller pieces" hint lives
+ * in the text because the model can usefully act on it.
+ */
+export const LENGTH_RECOVERY_CONTINUE_PROMPT =
+  "[auto] Your previous response was truncated at max_tokens. Continue from exactly where you were cut off. " +
+  "Do not restart, do not recap. If the remaining work is large, split it into smaller tool calls (write a " +
+  "skeleton first, then extend via edit) so each call fits.";
+
+/** Cap for the first recovery attempt — give the model one chance at more room. */
+export const LENGTH_RECOVERY_LARGE_CAP = 64_000;
+
+/** Total recovery attempts after the initial prompt resolves with stopReason=length. */
+export const LENGTH_RECOVERY_MAX_ATTEMPTS = 3;
+
+export interface LengthRecoveryState {
+  /** undefined → provider default; set to LENGTH_RECOVERY_LARGE_CAP on first recovery. */
+  maxTokensCap?: number;
+  /** True after the first "raise cap" attempt. Subsequent attempts reset cap to default. */
+  triedLargeCap: boolean;
+  /** How many recovery attempts have been committed (capped at LENGTH_RECOVERY_MAX_ATTEMPTS). */
+  attemptsUsed: number;
+}
+
+export interface LengthRecoveryController {
+  readonly state: LengthRecoveryState;
+  setLargeCap(): void;
+  resetCap(): void;
+  markAttempt(): void;
+}
+
+export function createLengthRecoveryController(): LengthRecoveryController {
+  const state: LengthRecoveryState = { maxTokensCap: undefined, triedLargeCap: false, attemptsUsed: 0 };
+  return {
+    state,
+    setLargeCap() { state.maxTokensCap = LENGTH_RECOVERY_LARGE_CAP; state.triedLargeCap = true; },
+    resetCap() { state.maxTokensCap = undefined; },
+    markAttempt() { state.attemptsUsed += 1; },
+  };
+}
+
+function lastAssistantStopReason(agent: InstanceType<typeof Agent>): string | undefined {
+  const msgs = agent.state.messages as any[];
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    if (msgs[i].role === "assistant") return msgs[i].stopReason;
+  }
+  return undefined;
+}
+
+/**
+ * Run agent.prompt(initialPrompt) with automatic length-truncation recovery.
+ *
+ * Strategy (B-level outer retry, per Phase 2 design):
+ *   1. First attempt: default cap (controller state untouched).
+ *   2. If stopReason === "length" and attemptsUsed < MAX:
+ *      - First recovery: raise cap to LARGE_CAP, inject isMeta continue marker, continue().
+ *      - Subsequent recoveries: reset cap to default, same marker, continue().
+ *   3. Stop when stopReason !== "length" OR attemptsUsed === MAX.
+ *
+ * The final state reflects the last attempt — if all attempts were length,
+ * the SubAgentExit contract will carry stopReason="length" up to the parent
+ * (PR-1), which is then responsible for deciding task-level retry policy.
+ *
+ * Uses agent.continue() after the first prompt so no duplicate user-prompt
+ * message is appended for the resume — the isMeta marker we insert via
+ * replaceMessages() is the new last message, and continue() runs the loop
+ * starting from there.
+ */
+export async function runWithLengthRecovery(
+  agent: InstanceType<typeof Agent>,
+  initialPrompt: string,
+  recovery: LengthRecoveryController,
+): Promise<void> {
+  await agent.prompt(initialPrompt);
+
+  while (
+    recovery.state.attemptsUsed < LENGTH_RECOVERY_MAX_ATTEMPTS &&
+    lastAssistantStopReason(agent) === "length"
+  ) {
+    recovery.markAttempt();
+    if (!recovery.state.triedLargeCap) {
+      recovery.setLargeCap();
+    } else {
+      recovery.resetCap();
+    }
+
+    const messages = agent.state.messages as any[];
+    agent.replaceMessages([
+      ...messages,
+      { role: "user", content: LENGTH_RECOVERY_CONTINUE_PROMPT, isMeta: true, timestamp: Date.now() } as any,
+    ]);
+    await agent.continue();
+  }
 }
 
 // ── Completion metadata helpers ─────────────────────
@@ -251,10 +368,14 @@ const touchKey = (path: string, via: "write" | "edit"): string => `${path}\0${vi
  *     collector.attach(agent, tokenTap);
  *     // ... run agent ...
  *     const exit = collector.finalize();   // or collector.finalize(stopReason) in catch
+ *
+ * If a LengthRecoveryController is attached via attachRecovery(), finalize()
+ * will populate SubAgentExit.recoveryAttemptsUsed from the controller state.
  */
 export interface SubAgentExitCollector {
   readonly runtimeHooks: SafetyRuntimeHooks;
   attach(agent: InstanceType<typeof Agent>, tokenTap: TokenTap): void;
+  attachRecovery(recovery: LengthRecoveryController): void;
   finalize(overrideStopReason?: SubAgentStopReason): SubAgentExit;
 }
 
@@ -266,6 +387,7 @@ export function createSubAgentExitCollector(t0: number): SubAgentExitCollector {
   const touches = new Map<string, FileTouchRecord>();
   let agent: InstanceType<typeof Agent> | null = null;
   let tokenTap: TokenTap | null = null;
+  let recovery: LengthRecoveryController | null = null;
 
   return {
     runtimeHooks: {
@@ -276,9 +398,14 @@ export function createSubAgentExitCollector(t0: number): SubAgentExitCollector {
       },
     },
     attach(a, t) { agent = a; tokenTap = t; },
+    attachRecovery(r) { recovery = r; },
     finalize(overrideStopReason) {
       const ordered = [...touches.values()].sort((a, b) => a.at - b.at);
-      return buildSubAgentExit(agent, t0, ordered, tokenTap, overrideStopReason);
+      const exit = buildSubAgentExit(agent, t0, ordered, tokenTap, overrideStopReason);
+      if (recovery && recovery.state.attemptsUsed > 0) {
+        exit.recoveryAttemptsUsed = recovery.state.attemptsUsed;
+      }
+      return exit;
     },
   };
 }
@@ -343,9 +470,15 @@ export function buildSubAgentExit(
 
 export async function spawnAgent(opts: SpawnAgentOptions): Promise<SpawnAgentResult> {
   const collector = createSubAgentExitCollector(Date.now());
+  const recovery = createLengthRecoveryController();
+  collector.attachRecovery(recovery);
 
   try {
-    const { agent, agentId, tokenTap } = buildAgentFromDefinition({ ...opts, runtimeHooks: collector.runtimeHooks });
+    const { agent, agentId, tokenTap } = buildAgentFromDefinition({
+      ...opts,
+      runtimeHooks: collector.runtimeHooks,
+      lengthRecovery: recovery,
+    });
     collector.attach(agent, tokenTap);
 
     // 11. Set up incremental conversation persistence (crash-safe: written per turn, not at end)
@@ -382,8 +515,8 @@ export async function spawnAgent(opts: SpawnAgentOptions): Promise<SpawnAgentRes
       }
     });
 
-    // 12. Run
-    await agent.prompt(opts.prompt);
+    // 12. Run with automatic length-truncation recovery
+    await runWithLengthRecovery(agent, opts.prompt, recovery);
 
     // Reader post-hook: rebuild notes/methodology.md + notes/literature.md
     // from their per-paper fragment dirs so both aggregates stay fresh
