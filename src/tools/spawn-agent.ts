@@ -13,7 +13,7 @@ import type { Agent as AgentType } from "@mariozechner/pi-agent-core";
 import { spawn } from "node:child_process";
 import { spawnAgent, type SpawnAgentOptions } from "../agents/spawn.js";
 import { listAgentDescriptions, getDefinition } from "../agents/registry.js";
-import { addAgent, removeAgent, loadRegistry, isAlive, tryExtractResult } from "../active-agents.js";
+import { addAgent, removeAgent, loadRegistry, isAlive, tryExtractResult, formatExitHint } from "../active-agents.js";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -269,7 +269,7 @@ export function createSpawnAgentTool(
         const summary = results.map((r, i) => {
           const icon = r.success ? "✓" : "✗";
           const secs = Math.floor(r.elapsed / 1000);
-          return `## Task ${i + 1} ${icon} (${secs}s)\n\n${r.output}`;
+          return `## Task ${i + 1} ${icon} (${secs}s)\n\n${r.output}${formatExitHint(r.exit)}`;
         }).join("\n\n---\n\n");
 
         return {
@@ -355,8 +355,8 @@ export function createSpawnAgentTool(
       }
 
       return {
-        content: [{ type: "text" as const, text: result.output }],
-        details: { elapsed: result.elapsed, success: result.success },
+        content: [{ type: "text" as const, text: result.output + formatExitHint(result.exit) }],
+        details: { elapsed: result.elapsed, success: result.success, exit: result.exit },
       };
     },
 

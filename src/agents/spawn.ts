@@ -17,7 +17,8 @@ import { extractTextContent } from "../utils.js";
 import { getDefinition, resolvePrompt, type AgentDefinition } from "./registry.js";
 import { resolveToolSets } from "./tool-sets.js";
 import { resolveContextBuilder } from "./context-builders.js";
-import { buildSafetyWrapper } from "./safety-wrappers.js";
+import { buildSafetyWrapper, type SafetyRuntimeHooks } from "./safety-wrappers.js";
+import type { SubAgentExit, SubAgentStopReason, FileTouchRecord } from "../active-agents.js";
 
 // Path to the canonical merge-notes script (same path logic as the
 // MERGE_NOTES template var in src/agent.ts). Invoked after every reader
@@ -94,12 +95,24 @@ export interface SpawnAgentOptions {
    * spawn machinery drives both layers without a forked spawn module.
    */
   resolveDefinition?: (name: string) => AgentDefinition;
+  /**
+   * Runtime observer hooks threaded into the safety wrapper (and future
+   * Phase 3 file-context sink). Foreground spawn and subagent-runner each
+   * allocate their own hook instance so fileTouches are scoped to one run.
+   */
+  runtimeHooks?: SafetyRuntimeHooks;
 }
 
 export interface SpawnAgentResult {
   output: string;
   elapsed: number;
   success: boolean;
+  /**
+   * Structured completion metadata. Always populated for spawnAgent() (foreground
+   * / parallel path); callers that invoked spawnAgent directly can inspect
+   * `exit.stopReason` to decide retry policy without parsing output text.
+   */
+  exit: SubAgentExit;
 }
 
 // ── Build agent from definition (shared by spawnAgent + subagent-runner) ──
@@ -140,7 +153,7 @@ export function buildAgentFromDefinition(opts: SpawnAgentOptions): BuiltAgent {
   // 4. Apply safety wrapper if defined
   const wrapper = buildSafetyWrapper(def.safety);
   if (wrapper) {
-    tools = wrapper(tools, opts.projectDir, opts.templateVars);
+    tools = wrapper(tools, opts.projectDir, opts.templateVars, opts.runtimeHooks);
   }
 
   // 5. Add tool overrides (e.g., PI verdict tool)
@@ -198,13 +211,110 @@ export function buildAgentFromDefinition(opts: SpawnAgentOptions): BuiltAgent {
   return { agent, agentId, definition: def, tokenTap };
 }
 
+// ── Completion metadata helpers ─────────────────────
+
+/**
+ * Map pi-ai's stop reason vocabulary to the PR-1 SubAgentExit contract.
+ * pi-ai emits: "stop" | "length" | "toolUse" | "error" | "aborted" | undefined.
+ * "toolUse" is an intermediate signal inside pi-agent-core's loop; a terminal
+ * "toolUse" on the final assistant message is unexpected and mapped to
+ * "unknown" rather than faking one of the canonical outcomes.
+ */
+function normalizeStopReason(raw: unknown): SubAgentStopReason {
+  switch (raw) {
+    case "stop": return "stop";
+    case "length": return "length";
+    case "error": return "error";
+    case "aborted": return "killed";
+    default: return "unknown";
+  }
+}
+
+/** Dedupe + sort file touch events for stable SubAgentExit payloads. */
+function finalizeFileTouches(events: { path: string; via: "write" | "edit"; at: number }[]): FileTouchRecord[] {
+  // One record per (path, via) keeping the latest `at`. Same file edited
+  // then written back (rare but possible) keeps both records.
+  const map = new Map<string, FileTouchRecord>();
+  for (const e of events) {
+    const key = `${e.path}\0${e.via}`;
+    const prior = map.get(key);
+    if (!prior || e.at > prior.at) map.set(key, { path: e.path, via: e.via, at: e.at });
+  }
+  return [...map.values()].sort((a, b) => a.at - b.at);
+}
+
+/**
+ * Build a SubAgentExit from an Agent instance + side-channel data (elapsed,
+ * touches, tokenTap). Safe to call in both the success and error paths —
+ * returns best-effort values (stopReason "unknown" is valid). Does not throw.
+ */
+export function buildSubAgentExit(
+  agent: InstanceType<typeof Agent> | null,
+  t0: number,
+  fileTouches: { path: string; via: "write" | "edit"; at: number }[],
+  tokenTap: TokenTap | null,
+  overrideStopReason?: SubAgentStopReason,
+): SubAgentExit {
+  let stopReason: SubAgentStopReason = overrideStopReason ?? "unknown";
+  let partialAssistantText: string | undefined;
+  let toolCallCount = 0;
+
+  if (agent) {
+    try {
+      const messages = agent.state.messages as any[];
+      // stopReason: from the last assistant message if not overridden.
+      if (!overrideStopReason) {
+        const lastAssistant = [...messages].reverse().find((m: any) => m.role === "assistant");
+        if (lastAssistant) {
+          stopReason = normalizeStopReason(lastAssistant.stopReason);
+          if (stopReason === "length") {
+            partialAssistantText = extractTextContent(lastAssistant.content ?? []) || undefined;
+          }
+        }
+      }
+      // toolCallCount: sum across all assistant messages — parent heuristics
+      // (e.g. "sub-agent made 0 tool calls" = suspect) care about totals.
+      for (const m of messages) {
+        if (m.role === "assistant" && Array.isArray(m.content)) {
+          for (const b of m.content) {
+            if (b && typeof b === "object" && (b.type === "toolCall" || b.type === "tool_use")) {
+              toolCallCount++;
+            }
+          }
+        }
+      }
+    } catch { /* best-effort — exit contract tolerates missing fields */ }
+  }
+
+  return {
+    stopReason,
+    partialAssistantText,
+    filesTouched: finalizeFileTouches(fileTouches),
+    elapsedMs: Date.now() - t0,
+    toolCallCount,
+    lastContextTokens: tokenTap?.lastContextTokens,
+    endedAt: new Date().toISOString(),
+  };
+}
+
 // ── Spawn (in-process mode) ─────────────────────────
 
 export async function spawnAgent(opts: SpawnAgentOptions): Promise<SpawnAgentResult> {
   const t0 = Date.now();
+  const fileTouches: { path: string; via: "write" | "edit"; at: number }[] = [];
+  // Each foreground spawn allocates its own sink; multiple foreground spawns
+  // from the same parent turn (parallel mode) get independent fileTouches lists.
+  const runtimeHooks: SafetyRuntimeHooks = {
+    onFileTouched: (e) => { fileTouches.push(e); },
+  };
+
+  let builtAgent: InstanceType<typeof Agent> | null = null;
+  let builtTokenTap: TokenTap | null = null;
 
   try {
-    const { agent, agentId } = buildAgentFromDefinition(opts);
+    const { agent, agentId, tokenTap } = buildAgentFromDefinition({ ...opts, runtimeHooks });
+    builtAgent = agent;
+    builtTokenTap = tokenTap;
 
     // 11. Set up incremental conversation persistence (crash-safe: written per turn, not at end)
     const convDir = join(opts.projectDir, ".agent", "conversations");
@@ -272,16 +382,27 @@ export async function spawnAgent(opts: SpawnAgentOptions): Promise<SpawnAgentRes
     // Usage tracking is handled automatically by the provider-level wrapper
     // (installUsageTracking in usage-log.ts). No manual accumulation needed.
 
-    const elapsed = Date.now() - t0;
-    return { output: output.slice(0, 50_000), elapsed, success: true };
+    const exit = buildSubAgentExit(agent, t0, fileTouches, tokenTap);
+    return { output: output.slice(0, 50_000), elapsed: exit.elapsedMs, success: true, exit };
 
   } catch (err: any) {
-    const elapsed = Date.now() - t0;
     const msg = err.message || String(err);
+    // Distinguish user-initiated abort (SIGINT/agent.abort()) from runtime errors.
+    // pi-agent-core's AbortError / signal.aborted flow surfaces to us as a thrown
+    // error; we map it to "killed" so the parent can distinguish "user stopped it"
+    // from "sonnet blew up".
+    const isAbort = err?.name === "AbortError" || /aborted/i.test(msg);
+    const stopReason: SubAgentStopReason = isAbort ? "killed" : "error";
+    const exit = buildSubAgentExit(builtAgent, t0, fileTouches, builtTokenTap, stopReason);
     // Surface auth errors clearly
     if (msg.includes("API key") || msg.includes("authentication") || msg.includes("401") || msg.includes("getApiKey")) {
-      return { output: `Agent "${opts.name}" failed: No API key. Set the appropriate env var (OPENAI_API_KEY, ANTHROPIC_API_KEY) or configure OAuth.\n\nOriginal error: ${msg}`, elapsed, success: false };
+      return {
+        output: `Agent "${opts.name}" failed: No API key. Set the appropriate env var (OPENAI_API_KEY, ANTHROPIC_API_KEY) or configure OAuth.\n\nOriginal error: ${msg}`,
+        elapsed: exit.elapsedMs,
+        success: false,
+        exit,
+      };
     }
-    return { output: `Agent "${opts.name}" failed: ${msg}`, elapsed, success: false };
+    return { output: `Agent "${opts.name}" failed: ${msg}`, elapsed: exit.elapsedMs, success: false, exit };
   }
 }

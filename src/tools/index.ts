@@ -12,7 +12,7 @@ import { createCodingToolsForProject } from "./coding.js";
 import { createSpawnAgentTool, getActiveBackgroundAgents } from "./spawn-agent.js";
 import { buildSafetyWrapper } from "../agents/safety-wrappers.js";
 import { getDefinition } from "../agents/registry.js";
-import { loadRegistry, removeAgent, isAlive, markFailed } from "../active-agents.js";
+import { loadRegistry, removeAgent, isAlive, markFailed, formatExitHint } from "../active-agents.js";
 
 /**
  * Parse `## L2.X` / `## E_N` experiment sections from notes/experiments.md
@@ -398,10 +398,10 @@ export function buildResearchTools(
       const harvested: string[] = [];
       for (const a of active) {
         if (a.status === "done" && a.result) {
-          harvested.push(`[Background Agent Complete: ${a.name} ✓]\nTask: ${a.task}\n\n${a.result}`);
+          harvested.push(`[Background Agent Complete: ${a.name} ✓]\nTask: ${a.task}\n\n${a.result}${formatExitHint(a.exit)}`);
           removeAgent(agentDir, a.id);
         } else if (a.status === "failed") {
-          harvested.push(`[Background Agent Failed: ${a.name} ✗]\nTask: ${a.task}\n\n${a.result ?? "Unknown error"}`);
+          harvested.push(`[Background Agent Failed: ${a.name} ✗]\nTask: ${a.task}\n\n${a.result ?? "Unknown error"}${formatExitHint(a.exit)}`);
           removeAgent(agentDir, a.id);
         }
       }

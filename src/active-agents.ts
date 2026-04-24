@@ -12,6 +12,48 @@ import { readFileSync, writeFileSync, renameSync, statSync, mkdirSync, closeSync
 import { join, dirname } from "node:path";
 import { extractTextContent } from "./utils.js";
 
+/**
+ * Normalized stop reason across sub-agent completion paths.
+ *
+ *   "stop"    — model ended the turn cleanly (pi-ai maps end_turn/pause_turn/
+ *               stop_sequence to "stop")
+ *   "length"  — max_tokens hit. Agent produced no final tool call; caller
+ *               should treat this as recoverable, not terminal
+ *   "error"   — provider returned an error-shaped response (refusal, HTTP 5xx,
+ *               stream aborted mid-response without SIGINT)
+ *   "killed"  — signal-aborted (pi-ai "aborted"; SIGTERM/SIGINT to subagent-runner,
+ *               or parent calling agent.abort() on foreground)
+ *   "unknown" — captured no reliable stopReason. Do NOT fake "length" here —
+ *               downstream recovery logic in PR-2+ depends on "length" being
+ *               truthful. PR-1 only promises best-effort capture
+ */
+export type SubAgentStopReason = "stop" | "length" | "error" | "killed" | "unknown";
+
+export interface FileTouchRecord {
+  path: string;           // absolute
+  via: "write" | "edit";
+  at: number;             // Date.now() millis
+}
+
+/**
+ * Structured completion metadata for a sub-agent run. Written alongside
+ * `result` by markDone/markFailed, consumed by parent harvest to decide
+ * how to react (continue, retry with changed scope, fail up the stack).
+ *
+ * Best-effort only in PR-1: filesTouched may be empty on SIGKILL/crash,
+ * stopReason may be "unknown" when pi-agent-core doesn't surface the
+ * underlying provider signal. Reliable "length" detection is PR-2 scope.
+ */
+export interface SubAgentExit {
+  stopReason: SubAgentStopReason;
+  partialAssistantText?: string;   // present only when stopReason === "length" AND capture succeeded
+  filesTouched: FileTouchRecord[]; // clean-exit best-effort; empty on killed
+  elapsedMs: number;
+  toolCallCount: number;           // assistant-message toolCall blocks seen
+  lastContextTokens?: number;      // from tokenTap if available
+  endedAt: string;                 // ISO-8601
+}
+
 export interface ActiveAgent {
   id: string;             // "brain.worker-0"
   name: string;           // "worker"
@@ -22,6 +64,12 @@ export interface ActiveAgent {
   pid?: number;           // independent process PID
   status?: "running" | "done" | "failed";
   result?: string;        // frozen result text (written by sub-agent on completion)
+  /**
+   * Structured completion metadata. Present iff status is "done" or "failed"
+   * and the completion path produced it. Absent on "running" agents and on
+   * crash-exited agents whose markDone/markFailed never fired.
+   */
+  exit?: SubAgentExit;
   /**
    * File path the agent is expected to produce. Used by brain's Layer 3 snapshot
    * to surface "in-flight" artifacts and prevent duplicate spawns. Extracted from
@@ -153,25 +201,70 @@ export function removeAgent(agentDir: string, agentId: string): void {
 }
 
 /** Mark a sub-agent as done with frozen result (called by subagent-runner, not brain). */
-export function markDone(agentDir: string, agentId: string, result: string): void {
+export function markDone(agentDir: string, agentId: string, result: string, exit?: SubAgentExit): void {
   withRegistryLock(agentDir, (agents) => {
     const agent = agents.find(a => a.id === agentId);
     if (agent) {
       agent.status = "done";
       agent.result = result.slice(0, 50_000);
+      if (exit) agent.exit = truncateExitForStorage(exit);
     }
   });
 }
 
 /** Mark a sub-agent as failed (called by subagent-runner on error). */
-export function markFailed(agentDir: string, agentId: string, error: string): void {
+export function markFailed(agentDir: string, agentId: string, error: string, exit?: SubAgentExit): void {
   withRegistryLock(agentDir, (agents) => {
     const agent = agents.find(a => a.id === agentId);
     if (agent) {
       agent.status = "failed";
       agent.result = error.slice(0, 5_000);
+      if (exit) agent.exit = truncateExitForStorage(exit);
     }
   });
+}
+
+// Keep partial text bounded — active-agents.json is read into memory every
+// harvest and a full 32K partial blob per stuck agent would bloat turns.
+// 4K is enough to diagnose "what was sonnet drafting when it got cut".
+function truncateExitForStorage(exit: SubAgentExit): SubAgentExit {
+  if (!exit.partialAssistantText || exit.partialAssistantText.length <= 4_000) return exit;
+  return { ...exit, partialAssistantText: exit.partialAssistantText.slice(0, 4_000) + "\n…[truncated]" };
+}
+
+/**
+ * Human-readable one-line tag for a SubAgentExit, prefixed with a newline so
+ * callers can append directly to result text. Returns empty string for the
+ * "stop" happy path (no noise for normal completions). For length/error/killed
+ * the tag tells a parent agent enough to pick a retry policy without parsing
+ * the full exit object.
+ */
+export function formatExitHint(exit: SubAgentExit | undefined): string {
+  if (!exit) return "";
+  if (exit.stopReason === "stop") return "";
+  const bits: string[] = [`stopReason=${exit.stopReason}`];
+  if (exit.filesTouched.length > 0) {
+    bits.push(`filesTouched=${exit.filesTouched.length}`);
+  }
+  if (exit.toolCallCount > 0) {
+    bits.push(`toolCalls=${exit.toolCallCount}`);
+  }
+  const projectRel = (p: string) => {
+    // best-effort tail — strip everything before /data/ or /notes/ or /scripts/
+    const m = p.match(/\/(data|notes|scripts|tests)\/[^\s]+/);
+    return m ? m[0].slice(1) : p.split("/").slice(-2).join("/");
+  };
+  const touchedList = exit.filesTouched
+    .slice(0, 5)
+    .map((t) => `${t.via}:${projectRel(t.path)}`)
+    .join(", ");
+  const touchedSuffix = exit.filesTouched.length > 0
+    ? `\n  touched: ${touchedList}${exit.filesTouched.length > 5 ? ` (+${exit.filesTouched.length - 5} more)` : ""}`
+    : "";
+  const partialSuffix = exit.partialAssistantText
+    ? `\n  partial (first 500 chars): ${exit.partialAssistantText.slice(0, 500).replace(/\n/g, " ⏎ ")}${exit.partialAssistantText.length > 500 ? "…" : ""}`
+    : "";
+  return `\n\n[sub-agent exit: ${bits.join(", ")}]${touchedSuffix}${partialSuffix}`;
 }
 
 function heartbeatPath(agentDir: string, agentId: string): string {

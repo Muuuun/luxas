@@ -33,7 +33,27 @@ import type { SafetyConfig } from "./registry.js";
 
 // ── Types ────────────────────────────────────────────────────────────────
 
-export type SafetyWrapper = (tools: any[], projectDir: string, templateVars?: Record<string, string>) => any[];
+/**
+ * Observer callbacks fired by the safety wrapper at well-defined tool
+ * milestones. PR-1 introduces only `onFileTouched` (post-success write/edit);
+ * Phase 3 will extend this into a full FileContextSink (onRead with content,
+ * per-range cache). Kept minimal on purpose — broadening now risks Phase 1
+ * absorbing Phase 3's cache design.
+ *
+ * Hooks are invoked synchronously inside the wrapper's success branch (after
+ * the underlying tool resolved, before the success result is returned). They
+ * must not throw — the wrapper does not catch.
+ */
+export interface SafetyRuntimeHooks {
+  onFileTouched?: (event: { path: string; via: "write" | "edit"; at: number }) => void;
+}
+
+export type SafetyWrapper = (
+  tools: any[],
+  projectDir: string,
+  templateVars?: Record<string, string>,
+  hooks?: SafetyRuntimeHooks,
+) => any[];
 
 interface ReadEntry {
   /** mtimeMs of the file at the moment it was read (or written/edited). */
@@ -167,6 +187,7 @@ function wrapEdit(
   protectedAbs: Set<string>,
   allowedWriteAbs: string[] | null,
   forbiddenWritePatterns: { pattern: RegExp; reason: string }[],
+  hooks: SafetyRuntimeHooks | undefined,
 ) {
   const origExecute = tool.execute;
   return {
@@ -263,6 +284,7 @@ function wrapEdit(
       if (newMtime !== null) {
         tracker.set(abs, { ...entry, mtimeAtRead: newMtime });
       }
+      hooks?.onFileTouched?.({ path: abs, via: "edit", at: Date.now() });
       return result;
     },
   };
@@ -276,6 +298,7 @@ function wrapWrite(
   allowedWriteAbs: string[] | null,
   opts: SafetyOptions,
   forbiddenWritePatterns: { pattern: RegExp; reason: string }[],
+  hooks: SafetyRuntimeHooks | undefined,
 ) {
   const origExecute = tool.execute;
   return {
@@ -316,6 +339,7 @@ function wrapWrite(
         if (newMtime !== null) {
           tracker.set(abs, { mtimeAtRead: newMtime });
         }
+        hooks?.onFileTouched?.({ path: abs, via: "write", at: Date.now() });
       }
       return result;
     },
@@ -325,7 +349,7 @@ function wrapWrite(
 // ── Factory ──────────────────────────────────────────────────────────────
 
 function createSafetyWrapper(opts: SafetyOptions): SafetyWrapper {
-  return (tools, projectDir, templateVars = {}) => {
+  return (tools, projectDir, templateVars = {}, hooks) => {
     // One tracker per wrapper instance — closure-scoped, lives as long as
     // the agent that owns these tool instances.
     const tracker: ReadTracker = new Map();
@@ -343,8 +367,8 @@ function createSafetyWrapper(opts: SafetyOptions): SafetyWrapper {
 
     return tools.map((tool: any) => {
       if (tool.name === "read")  return wrapRead(tool, tracker, projectDir, allowedReadAbs);
-      if (tool.name === "edit")  return wrapEdit(tool, tracker, projectDir, protectedAbs, allowedWriteAbs, forbiddenWritePatterns);
-      if (tool.name === "write") return wrapWrite(tool, tracker, projectDir, protectedAbs, allowedWriteAbs, opts, forbiddenWritePatterns);
+      if (tool.name === "edit")  return wrapEdit(tool, tracker, projectDir, protectedAbs, allowedWriteAbs, forbiddenWritePatterns, hooks);
+      if (tool.name === "write") return wrapWrite(tool, tracker, projectDir, protectedAbs, allowedWriteAbs, opts, forbiddenWritePatterns, hooks);
       return tool;
     });
   };

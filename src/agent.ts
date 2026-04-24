@@ -35,7 +35,7 @@ import { convertToLlm } from "./messages.js";                    // #7: custom m
 import { cleanMessagesForModel } from "./transform.js";           // #6: cross-model compatibility
 import { ExtensionBus } from "./extensions.js";                   // #8: extension system
 import { Session, buildSessionContext, deriveState } from "./session.js"; // #5: session DAG
-import { loadRegistry, removeAgent, tryExtractResult } from "./active-agents.js";
+import { loadRegistry, removeAgent, tryExtractResult, formatExitHint } from "./active-agents.js";
 import { installUsageTracking, readUsageTotals } from "./usage-log.js";
 
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
@@ -423,14 +423,14 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
           if (a.status === "done" && a.result) {
             agent.steer({
               role: "user",
-              content: `[Background Agent Complete: ${a.name} ✓]\nTask: ${a.task}\n\n${a.result.slice(0, 30_000)}`,
+              content: `[Background Agent Complete: ${a.name} ✓]\nTask: ${a.task}\n\n${a.result.slice(0, 30_000)}${formatExitHint(a.exit)}`,
               timestamp: Date.now(),
             });
             removeAgent(agentDir, a.id);
           } else if (a.status === "failed") {
             agent.steer({
               role: "user",
-              content: `[Background Agent Failed: ${a.name} ✗]\nTask: ${a.task}\n\n${a.result ?? "Unknown error"}`,
+              content: `[Background Agent Failed: ${a.name} ✗]\nTask: ${a.task}\n\n${a.result ?? "Unknown error"}${formatExitHint(a.exit)}`,
               timestamp: Date.now(),
             });
             removeAgent(agentDir, a.id);

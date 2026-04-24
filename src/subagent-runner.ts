@@ -15,9 +15,10 @@
 
 import { mkdirSync, appendFileSync } from "node:fs";
 import { join, isAbsolute, resolve, dirname } from "node:path";
-import { buildAgentFromDefinition, type SpawnAgentOptions } from "./agents/spawn.js";
+import { buildAgentFromDefinition, buildSubAgentExit, type SpawnAgentOptions } from "./agents/spawn.js";
+import type { SafetyRuntimeHooks } from "./agents/safety-wrappers.js";
 import { Session, deriveState, buildSessionContext } from "./session.js";
-import { markDone, markFailed, touchHeartbeat } from "./active-agents.js";
+import { markDone, markFailed, touchHeartbeat, type SubAgentStopReason } from "./active-agents.js";
 import { getApiKey } from "./auth.js";
 import { extractTextContent } from "./utils.js";
 import { cleanMessagesForModel } from "./transform.js";
@@ -79,6 +80,13 @@ async function main() {
     touchHeartbeat(agentDir, args.id);
   }, 30_000);
 
+  // Declared at function scope so the catch block can still read them when
+  // buildAgentFromDefinition / agent.prompt throws. agent and tokenTap start
+  // as null; fileTouches accumulates via the safety-wrapper hook.
+  const fileTouches: { path: string; via: "write" | "edit"; at: number }[] = [];
+  let builtAgent: any = null;
+  let builtTokenTap: any = null;
+
   try {
     // Parse forwarded templateVars from the spawning parent (e.g. PAPER_ID for
     // the reader). Fail fast — an agent spawned without its required vars
@@ -112,9 +120,16 @@ async function main() {
       getApiKey,
       parentAgentId: args.id.split(".").slice(0, -1).join(".") || "brain",
       createSpawnTool: makeSpawnTool,
+      runtimeHooks: {
+        onFileTouched: (e: { path: string; via: "write" | "edit"; at: number }) => {
+          fileTouches.push(e);
+        },
+      } satisfies SafetyRuntimeHooks,
     };
 
     const { agent, agentId, definition, tokenTap } = buildAgentFromDefinition(spawnOpts);
+    builtAgent = agent;
+    builtTokenTap = tokenTap;
 
     // Resolve the actual model for cross-model message cleaning
     const modelKey = definition.model === "inherit" ? "sonnet" : definition.model;
@@ -176,11 +191,18 @@ async function main() {
       ? extractTextContent(lastAssistant.content)
       : "(no output)";
 
-    // Mark done in registry
-    markDone(agentDir, args.id, output.slice(0, 50_000));
+    // Mark done in registry (with structured exit)
+    const exit = buildSubAgentExit(agent, processStartTime, fileTouches, tokenTap);
+    markDone(agentDir, args.id, output.slice(0, 50_000), exit);
 
   } catch (err: any) {
-    markFailed(agentDir, args.id, err.message || String(err));
+    const msg = err?.message || String(err);
+    const isAbort = err?.name === "AbortError" || /aborted/i.test(msg);
+    const stopReason: SubAgentStopReason = isAbort ? "killed" : "error";
+    // If buildAgentFromDefinition itself threw, builtAgent / builtTokenTap are
+    // still null — buildSubAgentExit tolerates that.
+    const exit = buildSubAgentExit(builtAgent, processStartTime, fileTouches, builtTokenTap, stopReason);
+    markFailed(agentDir, args.id, msg, exit);
   } finally {
     clearInterval(heartbeatInterval);
   }
