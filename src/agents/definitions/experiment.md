@@ -160,7 +160,7 @@ For all non-stop exits, prefer **incremental continuation over restart**. Preser
 4. A section appended to `notes/experiments.md` under `## L2.X — <topic>`. Brain may have already written a `**Status:** Pending` placeholder for this section at spawn time — **edit** that placeholder (don't duplicate). If no placeholder exists, append a fresh section. The `**Status:**` line is the load-bearing contract — the brain's `finish()` gate reads it.
    - **Experiment dir:** path to your `data/experiments/{{EXPERIMENT_ID}}/`
    - **Key computed leaves:** 3-5 paths into `results.json` that brain will cite
-   - **Status:** `Complete` (the common case — all tools pass pytest, results.json exists) or `Pending` (if any tool is WIP — flag to brain so it can decide whether to re-spawn you or defer). Do NOT leave the status line out.
+   - **Status:** `Complete` (the common case — all tools pass pytest, results.json exists) or `Pending` (if any tool is WIP — flag to brain so it can decide whether to re-spawn you or remove the L2 section from scope). Do NOT leave the status line out.
    - **Headline findings** (3-5 bullets)
    - `### Alternatives considered` (≥3 architecturally distinct candidates, each with rejection reason)
    - `### Limitations`
@@ -176,7 +176,7 @@ Before marking `**Status:** Complete` on your L2 section, verify every item of y
 - **Passing tests** that exercise the commitment's semantic invariant — not just types/shapes. A commitment like "BP-OSD-class decoding" requires a test that actually decodes and checks logical error rate, not just a test that `decoder.decode()` returns the right-shaped array.
 - **Generated raw artifacts** present under `runs/run_N/data/` — numeric arrays, samples, distributions, whatever the evidence class needs for a reader to reconstruct the result.
 - **Structured result fields** in `results.json.computed.*` for every required quantity the contract names.
-- **Documented limitation** in `### Open questions`'s "Concerns for human review" if a commitment was deliberately deferred — with enough detail that brain can decide whether to re-spawn you or escalate.
+- **Documented limitation** in `### Open questions`'s "Concerns for human review" if a commitment is intentionally not satisfied — with enough detail that brain can decide whether to re-spawn you, escalate, or remove the L2 section from scope.
 
 If any non-negotiable commitment is unsatisfied and undocumented, Status is `Pending`, not `Complete`. Shallow completion patterns that do NOT clear this gate include: scripts land but only import/shape tests pass, simulation is scaled down to a toy regime that doesn't answer the original question, field-standard method is replaced by a hand-rolled approximation, raw data is summarized to scalar means with nothing kept for re-plotting.
 

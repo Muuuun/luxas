@@ -16,14 +16,20 @@ import { loadRegistry, removeAgent, isAlive, markFailed, formatExitHint } from "
 
 /**
  * Parse `## L2.X` / `## E_N` experiment sections from notes/experiments.md
- * and extract each one's `**Status:**` line. Unknown status values (or
- * missing status) surface so the finish gate can tell brain which section
- * needs attention.
+ * and extract each one's `**Status:**` line. Only `Pending` and `Complete`
+ * are recognized statuses — any other value (`Deferred`, unrecognized text,
+ * or missing line entirely) parses as `missing` and the finish gate blocks.
+ *
+ * "Deferred" was removed as a status in favor of a stricter contract:
+ * scope reductions must be made at the plan level (drop the §E_N from
+ * notes/plan.md AND remove the L2.N section from notes/experiments.md),
+ * not laundered through an experiment-section status. brain was observed
+ * using "Deferred: <weak reason>" to skip experiments rather than spawn them;
+ * removing the status closes that escape hatch.
  */
 interface ExperimentSection {
   header: string;
-  status: "pending" | "complete" | "deferred" | "missing";
-  deferredReason?: string;
+  status: "pending" | "complete" | "missing";
 }
 
 export function parseExperimentSections(text: string): ExperimentSection[] {
@@ -31,7 +37,7 @@ export function parseExperimentSections(text: string): ExperimentSection[] {
   // Treat h2 headers starting with L2.N or E_N as experiment sections; other
   // h2s (like "Overview") are narrative and exempt from the status contract.
   const headerRE = /^##\s+((?:L2\.\d+|E\d+)\b.*)$/;
-  const statusRE = /^\*\*Status:\*\*\s*(Pending|Complete|Deferred)(?:\s*:\s*(.*))?/im;
+  const statusRE = /^\*\*Status:\*\*\s*(Pending|Complete)\b/im;
 
   const sections: ExperimentSection[] = [];
   let curHeader: string | null = null;
@@ -43,9 +49,8 @@ export function parseExperimentSections(text: string): ExperimentSection[] {
     if (!m) {
       sections.push({ header: curHeader, status: "missing" });
     } else {
-      const kind = m[1].toLowerCase() as "pending" | "complete" | "deferred";
-      const reason = kind === "deferred" ? (m[2] ?? "").trim() : undefined;
-      sections.push({ header: curHeader, status: kind, deferredReason: reason });
+      const kind = m[1].toLowerCase() as "pending" | "complete";
+      sections.push({ header: curHeader, status: kind });
     }
   };
   for (const line of lines) {
@@ -160,34 +165,26 @@ export function buildResearchTools(
       }
 
       // Plan-commitment gate: every L2.X / E_N section in notes/experiments.md
-      // must have **Status:** Complete or Deferred: <reason>. Pending blocks —
-      // brain silently skipped experiments before this gate existed. Deferred
-      // requires a reason so the final report surfaces it for human review.
+      // must have **Status: Complete**. Pending and missing-Status both block.
+      // No "Deferred" escape — scope reductions belong at the plan level
+      // (drop the §E_N from notes/plan.md AND remove the L2 section from
+      // notes/experiments.md), not as a section status.
       const expNotesPath = join(projectDir, "notes", "experiments.md");
       if (existsSync(expNotesPath)) {
         const sections = parseExperimentSections(readFileSync(expNotesPath, "utf-8"));
-        const pending = sections.filter(s => s.status === "pending");
-        const missing = sections.filter(s => s.status === "missing");
-        const deferredNoReason = sections.filter(
-          s => s.status === "deferred" && (s.deferredReason ?? "").length === 0,
-        );
-        if (pending.length + missing.length + deferredNoReason.length > 0) {
-          const lines: string[] = [`Cannot finish: notes/experiments.md has sections that block completion.`];
-          if (pending.length > 0) {
-            lines.push(``, `Pending (${pending.length}):`);
-            for (const s of pending) lines.push(`  - ${s.header}`);
-            lines.push(`→ Spawn the experiment to completion, or change status to "Deferred: <justification>".`);
+        const incomplete = sections.filter(s => s.status !== "complete");
+        if (incomplete.length > 0) {
+          const lines: string[] = [
+            `Cannot finish: notes/experiments.md has ${incomplete.length} section(s) that are not Complete.`,
+            ``,
+          ];
+          for (const s of incomplete) {
+            lines.push(`  - ${s.header} → status: ${s.status}`);
           }
-          if (missing.length > 0) {
-            lines.push(``, `Missing **Status:** line (${missing.length}):`);
-            for (const s of missing) lines.push(`  - ${s.header}`);
-            lines.push(`→ Add \`**Status:** Complete\`, \`**Status:** Pending\`, or \`**Status:** Deferred: <reason>\` to each.`);
-          }
-          if (deferredNoReason.length > 0) {
-            lines.push(``, `Deferred without reason (${deferredNoReason.length}):`);
-            for (const s of deferredNoReason) lines.push(`  - ${s.header}`);
-            lines.push(`→ Write \`**Status:** Deferred: <one-sentence justification>\`. The reason surfaces in the report's Open Questions section for human review.`);
-          }
+          lines.push(
+            ``,
+            `Each L2.X / E_N section must have \`**Status:** Complete\`. Spawn the experiment to completion. If a sub-question is no longer in scope, edit notes/plan.md to drop the §E_N section AND remove the corresponding L2 section from notes/experiments.md — do not leave a Pending or unrecognized-status placeholder.`,
+          );
           return { content: [{ type: "text" as const, text: lines.join("\n") }] };
         }
       }
@@ -200,8 +197,7 @@ export function buildResearchTools(
       // Figure gate: require ≥1 self-generated figure (under report/figures/,
       // not imported from ../data/papers/). Without this, brain tends to ship
       // text-with-paper-imports and skip visualising its own quantitative
-      // results. Deferred: <reason> in notes/experiments.md escape hatch is
-      // available if every experiment was genuinely non-plottable.
+      // results.
       const reportTexPath = join(projectDir, "report/report.tex");
       if (existsSync(reportTexPath)) {
         const tex = readFileSync(reportTexPath, "utf-8");

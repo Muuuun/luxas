@@ -5,11 +5,14 @@
  * Ensures the plan-commitment contract enforces:
  *   - Pending sections block finish
  *   - Missing Status lines block finish
- *   - Deferred sections with reason pass
- *   - Deferred without reason blocks
- *   - Only Complete + Deferred-with-reason passes
+ *   - Only `**Status:** Complete` passes
+ *   - "Deferred" status (legacy) is unrecognized → parses as `missing` → blocks
  *   - Non-experiment h2 headers (e.g. "## Overview") are exempt
  *   - Missing experiments.md file is not a block (projects without it = fresh)
+ *
+ * "Deferred" was removed Apr 2026 — brain was using it as escape hatch with
+ * weak reasons ("ran out of time") rather than as the intended legitimate
+ * scope-reduction marker. Scope reductions now go through plan.md edits.
  */
 import { parseExperimentSections } from "../src/tools/index.js";
 
@@ -78,7 +81,7 @@ This section has no status line.
   assert(missing.length === 1 && missing[0].header.startsWith("L2.2"), "L2.2 flagged missing");
 }
 
-// ---- 4. Deferred with reason → OK + reason captured ----
+// ---- 4. "Deferred" status (legacy) parses as `missing` → finish gate blocks ----
 {
   const text = `## L2.1 — A
 
@@ -86,28 +89,21 @@ This section has no status line.
 
 ## L2.2 — B
 
-**Status:** Complete`;
-  const sections = parseExperimentSections(text);
-  console.log(`\n[deferred with reason]`);
-  const def = sections.find(s => s.status === "deferred")!;
-  assert(def !== undefined, "deferred section parsed");
-  assert((def.deferredReason ?? "").includes("subsumed"), "reason captured");
-}
-
-// ---- 5. Deferred without reason → flagged via empty deferredReason ----
-{
-  const text = `## L2.1 — A
-
 **Status:** Deferred
 
-## L2.2 — B
+## L2.3 — C
 
 **Status:** Complete`;
   const sections = parseExperimentSections(text);
-  console.log(`\n[deferred no reason]`);
-  const def = sections.find(s => s.status === "deferred")!;
-  assert(def !== undefined, "deferred section parsed");
-  assert((def.deferredReason ?? "").length === 0, "reason is empty (gate will block)");
+  console.log(`\n[deferred status — legacy, must block]`);
+  assert(sections.length === 3, "all 3 sections parsed");
+  // Both Deferred variants (with reason, without reason) parse as `missing`
+  // since the parser no longer recognizes "Deferred" as a valid status.
+  // The finish gate only allows `complete`; missing → block.
+  const deferredAttempts = sections.filter(s => s.header.startsWith("L2.1") || s.header.startsWith("L2.2"));
+  assert(deferredAttempts.every(s => s.status === "missing"),
+    "Deferred (with or without reason) parses as missing — gate blocks");
+  assert(sections[2].status === "complete", "Complete still recognized");
 }
 
 // ---- 6. Non-experiment h2 (Overview) ignored ----
@@ -153,7 +149,7 @@ This is narrative text with no status.
 }
 
 if (failures === 0) {
-  console.log(`\nPASS — finish() gate parser handles all 9 cases`);
+  console.log(`\nPASS — finish() gate parser handles all 8 cases`);
   process.exit(0);
 } else {
   console.log(`\n${failures} failure(s)`);
