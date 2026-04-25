@@ -118,6 +118,72 @@ export function readUsageTotals(logPath: string): UsageTotals {
   return totals;
 }
 
+// ── Transient error retry ───────────────────────────
+//
+// Sessions 5 and 7 both died on a single network-layer transient failure
+// (`Connection error.`, `Request timed out.`) — pi-ai surfaces the rejection
+// to the agent loop, which has no retry path and exits. We wrap the provider
+// stream functions to retry once on recognized transient errors before
+// surfacing to the loop. Non-transient errors (e.g. context-length, rate
+// limit policy denials, malformed request) propagate unchanged.
+
+const TRANSIENT_RETRY_DELAYS_MS = [10_000, 30_000, 60_000];
+
+/**
+ * Heuristic: does this error look like a temporary network / provider
+ * blip we should retry? Matches phrases pi-ai's adapters surface from
+ * fetch / undici / Anthropic SDK on connection drops, timeouts, and
+ * provider 5xx. Pattern is intentionally inclusive — false-positive
+ * retries cost time but never lose work; false negatives (real error
+ * mistakenly retried) cost the wait time but ultimately throw at attempt
+ * exhaustion.
+ */
+export function isTransientError(err: unknown): boolean {
+  const msg = String((err as any)?.message ?? err ?? "").toLowerCase();
+  return (
+    msg.includes("connection error") ||
+    msg.includes("request timed out") ||
+    msg.includes("econnreset") ||
+    msg.includes("etimedout") ||
+    msg.includes("econnrefused") ||
+    msg.includes("socket hang up") ||
+    msg.includes("fetch failed") ||
+    msg.includes("network error") ||
+    msg.includes("503") ||
+    msg.includes("504") ||
+    msg.includes("529") // Anthropic "overloaded"
+  );
+}
+
+/**
+ * Run `attemptFn` with exponential-backoff retry on transient failures.
+ * Each attempt receives a fresh call to `attemptFn` — important when the
+ * underlying resource (stream, request) is single-use and must be recreated
+ * after a failure, not re-awaited.
+ *
+ * Defaults match the agent-loop case: [10s, 30s, 60s] = up to 4 total
+ * attempts, ≤100s aggregate wait. Tests pass tiny delays.
+ */
+export async function withTransientRetry<T>(
+  attemptFn: () => Promise<T>,
+  delaysMs: number[] = TRANSIENT_RETRY_DELAYS_MS,
+  log: (msg: string) => void = (m) => console.error(m),
+): Promise<T> {
+  let attempt = 0;
+  while (true) {
+    try {
+      return await attemptFn();
+    } catch (err: unknown) {
+      if (attempt >= delaysMs.length || !isTransientError(err)) throw err;
+      const delay = delaysMs[attempt];
+      const errMsg = String((err as any)?.message ?? err).slice(0, 120);
+      log(`[transient-retry] ${errMsg} — retrying in ${delay / 1000}s (attempt ${attempt + 1}/${delaysMs.length})`);
+      await new Promise((r) => setTimeout(r, delay));
+      attempt++;
+    }
+  }
+}
+
 // ── Install provider-level tracking ─────────────────
 
 let installed = false;
@@ -133,22 +199,53 @@ export function installUsageTracking(logPath: string): void {
 
   function wrapStreamFn(originalFn: Function, api: string) {
     return (model: any, context: any, options: any) => {
-      const eventStream = originalFn(model, context, options);
-      eventStream.result().then((msg: any) => {
-        if (msg?.usage) {
-          appendUsage(logPath, {
-            timestamp: Date.now(),
-            model: model.id ?? "unknown",
-            provider: model.provider ?? api,
-            input: msg.usage.input ?? 0,
-            output: msg.usage.output ?? 0,
-            cacheRead: msg.usage.cacheRead ?? 0,
-            cacheWrite: msg.usage.cacheWrite ?? 0,
-            cost: msg.usage.cost?.total ?? 0,
-          });
+      // Each attempt creates a fresh stream — retried attempts replace
+      // `activeStream` so the eventStream wrapper exposes the latest one.
+      let activeStream: any = originalFn(model, context, options);
+
+      // result() promise: retry chain wrapped around the stream's own
+      // result(). On transient failure we recreate the stream and retry.
+      // Usage logging fires once on the eventually-successful msg.
+      const finalResult = (async () => {
+        let attempt = 0;
+        while (true) {
+          try {
+            const msg = await activeStream.result();
+            if (msg?.usage) {
+              appendUsage(logPath, {
+                timestamp: Date.now(),
+                model: model.id ?? "unknown",
+                provider: model.provider ?? api,
+                input: msg.usage.input ?? 0,
+                output: msg.usage.output ?? 0,
+                cacheRead: msg.usage.cacheRead ?? 0,
+                cacheWrite: msg.usage.cacheWrite ?? 0,
+                cost: msg.usage.cost?.total ?? 0,
+              });
+            }
+            return msg;
+          } catch (err: unknown) {
+            if (attempt >= TRANSIENT_RETRY_DELAYS_MS.length || !isTransientError(err)) throw err;
+            const delay = TRANSIENT_RETRY_DELAYS_MS[attempt];
+            const errMsg = String((err as any)?.message ?? err).slice(0, 120);
+            console.error(`[transient-retry] ${api} ${errMsg} — retrying in ${delay / 1000}s (attempt ${attempt + 1}/${TRANSIENT_RETRY_DELAYS_MS.length})`);
+            await new Promise((r) => setTimeout(r, delay));
+            activeStream = originalFn(model, context, options);
+            attempt++;
+          }
         }
-      }).catch(() => {});
-      return eventStream;
+      })();
+
+      // Proxy the first stream but redirect `.result` to the retrying
+      // promise. Other props (events iterator, etc.) come from the active
+      // stream's first attempt — retries override only result, since that's
+      // what consumers actually depend on for state.
+      return new Proxy(activeStream, {
+        get(target, prop, receiver) {
+          if (prop === "result") return () => finalResult;
+          return Reflect.get(target, prop, receiver);
+        },
+      });
     };
   }
 
