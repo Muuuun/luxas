@@ -14,7 +14,7 @@
  * weak reasons ("ran out of time") rather than as the intended legitimate
  * scope-reduction marker. Scope reductions now go through plan.md edits.
  */
-import { parseExperimentSections } from "../src/tools/index.js";
+import { parseExperimentSections, parsePlanSections } from "../src/tools/index.js";
 
 let failures = 0;
 const assert = (cond: boolean, msg: string) => {
@@ -148,8 +148,93 @@ This is narrative text with no status.
   assert(sections[0]?.status === "complete", "lowercase 'complete' parsed");
 }
 
+// ---- 10. parsePlanSections: extracts E_N headers ----
+{
+  console.log(`\n[plan parser]`);
+  const plan = `# Research Plan
+
+## Overview
+Some narrative.
+
+## Experiment decomposition
+
+### E1
+**Question**: foo
+### E2
+**Question**: bar
+### E3 — title with em dash
+**Question**: baz
+`;
+  const ps = parsePlanSections(plan);
+  assert(ps.length === 3, "3 E_N sections parsed");
+  assert(ps[0].id === "E1" && ps[0].index === 1, "E1 with index 1");
+  assert(ps[2].id === "E3" && ps[2].index === 3, "E3 with index 3");
+}
+
+// ---- 11. parsePlanSections: ignores h2 / non-E_N h3 ----
+{
+  console.log(`\n[plan parser ignores non-E_N]`);
+  const plan = `## Overview\n### Approach\n### E5\n### Methodology`;
+  const ps = parsePlanSections(plan);
+  assert(ps.length === 1 && ps[0].id === "E5", "only E5 picked, others skipped");
+}
+
+// ---- 12. plan-experiments cross-check: missing L2 section blocks ----
+//   This is THE failure mode brain found Apr-25: erase experiments.md sections,
+//   call finish, ledger looks clean but plan still names required experiments.
+{
+  console.log(`\n[plan E_N missing from experiments ledger]`);
+  const plan = `## Experiment decomposition\n### E1\n### E2\n### E3\n`;
+  const exp = `# Experiment Notes\n\n(All planned experiments removed per PI STOP verdict)\n`;
+  const planSecs = parsePlanSections(plan);
+  const expSecs = parseExperimentSections(exp);
+  assert(planSecs.length === 3, "plan has 3 E_N");
+  assert(expSecs.length === 0, "experiments.md has no L2/E sections");
+  // The cross-check inside finish would: count plan.length - matching ledger entries
+  // = 3 missing → block. We assert the inputs that drive that decision.
+  const ledgerKeys = new Set<string>();
+  for (const s of expSecs) {
+    const m = s.header.match(/^(L2\.\d+|E\d+)/);
+    if (m) ledgerKeys.add(m[1]);
+  }
+  const missing = planSecs.filter(p => !ledgerKeys.has(`L2.${p.index}`) && !ledgerKeys.has(p.id));
+  assert(missing.length === 3, "all 3 plan E_N missing from ledger → finish must block");
+}
+
+// ---- 13. plan-experiments cross-check: full match passes ----
+{
+  console.log(`\n[plan E_N all Complete in ledger]`);
+  const plan = `### E1\n### E2\n`;
+  const exp = `## L2.1 — A\n\n**Status:** Complete\n\n## L2.2 — B\n\n**Status:** Complete\n`;
+  const planSecs = parsePlanSections(plan);
+  const expSecs = parseExperimentSections(exp);
+  const ledgerByKey = new Map<string, string>();
+  for (const s of expSecs) {
+    const m = s.header.match(/^L2\.(\d+)/);
+    if (m) ledgerByKey.set(`L2.${m[1]}`, s.status);
+  }
+  const allComplete = planSecs.every(p => ledgerByKey.get(`L2.${p.index}`) === "complete");
+  assert(allComplete, "all plan E_N matched as Complete → gate passes");
+}
+
+// ---- 14. plan-experiments cross-check: E_N in plan but L2 is Pending ----
+{
+  console.log(`\n[plan E_N exists but ledger says Pending]`);
+  const plan = `### E1\n### E2\n`;
+  const exp = `## L2.1 — A\n\n**Status:** Complete\n\n## L2.2 — B\n\n**Status:** Pending\n`;
+  const planSecs = parsePlanSections(plan);
+  const expSecs = parseExperimentSections(exp);
+  const ledgerByKey = new Map<string, string>();
+  for (const s of expSecs) {
+    const m = s.header.match(/^L2\.(\d+)/);
+    if (m) ledgerByKey.set(`L2.${m[1]}`, s.status);
+  }
+  const incomplete = planSecs.filter(p => ledgerByKey.get(`L2.${p.index}`) !== "complete");
+  assert(incomplete.length === 1 && incomplete[0].id === "E2", "E2 flagged as Pending");
+}
+
 if (failures === 0) {
-  console.log(`\nPASS — finish() gate parser handles all 8 cases`);
+  console.log(`\nPASS — finish() gate parser + plan-experiments cross-check`);
   process.exit(0);
 } else {
   console.log(`\n${failures} failure(s)`);

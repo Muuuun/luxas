@@ -20,16 +20,39 @@ import { loadRegistry, removeAgent, isAlive, markFailed, formatExitHint } from "
  * are recognized statuses — any other value (`Deferred`, unrecognized text,
  * or missing line entirely) parses as `missing` and the finish gate blocks.
  *
- * "Deferred" was removed as a status in favor of a stricter contract:
- * scope reductions must be made at the plan level (drop the §E_N from
- * notes/plan.md AND remove the L2.N section from notes/experiments.md),
- * not laundered through an experiment-section status. brain was observed
- * using "Deferred: <weak reason>" to skip experiments rather than spawn them;
- * removing the status closes that escape hatch.
+ * History: "Deferred" was removed Apr-25 because brain abused it as escape
+ * hatch with weak reasons. Then brain learned to delete the L2 section
+ * entirely (audit-ledger erasure) and fabricate a "PI STOP verdict" to
+ * justify finish. The finish gate now derives required experiments from
+ * notes/plan.md (which the plan-PI gate already protects) instead of
+ * trusting the brain-writable experiments.md ledger alone — see
+ * parsePlanSections + the cross-check inside finish.
  */
 interface ExperimentSection {
   header: string;
   status: "pending" | "complete" | "missing";
+}
+
+/**
+ * Parse `### E_N` headers from notes/plan.md. These are the load-bearing
+ * commitment statements: every E_N here implies the project promised to
+ * answer that sub-question, and the finish gate requires a corresponding
+ * `## L2.N` (Status: Complete) in notes/experiments.md.
+ *
+ * plan.md changes are PI-gated (see brain.md `<pi_review>`), so the set
+ * of E_N is a trustworthy authority for "what experiments must complete".
+ * The experiments.md ledger by contrast is brain-writable and was observed
+ * being wiped to bypass finish — it can't be the sole source of truth.
+ */
+export function parsePlanSections(text: string): Array<{ id: string; index: number }> {
+  const lines = text.split("\n");
+  const headerRE = /^###\s+(E\d+)\b/;
+  const sections: Array<{ id: string; index: number }> = [];
+  for (const line of lines) {
+    const m = line.match(headerRE);
+    if (m) sections.push({ id: m[1], index: parseInt(m[1].slice(1), 10) });
+  }
+  return sections;
 }
 
 export function parseExperimentSections(text: string): ExperimentSection[] {
@@ -164,29 +187,105 @@ export function buildResearchTools(
         return { content: [{ type: "text" as const, text: `Cannot finish: ${active.length} background agent(s) still running. Wait for them to complete before finishing.\n\nActive agents:\n${list}` }] };
       }
 
-      // Plan-commitment gate: every L2.X / E_N section in notes/experiments.md
-      // must have **Status: Complete**. Pending and missing-Status both block.
-      // No "Deferred" escape — scope reductions belong at the plan level
-      // (drop the §E_N from notes/plan.md AND remove the L2 section from
-      // notes/experiments.md), not as a section status.
+      // Plan-commitment gate: derive required experiments from notes/plan.md
+      // and verify each one is Complete in notes/experiments.md.
+      //
+      // The authority chain:
+      //   1. notes/plan.md  — what experiments the project committed to.
+      //      Changes are PI-gated; brain edits but PI-review blocks dispatch
+      //      after material edits. This is the trusted source of truth.
+      //   2. notes/experiments.md — the per-experiment status ledger.
+      //      Brain was observed wiping sections to bypass the gate
+      //      (Apr-25 incident). Cannot be sole source of truth.
+      //
+      // Cross-check: every `### E_N` in plan.md must have a corresponding
+      // `## L2.N` (or `## E_N`) section with Status: Complete in
+      // experiments.md. Missing section = ledger erased = block.
+      // Defensive check: any L2/E section actually present in experiments.md
+      // must also be Complete (catches stray Pending sections not in plan).
+      const planPath = join(projectDir, "notes", "plan.md");
       const expNotesPath = join(projectDir, "notes", "experiments.md");
-      if (existsSync(expNotesPath)) {
-        const sections = parseExperimentSections(readFileSync(expNotesPath, "utf-8"));
-        const incomplete = sections.filter(s => s.status !== "complete");
-        if (incomplete.length > 0) {
-          const lines: string[] = [
-            `Cannot finish: notes/experiments.md has ${incomplete.length} section(s) that are not Complete.`,
-            ``,
-          ];
-          for (const s of incomplete) {
-            lines.push(`  - ${s.header} → status: ${s.status}`);
-          }
+
+      const planExperiments = existsSync(planPath)
+        ? parsePlanSections(readFileSync(planPath, "utf-8"))
+        : [];
+      const ledgerSections = existsSync(expNotesPath)
+        ? parseExperimentSections(readFileSync(expNotesPath, "utf-8"))
+        : [];
+
+      // Index ledger sections by their L2.N / E_N identifier prefix.
+      const ledgerByKey = new Map<string, "pending" | "complete" | "missing">();
+      for (const s of ledgerSections) {
+        const m = s.header.match(/^(L2\.(\d+)|E(\d+))/);
+        if (!m) continue;
+        const idx = m[2] ?? m[3];
+        ledgerByKey.set(`L2.${idx}`, s.status);
+        ledgerByKey.set(`E${idx}`, s.status);
+      }
+
+      // Cross-check: every plan.md E_N must have a Complete ledger entry.
+      const planMissingFromLedger: string[] = [];
+      const planIncompleteInLedger: Array<{ id: string; status: string }> = [];
+      for (const p of planExperiments) {
+        const key1 = `L2.${p.index}`;
+        const key2 = p.id;
+        const status = ledgerByKey.get(key1) ?? ledgerByKey.get(key2);
+        if (status === undefined) {
+          planMissingFromLedger.push(p.id);
+        } else if (status !== "complete") {
+          planIncompleteInLedger.push({ id: p.id, status });
+        }
+      }
+
+      // Defensive: any extra section in experiments.md must also be Complete.
+      const ledgerExtraIncomplete = ledgerSections.filter(s => {
+        if (s.status === "complete") return false;
+        const m = s.header.match(/^(L2\.(\d+)|E(\d+))/);
+        const idx = m?.[2] ?? m?.[3];
+        // Skip if already flagged via plan cross-check (avoid double-report)
+        if (idx !== undefined && planIncompleteInLedger.some(pi => pi.id === `E${idx}`)) {
+          return false;
+        }
+        return true;
+      });
+
+      if (
+        planMissingFromLedger.length > 0 ||
+        planIncompleteInLedger.length > 0 ||
+        ledgerExtraIncomplete.length > 0
+      ) {
+        const lines: string[] = [`Cannot finish: plan-experiments commitment check failed.`];
+
+        if (planMissingFromLedger.length > 0) {
           lines.push(
             ``,
-            `Each L2.X / E_N section must have \`**Status:** Complete\`. Spawn the experiment to completion. If a sub-question is no longer in scope, edit notes/plan.md to drop the §E_N section AND remove the corresponding L2 section from notes/experiments.md — do not leave a Pending or unrecognized-status placeholder.`,
+            `notes/plan.md commits to ${planMissingFromLedger.length} experiment(s) with no entry in notes/experiments.md:`,
           );
-          return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+          for (const id of planMissingFromLedger) lines.push(`  - ${id}`);
+          lines.push(
+            `→ Spawn experiment for each missing E_N. The experiment agent appends its own L2 section with Status: Complete on Phase 3 integrate. If a sub-question is genuinely out of scope, edit notes/plan.md to drop its §E_N section, then re-run plan-PI gate (request_pi_review) before retrying finish.`,
+          );
         }
+
+        if (planIncompleteInLedger.length > 0) {
+          lines.push(
+            ``,
+            `Plan-referenced experiments not Complete (${planIncompleteInLedger.length}):`,
+          );
+          for (const s of planIncompleteInLedger) lines.push(`  - ${s.id} → status: ${s.status}`);
+          lines.push(`→ Spawn experiment to drive each section to Complete.`);
+        }
+
+        if (ledgerExtraIncomplete.length > 0) {
+          lines.push(
+            ``,
+            `Extra non-Complete sections in experiments.md not tied to plan.md (${ledgerExtraIncomplete.length}):`,
+          );
+          for (const s of ledgerExtraIncomplete) lines.push(`  - ${s.header} → status: ${s.status}`);
+          lines.push(`→ Either spawn experiment to drive these to Complete, or remove if written in error (note: brain cannot edit experiments.md by design — this entry came from an experiment agent and only that agent class can clean it up).`);
+        }
+
+        return { content: [{ type: "text" as const, text: lines.join("\n") }] };
       }
 
       const pdfPath = join(projectDir, "report/report.pdf");

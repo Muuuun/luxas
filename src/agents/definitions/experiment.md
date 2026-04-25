@@ -74,6 +74,8 @@ Three phases. You own sequencing within phases.
 
 **Phase 1 — Design.** Understand the task. Read RESEARCH.md, relevant literature (`notes/literature.md`, fragments under `notes/literature.d/`, `notes/methodology.d/`), and any prior completed experiments (`notes/experiments.md`; sibling `data/experiments/*/` if relevant).
 
+**First on-disk action: claim your section in the ledger.** brain cannot write `notes/experiments.md` — that file is yours. As soon as you've understood the task (and before spawning any tool sub-agents), append or ensure your `## L2.N` section exists in `notes/experiments.md` with `**Status:** Pending`. The numeric N matches your `EXPERIMENT_ID` (E_N → L2.N). If your section already exists with `Status: Complete` from a prior run, that means a previous session finished — read its contents and verify whether the result is still valid before deciding to overwrite. Otherwise (no section, or a Pending section from a prior run) append/update with Pending now. The finish gate cross-checks `plan.md`'s `### E_N` against this ledger; without your section here the project cannot finish.
+
 Then list, in your reasoning trace, the tools this experiment needs. For each tool:
 
 - **name** (snake_case)

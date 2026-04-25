@@ -34,6 +34,7 @@ function wrapperFor(name: string): SafetyWrapper {
   if (!wrap) throw new Error(`${name}.md must declare a safety config for this smoke to run`);
   return wrap;
 }
+const wrapBrainTools = wrapperFor("brain");
 const wrapExperimentTools = wrapperFor("experiment");
 const wrapToolImplTools = wrapperFor("tool_impl");
 const wrapToolReviewTools = wrapperFor("tool_review");
@@ -74,6 +75,22 @@ async function test(label: string, wrapper: any, templateVars: Record<string, st
     assert(got === want, `write ${path} → ${got} (expected ${want})`);
   }
 }
+
+// brain: cannot write notes/experiments.md (the experiment-status ledger
+// is owned by experiment agents). Other notes/* and report/* paths fine.
+// This protection added Apr-25 after brain was observed wiping
+// experiments.md sections + fabricating a "PI STOP verdict" to bypass
+// finish(). Tool-layer block prevents the audit-ledger erasure path.
+await test("wrapBrainTools", wrapBrainTools, {}, {
+  "notes/experiments.md": "blocked",      // protected — only experiment agent writes
+  "notes/memory.md": "ok",                // brain's scratchpad — fine
+  "notes/plan.md": "ok",                  // brain owns plan — fine
+  "report/report.tex": "ok",              // brain writes report — fine
+  "reviews/pi_pushback.md": "ok",         // brain writes pushback when needed
+  "RESEARCH.md": "blocked",               // user-authored, protected
+  "data/experiments/E_test/scripts/foo.py": "blocked",  // not in brain's allowedWriteRoots
+  "data/experiments/E_test/runs/results.json": "blocked", // ditto
+});
 
 // experiment: tool layer enforces role separation. Writes to scripts/
 // or tests/ (tool_impl/tool_review territory) are blocked. Writes to
