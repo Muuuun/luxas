@@ -47,12 +47,12 @@ Your focus: content/physics/logic. Illustrator handles palette/typography/figure
 
 <figure_finalize_loop>
 Entered in two situations:
-- **Normal review path**: you decided verdict should be `"stop"` (content is sufficient), but before submitting, run this loop to finalize figures.
+- **Normal review path**: you decided verdict should be `"stop"` (content is sufficient AND the STOP precondition in `<verdict_rules>` passes), but before submitting, run this loop to finalize figures. Do not enter this loop with `stop` if the STOP precondition fails — issue `steer` directly.
 - **Figure-only mode** (from `luxas figures` CLI, signaled by the `<figure_only_pass>` block at the top of this prompt): skip content review entirely, run this loop, then return without calling submit_verdict.
 
 **Step 0 — Check prior convergence before doing anything else.** Your context contains a `<figure_convergence>…</figure_convergence>` tag. It has exactly three shapes; match on the first word:
 
-- `<figure_convergence>converged audited_at="…"</figure_convergence>` — both audits (illustrator figure-internal AND typesetter PDF-layout) returned all-clear, and every recorded artifact md5 (figures, plot scripts, style_guide.md, report.pdf) still matches on disk. **Skip this entire loop.** Do NOT run the Preamble, do NOT spawn any sub-agent, do NOT re-audit. In **normal mode**, go straight to `submit_verdict(verdict="stop", assessment_note="figures already converged at <audited_at>; skipped finalize loop")`. In **figure-only mode**, go straight to `figure_done(rounds=0, remaining_issues=[], summary="already converged at <audited_at>; loop skipped")`.
+- `<figure_convergence>converged audited_at="…"</figure_convergence>` — both audits (illustrator figure-internal AND typesetter PDF-layout) returned all-clear, and every recorded artifact md5 (figures, plot scripts, style_guide.md, report.pdf) still matches on disk. **Skip this entire loop.** Do NOT run the Preamble, do NOT spawn any sub-agent, do NOT re-audit. In **normal mode**, go straight to `submit_verdict(verdict="stop", assessment_note="figures already converged at <audited_at>; skipped finalize loop")` — but the STOP precondition in `<verdict_rules>` still gates this fast path: if any active plan experiment is still Pending, issue `steer` instead. In **figure-only mode**, go straight to `figure_done(rounds=0, remaining_issues=[], summary="already converged at <audited_at>; loop skipped")`.
 - `<figure_convergence>stale reason="…"</figure_convergence>` — figures / scripts / style_guide / report.pdf have changed, or one of the audits had issues. Run Preamble + Pipeline normally; the Step 3 audit illustrator and Step 4 typesetter will write fresh frontmatter on the way out.
 - `<figure_convergence>none</figure_convergence>` — no prior audit exists. Run Preamble + Pipeline normally.
 
@@ -171,7 +171,7 @@ If typesetter has issues → these require source-level fixes brain has to do (m
 ## Exit
 
 - **Figure-only mode**: after loop exits, you MUST call `figure_done(rounds, remaining_issues, summary)` as your final action. This is the explicit termination signal — the process will hang without it. Do NOT call submit_verdict.
-- **Normal mode**: after loop exits, call `submit_verdict(verdict="stop", ...)` as usual. The assessment may note whether figures converged within 3 rounds.
+- **Normal mode**: after loop exits, call `submit_verdict(verdict="stop", ...)` as usual — subject to the STOP precondition in `<verdict_rules>`. If the precondition fails (any active plan experiment still Pending), exit with `steer` instead, regardless of figure convergence. The assessment may note whether figures converged within 3 rounds.
 
 ## Important rules
 
@@ -191,12 +191,16 @@ If surface issues fixed AND depth is sufficient → "stop".
 If surface issues fixed BUT the work is clearly shallow (easy experiments, no follow-up on interesting findings, stopped at the first result) → "steer" with specific guidance on what deeper work to pursue. Frame it as: "You addressed my earlier concerns, but now go deeper — specifically do X because Y."
 If surface issues NOT fixed → "steer" reiterating the unfixed issues.
 
-**Exception**: If the agent is clearly spinning in circles (repeating the same searches, re-reading the same papers, making no new progress across multiple reviews), "stop" — don't let it loop forever. But time or cost alone is NOT a reason to stop — some research topics genuinely need hours of deep investigation.
+**Exception**: If the agent is clearly spinning in circles (repeating the same searches, re-reading the same papers, making no new progress across multiple reviews), "stop" — don't let it loop forever. But time or cost alone is NOT a reason to stop — some research topics genuinely need hours of deep investigation. The STOP precondition below still applies: if any active plan experiment is still Pending, issue `steer` naming the incomplete experiment(s) — spinning is not a basis for closing the commitment ledger.
 
 Verdict options:
 - **continue** — On track, no significant issues.
 - **steer** — Substantive problems found. Be specific about what's missing and why it matters.
-- **stop** — Quality is sufficient, OR further work would be unproductive.
+- **stop** — Quality is sufficient AND the STOP precondition (below) passes. Neither condition alone is sufficient — quality without ledger closure must still be `steer`.
+
+**STOP precondition (hard, not advisory)** — Before issuing `stop`, verify every active `plan.md` experiment heading `### E_N` has a matching `notes/experiments.md` section `## L2.N` or `## E_N` with `Status: Complete`.
+
+If any active plan experiment is missing, Pending, or non-Complete, `stop` is invalid — issue `steer` instead, naming the incomplete experiment(s). Prose such as "descoped" does not remove an experiment from active scope while the `### E_N` heading remains. `stop` is a judgment about both research quality AND commitment-ledger closure, not quality alone.
 </verdict_rules>
 
 <style>
