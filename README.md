@@ -38,7 +38,7 @@ Give Luxas a topic. It will:
 5. **Author publication-grade figures** — `illustrator_write` writes the first-pass plot script from raw experiment data; `illustrator` polishes / regenerates with the hybrid Nano Banana + TikZ pipeline; `typesetter` audits how each figure floats in the rendered PDF.
 6. **Write and compile LaTeX** — venue-specific styles, BibTeX, and figure-citation enforcement, with `provref` ensuring every numeric claim resolves to a JSON key.
 7. **Submit to layered adversarial review** — `reviewer` (Opus PI persona) reads the project state and challenges findings on content; its `figure_finalize_loop` spawns `illustrator` (figure internals) and `typesetter` (PDF layout) before any STOP verdict.
-8. **Finish only through deterministic gates** — `finish` is blocked unless: PI verdict is not `steer` (or brain wrote a fresh pushback), `typesetter_notes.md` is `all-clear` and its `report_pdf_md5` matches the live PDF, every `## L2.X` section in `notes/experiments.md` is `Complete` or `Deferred:<reason>`, ≥1 self-generated figure is included, and no background agents are still running.
+8. **Finish only through deterministic gates** — `finish` is blocked unless: every `### E_N` heading in `notes/plan.md` has a matching `## L2.N` (or `## E_N`) in `notes/experiments.md` with `Status: Complete`, PI verdict is `stop` (or brain wrote a fresh pushback), `typesetter_notes.md` is `all-clear` and its `report_pdf_md5` matches the live PDF, ≥1 self-generated figure is included, and no background agents are still running. The reviewer is held to the same plan/experiments closure check before it can issue `stop`, so a "PI STOP after Pending → brain deadlocked" race is structurally impossible.
 
 The CLI entry points are small: `luxas init`, `luxas run`, `luxas status`, `luxas list`, `luxas figures`. Everything else happens inside the harness.
 
@@ -78,7 +78,7 @@ A run will populate the project directory with notes, downloaded papers, per-exp
 ├── notes/
 │   ├── literature.md           ← agent-maintained literature ledger
 │   ├── literature.d/           ← per-paper fragments (reader output, merged by hook)
-│   ├── experiments.md          ← per-experiment L2.X sections (status: Complete/Pending/Deferred)
+│   ├── experiments.md          ← per-experiment L2.X sections (status: Complete/Pending) — brain-write-locked; only experiment agents append
 │   ├── methodology.md          ← agent-maintained methodology ledger
 │   ├── methodology.d/          ← per-paper methodology fragments
 │   └── memory.md               ← freeform scratchpad
@@ -144,6 +144,30 @@ The `experiment` agent doesn't write code itself. It:
 
 The independent-author pattern blocks the self-circular failure mode where impl-and-test are written together (the impl redefines a field's semantics so its own self-reported value passes its own assertion). When `experiment` returns, the harness auto-spawns `experiment_reviewer` for an adversarial post-hoc audit; if its verdict is `revise`, the experiment is re-spawned with the feedback injected.
 
+### Commitment ledger: plan as authority, PI gates closure
+
+Two files form the project's commitment ledger:
+
+- **`notes/plan.md`** — source of truth for what's promised. Each `### E_N` heading is a hard commitment.
+- **`notes/experiments.md`** — audit log. Each `## L2.N` (or `## E_N`) section is the experiment agent's record, with `Status: Complete` / `Pending`.
+
+Two aligned gates enforce closure between the two files, at different levels:
+
+| Gate | Where | What it enforces |
+|---|---|---|
+| **`finish` tool gate** | `src/tools/index.ts` | Every `### E_N` in `plan.md` must have a matching `## L2.N` / `## E_N` in `experiments.md` with `Status: Complete`. Tool-layer hard block. |
+| **PI STOP precondition** | `reviewer.md` `<verdict_rules>` | Reviewer cannot issue `stop` while any active plan `### E_N` is missing or non-Complete in `experiments.md`. Prompt-layer rule, mirrors the tool gate one layer up. |
+
+The two gates are aligned: PI must clear the same condition before `stop` that `finish` enforces before exit. This eliminates the deadlock where PI issues `stop`, brain calls `finish`, gate blocks, and brain has no way to reconcile (it cannot write `experiments.md`).
+
+**Three hard invariants follow:**
+
+1. **brain cannot write `notes/experiments.md`.** The audit ledger is owned by experiment agents only, enforced via `safety.protectedFiles` in `brain.md` and a heredoc-bash escape block.
+2. **Scope reduction is `plan.md`-only.** To drop an experiment, brain removes the `### E_N` heading from `plan.md` and re-runs `request_pi_review`. Prose like "(Descoped)" next to a heading does not remove it from active scope while the heading remains.
+3. **`Deferred` is not a status.** Removed in Apr-26 after observed abuse as a soft escape hatch. Only `Complete` lets a `### E_N` exit active scope.
+
+This design closes a class of failure modes observed live: brain wiping `experiments.md` to bypass the gate, brain marking experiments `Deferred` with weak justifications, brain writing prose-descope while keeping the heading, and PI issuing `stop` despite Pending entries (which then deadlocked `finish`).
+
 ### Finalize loop (figures + layout)
 
 When the reviewer is about to vote `stop`, it first runs the `<figure_finalize_loop>` from `reviewer.md`:
@@ -192,7 +216,7 @@ You write ONE Python tool from its description...
 |---|---|
 | `name` | Unique identifier used by `spawn_agent` |
 | `description` | Shown in the `spawn_agent` catalog that parent agents see |
-| `model` | `opus` / `sonnet` / `haiku` / `gpt-5.2` / `inherit` |
+| `model` | `opus` / `sonnet` / `haiku` / `gpt-5.2` / `deepseek-v4-pro` / `deepseek-v4-flash` / `inherit` |
 | `thinkingLevel` | `off` / `low` / `medium` / `high` |
 | `toolSets` | Names from `src/agents/tool-sets.ts` (`coding`, `report`, `pi`, `wolfram`, `figure-gen`) |
 | `contextBuilder` | Optional — name of a dynamic-context builder in `src/agents/context-builders.ts` |
@@ -343,7 +367,9 @@ Every constraint is a hook, a tool guard, a frontmatter-declared scope, or a fin
 | `RESEARCH.md` | write-protected (via `safety.presets: [research_brief]`) | declared in every writing agent's `.md` |
 | Per-agent write scope | `safety.presets` + `safety.protectedFiles`; default `writeOnExistingPolicy: block` (forces `edit` over `write`) | compiled by `buildSafetyWrapper` from each agent's `.md` |
 | Per-agent read scope | `safety.allowedReadRoots` with `{{VAR}}` templating (e.g. `tool_impl` / `tool_review` scoped to `data/experiments/{{EXPERIMENT_ID}}/`) | compiled by `buildSafetyWrapper` |
-| `finish` gate stack | (a) no background agents running, (b) every `## L2.X` section is `Complete` or `Deferred:<reason>`, (c) `report.pdf` exists, (d) ≥1 self-generated figure, (e) `typesetter_notes.md` status `all-clear` + `report_pdf_md5` matches live PDF, (f) PI verdict ≠ `steer` (or `pi_pushback.md` mtime > `pi_feedback.md` mtime) | `tools/index.ts` |
+| `finish` gate stack | (a) no background agents running, (b) every `### E_N` in `notes/plan.md` has a matching `## L2.N` / `## E_N` in `notes/experiments.md` with `Status: Complete` (no `Deferred` escape hatch since Apr-26), (c) `report.pdf` exists, (d) ≥1 self-generated figure, (e) `typesetter_notes.md` status `all-clear` + `report_pdf_md5` matches live PDF, (f) PI verdict is `stop` (or `pi_pushback.md` mtime > `pi_feedback.md` mtime) | `tools/index.ts` |
+| PI STOP precondition | Reviewer cannot issue `stop` while any active plan `### E_N` is missing or non-Complete in `experiments.md` — mirrors the `finish` gate one layer up so a "STOP after Pending" deadlock is structurally impossible | `agents/definitions/reviewer.md` `<verdict_rules>` |
+| `notes/experiments.md` write lock | brain cannot write/edit/heredoc-bash this file — only experiment agents may append their own `## L2.N` sections | `safety.protectedFiles` + bash write-guard in `brain.md` |
 
 The `finish` tool is the only clean exit. Anything else is a crash, and the stateless harness is designed to survive crashes. The PI-pushback escape exists so brain can defensibly disagree with PI without entering a dead loop — it must produce written justification fresher than the disputed feedback, and `maxTurns` caps any true runaway at bounded damage.
 
@@ -434,6 +460,7 @@ luxas/
 - **provref** (optional but recommended) — `npm i -g provref` for the merge / check steps during compilation
 - **`WOLFRAM_APP_ID`** or local Wolfram Engine (optional) — for the math agent; falls back to sympy otherwise
 - **`OPENAI_API_KEY`** (optional) — for the math agent (o3)
+- **`DEEPSEEK_API_KEY`** (optional) — for `deepseek-v4-pro` / `deepseek-v4-flash` (1M context, dual Thinking/Non-Thinking modes via `api.deepseek.com/v1`). Useful as a Sonnet/Haiku replacement on `tool_impl` / `tool_review` / `worker` / `fixer` / `reader` where prompt caching isn't load-bearing — not recommended for `brain` or `reviewer` since DeepSeek doesn't support Anthropic-style ephemeral cache_control.
 - **`BRAVE_API_KEY`** (optional) — for web search in the search skill
 - **browser-use** (optional) — anti-detect browser at `~/.browser-use-env/bin/browser-use` for paywalled sites
 - **`GEMINI_API_KEY`** (optional) — for `generate_raster_component` (Nano Banana) in the hybrid figure pipeline
@@ -449,7 +476,7 @@ A stateless, file-backed harness that drives Claude (and friends) through a mult
 Drop a new `.md` into `src/agents/definitions/`. Declare `model`, `thinkingLevel`, `toolSets`, `templates`, `spawn`, and (if it writes to the project) `safety`. No TypeScript changes — `validateSpawnGraph` sanity-checks the graph on next startup and the new agent is immediately visible to `spawn_agent`.
 
 **How is this different from a single long Claude Code session?**
-Claude Code is one agent in one terminal. Luxas is a brain that spawns fourteen kinds of sub-agents (search / reader / worker / experiment / tool_impl / tool_review / experiment_reviewer / math / illustrator / illustrator_write / typesetter / reviewer / fixer / sub-brain) as detached processes, routes each to a different model, enforces safety limits via hooks and declarative frontmatter rather than prompts, maintains file-based notes across compaction, applies a deterministic finish-gate stack, and survives its own crashes.
+Claude Code is one agent in one terminal. Luxas is a brain that spawns thirteen kinds of sub-agents (search / reader / worker / experiment / tool_impl / tool_review / experiment_reviewer / math / illustrator / illustrator_write / typesetter / reviewer / fixer) as detached processes, routes each to a different model, enforces safety limits via hooks and declarative frontmatter rather than prompts, maintains file-based notes across compaction, applies a two-tier commitment-ledger gate (PI STOP precondition + `finish` tool gate, both checking plan/experiments closure), and survives its own crashes.
 
 **Why split `tool_impl` and `tool_review` instead of letting the experiment write both?**
 Because letting one agent write impl + tests is the classic self-circular failure mode — the impl redefines a field's semantics so its own self-reported value passes its own assertion. Observed live: `max_pair_distance_um` got redefined as post-move distance = 0; tests passed; the tool was wrong. The blind-author split (tool_impl reads only the description; tool_review reads only the description; pytest is the only ground truth) blocks this.

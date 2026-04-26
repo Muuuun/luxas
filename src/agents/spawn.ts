@@ -42,8 +42,25 @@ const MERGE_NOTES_SCRIPT = join(
 );
 
 // ── Model map ────────────────────────────────────────
+//
+// Tuple `[provider, modelId]` resolves via pi-ai's registry. Inline-object
+// form bypasses the registry for models pi-ai doesn't ship yet.
 
-const MODEL_MAP: Record<string, [string, string]> = {
+type InlineModel = {
+  id: string;
+  name: string;
+  api: string;
+  provider: string;
+  baseUrl: string;
+  reasoning?: boolean;
+  input: string[];
+  cost: { input: number; output: number; cacheRead: number; cacheWrite: number };
+  contextWindow: number;
+  maxTokens: number;
+  compat?: Record<string, unknown>;
+};
+
+const MODEL_MAP: Record<string, [string, string] | InlineModel> = {
   // Anthropic
   haiku: ["anthropic", "claude-haiku-4-5-20251001"],
   sonnet: ["anthropic", "claude-sonnet-4-6"],
@@ -57,11 +74,36 @@ const MODEL_MAP: Record<string, [string, string]> = {
   "gpt-5.2-codex": ["openai-codex", "gpt-5.2-codex"],
   "gpt-5.1": ["openai-codex", "gpt-5.1"],
   "gpt-5.1-codex-mini": ["openai-codex", "gpt-5.1-codex-mini"],
+  "deepseek-v4-pro": {
+    id: "deepseek-v4-pro",
+    name: "DeepSeek-V4-Pro",
+    api: "openai-completions",
+    provider: "deepseek",
+    baseUrl: "https://api.deepseek.com/v1",
+    reasoning: true,
+    input: ["text"],
+    cost: { input: 1.667, output: 3.333, cacheRead: 0.139, cacheWrite: 0 },
+    contextWindow: 1048576,
+    maxTokens: 393216,
+  },
+  "deepseek-v4-flash": {
+    id: "deepseek-v4-flash",
+    name: "DeepSeek-V4-Flash",
+    api: "openai-completions",
+    provider: "deepseek",
+    baseUrl: "https://api.deepseek.com/v1",
+    reasoning: true,
+    input: ["text"],
+    cost: { input: 0.139, output: 0.278, cacheRead: 0.028, cacheWrite: 0 },
+    contextWindow: 1048576,
+    maxTokens: 393216,
+  },
 };
 
 function resolveModel(modelKey: string) {
   const entry = MODEL_MAP[modelKey] ?? MODEL_MAP.sonnet;
-  return getModel(entry[0] as any, entry[1] as any);
+  if (Array.isArray(entry)) return getModel(entry[0] as any, entry[1] as any);
+  return entry as any;
 }
 
 // ── Max spawn depth ──────────────────────────────────

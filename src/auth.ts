@@ -2,7 +2,7 @@
  * API key resolution — environment variables and config files.
  *
  * Supports:
- * - Environment variables (ANTHROPIC_API_KEY, OPENAI_API_KEY)
+ * - Environment variables (ANTHROPIC_API_KEY, OPENAI_API_KEY, DEEPSEEK_API_KEY)
  * - Config files (Codex OAuth tokens)
  */
 
@@ -125,9 +125,15 @@ async function refreshCodexToken(refreshToken: string): Promise<{ access_token: 
   }
 }
 
+export async function resolveDeepSeekKey(): Promise<string | undefined> {
+  if (process.env.DEEPSEEK_API_KEY) return process.env.DEEPSEEK_API_KEY;
+  return undefined;
+}
+
 export async function getApiKey(provider: string): Promise<string | undefined> {
   if (provider === "anthropic") return resolveAnthropicKey();
   if (provider === "openai" || provider === "openai-codex") return resolveOpenAIKey();
+  if (provider === "deepseek") return resolveDeepSeekKey();
   return undefined;
 }
 
