@@ -174,7 +174,11 @@ async function run(dir: string, modelName: string, userDirective?: string) {
   // Backstop: sweep every 15s for deadline-passed and pid-gone running jobs
   // that the in-process bash handler might have missed. .unref() so the
   // interval doesn't keep the process alive after the agent loop returns.
-  const sweepInterval = setInterval(() => { sweepJobs(dir).catch(() => {}); }, SWEEP_INTERVAL_MS);
+  const sweepInterval = setInterval(() => {
+    sweepJobs(dir).catch(err => {
+      console.error(`[sweep] ${err?.message ?? err}`);
+    });
+  }, SWEEP_INTERVAL_MS);
   sweepInterval.unref();
 
   // Register in global project registry

@@ -110,7 +110,11 @@ export default function App({ baseDir, brainTool = "claude" }: { baseDir: string
 
     let turnCount = 0;
     let toolCallCounter = 0;
-    const sweepInterval = setInterval(() => { sweepJobs(project.dir).catch(() => {}); }, 15_000);
+    const sweepInterval = setInterval(() => {
+      sweepJobs(project.dir).catch(err => {
+        setLogs((p) => [...p.slice(-200), { text: `[sweep] ${err?.message ?? err}`, color: dark.error }]);
+      });
+    }, 15_000);
     sweepInterval.unref();
 
     try {

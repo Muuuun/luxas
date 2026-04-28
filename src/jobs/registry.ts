@@ -98,12 +98,8 @@ export function listJobIds(projectDir: string): string[] {
  * command line. If ps fails, parsing fails, or either signal is missing,
  * returns false — the caller marks the record `orphaned` rather than
  * risking a wrong-target kill after pid reuse.
- *
- * Exported so reconcile (startup) and sweep (interval) can share a single
- * ownership predicate; logic drift between them would lead to a job being
- * killable by one path and orphaned by the other.
  */
-export function processIsOurs(pid: number, expectedCommand: string): boolean {
+function processIsOurs(pid: number, expectedCommand: string): boolean {
   try {
     const out = execFileSync("ps", ["-p", String(pid), "-o", "pgid=,command="], {
       encoding: "utf-8",
@@ -138,6 +134,11 @@ export interface ReconcileSummary {
   unverifiable: number;
 }
 
+/**
+ * Walk every running record at session boot. No race guard needed — the agent
+ * loop hasn't started yet, so no concurrent writer can clobber our writes.
+ * (Sweep, which runs alongside the agent, uses a re-read commit guard.)
+ */
 export async function reconcileOnStartup(projectDir: string): Promise<ReconcileSummary> {
   const summary: ReconcileSummary = {
     scanned: 0, alreadyDone: 0, markedDone: 0, killedOrphans: 0, unverifiable: 0,
@@ -183,7 +184,6 @@ export interface SweepSummary {
   markedDone: number;       // pid gone since last sweep
   killedDeadline: number;   // deadline passed AND verified ours → killed
   unverifiable: number;     // deadline passed but ownership unconfirmable
-  raceSkipped: number;      // status changed between read and write
 }
 
 /**
@@ -201,19 +201,18 @@ export interface SweepSummary {
 export async function sweepJobs(projectDir: string): Promise<SweepSummary> {
   const summary: SweepSummary = {
     scanned: 0, healthy: 0, markedDone: 0,
-    killedDeadline: 0, unverifiable: 0, raceSkipped: 0,
+    killedDeadline: 0, unverifiable: 0,
   };
   for (const id of listJobIds(projectDir)) {
     summary.scanned++;
     const state = readState(projectDir, id);
     if (!state || state.status !== "running") continue;
 
+    // Re-read guard against bash-hardened's close handler racing us — if it
+    // already wrote a more accurate cause (e.g. "completed"), skip the commit.
     const commit = (next: JobState): boolean => {
       const fresh = readState(projectDir, id);
-      if (!fresh || fresh.status !== "running") {
-        summary.raceSkipped++;
-        return false;
-      }
+      if (!fresh || fresh.status !== "running") return false;
       writeState(projectDir, next);
       return true;
     };

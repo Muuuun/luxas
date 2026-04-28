@@ -14,10 +14,9 @@ import { spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  reconcileOnStartup, writeState, jobStatePath, type JobState,
-} from "../../src/jobs/registry.js";
+import { reconcileOnStartup, jobStatePath, type JobState } from "../../src/jobs/registry.js";
 import { pidAlive, sleep } from "../../src/utils.js";
+import { seedRunning } from "../test-helpers/seed-job.js";
 
 let pass = 0, fail = 0;
 function ok(label: string) { pass++; console.log(`  ✓ ${label}`); }
@@ -28,47 +27,36 @@ function bad(label: string, detail?: string) {
 
 async function main() {
   const projectDir = mkdtempSync(join(tmpdir(), "luxas-bash-resume-"));
-  process.on("exit", () => { try { rmSync(projectDir, { recursive: true, force: true }); } catch {} });
+  const stragglers: number[] = [];
+  process.on("exit", () => {
+    for (const pid of stragglers) { try { process.kill(-pid, "SIGKILL"); } catch {} }
+    try { rmSync(projectDir, { recursive: true, force: true }); } catch {}
+  });
   mkdirSync(join(projectDir, ".agent"), { recursive: true });
-
-  const seedRunning = (id: string, pid: number, command: string) => {
-    const now = Date.now();
-    writeState(projectDir, {
-      id, pid, command,
-      ownerAgentId: "smoke-test",
-      ownerAgentType: "smoke",
-      toolCallId: null,
-      cwd: projectDir,
-      startedAt: now - 5000,
-      deadlineAt: now + 600_000,
-      timeoutSec: 600,
-      status: "running",
-      endedAt: null, exitCode: null, signal: null, cause: null,
-      logPath: join(projectDir, ".agent", "jobs", id, "output.log"),
-    });
-  };
 
   // Case A: spawn-and-die yields a guaranteed used-then-freed pid.
   const dead = spawn("/bin/bash", ["-c", "true"], { detached: true, stdio: "ignore" });
   const deadPid = dead.pid!;
   await new Promise<void>(r => dead.on("close", () => r()));
   await sleep(50);
-  seedRunning("job_aaaaaa111111", deadPid, "echo gone-pid");
+  seedRunning(projectDir, { id: "job_aaaaaa111111", pid: deadPid, command: "echo gone-pid" });
 
   // Case B: bash -c with a single command exec-replaces into "sleep 30",
   // so ps -o command= reports "sleep 30" — exact match with state.command.
   const aliveB = spawn("/bin/bash", ["-c", "sleep 30"], { detached: true, stdio: "ignore" });
   aliveB.unref();
+  stragglers.push(aliveB.pid!);
   await sleep(200);
   if (!pidAlive(aliveB.pid!)) bad("setup: case B child died early");
-  seedRunning("job_bbbbbb222222", aliveB.pid!, "sleep 30");
+  seedRunning(projectDir, { id: "job_bbbbbb222222", pid: aliveB.pid!, command: "sleep 30" });
 
   // Case C: same kind of process, mismatched recorded command. Reconcile
   // must classify orphaned without killing.
   const aliveC = spawn("/bin/bash", ["-c", "sleep 30"], { detached: true, stdio: "ignore" });
   aliveC.unref();
+  stragglers.push(aliveC.pid!);
   await sleep(200);
-  seedRunning("job_cccccc333333", aliveC.pid!, "definitely-not-the-real-command-XYZ");
+  seedRunning(projectDir, { id: "job_cccccc333333", pid: aliveC.pid!, command: "definitely-not-the-real-command-XYZ" });
 
   const summary = await reconcileOnStartup(projectDir);
 
@@ -93,10 +81,7 @@ async function main() {
 
   await sleep(300);
   if (!pidAlive(aliveB.pid!)) ok("case B: process killed by reconcile");
-  else {
-    bad("case B: process still alive", String(aliveB.pid));
-    try { process.kill(-aliveB.pid!, "SIGKILL"); } catch {}
-  }
+  else bad("case B: process still alive", String(aliveB.pid));
 
   const stateC = readJob("job_cccccc333333");
   if (stateC.status === "orphaned" && stateC.cause === "pid_reuse_or_unverifiable") ok("case C: orphaned/pid_reuse_or_unverifiable");
@@ -104,7 +89,7 @@ async function main() {
 
   if (pidAlive(aliveC.pid!)) ok("case C: ambiguous process untouched");
   else bad("case C: process was killed (misfire — conservative path violated)");
-  try { process.kill(-aliveC.pid!, "SIGKILL"); } catch {}
+  // Stragglers exit handler catches any survivors.
 
   const summary2 = await reconcileOnStartup(projectDir);
   if (summary2.alreadyDone === 3 && summary2.markedDone === 0 && summary2.killedOrphans === 0) {

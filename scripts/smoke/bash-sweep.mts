@@ -14,10 +14,9 @@ import { spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  sweepJobs, writeState, jobStatePath, type JobState,
-} from "../../src/jobs/registry.js";
+import { sweepJobs, writeState, jobStatePath, type JobState } from "../../src/jobs/registry.js";
 import { pidAlive, sleep } from "../../src/utils.js";
+import { seedRunning } from "../test-helpers/seed-job.js";
 
 let pass = 0, fail = 0;
 function ok(label: string) { pass++; console.log(`  ✓ ${label}`); }
@@ -28,23 +27,16 @@ function bad(label: string, detail?: string) {
 
 async function main() {
   const projectDir = mkdtempSync(join(tmpdir(), "luxas-bash-sweep-"));
-  process.on("exit", () => { try { rmSync(projectDir, { recursive: true, force: true }); } catch {} });
+  // Track every detached process so the exit handler can kill stragglers
+  // (cases A and R intentionally leave processes alive for assertions).
+  const stragglers: number[] = [];
+  process.on("exit", () => {
+    for (const pid of stragglers) {
+      try { process.kill(-pid, "SIGKILL"); } catch {}
+    }
+    try { rmSync(projectDir, { recursive: true, force: true }); } catch {}
+  });
   mkdirSync(join(projectDir, ".agent"), { recursive: true });
-
-  const seedRunning = (id: string, pid: number, command: string, deadlineAt: number) => {
-    writeState(projectDir, {
-      id, pid, command, deadlineAt,
-      ownerAgentId: "smoke-test",
-      ownerAgentType: "smoke",
-      toolCallId: null,
-      cwd: projectDir,
-      startedAt: Date.now() - 5000,
-      timeoutSec: 600,
-      status: "running",
-      endedAt: null, exitCode: null, signal: null, cause: null,
-      logPath: join(projectDir, ".agent", "jobs", id, "output.log"),
-    });
-  };
 
   const future = Date.now() + 10 * 60_000;
   const past = Date.now() - 1000;
@@ -53,26 +45,29 @@ async function main() {
   // Case A: healthy in-flight job — sweep must not touch it.
   const aliveA = spawn("/bin/bash", ["-c", "sleep 30"], { detached: true, stdio: "ignore" });
   aliveA.unref();
+  stragglers.push(aliveA.pid!);
   await sleep(200);
-  seedRunning("job_AAAAAAAAA", aliveA.pid!, "sleep 30", future);
+  seedRunning(projectDir, { id: "job_AAAAAAAAA", pid: aliveA.pid!, command: "sleep 30", deadlineAt: future });
 
   // Case B: pid is gone — sweep must mark done.
   const dead = spawn("/bin/bash", ["-c", "true"], { detached: true, stdio: "ignore" });
   await new Promise<void>(r => dead.on("close", () => r()));
   await sleep(50);
-  seedRunning("job_BBBBBBBBB", dead.pid!, "true", future);
+  seedRunning(projectDir, { id: "job_BBBBBBBBB", pid: dead.pid!, command: "true", deadlineAt: future });
 
   // Case C: deadline passed, ours — sweep must kill + mark done.
   const aliveC = spawn("/bin/bash", ["-c", "sleep 30"], { detached: true, stdio: "ignore" });
   aliveC.unref();
+  stragglers.push(aliveC.pid!);
   await sleep(200);
-  seedRunning("job_CCCCCCCCC", aliveC.pid!, "sleep 30", past);
+  seedRunning(projectDir, { id: "job_CCCCCCCCC", pid: aliveC.pid!, command: "sleep 30", deadlineAt: past });
 
   // Case D: deadline passed, unverifiable — sweep must orphan, NOT kill.
   const aliveD = spawn("/bin/bash", ["-c", "sleep 30"], { detached: true, stdio: "ignore" });
   aliveD.unref();
+  stragglers.push(aliveD.pid!);
   await sleep(200);
-  seedRunning("job_DDDDDDDDD", aliveD.pid!, "definitely-not-the-real-command-XYZ", past);
+  seedRunning(projectDir, { id: "job_DDDDDDDDD", pid: aliveD.pid!, command: "definitely-not-the-real-command-XYZ", deadlineAt: past });
 
   const summary = await sweepJobs(projectDir);
 
@@ -104,7 +99,8 @@ async function main() {
 
   await sleep(300);
   if (!pidAlive(aliveC.pid!)) ok("case C: process killed");
-  else { bad("case C: process still alive"); try { process.kill(-aliveC.pid!, "SIGKILL"); } catch {} }
+  else bad("case C: process still alive");
+  // Stragglers list catches any survivors at exit.
 
   const stateD = readJob("job_DDDDDDDDD");
   if (stateD.status === "orphaned" && stateD.cause === "pid_reuse_or_unverifiable")
@@ -119,29 +115,25 @@ async function main() {
     ok("sweep is idempotent");
   else bad("sweep not idempotent", JSON.stringify(summary2));
 
-  // Race guard: pre-flip a record to done after seeding it as running. This
-  // simulates the in-process close handler racing the sweep's commit.
-  // Re-read guard inside sweep should detect and skip without a clobber.
+  // Race guard: pre-flip a record to done before sweep runs. Sweep's outer
+  // `state.status !== "running"` check exits early; the inner `commit()`
+  // re-read guard isn't deterministically reachable from a smoke (would
+  // need a synchronous scheduler hook), so we assert the observable: the
+  // pre-flipped cause survives a sweep tick without being clobbered.
   const idR = "job_RRRRRRRRR";
   const aliveR = spawn("/bin/bash", ["-c", "sleep 30"], { detached: true, stdio: "ignore" });
   aliveR.unref();
+  stragglers.push(aliveR.pid!);
   await sleep(200);
-  seedRunning(idR, aliveR.pid!, "sleep 30", past);
-  // Flip to "done" under sweep's feet by writing directly:
+  seedRunning(projectDir, { id: idR, pid: aliveR.pid!, command: "sleep 30", deadlineAt: past });
   const seeded = readJob(idR);
   writeState(projectDir, { ...seeded, status: "done", endedAt: Date.now(), cause: "completed" });
   const summary3 = await sweepJobs(projectDir);
-  // case R is already done at scan time, so we expect alreadyDone-style skip
-  // (sweep returns early via `state.status !== "running"`, no raceSkipped).
-  // raceSkipped fires when status flips between read and write — that path
-  // is hard to reproduce deterministically; assert only that nothing
-  // additional happened (no kill, no clobber).
   const stateR = readJob(idR);
   if (stateR.cause === "completed") ok("race: pre-flipped record kept its cause (no clobber)");
   else bad("race: cause clobbered", String(stateR.cause));
   if (summary3.killedDeadline === 0) ok("race: no spurious kill on already-done record");
   else bad("race: killedDeadline", String(summary3.killedDeadline));
-  try { process.kill(-aliveR.pid!, "SIGKILL"); } catch {}
 
   console.log(`\n${pass} pass, ${fail} fail`);
   process.exit(fail > 0 ? 1 : 0);
