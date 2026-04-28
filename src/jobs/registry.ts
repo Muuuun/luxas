@@ -22,7 +22,9 @@ export type JobCause =
   | "aborted"
   | "signal"
   | "process_gone_during_outage"
+  | "process_gone_since_last_sweep"
   | "reconcile_orphan_killed"
+  | "sweep_deadline_killed"
   | "pid_reuse_or_unverifiable"
   | `spawn_error:${string}`;
 
@@ -96,8 +98,12 @@ export function listJobIds(projectDir: string): string[] {
  * command line. If ps fails, parsing fails, or either signal is missing,
  * returns false — the caller marks the record `orphaned` rather than
  * risking a wrong-target kill after pid reuse.
+ *
+ * Exported so reconcile (startup) and sweep (interval) can share a single
+ * ownership predicate; logic drift between them would lead to a job being
+ * killable by one path and orphaned by the other.
  */
-function processIsOurs(pid: number, expectedCommand: string): boolean {
+export function processIsOurs(pid: number, expectedCommand: string): boolean {
   try {
     const out = execFileSync("ps", ["-p", String(pid), "-o", "pgid=,command="], {
       encoding: "utf-8",
@@ -109,6 +115,18 @@ function processIsOurs(pid: number, expectedCommand: string): boolean {
     return m[2].includes(expectedCommand);
   } catch {
     return false;
+  }
+}
+
+/** SIGTERM the process group, wait up to SIGTERM_GRACE_MS, then SIGKILL. */
+async function killGroupAndWait(pid: number): Promise<void> {
+  try { process.kill(-pid, "SIGTERM"); } catch { /* may already be exiting */ }
+  const deadline = Date.now() + SIGTERM_GRACE_MS;
+  while (Date.now() < deadline && pidAlive(pid)) {
+    await sleep(50);
+  }
+  if (pidAlive(pid)) {
+    try { process.kill(-pid, "SIGKILL"); } catch { /* gone */ }
   }
 }
 
@@ -142,14 +160,7 @@ export async function reconcileOnStartup(projectDir: string): Promise<ReconcileS
       continue;
     }
     if (processIsOurs(state.pid, state.command)) {
-      try { process.kill(-state.pid, "SIGTERM"); } catch { /* may already be exiting */ }
-      const deadline = Date.now() + SIGTERM_GRACE_MS;
-      while (Date.now() < deadline && pidAlive(state.pid)) {
-        await sleep(50);
-      }
-      if (pidAlive(state.pid)) {
-        try { process.kill(-state.pid, "SIGKILL"); } catch { /* gone */ }
-      }
+      await killGroupAndWait(state.pid);
       writeState(projectDir, {
         ...state, status: "done", endedAt: Date.now(),
         exitCode: null, signal: "SIGKILL", cause: "reconcile_orphan_killed",
@@ -162,6 +173,77 @@ export async function reconcileOnStartup(projectDir: string): Promise<ReconcileS
       exitCode: null, signal: null, cause: "pid_reuse_or_unverifiable",
     });
     summary.unverifiable++;
+  }
+  return summary;
+}
+
+export interface SweepSummary {
+  scanned: number;
+  healthy: number;          // running, deadline not yet passed — left alone
+  markedDone: number;       // pid gone since last sweep
+  killedDeadline: number;   // deadline passed AND verified ours → killed
+  unverifiable: number;     // deadline passed but ownership unconfirmable
+  raceSkipped: number;      // status changed between read and write
+}
+
+/**
+ * Per-tick scan of running records. Designed to be called every ~15s on
+ * an unrefed setInterval inside the harness. Distinguished from reconcile:
+ * reconcile presumes every running record is from a prior session and acts
+ * on all of them; sweep distinguishes healthy in-flight jobs (deadline
+ * still in the future, leave alone) from stuck/leaked ones.
+ *
+ * Race vs. bash-hardened's own close handler: between this loop's read and
+ * its write, the in-process handler may transition the same record to done
+ * with a more accurate cause (e.g. "completed"). Re-read guards each write
+ * — if status flipped under us, we skip and let the in-process write win.
+ */
+export async function sweepJobs(projectDir: string): Promise<SweepSummary> {
+  const summary: SweepSummary = {
+    scanned: 0, healthy: 0, markedDone: 0,
+    killedDeadline: 0, unverifiable: 0, raceSkipped: 0,
+  };
+  for (const id of listJobIds(projectDir)) {
+    summary.scanned++;
+    const state = readState(projectDir, id);
+    if (!state || state.status !== "running") continue;
+
+    const commit = (next: JobState): boolean => {
+      const fresh = readState(projectDir, id);
+      if (!fresh || fresh.status !== "running") {
+        summary.raceSkipped++;
+        return false;
+      }
+      writeState(projectDir, next);
+      return true;
+    };
+
+    if (!pidAlive(state.pid)) {
+      if (commit({
+        ...state, status: "done", endedAt: Date.now(),
+        exitCode: null, signal: null, cause: "process_gone_since_last_sweep",
+      })) summary.markedDone++;
+      continue;
+    }
+
+    if (Date.now() < state.deadlineAt) {
+      summary.healthy++;
+      continue;
+    }
+
+    if (processIsOurs(state.pid, state.command)) {
+      await killGroupAndWait(state.pid);
+      if (commit({
+        ...state, status: "done", endedAt: Date.now(),
+        exitCode: null, signal: "SIGKILL", cause: "sweep_deadline_killed",
+      })) summary.killedDeadline++;
+      continue;
+    }
+
+    if (commit({
+      ...state, status: "orphaned", endedAt: Date.now(),
+      exitCode: null, signal: null, cause: "pid_reuse_or_unverifiable",
+    })) summary.unverifiable++;
   }
   return summary;
 }

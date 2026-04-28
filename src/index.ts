@@ -38,7 +38,9 @@ import { Type } from "@sinclair/typebox";
 import { createResearchAgent } from "./agent.js";
 import { ensureLiteratureFile } from "./methodology.js";
 import { jobOwnerAls } from "./jobs/als.js";
-import { reconcileOnStartup } from "./jobs/registry.js";
+import { reconcileOnStartup, sweepJobs } from "./jobs/registry.js";
+
+const SWEEP_INTERVAL_MS = 15_000;
 
 // Ensure pdflatex is in PATH (needed for usetex figstyles + compile_latex)
 try { execSync("which pdflatex", { stdio: "pipe" }); } catch {
@@ -168,6 +170,12 @@ async function run(dir: string, modelName: string, userDirective?: string) {
     console.log(`  ⟳ Reconciled ${reconciled.scanned} prior bash job(s): ` +
       `${reconciled.markedDone} done, ${reconciled.killedOrphans} killed, ${reconciled.unverifiable} orphaned`);
   }
+
+  // Backstop: sweep every 15s for deadline-passed and pid-gone running jobs
+  // that the in-process bash handler might have missed. .unref() so the
+  // interval doesn't keep the process alive after the agent loop returns.
+  const sweepInterval = setInterval(() => { sweepJobs(dir).catch(() => {}); }, SWEEP_INTERVAL_MS);
+  sweepInterval.unref();
 
   // Register in global project registry
   registerProject(dir);

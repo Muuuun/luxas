@@ -25,6 +25,7 @@ import { discoverProjects, createProjectShell, type ProjectInfo } from "./projec
 import { dark, icons, formatTokens, formatCost } from "./theme.js";
 import { createResearchAgent } from "../agent.js";
 import { jobOwnerAls } from "../jobs/als.js";
+import { sweepJobs } from "../jobs/registry.js";
 import { createBrainstormAgent } from "./brainstorm.js";
 import type { Agent } from "@mariozechner/pi-agent-core/dist/agent.js";
 
@@ -109,6 +110,8 @@ export default function App({ baseDir, brainTool = "claude" }: { baseDir: string
 
     let turnCount = 0;
     let toolCallCounter = 0;
+    const sweepInterval = setInterval(() => { sweepJobs(project.dir).catch(() => {}); }, 15_000);
+    sweepInterval.unref();
 
     try {
       const { agent, hooks, usageLogPath } = createResearchAgent({
@@ -208,6 +211,7 @@ export default function App({ baseDir, brainTool = "claude" }: { baseDir: string
       setBrainStatus(`Error: ${err.message}`);
       setLogs((p) => [...p, { text: `${icons.fail} ${err.message}`, color: dark.error }]);
     } finally {
+      clearInterval(sweepInterval);
       setRunning(false);
       agentRef.current = null;
       refreshProjects();
