@@ -127,7 +127,17 @@ After both return, run the tests:
 bash: cd data/experiments/{{EXPERIMENT_ID}} && python -m pytest tests/test_<name>.py -v
 ```
 
-If tests fail, send the full pytest output to `tool_impl` via SendMessage (the agent ID is in its return) and ask for a fix. Iterate. **Cap at 3 impl revisions per tool.** If still failing, mark the tool as WIP in the notes entry and flag to brain.
+If tests fail, deliver the full pytest output back to the SAME `tool_impl` agent that wrote the impl, via:
+
+```
+spawn_agent(action="continue",
+            id="<the agentId you got from the initial spawn — shown in the result text as [agent: ...]>",
+            task="Tests failed:\n<full pytest output>\n\nFix the failing tests while preserving the ones that already pass.")
+```
+
+This wakes that exact agent — its full prior conversation (its task, what it wrote, what it considered, any reasoning trace) is reloaded so the fix is a true iteration on the same mental model, not a cold-start guess. The result includes `details.revisionNumber` (also visible in the text header as `revision=N`); **cap at 3 continues per tool**. After 3, mark the tool WIP in the notes entry and flag to brain.
+
+**Anti-pattern: do NOT call `spawn_agent(action="spawn", agent="tool_impl", ...)` again with a new "fix this" task for the same tool.** That creates a fresh cold-start agent with zero memory of prior attempts. When N such cold-start fix-attempts run in succession, each one looks at the broken file, reverts changes a previous agent made, introduces new regressions, and the file becomes a Frankenstein across uncoordinated rewrites. The continue path exists specifically to prevent this; use it.
 
 If review's tests reveal an issue with the **description itself** (ambiguity, physically impossible constraint, missing semantics), pause the loop and refine the tool description — not the impl. Then re-spawn both.
 

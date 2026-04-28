@@ -58,6 +58,14 @@ export interface SubAgentExit {
    * (stopReason="length", attemptsUsed === MAX).
    */
   recoveryAttemptsUsed?: number;
+  /**
+   * Revision number of THIS run (1-indexed, includes this continue).
+   * Absent on initial spawn (action="spawn"); set on every continue
+   * (action="continue") to prior_continue_init_count + 1. Caller uses this
+   * for cap awareness — typical contract is cap=3 per logical agent, after
+   * which the caller marks the work WIP and stops issuing continues.
+   */
+  revisionNumber?: number;
   endedAt: string;                 // ISO-8601
 }
 
@@ -345,4 +353,48 @@ export function tryExtractResult(conversationFile: string): string | null {
     }
   } catch { /* file not found or read error */ }
   return null;
+}
+
+// agentId is NOT stored on either marker — the conv jsonl filename IS the
+// agentId. continue_init carries no revisionNumber either: it's the index in
+// ParsedConv.continueInits.
+interface SpawnInitMeta {
+  type: "spawn_init";
+  agent: string;
+  task: string;
+  parentAgentId?: string;
+  templateVars?: Record<string, string>;
+  timestamp: number;
+}
+
+interface ContinueInitMeta {
+  type: "continue_init";
+  newTask: string;
+  timestamp: number;
+}
+
+interface ParsedConv {
+  spawnInit: SpawnInitMeta | null;
+  messages: any[];
+  continueInits: ContinueInitMeta[];
+}
+
+// Empty/missing/malformed files yield empty-shape results, not throws.
+export function parseConvJsonl(conversationFile: string): ParsedConv {
+  const out: ParsedConv = { spawnInit: null, messages: [], continueInits: [] };
+  let raw: string;
+  try {
+    raw = readFileSync(conversationFile, "utf-8");
+  } catch {
+    return out;
+  }
+  for (const line of raw.split("\n")) {
+    if (!line) continue;
+    let entry: any;
+    try { entry = JSON.parse(line); } catch { continue; }
+    if (entry?.type === "spawn_init") { out.spawnInit = entry; continue; }
+    if (entry?.type === "continue_init") { out.continueInits.push(entry); continue; }
+    if (entry?.role) out.messages.push(entry);
+  }
+  return out;
 }

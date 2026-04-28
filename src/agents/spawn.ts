@@ -20,6 +20,7 @@ import { resolveContextBuilder } from "./context-builders.js";
 import { buildSafetyWrapper, type SafetyRuntimeHooks } from "./safety-wrappers.js";
 import { jobOwnerAls } from "../jobs/als.js";
 import { classifyThrownStopReason, type SubAgentExit, type SubAgentStopReason, type FileTouchRecord } from "../active-agents.js";
+import { cleanMessagesForModel } from "../transform.js";
 import {
   createFileContextCache,
   type FileContextCache,
@@ -197,6 +198,17 @@ export interface SpawnAgentOptions {
    * can bump the cap between attempts.
    */
   lengthRecovery?: LengthRecoveryController;
+  /**
+   * Continue-mode: revive an existing logical agent. agentId reuses the same
+   * conv jsonl. messages are run through cleanMessagesForModel and replayed
+   * into the new Agent. revisionNumber is 1-indexed; surfaces on
+   * exit.revisionNumber for cap awareness.
+   */
+  resume?: {
+    agentId: string;
+    messages: any[];
+    revisionNumber: number;
+  };
 }
 
 export interface SpawnAgentResult {
@@ -209,6 +221,13 @@ export interface SpawnAgentResult {
    * `exit.stopReason` to decide retry policy without parsing output text.
    */
   exit: SubAgentExit;
+  /**
+   * Stable identity of the spawned (or continued) agent. Surfacing this to
+   * callers is what makes spawn_agent(action="continue", id=...) usable —
+   * without it the LLM has no way to refer back to a foreground sub-agent.
+   * Same value as the agentId persisted in the conv jsonl filename.
+   */
+  agentId: string;
 }
 
 // ── Build agent from definition (shared by spawnAgent + subagent-runner) ──
@@ -243,17 +262,19 @@ function mergeRuntimeHooks(
 export function buildAgentFromDefinition(opts: SpawnAgentOptions): BuiltAgent {
   const def = (opts.resolveDefinition ?? getDefinition)(opts.name);
 
-  // Give every spawn a unique id. Explicit instanceIndex (parallel batch)
-  // stays `-0`, `-1`, … for predictability; otherwise fall back to a short
-  // random suffix so independent foreground spawns of the same agent type
-  // (e.g. one reader per paper) don't collide onto the same conversation
-  // file and accumulate each other's history as context.
+  // Continue-mode reuses the prior agentId verbatim so the resumed run
+  // appends to the same conv jsonl — one tool ↔ one jsonl ↔ one logical
+  // agent. instanceIndex makes parallel batches predictable (-0, -1, …);
+  // otherwise we want a random suffix so independent foreground spawns of
+  // the same agent type (one reader per paper) don't collide on a shared
+  // conversation file.
   const suffix = opts.instanceIndex !== undefined
     ? `-${opts.instanceIndex}`
     : `-${Math.random().toString(36).slice(2, 8)}`;
-  const agentId = opts.parentAgentId
-    ? `${opts.parentAgentId}.${opts.name}${suffix}`
-    : `${opts.name}${suffix}`;
+  const agentId = opts.resume?.agentId
+    ?? (opts.parentAgentId
+      ? `${opts.parentAgentId}.${opts.name}${suffix}`
+      : `${opts.name}${suffix}`);
   const depth = opts.depth ?? 0;
 
   // 1. Resolve model
@@ -443,7 +464,41 @@ export async function runWithLengthRecovery(
   recovery: LengthRecoveryController,
 ): Promise<void> {
   await agent.prompt(initialPrompt);
+  await driveAgentWithLengthRecovery(agent, recovery);
+}
 
+/**
+ * Continue-mode counterpart to runWithLengthRecovery. Caller has already
+ * loaded prior messages via agent.replaceMessages(...) and we drive a fresh
+ * turn keyed by `newUserMessage`. The new message is a real user task, NOT
+ * isMeta — it carries actual semantic payload (pytest output, fix request).
+ * Counting/marker bookkeeping is the caller's job (continue_init in the conv
+ * jsonl); this function only drives the loop.
+ */
+export async function continueWithLengthRecovery(
+  agent: InstanceType<typeof Agent>,
+  newUserMessage: string,
+  recovery: LengthRecoveryController,
+): Promise<void> {
+  await agent.followUp({
+    role: "user",
+    content: newUserMessage,
+    timestamp: Date.now(),
+  } as any);
+  await agent.continue();
+  await driveAgentWithLengthRecovery(agent, recovery);
+}
+
+/**
+ * Inner length-recovery loop shared by initial spawn (runWithLengthRecovery)
+ * and continue (continueWithLengthRecovery). Repeats while the last assistant
+ * message stopped at max_tokens AND we have remaining attempts. The injected
+ * "continue from cut" marker IS isMeta — it's structural noise, not a task.
+ */
+async function driveAgentWithLengthRecovery(
+  agent: InstanceType<typeof Agent>,
+  recovery: LengthRecoveryController,
+): Promise<void> {
   while (
     recovery.state.attemptsUsed < LENGTH_RECOVERY_MAX_ATTEMPTS &&
     lastAssistantStopReason(agent) === "length"
@@ -512,6 +567,12 @@ export interface SubAgentExitCollector {
   readonly runtimeHooks: SafetyRuntimeHooks;
   attach(agent: InstanceType<typeof Agent>, tokenTap: TokenTap): void;
   attachRecovery(recovery: LengthRecoveryController): void;
+  /**
+   * Continue-mode bookkeeping: record the 1-indexed revisionNumber for THIS
+   * run so finalize() can stamp it onto the SubAgentExit. Initial spawns
+   * leave it unset and exit.revisionNumber stays undefined.
+   */
+  attachRevisionNumber(n: number): void;
   finalize(overrideStopReason?: SubAgentStopReason): SubAgentExit;
 }
 
@@ -524,6 +585,7 @@ export function createSubAgentExitCollector(t0: number): SubAgentExitCollector {
   let agent: InstanceType<typeof Agent> | null = null;
   let tokenTap: TokenTap | null = null;
   let recovery: LengthRecoveryController | null = null;
+  let revisionNumber: number | undefined;
 
   return {
     runtimeHooks: {
@@ -535,11 +597,15 @@ export function createSubAgentExitCollector(t0: number): SubAgentExitCollector {
     },
     attach(a, t) { agent = a; tokenTap = t; },
     attachRecovery(r) { recovery = r; },
+    attachRevisionNumber(n) { revisionNumber = n; },
     finalize(overrideStopReason) {
       const ordered = [...touches.values()].sort((a, b) => a.at - b.at);
       const exit = buildSubAgentExit(agent, t0, ordered, tokenTap, overrideStopReason);
       if (recovery && recovery.state.attemptsUsed > 0) {
         exit.recoveryAttemptsUsed = recovery.state.attemptsUsed;
+      }
+      if (revisionNumber !== undefined) {
+        exit.revisionNumber = revisionNumber;
       }
       return exit;
     },
@@ -608,36 +674,61 @@ export async function spawnAgent(opts: SpawnAgentOptions): Promise<SpawnAgentRes
   const collector = createSubAgentExitCollector(Date.now());
   const recovery = createLengthRecoveryController();
   collector.attachRecovery(recovery);
+  if (opts.resume) {
+    collector.attachRevisionNumber(opts.resume.revisionNumber);
+  }
+  const isResume = !!opts.resume;
+
+  // Hoisted so the catch block can still surface an id when build throws.
+  let agentId: string = opts.resume?.agentId ?? "";
 
   try {
-    const { agent, agentId, tokenTap } = buildAgentFromDefinition({
+    const built = buildAgentFromDefinition({
       ...opts,
       runtimeHooks: collector.runtimeHooks,
       lengthRecovery: recovery,
     });
+    const { agent, tokenTap } = built;
+    agentId = built.agentId;
     collector.attach(agent, tokenTap);
 
-    // 11. Set up incremental conversation persistence (crash-safe: written per turn, not at end)
     const convDir = join(opts.projectDir, ".agent", "conversations");
     mkdirSync(convDir, { recursive: true });
     const convPath = join(convDir, `${agentId}.jsonl`);
-    let lastSavedMsgCount = 0;
 
-    // Write a spawn_init marker before any turn fires. Guarantees the parent
-    // jsonl exists even if agent.prompt() throws synchronously or the first
-    // turn_end's appendFileSync fails (observed: ghost agents where only
-    // sub-agent files existed, parent was never created). If this write
-    // itself fails, let it propagate — the spawn is already doomed and the
-    // stack trace is diagnostically valuable. Not wrapped in the silencing
-    // catch below on purpose.
-    appendFileSync(convPath, JSON.stringify({
-      type: "spawn_init",
-      agentId,
-      agent: opts.name,
-      task: opts.prompt.slice(0, 2000),
-      parentAgentId: opts.parentAgentId,
-      timestamp: Date.now(),
-    }) + "\n");
+    // Birth/revision marker eagerly so the jsonl exists even if the first
+    // turn throws (otherwise: ghost agents where parent jsonl never appears).
+    // spawn_init carries templateVars so a future continue can recover scope;
+    // continue_init has no such payload — the marker only delimits revision
+    // boundaries, the count itself is derivable from how many such lines exist.
+    if (isResume) {
+      appendFileSync(convPath, JSON.stringify({
+        type: "continue_init",
+        newTask: opts.prompt.slice(0, 2000),
+        timestamp: Date.now(),
+      }) + "\n");
+    } else {
+      appendFileSync(convPath, JSON.stringify({
+        type: "spawn_init",
+        agent: opts.name,
+        task: opts.prompt.slice(0, 2000),
+        parentAgentId: opts.parentAgentId,
+        templateVars: opts.templateVars,
+        timestamp: Date.now(),
+      }) + "\n");
+    }
+
+    // Resume MUST replaceMessages before subscribing — otherwise the first
+    // turn_end re-appends the full prior history and doubles the jsonl.
+    if (isResume) {
+      const currentModel = (agent.state as any).model;
+      const cleaned = cleanMessagesForModel(opts.resume!.messages, {
+        provider: currentModel?.provider,
+        id: currentModel?.id,
+      });
+      agent.replaceMessages(cleaned);
+    }
+    let lastSavedMsgCount = (agent.state.messages as any[]).length;
 
     agent.subscribe((event: any) => {
       if (event.type === "turn_end") {
@@ -651,12 +742,11 @@ export async function spawnAgent(opts: SpawnAgentOptions): Promise<SpawnAgentRes
       }
     });
 
-    // 12. Run with automatic length-truncation recovery, scoped under this
-    // sub-agent's owner identity so any bash invocation it makes records
-    // ownerAgentId === agentId (not the spawning parent's id).
     await jobOwnerAls.run(
       { agentId, agentType: opts.name, projectDir: opts.projectDir },
-      () => runWithLengthRecovery(agent, opts.prompt, recovery),
+      () => isResume
+        ? continueWithLengthRecovery(agent, opts.prompt, recovery)
+        : runWithLengthRecovery(agent, opts.prompt, recovery),
     );
 
     // Reader post-hook: rebuild notes/methodology.md + notes/literature.md
@@ -689,7 +779,7 @@ export async function spawnAgent(opts: SpawnAgentOptions): Promise<SpawnAgentRes
     // (installUsageTracking in usage-log.ts). No manual accumulation needed.
 
     const exit = collector.finalize();
-    return { output: output.slice(0, 50_000), elapsed: exit.elapsedMs, success: true, exit };
+    return { output: output.slice(0, 50_000), elapsed: exit.elapsedMs, success: true, exit, agentId };
 
   } catch (err: any) {
     const msg = err.message || String(err);
@@ -703,8 +793,9 @@ export async function spawnAgent(opts: SpawnAgentOptions): Promise<SpawnAgentRes
         elapsed: exit.elapsedMs,
         success: false,
         exit,
+        agentId,
       };
     }
-    return { output: `Agent "${opts.name}" failed: ${msg}`, elapsed: exit.elapsedMs, success: false, exit };
+    return { output: `Agent "${opts.name}" failed: ${msg}`, elapsed: exit.elapsedMs, success: false, exit, agentId };
   }
 }

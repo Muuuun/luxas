@@ -13,14 +13,211 @@ import type { Agent as AgentType } from "@mariozechner/pi-agent-core";
 import { spawn } from "node:child_process";
 import { spawnAgent, type SpawnAgentOptions } from "../agents/spawn.js";
 import { listAgentDescriptions, getDefinition } from "../agents/registry.js";
-import { addAgent, removeAgent, loadRegistry, isAlive, tryExtractResult, formatExitHint } from "../active-agents.js";
-import { join, dirname } from "node:path";
+import { addAgent, removeAgent, loadRegistry, isAlive, tryExtractResult, formatExitHint, parseConvJsonl } from "../active-agents.js";
+import { closeSync, openSync, readFileSync, realpathSync, unlinkSync, writeSync } from "node:fs";
+import { join, dirname, sep as pathSep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { pidAlive } from "../utils.js";
+
+// Primary defense against path-escape via LLM-supplied id; the realpath check
+// in handleContinue is defense-in-depth in case this regex is ever widened.
+const AGENT_ID_RE = /^[A-Za-z0-9._-]+$/;
 
 // Module-scope: spawn-agent tools are rebuilt per brain turn (see tools/index.ts),
 // so a closure-local counter would reset and collide across turns. Keeping this
 // at module scope gives every background spawn in the process a unique bg id.
 let bgCounter = 0;
+
+interface ContinueContext {
+  projectDir: string;
+  agentDir: string;
+  getApiKey: (provider: string) => Promise<string | undefined> | string | undefined;
+  parentAgentId?: string;
+  makeSpawnTool: (parentId: string, childDepth: number, childAllowedTypes?: string[]) => any;
+}
+
+function errResult(text: string) {
+  return { content: [{ type: "text" as const, text }], details: { success: false } };
+}
+
+function continueErr(body: string) {
+  return errResult(`spawn_agent(action="continue"): ${body}`);
+}
+
+// O_EXCL lock with PID-staleness reclaim. Returns null on success (caller
+// unlinks on release); returns a reason string on failure (suitable for
+// surfacing to the LLM).
+//
+// Divergence from active-agents.ts:withRegistryLock: that one wraps a sync
+// mutator on a single registry file with mtime-staleness + Atomics.wait
+// retry. This one is per-agent path, held for the full async spawn duration,
+// PID-staleness. Different enough that a shared helper would be cosmetic.
+function acquireLock(lockPath: string): string | null {
+  const writeOurPid = () => {
+    const fd = openSync(lockPath, "wx");
+    try { writeSync(fd, String(process.pid)); } finally { closeSync(fd); }
+  };
+  try {
+    writeOurPid();
+    return null;
+  } catch (err: any) {
+    if (err.code !== "EEXIST") return err.message;
+  }
+  // EEXIST: probe holder PID. Dead → reclaim. Alive → bail.
+  let holderPid: number | null = null;
+  try {
+    const n = Number(readFileSync(lockPath, "utf-8").trim());
+    if (Number.isFinite(n) && n > 0) holderPid = n;
+  } catch { /* lock vanished — treat as stale */ }
+  if (holderPid !== null && pidAlive(holderPid)) {
+    return `lock held by live pid=${holderPid} (delete ${lockPath} manually if you're sure)`;
+  }
+  try { unlinkSync(lockPath); } catch { /* race with another reclaimer */ }
+  try {
+    writeOurPid();
+    return null;
+  } catch (err: any) {
+    return `acquisition failed after stale-reclaim: ${err.message}`;
+  }
+}
+
+async function handleContinue(
+  params: { id?: string; task?: string; templateVars?: Record<string, string> },
+  ctx: ContinueContext,
+): Promise<{ content: { type: "text"; text: string }[]; details: any }> {
+  if (!params.id) return continueErr("`id` is required.");
+  if (!params.task) return continueErr("`task` is required.");
+  if (!AGENT_ID_RE.test(params.id)) {
+    return continueErr(`invalid id "${params.id}". Allowed characters: [A-Za-z0-9._-].`);
+  }
+  if (params.templateVars && Object.keys(params.templateVars).length > 0) {
+    return continueErr("templateVars are recovered from the original spawn_init marker — do not pass them again.");
+  }
+
+  const convDir = join(ctx.projectDir, ".agent", "conversations");
+  const convPath = join(convDir, `${params.id}.jsonl`);
+
+  // realpath throws ENOENT for missing files — doubles as our "no conv file" check.
+  let resolvedDir: string;
+  let resolvedPath: string;
+  try {
+    resolvedDir = realpathSync(convDir);
+    resolvedPath = realpathSync(convPath);
+  } catch (err: any) {
+    if (err.code === "ENOENT") {
+      return continueErr(`no conversation file for "${params.id}". Use action="spawn" to start fresh.`);
+    }
+    return continueErr(`path resolution failed for "${params.id}": ${err.message}`);
+  }
+  if (!resolvedPath.startsWith(resolvedDir + pathSep)) {
+    return continueErr(`id "${params.id}" resolves outside the conversations dir.`);
+  }
+
+  // Lock BEFORE parse so two parallel continues can't both compute the same
+  // revisionNumber off the same prior continueInits.length snapshot. With the
+  // lock first, the second caller fails fast at acquireLock and never reads
+  // a stale transcript.
+  const lockPath = `${convPath}.lock`;
+  const lockErr = acquireLock(lockPath);
+  if (lockErr) return continueErr(`"${params.id}" lock acquisition failed: ${lockErr}.`);
+
+  try {
+    const { spawnInit, messages, continueInits } = parseConvJsonl(convPath);
+    if (!spawnInit) {
+      // Distinguish "background agent" (Session-wrapper schema) from "no marker
+      // at all": the former is a known-unsupported case worth naming explicitly.
+      let hint = "Use action=\"spawn\" instead.";
+      try {
+        const head = readFileSync(convPath, "utf-8").slice(0, 4096);
+        if (/"type":\s*"session"/.test(head) || /"type":\s*"message"/.test(head)) {
+          hint = "This looks like a background-agent transcript (Session wrapper format). action=\"continue\" only supports foreground/parallel-spawned agents.";
+        }
+      } catch { /* best-effort hint only */ }
+      return continueErr(`"${params.id}" has no spawn_init marker. ${hint}`);
+    }
+    if (messages.length === 0) {
+      return continueErr(`"${params.id}" has spawn_init but zero messages — original spawn likely failed before any turn. Re-spawn fresh.`);
+    }
+
+    // Cross-parent reach-in would let one agent steer another's children.
+    const callerParent = ctx.parentAgentId ?? "brain";
+    if (spawnInit.parentAgentId !== callerParent) {
+      return continueErr(
+        `"${params.id}" was spawned by "${spawnInit.parentAgentId ?? "(unknown)"}", not by you ("${callerParent}"). ` +
+        `Only the original parent can continue an agent.`,
+      );
+    }
+
+    let def;
+    try {
+      def = getDefinition(spawnInit.agent);
+    } catch (err: any) {
+      return continueErr(`agent type "${spawnInit.agent}" referenced by "${params.id}" is no longer registered. ${err.message}`);
+    }
+
+    // Required templateVars must be recoverable. Without them the safety
+    // wrapper's path scopes (e.g. EXPERIMENT_ID embedded in allowedWriteRoots)
+    // would silently widen — refuse rather than gamble with blast radius.
+    const recoveredTemplateVars = spawnInit.templateVars ?? {};
+    const missing = (def.templates ?? [])
+      .filter(t => t !== "PROJECT_DIR" && !(t in recoveredTemplateVars));
+    if (missing.length > 0) {
+      return continueErr(
+        `cannot recover required template variables [${missing.join(", ")}] for "${params.id}" — ` +
+        `the original spawn_init predates templateVars persistence. Spawn fresh with action="spawn", passing them explicitly.`,
+      );
+    }
+
+    const mergedTemplateVars: Record<string, string> = {
+      ...recoveredTemplateVars,
+      PROJECT_DIR: ctx.projectDir,
+    };
+    const revisionNumber = continueInits.length + 1;
+    const result = await spawnAgent({
+      name: spawnInit.agent,
+      templateVars: mergedTemplateVars,
+      prompt: params.task,
+      projectDir: ctx.projectDir,
+      getApiKey: ctx.getApiKey,
+      parentAgentId: callerParent,
+      createSpawnTool: ctx.makeSpawnTool,
+      resume: { agentId: params.id, messages, revisionNumber },
+    });
+
+    const elapsedSec = Math.floor(result.elapsed / 1000);
+    const header = `[agent continue: id=${params.id}, revision=${revisionNumber}, elapsed=${elapsedSec}s, success=${result.success}]`;
+    const text = `${header}\n\n${result.output}${formatExitHint(result.exit, ctx.projectDir)}`;
+    return {
+      content: [{ type: "text" as const, text }],
+      details: {
+        elapsed: result.elapsed,
+        success: result.success,
+        exit: slimExit(result.exit),
+        agentId: result.agentId,
+        revisionNumber,
+      },
+    };
+  } finally {
+    try { unlinkSync(lockPath); } catch { /* best-effort */ }
+  }
+}
+
+// Project SubAgentExit to a slim shape for tool result `details` payloads.
+// `partialAssistantText` can be MB-scale on length-truncated runs and there's
+// no consumer for it inside the tool result envelope (callers that want it
+// can fish it out of the in-memory result via the spawnAgent API).
+function slimExit(exit: any) {
+  return {
+    stopReason: exit?.stopReason,
+    elapsedMs: exit?.elapsedMs,
+    toolCallCount: exit?.toolCallCount,
+    lastContextTokens: exit?.lastContextTokens,
+    recoveryAttemptsUsed: exit?.recoveryAttemptsUsed,
+    revisionNumber: exit?.revisionNumber,
+    endedAt: exit?.endedAt,
+    filesTouched: exit?.filesTouched,
+  };
+}
 
 export function getActiveBackgroundAgents(projectDir?: string) {
   if (!projectDir) return [];
@@ -61,14 +258,14 @@ export function createSpawnAgentTool(
     .join("\n");
 
   const SpawnParams = Type.Object({
-    agent: Type.String({
-      description: `Agent type to spawn. Available: ${agents.map(a => a.name).join(", ")}`,
-    }),
+    agent: Type.Optional(Type.String({
+      description: `Agent type to spawn. Available: ${agents.map(a => a.name).join(", ")}. Required for action="spawn" (default); ignored for action="status" / action="continue" (the agent type is recovered from the spawn_init marker of the referenced id).`,
+    })),
     task: Type.Optional(Type.String({
-      description: "The task or prompt for the agent. Use this OR `tasks` (array form). Required for single/background spawns.",
+      description: 'For action="spawn": the initial task. For action="continue": the new user message (e.g. pytest output + fix request) to deliver to the previously-spawned agent. Use this OR `tasks` (array form). Required for single/background spawns and for continue.',
     })),
     tasks: Type.Optional(Type.Array(Type.String(), {
-      description: "For parallel execution: array of tasks. Spawns one agent instance per task, runs them concurrently. Mutually exclusive with a singular `task`.",
+      description: "For parallel execution: array of tasks. Spawns one agent instance per task, runs them concurrently. Mutually exclusive with a singular `task`. Only valid for action=\"spawn\".",
     })),
     background: Type.Optional(Type.Boolean({
       description: "Run in background — you continue working while this agent runs. Results are delivered back as a message when done. Use for long-running tasks (sub-brain, complex experiments) that you don't need to wait for.",
@@ -77,13 +274,17 @@ export function createSpawnAgentTool(
       description: 'Override thinking level: "off", "low", "medium", "high". Defaults to the agent definition\'s level.',
     })),
     action: Type.Optional(Type.String({
-      description: '"spawn" (default) or "status" — query a running background agent\'s recent progress.',
+      description:
+        '"spawn" (default), "status", or "continue".\n' +
+        '  - spawn: create a new agent (provide `agent` + `task`/`tasks`).\n' +
+        '  - status: query a background agent (provide `id`).\n' +
+        '  - continue: deliver a follow-up `task` to a previously-spawned FOREGROUND or PARALLEL agent identified by `id`. Reloads the agent\'s prior conversation transcript so it retains its working memory of what it wrote and considered. Use this for tool_impl revision loops — calling spawn again with a new task creates a cold-start agent with no memory of prior attempts and tends to produce a Frankenstein file across uncoordinated rewrites. The result\'s exit.revisionNumber tracks how many continues this agent has had (1-indexed); enforce your per-tool revision cap from that. NOT supported for background agents (their transcripts use a different schema).',
     })),
     id: Type.Optional(Type.String({
-      description: 'Agent ID to query status for (e.g. "brain.worker-bg-1"). Required when action="status".',
+      description: 'Agent ID. Required when action="status" or action="continue". Foreground/parallel/background spawns return their agentId in the result text — copy it from there.',
     })),
     templateVars: Type.Optional(Type.Record(Type.String(), Type.String(), {
-      description: 'Per-call template variables substituted into the sub-agent\'s system prompt (e.g. {PAPER_ID: "2301.07041"} for the reader agent). PROJECT_DIR is always injected automatically; do not set it here. Forwarded through to both foreground and background spawns.',
+      description: 'Per-call template variables substituted into the sub-agent\'s system prompt (e.g. {PAPER_ID: "2301.07041"} for the reader agent). PROJECT_DIR is always injected automatically; do not set it here. Forwarded through to both foreground and background spawns. For action="continue" templateVars are recovered from the original spawn_init marker — do NOT pass them again.',
     })),
   });
 
@@ -121,14 +322,27 @@ export function createSpawnAgentTool(
 
     async execute(
       _toolCallId: string,
-      params: { agent: string; task?: string; tasks?: string[]; background?: boolean; thinkingLevel?: string; action?: string; id?: string; templateVars?: Record<string, string> },
+      params: { agent?: string; task?: string; tasks?: string[]; background?: boolean; thinkingLevel?: string; action?: string; id?: string; templateVars?: Record<string, string> },
     ) {
+      const action = params.action ?? "spawn";
+      if (action !== "spawn" && action !== "status" && action !== "continue") {
+        return errResult(`spawn_agent: unknown action "${action}". Allowed: "spawn", "status", "continue".`);
+      }
+
+      if (action === "continue") {
+        return await handleContinue(
+          params,
+          { projectDir, agentDir, getApiKey, parentAgentId, makeSpawnTool },
+        );
+      }
+
       // ── Status query ──
-      if (params.action === "status" && params.id) {
+      if (action === "status") {
+        if (!params.id) return errResult('spawn_agent(action="status"): `id` is required.');
         const reg = loadRegistry(agentDir);
         const entry = reg.find(a => a.id === params.id);
         if (!entry) {
-          return { content: [{ type: "text" as const, text: `No active agent with id "${params.id}".` }], details: { success: false } };
+          return errResult(`No active agent with id "${params.id}".`);
         }
         const alive = isAlive(agentDir, params.id);
         const elapsed = Math.floor((Date.now() - entry.startedAt) / 1000);
@@ -151,17 +365,18 @@ export function createSpawnAgentTool(
           recent ? `\n${bodyLabel}:\n${recent.slice(0, 5000)}` : "\nNo output yet.",
         ];
         const body = lines.join("\n") + formatExitHint(entry.exit, projectDir);
-        return { content: [{ type: "text" as const, text: body }], details: { success: true, exit: entry.exit } };
+        return { content: [{ type: "text" as const, text: body }], details: { success: true, exit: slimExit(entry.exit) } };
       }
 
-      // Validate agent exists
+      // Spawn-only from here: require agent name explicitly.
+      if (!params.agent) {
+        return errResult('spawn_agent: `agent` is required for action="spawn".');
+      }
+
       try {
         getDefinition(params.agent);
       } catch (err: any) {
-        return {
-          content: [{ type: "text" as const, text: err.message }],
-          details: { success: false },
-        };
+        return errResult(err.message);
       }
 
       // Normalize `task` / `tasks` into a single list. Downstream code only
@@ -172,24 +387,14 @@ export function createSpawnAgentTool(
           ? [params.task]
           : [];
       if (taskList.length === 0) {
-        return {
-          content: [{ type: "text" as const, text: 'spawn_agent: must provide either `task` (string) or `tasks` (non-empty array of strings).' }],
-          details: { success: false },
-        };
+        return errResult('spawn_agent: must provide either `task` (string) or `tasks` (non-empty array of strings).');
       }
       if (params.background && taskList.length > 1) {
-        return {
-          content: [{ type: "text" as const, text: 'spawn_agent: `background` mode expects a single task. Spawn each background task with its own call.' }],
-          details: { success: false },
-        };
+        return errResult('spawn_agent: `background` mode expects a single task. Spawn each background task with its own call.');
       }
 
-      // Enforce allowedTypes restriction (if parent is scoped)
       if (allowedTypes && !allowedTypes.includes(params.agent)) {
-        return {
-          content: [{ type: "text" as const, text: `spawn_agent: agent "${params.agent}" is not whitelisted for this parent. Allowed: ${allowedTypes.join(", ")}.` }],
-          details: { success: false },
-        };
+        return errResult(`spawn_agent: agent "${params.agent}" is not whitelisted for this parent. Allowed: ${allowedTypes.join(", ")}.`);
       }
 
       // Merge per-call templateVars over the factory defaults (PROJECT_DIR etc).
@@ -280,12 +485,19 @@ export function createSpawnAgentTool(
         const summary = results.map((r, i) => {
           const icon = r.success ? "✓" : "✗";
           const secs = Math.floor(r.elapsed / 1000);
-          return `## Task ${i + 1} ${icon} (${secs}s)\n\n${r.output}${formatExitHint(r.exit, projectDir)}`;
+          return `## Task ${i + 1} ${icon} (${secs}s) [agent: ${r.agentId}]\n\n${r.output}${formatExitHint(r.exit, projectDir)}`;
         }).join("\n\n---\n\n");
 
         return {
           content: [{ type: "text" as const, text: summary }],
-          details: { results },
+          details: {
+            results: results.map(r => ({
+              elapsed: r.elapsed,
+              success: r.success,
+              exit: slimExit(r.exit),
+              agentId: r.agentId,
+            })),
+          },
         };
       }
 
@@ -366,8 +578,8 @@ export function createSpawnAgentTool(
       }
 
       return {
-        content: [{ type: "text" as const, text: result.output + formatExitHint(result.exit, projectDir) }],
-        details: { elapsed: result.elapsed, success: result.success, exit: result.exit },
+        content: [{ type: "text" as const, text: `[agent: ${result.agentId}]\n${result.output}${formatExitHint(result.exit, projectDir)}` }],
+        details: { elapsed: result.elapsed, success: result.success, exit: slimExit(result.exit), agentId: result.agentId },
       };
     },
 
