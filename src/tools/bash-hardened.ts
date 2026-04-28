@@ -3,14 +3,22 @@
  * detached and kills the process group, but it has no default timeout
  * (`timeout?: number` with explicit "no default") and goes straight to
  * SIGKILL with no grace. This wrapper forces a 600s default, gives 2s
- * SIGTERM grace, and persists every invocation under .agent/jobs/<id>/.
+ * SIGTERM grace, persists every invocation under .agent/jobs/<id>/, and
+ * supports two backgrounding modes:
+ *
+ *   - run_in_background=true: returns a handle immediately; the agent
+ *     uses job_status / job_output / job_wait / job_kill to observe.
+ *   - foreground (default): waits for completion; if the call hasn't
+ *     finished within FOREGROUND_BUDGET_MS (90s), auto-promotes to a
+ *     handle so the agent's turn isn't blocked indefinitely. The
+ *     in-process timer/close handlers stay wired — the deadline still
+ *     fires, the terminal state.json still gets written.
  *
  * Process-group semantics: spawn(..., { detached: true }) makes the child
- * the leader of a new process group on POSIX (this is the documented
- * Node.js behavior; there is no setpgid API in node — `detached: true` is
- * how you get it). process.kill(-pid, sig) then reaches the whole group,
- * killing shell + python + grandchildren together. Without `detached`, a
- * negative-pid kill targets *our* group and SIGTERMs the agent itself.
+ * the leader of a new process group on POSIX. process.kill(-pid, sig)
+ * then reaches the whole group, killing shell + python + grandchildren
+ * together. Without `detached`, a negative-pid kill targets *our* group
+ * and SIGTERMs the agent itself.
  */
 
 import { spawn } from "node:child_process";
@@ -27,6 +35,7 @@ import { currentJobOwner } from "../jobs/als.js";
 
 const DEFAULT_TIMEOUT_SEC = 600;
 const MAX_TIMEOUT_SEC = 30 * 60;
+export const FOREGROUND_BUDGET_MS = 90_000;
 
 const bashSchema = Type.Object({
   command: Type.String({ description: "Bash command to execute" }),
@@ -34,14 +43,30 @@ const bashSchema = Type.Object({
     description: `Optional timeout in seconds. Default ${DEFAULT_TIMEOUT_SEC}s, max ${MAX_TIMEOUT_SEC}s. ` +
       `On timeout the entire process group is killed (SIGTERM, 2s grace, SIGKILL).`,
   })),
+  run_in_background: Type.Optional(Type.Boolean({
+    description:
+      `When true, return a job handle immediately without waiting for the command to finish. ` +
+      `Use job_status / job_output / job_wait / job_kill to observe. ` +
+      `Foreground (default) auto-promotes to a handle if the command hasn't finished in ${FOREGROUND_BUDGET_MS / 1000}s.`,
+  })),
 });
 
 type BashParams = Static<typeof bashSchema>;
+
+export interface BashOptions {
+  /**
+   * Override foreground budget (test seam). Production uses
+   * FOREGROUND_BUDGET_MS; smokes set a shorter value to exercise auto-
+   * promote in real time.
+   */
+  foregroundBudgetMs?: number;
+}
 
 interface BashResult {
   truncation?: ReturnType<typeof truncateTail>;
   jobId?: string;
   logPath?: string;
+  status?: "running" | "done";
 }
 
 function formatTrailer(
@@ -63,7 +88,8 @@ function formatTrailer(
   return `\n\n[${head}. Full output: ${logPath}]`;
 }
 
-export function createHardenedBashTool(cwd: string) {
+export function createHardenedBashTool(cwd: string, opts?: BashOptions) {
+  const foregroundBudgetMs = opts?.foregroundBudgetMs ?? FOREGROUND_BUDGET_MS;
   return {
     name: "bash",
     label: "bash",
@@ -72,7 +98,9 @@ export function createHardenedBashTool(cwd: string) {
       `(merged in chronological order; full transcript also written to .agent/jobs/<id>/output.log). ` +
       `Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB. ` +
       `Default timeout ${DEFAULT_TIMEOUT_SEC}s, max ${MAX_TIMEOUT_SEC}s — on timeout the entire ` +
-      `process group is killed.`,
+      `process group is killed. Set run_in_background=true to return a job handle immediately ` +
+      `(observe via job_status/job_output/job_wait/job_kill); otherwise foreground auto-promotes ` +
+      `to a handle after ${foregroundBudgetMs / 1000}s.`,
     parameters: bashSchema,
     execute: (
       toolCallId: string,
@@ -82,10 +110,8 @@ export function createHardenedBashTool(cwd: string) {
     ): Promise<{ content: any[]; details: BashResult }> => {
       const requested = params.timeout ?? DEFAULT_TIMEOUT_SEC;
       const timeoutSec = Math.min(Math.max(1, requested), MAX_TIMEOUT_SEC);
+      const runInBackground = params.run_in_background === true;
 
-      // Falls back to "unknown" if a bash call slips past wrapping (smoke
-      // tests, direct tool invocation). Production paths are wrapped in
-      // jobOwnerAls.run() at every agent entry point.
       const owner = currentJobOwner();
       const ownerAgentId = owner?.agentId ?? "unknown";
       const ownerAgentType = owner?.agentType ?? "unknown";
@@ -129,19 +155,37 @@ export function createHardenedBashTool(cwd: string) {
         let chunksBytes = 0;
         const maxChunksBytes = DEFAULT_MAX_BYTES * 2;
 
-        // setImmediate-coalesced onUpdate. Without this, a high-throughput
-        // stdout (pip install logs, training output) triggers a full
-        // Buffer.concat + truncateTail on every chunk → O(N²) in chunk
-        // count. Coalescing collapses bursts into one notify per tick.
+        // Two independent one-shot flags: the promise can resolve early
+        // (run_in_background or 90s foreground budget) while the in-process
+        // close handler still has to commit the terminal state.json. They
+        // cannot collapse into a single `settled` flag.
+        let promiseSettled = false;
+        let stateCommitted = false;
+        const settlePromise = (value: { content: any[]; details: BashResult }): void => {
+          if (promiseSettled) return;
+          promiseSettled = true;
+          resolve(value);
+        };
+        const rejectPromise = (err: Error): void => {
+          if (promiseSettled) return;
+          promiseSettled = true;
+          reject(err);
+        };
+        const commitTerminal = (next: JobState): void => {
+          if (stateCommitted) return;
+          stateCommitted = true;
+          writeState(projectDir, next);
+        };
+
         let updatePending = false;
         const flushUpdate = () => {
           updatePending = false;
-          if (!onUpdate) return;
+          if (!onUpdate || promiseSettled) return;
           const text = Buffer.concat(chunks).toString("utf-8");
           const trunc = truncateTail(text);
           onUpdate({
             content: [{ type: "text", text: trunc.content || "" }],
-            details: { truncation: trunc.truncated ? trunc : undefined, jobId, logPath },
+            details: { truncation: trunc.truncated ? trunc : undefined, jobId, logPath, status: "running" },
           });
         };
 
@@ -153,7 +197,7 @@ export function createHardenedBashTool(cwd: string) {
             const removed = chunks.shift()!;
             chunksBytes -= removed.length;
           }
-          if (onUpdate && !updatePending) {
+          if (onUpdate && !promiseSettled && !updatePending) {
             updatePending = true;
             setImmediate(flushUpdate);
           }
@@ -181,31 +225,53 @@ export function createHardenedBashTool(cwd: string) {
           else signal.addEventListener("abort", onAbort, { once: true });
         }
 
-        // Both `error` and `close` can fire on Node (e.g. ENOENT spawn → error
-        // then close with code=null). The settled flag guarantees a single
-        // termination path: one writeState, one logStream.end, one settle.
-        let settled = false;
-        const finalize = (fn: () => void) => {
-          if (settled) return;
-          settled = true;
+        const handleResult = (): { content: any[]; details: BashResult } => ({
+          content: [{
+            type: "text",
+            text:
+              `Job ${jobId} running in background (pid ${pid}, deadline ${timeoutSec}s). ` +
+              `Use job_wait/job_status/job_output to observe, job_kill to terminate. Log: ${logPath}`,
+          }],
+          details: { jobId, logPath, status: "running" },
+        });
+
+        // run_in_background=true: settle the promise immediately. The child
+        // keeps running, child.on("close") still fires later and writes the
+        // terminal state.json (rejectPromise/settlePromise are no-ops by then).
+        if (runInBackground) {
+          settlePromise(handleResult());
+        }
+
+        // Foreground budget: if the command hasn't finished in
+        // foregroundBudgetMs, auto-promote so the agent's turn isn't blocked
+        // for the full timeoutSec. The process keeps running.
+        const budgetTimer = !runInBackground
+          ? setTimeout(() => settlePromise(handleResult()), foregroundBudgetMs)
+          : null;
+        budgetTimer?.unref?.();
+
+        child.on("error", (err) => {
           clearTimeout(timeoutHandle);
+          if (budgetTimer) clearTimeout(budgetTimer);
           if (killTimer) clearTimeout(killTimer);
           if (signal) signal.removeEventListener("abort", onAbort);
           logStream.end();
-          fn();
-        };
-
-        child.on("error", (err) => finalize(() => {
-          writeState(projectDir, {
+          commitTerminal({
             ...initialState,
             status: "done", endedAt: Date.now(),
             exitCode: null, signal: null,
             cause: `spawn_error:${(err as any)?.code ?? err.message}` as JobCause,
           });
-          reject(err);
-        }));
+          rejectPromise(err);
+        });
 
-        child.on("close", (code, sig) => finalize(() => {
+        child.on("close", (code, sig) => {
+          clearTimeout(timeoutHandle);
+          if (budgetTimer) clearTimeout(budgetTimer);
+          if (killTimer) clearTimeout(killTimer);
+          if (signal) signal.removeEventListener("abort", onAbort);
+          logStream.end();
+
           const fullOutput = Buffer.concat(chunks).toString("utf-8");
           const trunc = truncateTail(fullOutput);
           let outputText = trunc.content || "(no output)";
@@ -216,41 +282,40 @@ export function createHardenedBashTool(cwd: string) {
             : sig ? "signal"
             : "completed";
 
-          writeState(projectDir, {
+          commitTerminal({
             ...initialState,
             status: "done", endedAt: Date.now(),
             exitCode: code, signal: sig ?? null, cause,
           });
 
-          const failureDetails: BashResult = { truncation: trunc.truncated ? trunc : undefined, jobId, logPath };
+          const details: BashResult = {
+            truncation: trunc.truncated ? trunc : undefined,
+            jobId, logPath, status: "done",
+          };
 
           if (timedOut) {
             const err: any = new Error(
               (outputText ? outputText + "\n\n" : "") +
               `Command timed out after ${timeoutSec} seconds (process group killed). Job ${jobId}, log at ${logPath}.`,
             );
-            err.details = failureDetails;
-            reject(err);
+            err.details = details;
+            rejectPromise(err);
             return;
           }
           if (aborted) {
-            reject(new Error((outputText ? outputText + "\n\n" : "") + "Command aborted"));
+            rejectPromise(new Error((outputText ? outputText + "\n\n" : "") + "Command aborted"));
             return;
           }
           if (code !== 0 && code !== null) {
-            reject(new Error(outputText + `\n\nCommand exited with code ${code}` + (sig ? ` (signal ${sig})` : "")));
+            rejectPromise(new Error(outputText + `\n\nCommand exited with code ${code}` + (sig ? ` (signal ${sig})` : "")));
             return;
           }
           if (sig) {
-            // External signal (e.g. SIGTERM from outside the agent stack):
-            // code is null and we never went through timedOut/aborted, but the
-            // command did not complete normally. Report as failure so callers
-            // don't treat a killed command as a successful no-op.
-            reject(new Error((outputText ? outputText + "\n\n" : "") + `Command killed by signal ${sig}`));
+            rejectPromise(new Error((outputText ? outputText + "\n\n" : "") + `Command killed by signal ${sig}`));
             return;
           }
-          resolve({ content: [{ type: "text", text: outputText }], details: failureDetails });
-        }));
+          settlePromise({ content: [{ type: "text", text: outputText }], details });
+        });
       });
     },
   };

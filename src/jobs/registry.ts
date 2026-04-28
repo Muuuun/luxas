@@ -92,6 +92,44 @@ export function listJobIds(projectDir: string): string[] {
 }
 
 /**
+ * Return every job record currently owned by `ownerAgentId`. Used by the
+ * job-control tools to scope visibility and for the upcoming Owner Exit
+ * Gate (filter to status=running before allowing a clean exit).
+ */
+export function listJobsByOwner(projectDir: string, ownerAgentId: string): JobState[] {
+  const out: JobState[] = [];
+  for (const id of listJobIds(projectDir)) {
+    const state = readState(projectDir, id);
+    if (state && state.ownerAgentId === ownerAgentId) out.push(state);
+  }
+  return out;
+}
+
+/**
+ * Poll state.json until status !== "running" or `timeoutMs` elapses. The
+ * agent-facing `job_wait` tool sits on top of this. Polling beats fs.watch
+ * because (a) state.json writes are atomic via tmp+rename, which can confuse
+ * fs.watch on macOS; (b) the agent loop's natural cadence is multi-second
+ * anyway, so 500ms polls are not load-bearing.
+ *
+ * Returns the final state, or `null` if the job dir disappeared.
+ */
+export async function waitForJob(
+  projectDir: string,
+  jobId: string,
+  timeoutMs: number,
+): Promise<JobState | null> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const state = readState(projectDir, jobId);
+    if (!state) return null;
+    if (state.status !== "running") return state;
+    await sleep(500);
+  }
+  return readState(projectDir, jobId);
+}
+
+/**
  * Conservative ownership check. Returns true only when ps confirms both
  * (a) the pid is still its own process-group leader (i.e. nobody re-pgid'd
  * it) and (b) the recorded command appears as a substring of the live ps
@@ -115,7 +153,7 @@ function processIsOurs(pid: number, expectedCommand: string): boolean {
 }
 
 /** SIGTERM the process group, wait up to SIGTERM_GRACE_MS, then SIGKILL. */
-async function killGroupAndWait(pid: number): Promise<void> {
+export async function killGroupAndWait(pid: number): Promise<void> {
   try { process.kill(-pid, "SIGTERM"); } catch { /* may already be exiting */ }
   const deadline = Date.now() + SIGTERM_GRACE_MS;
   while (Date.now() < deadline && pidAlive(pid)) {
