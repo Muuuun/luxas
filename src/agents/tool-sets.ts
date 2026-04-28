@@ -2,7 +2,8 @@
  * Tool-set registry — named factories that produce tool arrays for agents.
  */
 
-import { createCodingTools, createReadTool } from "@mariozechner/pi-coding-agent";
+import { createReadTool } from "@mariozechner/pi-coding-agent";
+import { createCodingToolsForProject } from "../tools/coding.js";
 import { createReportTools } from "../tools/report.js";
 import { createWolframTool } from "../tools/wolfram.js";
 import { createFigureGenTools } from "../tools/figure-gen.js";
@@ -10,7 +11,12 @@ import { createFigureGenTools } from "../tools/figure-gen.js";
 export type ToolSetFactory = (projectDir: string) => any[];
 
 const TOOL_SETS: Record<string, ToolSetFactory> = {
-  coding: (dir) => createCodingTools(dir),
+  // "coding" routes through Sisyphus's wrapper so every agent that requests
+  // coding tools — including all sub-agents (experiment, tool_impl, …) —
+  // gets the hardened bash with default timeout, process-tree kill, and
+  // .agent/jobs/<id>/ records. Without this, only brain (which builds its
+  // tools via buildResearchTools) was protected.
+  coding: (dir) => createCodingToolsForProject(dir),
   report: (dir) => createReportTools(dir),
   pi: (dir) => [createReadTool(dir)],
   wolfram: () => [createWolframTool()],
