@@ -37,6 +37,8 @@ import { Type } from "@sinclair/typebox";
 // const agentSmeltHandle = autoPatch(Agent, "sisyphus");
 import { createResearchAgent } from "./agent.js";
 import { ensureLiteratureFile } from "./methodology.js";
+import { jobOwnerAls } from "./jobs/als.js";
+import { reconcileOnStartup } from "./jobs/registry.js";
 
 // Ensure pdflatex is in PATH (needed for usetex figstyles + compile_latex)
 try { execSync("which pdflatex", { stdio: "pipe" }); } catch {
@@ -95,6 +97,15 @@ projectDir = resolve(projectDir);
 // && search source X` can't produce a nested data/papers/data/papers path.
 process.env.LUXAS_PROJECT_DIR = projectDir;
 
+// Family-level model switch. When --model is a deepseek model, every
+// anthropic-tier slot (haiku/sonnet/opus declared in agent frontmatter)
+// redirects to that deepseek model via spawn.ts's applyProfile. OpenAI
+// tiers (gpt-5.2 / o3) are deliberate provider-specific picks and pass
+// through unchanged (math agent stays gpt-5.2).
+if (model.startsWith("deepseek-")) {
+  process.env.LUXAS_MODEL_PROFILE = model;
+}
+
 if (command === "status") {
   showStatus(projectDir);
   process.exit(0);
@@ -149,6 +160,15 @@ async function run(dir: string, modelName: string, userDirective?: string) {
   // If previous session finished, archive checkpoint + PI feedback so we start fresh
   archiveIfFinished(dir);
 
+  // Reconcile any bash jobs left running from a prior crashed/aborted session.
+  // Verified-ours orphans are killed; ambiguous ones (pid reuse, missing ps)
+  // are marked orphaned without killing — see src/jobs/registry.ts.
+  const reconciled = await reconcileOnStartup(dir);
+  if (reconciled.scanned > 0 && (reconciled.markedDone + reconciled.killedOrphans + reconciled.unverifiable) > 0) {
+    console.log(`  ⟳ Reconciled ${reconciled.scanned} prior bash job(s): ` +
+      `${reconciled.markedDone} done, ${reconciled.killedOrphans} killed, ${reconciled.unverifiable} orphaned`);
+  }
+
   // Register in global project registry
   registerProject(dir);
 
@@ -187,29 +207,35 @@ async function run(dir: string, modelName: string, userDirective?: string) {
   // Check for checkpoint to resume from
   const t0 = Date.now();
   try {
-    if (restore) {
-      const msgCount = restore();
-      if (msgCount > 0) {
-        console.log(`  ⟳ Resuming from checkpoint (${msgCount} messages)`);
-        const resumePrompt = userDirective
-          ? `Continue your research. Additional directive: ${userDirective}\n\nIMPORTANT: This is a follow-up directive on an existing project. After completing the analysis, you MUST update both notes/experiments.md AND report/report.tex (add new sections, update existing comparisons, recompile with compile_latex). The report should always reflect the latest state of the research.`
-          : `Continue your research from where you left off. Check notes/literature.md and notes/experiments.md for your current progress.`;
-        await agent.followUp({
-          role: "user",
-          content: resumePrompt,
-          timestamp: Date.now(),
-        });
-        await agent.continue();
+    // Wrap the entire brain run in jobOwnerAls so every bash invocation made
+    // by the brain (including ones nested in followUp/continue) tags its
+    // job record with ownerAgentId="brain". Sub-agents that brain spawns
+    // get their own als.run inside spawnAgent / subagent-runner.
+    await jobOwnerAls.run({ agentId: "brain", agentType: "brain", projectDir: dir }, async () => {
+      if (restore) {
+        const msgCount = restore();
+        if (msgCount > 0) {
+          console.log(`  ⟳ Resuming from checkpoint (${msgCount} messages)`);
+          const resumePrompt = userDirective
+            ? `Continue your research. Additional directive: ${userDirective}\n\nIMPORTANT: This is a follow-up directive on an existing project. After completing the analysis, you MUST update both notes/experiments.md AND report/report.tex (add new sections, update existing comparisons, recompile with compile_latex). The report should always reflect the latest state of the research.`
+            : `Continue your research from where you left off. Check notes/literature.md and notes/experiments.md for your current progress.`;
+          await agent.followUp({
+            role: "user",
+            content: resumePrompt,
+            timestamp: Date.now(),
+          });
+          await agent.continue();
+        } else {
+          // Checkpoint exists but empty/corrupted — fresh start
+          const prompt = buildPrompt(researchGoal, userDirective);
+          await agent.prompt(prompt);
+        }
       } else {
-        // Checkpoint exists but empty/corrupted — fresh start
+        // No checkpoint — fresh start
         const prompt = buildPrompt(researchGoal, userDirective);
         await agent.prompt(prompt);
       }
-    } else {
-      // No checkpoint — fresh start
-      const prompt = buildPrompt(researchGoal, userDirective);
-      await agent.prompt(prompt);
-    }
+    });
   } catch (err: any) {
     console.error(`\n✗ Agent error: ${err.message}`);
   }

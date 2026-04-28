@@ -12,6 +12,7 @@
 import { mkdirSync, readFileSync, writeFileSync, existsSync, renameSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { pidAlive } from "../utils.js";
 
 // ── Configuration constants ────────────────────────────────────────────────
 
@@ -164,16 +165,12 @@ export function inboxLocked(): boolean {
   }
   const parts = raw.split("\n");
   const pid = Number(parts[2]);
-  if (Number.isFinite(pid) && pid > 0 && !processAlive(pid)) {
+  if (Number.isFinite(pid) && pid > 0 && !pidAlive(pid)) {
     console.error(`[meta-state] reaping stale inbox lock from dead PID ${pid} (owner: ${parts[0]})`);
     try { unlinkSync(p); } catch {}
     return false;
   }
   return true;
-}
-
-function processAlive(pid: number): boolean {
-  try { process.kill(pid, 0); return true; } catch { return false; }
 }
 
 export function acquireInboxLock(owner: string): void {

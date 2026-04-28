@@ -23,6 +23,7 @@ import { extractTextContent } from "./utils.js";
 import { cleanMessagesForModel } from "./transform.js";
 import { installUsageTracking } from "./usage-log.js";
 import { createSpawnToolFactory } from "./tools/spawn-agent.js";
+import { jobOwnerAls } from "./jobs/als.js";
 
 // Match agent.ts: default Anthropic prompt-cache TTL to 5m.
 // Subagents are separate processes, so the env var must be set here too.
@@ -175,8 +176,13 @@ async function main() {
       }
     });
 
-    // Run with automatic length-truncation recovery
-    await runWithLengthRecovery(agent, args.task, lengthRecovery);
+    // Run with automatic length-truncation recovery. Scoped under this
+    // sub-agent's owner identity (matches the in-process branch in
+    // spawn.ts) so bash jobs persist with this agent's id, not "brain".
+    await jobOwnerAls.run(
+      { agentId: args.id, agentType: args.agent, projectDir },
+      () => runWithLengthRecovery(agent, args.task, lengthRecovery),
+    );
 
     // Extract output. extractTextContent can return "" even when content
     // exists (e.g., assistant message that was all thinking blocks + tool_use

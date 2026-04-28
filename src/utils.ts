@@ -2,12 +2,33 @@
  * Shared utility functions used across multiple modules.
  */
 
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 
 export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Liveness probe via signal 0 — kernel returns ESRCH if no process owns
+ * the pid. Both pid wrap-around (rare) and "pid alive but it's a different
+ * program now" (more common) are accepted false positives; callers needing
+ * stronger ownership proof must verify out of band.
+ */
+export function pidAlive(pid: number): boolean {
+  try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
+/**
+ * Atomic JSON write: serialize, write to a sibling tmp file, rename onto
+ * the target. The rename is the atomic step on POSIX, so a crash mid-write
+ * never leaves a half-written file at `path`.
+ */
+export function atomicWriteJson(path: string, value: unknown): void {
+  const tmp = path + ".tmp";
+  writeFileSync(tmp, JSON.stringify(value, null, 2));
+  renameSync(tmp, path);
 }
 
 /** Strict arXiv id: YYMM.NNNNN (4-5 digits after the dot). */

@@ -24,6 +24,7 @@ import { InputBar } from "./input-bar.js";
 import { discoverProjects, createProjectShell, type ProjectInfo } from "./projects.js";
 import { dark, icons, formatTokens, formatCost } from "./theme.js";
 import { createResearchAgent } from "../agent.js";
+import { jobOwnerAls } from "../jobs/als.js";
 import { createBrainstormAgent } from "./brainstorm.js";
 import type { Agent } from "@mariozechner/pi-agent-core/dist/agent.js";
 
@@ -194,7 +195,10 @@ export default function App({ baseDir, brainTool = "claude" }: { baseDir: string
         ? `Research goal (from RESEARCH.md):\n${researchGoal}\n\nAdditional directive: ${directive}`
         : `Research goal (from RESEARCH.md):\n${researchGoal}\n\nStart by reading RESEARCH.md for the full goal, then check notes/literature.md and notes/experiments.md for any existing progress. Proceed with the research.`;
 
-      await agent.prompt(prompt);
+      await jobOwnerAls.run(
+        { agentId: "brain", agentType: "brain", projectDir: project.dir },
+        () => agent.prompt(prompt),
+      );
 
       const { readUsageTotals } = await import("../usage-log.js");
       const totals = readUsageTotals(usageLogPath);

@@ -18,6 +18,7 @@ import { getDefinition, resolvePrompt, type AgentDefinition } from "./registry.j
 import { resolveToolSets } from "./tool-sets.js";
 import { resolveContextBuilder } from "./context-builders.js";
 import { buildSafetyWrapper, type SafetyRuntimeHooks } from "./safety-wrappers.js";
+import { jobOwnerAls } from "../jobs/als.js";
 import { classifyThrownStopReason, type SubAgentExit, type SubAgentStopReason, type FileTouchRecord } from "../active-agents.js";
 import {
   createFileContextCache,
@@ -100,10 +101,47 @@ const MODEL_MAP: Record<string, [string, string] | InlineModel> = {
   },
 };
 
-function resolveModel(modelKey: string) {
-  const entry = MODEL_MAP[modelKey] ?? MODEL_MAP.sonnet;
+// Anthropic tier names that participate in profile redirection. When
+// LUXAS_MODEL_PROFILE is set (e.g. to "deepseek-v4-flash"), any agent that
+// declared one of these in its frontmatter routes to the profile model
+// instead. OpenAI / Codex tiers (gpt-5.2, o3, …) bypass — those are
+// deliberate provider-specific picks (math agent's reasoning, etc.) that a
+// family-level switch must not stomp.
+const ANTHROPIC_TIERS = new Set(["haiku", "sonnet", "opus"]);
+
+function applyProfile(modelKey: string): string {
+  const profile = process.env.LUXAS_MODEL_PROFILE;
+  if (!profile) return modelKey;
+  if (ANTHROPIC_TIERS.has(modelKey)) return profile;
+  return modelKey;
+}
+
+export function resolveModel(modelKey: string) {
+  const effectiveKey = applyProfile(modelKey);
+  const entry = MODEL_MAP[effectiveKey] ?? MODEL_MAP.sonnet;
   if (Array.isArray(entry)) return getModel(entry[0] as any, entry[1] as any);
   return entry as any;
+}
+
+// "Require any tool" tool_choice value, per provider+model. The brain and
+// every sub-agent's streamFn calls this so the silent-exit guard (force a
+// tool_use on every turn) sends the strongest tool-forcing value the
+// underlying API actually accepts:
+//
+//   - anthropic            → "any"      (Anthropic-native)
+//   - reasoning models     → "auto"     (deepseek-reasoner rejects forced
+//                                        tool_choice with HTTP 400; we
+//                                        accept the silent-exit risk Mu's
+//                                        guard normally prevents — observed
+//                                        rarely on Claude per d19ec9f's
+//                                        comment)
+//   - everything else      → "required" (OpenAI chat-completions spec since
+//                                        Jun 2024; deepseek-chat + openai-
+//                                        codex share that wire format)
+export function pickRequireToolChoice(model: any): "any" | "required" | "auto" {
+  if (model?.provider === "anthropic") return "any";
+  if (model?.reasoning) return "auto";
+  return "required";
 }
 
 // ── Max spawn depth ──────────────────────────────────
@@ -312,7 +350,7 @@ export function buildAgentFromDefinition(opts: SpawnAgentOptions): BuiltAgent {
     transformContext,
     streamFn: (m, ctx, streamOpts) => {
       const cap = opts.lengthRecovery?.state.maxTokensCap;
-      const merged: any = { ...streamOpts, toolChoice: "any" };
+      const merged: any = { ...streamOpts, toolChoice: pickRequireToolChoice(m) };
       if (cap !== undefined) merged.maxTokens = cap;
       return streamSimple(m, ctx, merged);
     },
@@ -613,8 +651,13 @@ export async function spawnAgent(opts: SpawnAgentOptions): Promise<SpawnAgentRes
       }
     });
 
-    // 12. Run with automatic length-truncation recovery
-    await runWithLengthRecovery(agent, opts.prompt, recovery);
+    // 12. Run with automatic length-truncation recovery, scoped under this
+    // sub-agent's owner identity so any bash invocation it makes records
+    // ownerAgentId === agentId (not the spawning parent's id).
+    await jobOwnerAls.run(
+      { agentId, agentType: opts.name, projectDir: opts.projectDir },
+      () => runWithLengthRecovery(agent, opts.prompt, recovery),
+    );
 
     // Reader post-hook: rebuild notes/methodology.md + notes/literature.md
     // from their per-paper fragment dirs so both aggregates stay fresh

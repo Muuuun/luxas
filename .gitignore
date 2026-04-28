@@ -8,6 +8,11 @@ research-state.json
 # Build output
 dist/
 
+# Per-project agent state (sessions, conversation logs, bash job records).
+# Created at runtime under any working dir where `luxas run` executes,
+# including the Sisyphus repo itself when used for self-testing.
+.agent/
+
 # OS
 .DS_Store
 

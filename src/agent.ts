@@ -17,13 +17,13 @@ import {
   nameAgent, createSmeltReminderProvider,
   readPatches, applyPatches, DEFAULT_BASE_DIR,
 } from "agentsmelt";
-import { getModel, streamSimple, type TextContent } from "@mariozechner/pi-ai";
+import { streamSimple, type TextContent } from "@mariozechner/pi-ai";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { join, isAbsolute, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getDefinition, resolvePrompt } from "./agents/registry.js";
-import { spawnAgent } from "./agents/spawn.js";
+import { resolveModel, spawnAgent, pickRequireToolChoice } from "./agents/spawn.js";
 import { ensureMethodologyFile, ensureLiteratureFile } from "./methodology.js";
 import { buildResearchTools } from "./tools/index.js";
 import { buildContextTransformer, buildSemiStaticSystemLayer } from "./context.js";
@@ -73,11 +73,9 @@ export interface ResearchAgentOptions {
   onPIVerdict?: (verdict: PIVerdict, toolCallCount: number) => void;
 }
 
-const MODEL_MAP: Record<string, [string, string]> = {
-  haiku: ["anthropic", "claude-haiku-4-5-20251001"],
-  sonnet: ["anthropic", "claude-sonnet-4-6"],
-  opus: ["anthropic", "claude-opus-4-6"],
-};
+// Brain model resolution is delegated to spawn.ts's resolveModel so the
+// brain participates in the same MODEL_MAP + LUXAS_MODEL_PROFILE machinery
+// as every sub-agent. Single source of truth: spawn.ts.
 
 // Resolve paths for template variables
 const LUXAS_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -98,10 +96,14 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
     } catch {}
   }
 
-  // Model for the brain agent
+  // Model for the brain agent. resolveModel applies LUXAS_MODEL_PROFILE,
+  // so when the user passes --model deepseek-v4-flash the whole stack
+  // (brain + every anthropic-tier sub-agent) routes through deepseek; when
+  // they pass --model opus, today's behavior is preserved.
   const modelKey = opts.model ?? "opus";
-  const [provider, modelId] = MODEL_MAP[modelKey] ?? MODEL_MAP.opus;
-  const model = getModel(provider as any, modelId as any);
+  const model = resolveModel(modelKey);
+  const provider: string = (model as any).provider;
+  const modelId: string = (model as any).id;
   const thinkingLevel = opts.thinkingLevel ?? "medium";
 
   // Template variables shared by brain and sub-agents
@@ -291,19 +293,23 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
 
   // Assemble Agent
   //
-  // streamFn wrapper: force toolChoice: "any" on every API call. Closes a
+  // streamFn wrapper: force "must call a tool" on every API call. Closes a
   // silent-exit failure mode in pi-agent-core where the brain sometimes returns
   // a response with thinking blocks only (no text, no tool_use) with stopReason
   // "stop" (model voluntarily stops) or "length" (max_tokens truncated). The
   // loop in agent-loop.js:112-113 exits as soon as `toolCalls.length === 0`,
-  // so these malformed responses silently terminate the session. Forcing
-  // tool_choice=any at the provider level guarantees every response contains a
-  // tool_use block, eliminating Case B (observed 2× with opus 4.6 in one
-  // session) and biasing the model toward emitting tool_use earlier within the
-  // token budget (mitigates Case A, observed 1× with sonnet). Sisyphus's
-  // workflow is entirely tool-driven (read/edit/bash/spawn_agent/finish/
-  // request_pi_review) — there is no legitimate agent turn that returns
-  // text-only, so this constraint does not break any expected behavior.
+  // so these malformed responses silently terminate the session. Forcing the
+  // require-a-tool tool_choice at the provider level guarantees every response
+  // contains a tool_use block. Sisyphus's workflow is entirely tool-driven
+  // (read/edit/bash/spawn_agent/finish/request_pi_review) — there is no
+  // legitimate agent turn that returns text-only, so this constraint does
+  // not break any expected behavior.
+  //
+  // Provider mapping: Anthropic uses "any"; OpenAI/DeepSeek's chat-completions
+  // API expects "required"; reasoning-only models (deepseek-reasoner) reject
+  // both and require "auto". pickRequireToolChoice resolves per-call from
+  // (provider, reasoning) so the brain works under any of anthropic / openai
+  // / openai-codex / deepseek (-chat or -reasoner).
   const agent = new Agent({
     initialState: {
       systemPrompt,
@@ -319,7 +325,7 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
     afterToolCall: hooks.after,
     getApiKey,
     onPayload: payloadCapture,
-    streamFn: (m, ctx, opts) => streamSimple(m, ctx, { ...opts, toolChoice: "any" } as any),
+    streamFn: (m, ctx, opts) => streamSimple(m, ctx, { ...opts, toolChoice: pickRequireToolChoice(m) } as any),
   });
   nameAgent(agent, "brain", "brain");
 

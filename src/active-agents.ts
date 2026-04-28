@@ -8,9 +8,9 @@
  * Maintained by harness code only (not LLM).
  */
 
-import { readFileSync, writeFileSync, renameSync, statSync, mkdirSync, closeSync, openSync, unlinkSync, utimesSync } from "node:fs";
+import { readFileSync, statSync, mkdirSync, closeSync, openSync, unlinkSync, utimesSync } from "node:fs";
 import { join, dirname, relative } from "node:path";
-import { extractTextContent } from "./utils.js";
+import { atomicWriteJson, extractTextContent } from "./utils.js";
 
 /**
  * Normalized stop reason across sub-agent completion paths.
@@ -114,10 +114,7 @@ export function loadRegistry(agentDir: string): ActiveAgent[] {
 }
 
 function saveRegistry(agentDir: string, agents: ActiveAgent[]): void {
-  const path = registryPath(agentDir);
-  const tmp = path + ".tmp";
-  writeFileSync(tmp, JSON.stringify(agents, null, 2));
-  renameSync(tmp, path); // atomic replace
+  atomicWriteJson(registryPath(agentDir), agents);
 }
 
 // Exclusive-file lock around load-mutate-save. Without this, two sub-agents
