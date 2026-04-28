@@ -25,7 +25,7 @@ import { discoverProjects, createProjectShell, type ProjectInfo } from "./projec
 import { dark, icons, formatTokens, formatCost } from "./theme.js";
 import { createResearchAgent } from "../agent.js";
 import { jobOwnerAls } from "../jobs/als.js";
-import { sweepJobs } from "../jobs/registry.js";
+import { reconcileOnStartup, sweepJobs } from "../jobs/registry.js";
 import { createBrainstormAgent } from "./brainstorm.js";
 import type { Agent } from "@mariozechner/pi-agent-core/dist/agent.js";
 
@@ -110,6 +110,21 @@ export default function App({ baseDir, brainTool = "claude" }: { baseDir: string
 
     let turnCount = 0;
     let toolCallCounter = 0;
+
+    // Match CLI: reconcile prior-session jobs before starting sweep so a
+    // crashed previous TUI session's bash records get classified instead
+    // of being treated as healthy until their original deadline.
+    reconcileOnStartup(project.dir).then(r => {
+      if (r.scanned > 0 && (r.markedDone + r.killedOrphans + r.unverifiable) > 0) {
+        setLogs((p) => [...p.slice(-200), {
+          text: `⟳ Reconciled ${r.scanned} prior bash job(s): ${r.markedDone} done, ${r.killedOrphans} killed, ${r.unverifiable} orphaned`,
+          color: dark.suggestion,
+        }]);
+      }
+    }).catch(err => {
+      setLogs((p) => [...p.slice(-200), { text: `[reconcile] ${err?.message ?? err}`, color: dark.error }]);
+    });
+
     const sweepInterval = setInterval(() => {
       sweepJobs(project.dir).catch(err => {
         setLogs((p) => [...p.slice(-200), { text: `[sweep] ${err?.message ?? err}`, color: dark.error }]);

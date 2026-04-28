@@ -14,6 +14,8 @@ export interface SeedRunningOptions {
   deadlineAt?: number;
   ownerAgentId?: string;
   ownerAgentType?: string;
+  /** Defaults to current process.pid (the test runner) so sweep treats it as alive-owner. */
+  ownerProcessPid?: number;
 }
 
 export function seedRunning(projectDir: string, opts: SeedRunningOptions): void {
@@ -24,6 +26,7 @@ export function seedRunning(projectDir: string, opts: SeedRunningOptions): void 
     command: opts.command,
     ownerAgentId: opts.ownerAgentId ?? "smoke-test",
     ownerAgentType: opts.ownerAgentType ?? "smoke",
+    ownerProcessPid: opts.ownerProcessPid ?? process.pid,
     toolCallId: null,
     cwd: projectDir,
     startedAt: now - 5000,

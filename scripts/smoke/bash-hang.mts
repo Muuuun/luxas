@@ -145,6 +145,38 @@ time.sleep(999)
   if (sigEnd.cause === "signal" && sigEnd.signal === "SIGTERM") ok("state cause=signal, signal=SIGTERM");
   else bad("state cause/signal", `${sigEnd.cause}/${sigEnd.signal}`);
 
+  // ── SIGTERM-ignoring child still gets killed by SIGKILL after grace ──
+  // Regression for a bug where killGroupAndWait gated SIGKILL on the
+  // leader's liveness, leaving a SIGTERM-ignoring child alive forever.
+  console.log("\n=== SIGTERM-ignoring child gets SIGKILL'd ===");
+  const ignoreCmd = `python3 -c '
+import os, signal, sys, time
+print(f"PYPID {os.getpid()}", flush=True)
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+time.sleep(60)
+'`;
+  const ignorePromise = jobOwnerAls.run(
+    { agentId: "smoke-test", agentType: "smoke", projectDir },
+    () => bash.execute("call_ignore", { command: ignoreCmd, timeout: 3 } as any),
+  );
+  await sleep(800); // let python install the SIGTERM handler
+  const ignoreIds = listJobIds(projectDir).filter(i => i !== jobId && i !== sigJobId);
+  if (ignoreIds.length !== 1) bad(`expected 1 ignore-test job, got ${ignoreIds.length}`);
+  const ignoreJobId = ignoreIds[0];
+  const ignoreLog = readFileSync(JSON.parse(readFileSync(jobStatePath(projectDir, ignoreJobId), "utf-8")).logPath, "utf-8");
+  const ignorePyMatch = ignoreLog.match(/PYPID (\d+)/);
+  const ignorePyPid = ignorePyMatch ? Number(ignorePyMatch[1]) : -1;
+  if (ignorePyPid > 0 && pidAlive(ignorePyPid)) ok("python with SIGTERM-ignore alive mid-flight");
+  else bad("could not establish python with SIGTERM-ignore", String(ignorePyPid));
+
+  let ignoreErr: any = null;
+  try { await ignorePromise; } catch (e) { ignoreErr = e; }
+  if (ignoreErr) ok("timeout fired on ignore test");
+  else bad("ignore test resolved without timeout");
+  await sleep(800); // let SIGKILL reap
+  if (ignorePyPid > 0 && !pidAlive(ignorePyPid)) ok("SIGTERM-ignoring python killed (always-SIGKILL after grace)");
+  else bad("SIGTERM-ignoring python still alive (gated-SIGKILL regression)");
+
   console.log(`\n${pass} pass, ${fail} fail`);
   process.exit(fail > 0 ? 1 : 0);
 }

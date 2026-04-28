@@ -137,6 +137,7 @@ export function createHardenedBashTool(cwd: string, opts?: BashOptions) {
         const initialState: JobState = {
           id: jobId,
           ownerAgentId, ownerAgentType,
+          ownerProcessPid: process.pid,
           toolCallId: toolCallId ?? null,
           command: params.command,
           cwd,

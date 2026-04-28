@@ -9,13 +9,21 @@
  * predictable and an agent can't accidentally signal a sibling's process.
  */
 
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
 import { Type, type Static } from "@sinclair/typebox";
 import {
-  readState, listJobsByOwner, killGroupAndWait, waitForJob,
+  readState, listJobsByOwner, safeKillJob, waitForJob,
   type JobState,
 } from "../jobs/registry.js";
 import { currentJobOwner } from "../jobs/als.js";
+
+/**
+ * Bound on bytes read from output.log when serving job_output. Background
+ * jobs producing GB-scale logs would OOM a `readFileSync` tail. We read at
+ * most this many bytes from the end of the file and slice into lines from
+ * there. The agent's `tail` parameter still applies inside the window.
+ */
+const MAX_TAIL_BYTES = 256 * 1024;
 
 function summarize(state: JobState): {
   id: string; status: string; cause: string | null;
@@ -103,12 +111,45 @@ const outputSchema = Type.Object({
   })),
 });
 
+/**
+ * Bounded tail read: open the log, seek to size - MAX_TAIL_BYTES, read up
+ * to MAX_TAIL_BYTES, drop the (possibly truncated) first line if we didn't
+ * start at offset 0, then slice the last `tail` lines from what remains.
+ * Memory cost is bounded by MAX_TAIL_BYTES regardless of file size.
+ */
+function readTail(logPath: string, tail: number): { text: string; sizeBytes: number; truncated: boolean } {
+  const sizeBytes = statSync(logPath).size;
+  const startOffset = Math.max(0, sizeBytes - MAX_TAIL_BYTES);
+  const readLen = sizeBytes - startOffset;
+  const buf = Buffer.alloc(readLen);
+  const fd = openSync(logPath, "r");
+  try {
+    if (readLen > 0) readSync(fd, buf, 0, readLen, startOffset);
+  } finally {
+    closeSync(fd);
+  }
+  let text = buf.toString("utf-8");
+  if (startOffset > 0) {
+    const nl = text.indexOf("\n");
+    text = nl >= 0 ? text.slice(nl + 1) : "";
+  }
+  const lines = text.split("\n");
+  const sliceFrom = Math.max(0, lines.length - tail - (lines[lines.length - 1] === "" ? 1 : 0));
+  return {
+    text: lines.slice(sliceFrom).join("\n"),
+    sizeBytes,
+    truncated: startOffset > 0,
+  };
+}
+
 function createJobOutputTool() {
   return {
     name: "job_output",
     label: "job_output",
     description:
-      "Read tail of a job's output.log. Default 100 lines. Restricted to jobs you own.",
+      `Read tail of a job's output.log. Default 100 lines. Reads at most ${MAX_TAIL_BYTES / 1024}KB ` +
+      `from the end of the log regardless of total size — long-running jobs with GB-scale logs are safe. ` +
+      `Restricted to jobs you own.`,
     parameters: outputSchema,
     execute: async (
       _toolCallId: string,
@@ -120,16 +161,13 @@ function createJobOutputTool() {
       if (!existsSync(r.state.logPath)) {
         return errResult(`Log file missing: ${r.state.logPath}`);
       }
-      const content = readFileSync(r.state.logPath, "utf-8");
-      const lines = content.split("\n");
-      const slice = lines.slice(Math.max(0, lines.length - tail - 1)).join("\n");
-      const totalLines = lines.length - 1;  // trailing \n produces an empty last entry
-      const sizeBytes = statSync(r.state.logPath).size;
+      const { text, sizeBytes, truncated } = readTail(r.state.logPath, tail);
+      const truncNote = truncated ? `; window=last ${MAX_TAIL_BYTES / 1024}KB` : "";
       const header = `[${r.state.id} ${r.state.status}${r.state.cause ? `/${r.state.cause}` : ""}; ` +
-        `${totalLines} lines / ${sizeBytes} bytes total; showing last ${Math.min(tail, totalLines)}]\n`;
+        `${sizeBytes} bytes total; tail=${tail}${truncNote}]\n`;
       return {
-        content: [{ type: "text", text: header + slice }],
-        details: { jobId: r.state.id, totalLines, sizeBytes },
+        content: [{ type: "text", text: header + text }],
+        details: { jobId: r.state.id, sizeBytes, truncated },
       };
     },
   };
@@ -206,14 +244,23 @@ function createJobKillTool() {
           details: { jobId: params.job_id, status: r.state.status },
         };
       }
-      await killGroupAndWait(r.state.pid);
+      // safeKillJob verifies the live process group still matches our
+      // recorded command before signalling — defends against killing a
+      // recycled pid that now belongs to an unrelated process.
+      const result = await safeKillJob(r.state);
+      if (!result.killed) {
+        return {
+          content: [{ type: "text", text: `Did not kill job ${params.job_id} (pid ${r.state.pid}): ${result.reason}.` }],
+          details: { jobId: params.job_id, killed: false, reason: result.reason },
+        };
+      }
       // Don't write state.json here — let the in-process child.on("close")
       // commit the terminal state with the actual exit code/signal. If the
       // close handler is somehow not wired (orphan pid), sweep will pick it
       // up within 15s with cause=process_gone_since_last_sweep.
       return {
         content: [{ type: "text", text: `Killed job ${params.job_id} (pid ${r.state.pid}).` }],
-        details: { jobId: params.job_id },
+        details: { jobId: params.job_id, killed: true },
       };
     },
   };

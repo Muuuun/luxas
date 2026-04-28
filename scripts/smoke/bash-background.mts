@@ -183,6 +183,81 @@ async function main() {
   if (fastFg.details?.status === "done") ok("foreground within budget details.status=done");
   else bad("foreground done status", String(fastFg.details?.status));
 
+  // ── 9. job_kill refuses when ownership unverifiable ────────────
+  // Spawn a real bash, then write its state.json with a mismatched
+  // command. processIsOurs (used by safeKillJob) sees the mismatch and
+  // returns "ownership unverifiable" — the live bash must NOT die.
+  console.log("\n=== job_kill verifies ownership ===");
+  const { spawn } = await import("node:child_process");
+  const { writeState } = await import("../../src/jobs/registry.js");
+  const decoy = spawn("/bin/bash", ["-c", "sleep 30"], { detached: true, stdio: "ignore" });
+  decoy.unref();
+  stragglers.push(decoy.pid!);
+  await sleep(200);
+  const decoyJobId = "job_decoyaaaaaa";
+  writeState(projectDir, {
+    id: decoyJobId,
+    pid: decoy.pid!,
+    command: "definitely-not-the-real-command-XYZ",
+    ownerAgentId: "agent-A",
+    ownerAgentType: "smoke",
+    ownerProcessPid: process.pid,
+    toolCallId: null,
+    cwd: projectDir,
+    startedAt: Date.now() - 1000,
+    deadlineAt: Date.now() + 600_000,
+    timeoutSec: 600,
+    status: "running",
+    endedAt: null, exitCode: null, signal: null, cause: null,
+    logPath: join(projectDir, ".agent", "jobs", decoyJobId, "output.log"),
+  });
+  const decoyKill: any = await runAs("agent-A", () =>
+    jobKill.execute("call_decoy", { job_id: decoyJobId } as any));
+  if (/ownership unverifiable/i.test(decoyKill.content[0].text)) ok("job_kill refuses on unverifiable ownership");
+  else bad("job_kill should have refused", decoyKill.content[0].text.slice(0, 200));
+  if (pidAlive(decoy.pid!)) ok("decoy process untouched (no misfire)");
+  else bad("decoy was killed despite unverifiable ownership");
+
+  // ── 10. job_output bounded tail on a large log ─────────────────
+  // Write a 1MB log inline (faster than spawning a printer); job_output
+  // must return last 50 lines without slurping the whole file.
+  console.log("\n=== job_output bounded tail ===");
+  const { writeFileSync, mkdirSync: mkdir } = await import("node:fs");
+  const bigJobId = "job_bigloggggg";
+  const bigLogDir = join(projectDir, ".agent", "jobs", bigJobId);
+  mkdir(bigLogDir, { recursive: true });
+  const bigLogPath = join(bigLogDir, "output.log");
+  // Build a ~1MB log of distinct numbered lines so we can verify tail content.
+  let big = "";
+  for (let i = 1; i <= 20000; i++) big += `line-${String(i).padStart(8, "0")}\n`;
+  writeFileSync(bigLogPath, big);
+  writeState(projectDir, {
+    id: bigJobId,
+    pid: process.pid,  // any alive pid
+    command: "echo big-log-marker",
+    ownerAgentId: "agent-A",
+    ownerAgentType: "smoke",
+    ownerProcessPid: process.pid,
+    toolCallId: null,
+    cwd: projectDir,
+    startedAt: Date.now() - 1000,
+    deadlineAt: Date.now() + 600_000,
+    timeoutSec: 600,
+    status: "done",
+    endedAt: Date.now(),
+    exitCode: 0, signal: null, cause: "completed",
+    logPath: bigLogPath,
+  });
+  const bigOut: any = await runAs("agent-A", () =>
+    jobOutput.execute("call_big_tail", { job_id: bigJobId, tail: 50 } as any));
+  const bigText: string = bigOut.content[0].text;
+  if (/line-00020000/.test(bigText)) ok("bounded tail includes last line of big log");
+  else bad("last line not in tail", bigText.slice(-200));
+  if (/window=last/.test(bigText)) ok("header indicates bounded read window");
+  else bad("no window note in header", bigText.split("\n")[0]);
+  if (bigText.length < 200_000) ok(`tail response bounded (~${bigText.length} bytes, log was ${big.length})`);
+  else bad("tail response too large", String(bigText.length));
+
   console.log(`\n${pass} pass, ${fail} fail`);
   process.exit(fail > 0 ? 1 : 0);
 }

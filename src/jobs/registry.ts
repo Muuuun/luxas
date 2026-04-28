@@ -25,6 +25,7 @@ export type JobCause =
   | "process_gone_since_last_sweep"
   | "reconcile_orphan_killed"
   | "sweep_deadline_killed"
+  | "owner_gone"
   | "pid_reuse_or_unverifiable"
   | `spawn_error:${string}`;
 
@@ -34,6 +35,13 @@ export interface JobState {
   id: string;
   ownerAgentId: string;
   ownerAgentType: string;
+  /**
+   * Pid of the harness process (brain or detached subagent-runner) that
+   * launched this bash. When it dies — crash, SIGKILL, or normal exit
+   * before the bash finishes — sweep marks the job ownerless and kills
+   * the bash group so it doesn't run unattended until its own deadline.
+   */
+  ownerProcessPid: number;
   toolCallId: string | null;
   command: string;
   cwd: string;
@@ -136,8 +144,11 @@ export async function waitForJob(
  * command line. If ps fails, parsing fails, or either signal is missing,
  * returns false — the caller marks the record `orphaned` rather than
  * risking a wrong-target kill after pid reuse.
+ *
+ * Exported for `safeKillJob` and any future caller that needs the same
+ * verify-before-signal contract.
  */
-function processIsOurs(pid: number, expectedCommand: string): boolean {
+export function processIsOurs(pid: number, expectedCommand: string): boolean {
   try {
     const out = execFileSync("ps", ["-p", String(pid), "-o", "pgid=,command="], {
       encoding: "utf-8",
@@ -152,16 +163,43 @@ function processIsOurs(pid: number, expectedCommand: string): boolean {
   }
 }
 
-/** SIGTERM the process group, wait up to SIGTERM_GRACE_MS, then SIGKILL. */
+/**
+ * Verify-then-kill helper. job_kill (and the upcoming Owner Exit Gate)
+ * must check `processIsOurs` before signalling — state.json's pid can be
+ * stale and a recycled pid would lead to a wrong-target kill. Returns
+ * `{ killed: true }` when the kill ran, `{ killed: false, reason }` if
+ * verification failed (caller should mark the record orphaned, not retry).
+ */
+export async function safeKillJob(
+  state: JobState,
+): Promise<{ killed: boolean; reason?: string }> {
+  if (!pidAlive(state.pid)) {
+    return { killed: false, reason: "pid no longer alive" };
+  }
+  if (!processIsOurs(state.pid, state.command)) {
+    return { killed: false, reason: "ownership unverifiable (pid reuse?)" };
+  }
+  await killGroupAndWait(state.pid);
+  return { killed: true };
+}
+
+/**
+ * SIGTERM the process group, wait up to SIGTERM_GRACE_MS, then SIGKILL.
+ *
+ * The SIGKILL fires unconditionally. Earlier versions gated it on
+ * `pidAlive(pid)` after the grace window — but the leader can exit while
+ * a child that ignores SIGTERM (or has installed its own handler) lives
+ * on inside the same process group. `process.kill(-pid, sig)` targets
+ * the whole group, so always sending SIGKILL is correct: at worst it's a
+ * no-op for processes that are already gone.
+ */
 export async function killGroupAndWait(pid: number): Promise<void> {
-  try { process.kill(-pid, "SIGTERM"); } catch { /* may already be exiting */ }
+  try { process.kill(-pid, "SIGTERM"); } catch { /* group may already be exiting */ }
   const deadline = Date.now() + SIGTERM_GRACE_MS;
   while (Date.now() < deadline && pidAlive(pid)) {
     await sleep(50);
   }
-  if (pidAlive(pid)) {
-    try { process.kill(-pid, "SIGKILL"); } catch { /* gone */ }
-  }
+  try { process.kill(-pid, "SIGKILL"); } catch { /* group fully gone */ }
 }
 
 export interface ReconcileSummary {
@@ -221,6 +259,7 @@ export interface SweepSummary {
   healthy: number;          // running, deadline not yet passed — left alone
   markedDone: number;       // pid gone since last sweep
   killedDeadline: number;   // deadline passed AND verified ours → killed
+  killedOwnerless: number;  // owner process gone AND verified ours → killed
   unverifiable: number;     // deadline passed but ownership unconfirmable
 }
 
@@ -239,7 +278,7 @@ export interface SweepSummary {
 export async function sweepJobs(projectDir: string): Promise<SweepSummary> {
   const summary: SweepSummary = {
     scanned: 0, healthy: 0, markedDone: 0,
-    killedDeadline: 0, unverifiable: 0,
+    killedDeadline: 0, killedOwnerless: 0, unverifiable: 0,
   };
   for (const id of listJobIds(projectDir)) {
     summary.scanned++;
@@ -260,6 +299,27 @@ export async function sweepJobs(projectDir: string): Promise<SweepSummary> {
         ...state, status: "done", endedAt: Date.now(),
         exitCode: null, signal: null, cause: "process_gone_since_last_sweep",
       })) summary.markedDone++;
+      continue;
+    }
+
+    // Owner-gone: harness process that launched the bash has died. The
+    // bash itself can keep running until its deadline, accumulating cost
+    // and disk with nobody listening. Kill the group if we can verify
+    // ownership; orphan it otherwise. Checked before the deadline check
+    // so a healthy-deadline-but-ownerless job doesn't get a free pass.
+    if (state.ownerProcessPid && !pidAlive(state.ownerProcessPid)) {
+      if (processIsOurs(state.pid, state.command)) {
+        await killGroupAndWait(state.pid);
+        if (commit({
+          ...state, status: "done", endedAt: Date.now(),
+          exitCode: null, signal: "SIGKILL", cause: "owner_gone",
+        })) summary.killedOwnerless++;
+      } else {
+        if (commit({
+          ...state, status: "orphaned", endedAt: Date.now(),
+          exitCode: null, signal: null, cause: "pid_reuse_or_unverifiable",
+        })) summary.unverifiable++;
+      }
       continue;
     }
 
