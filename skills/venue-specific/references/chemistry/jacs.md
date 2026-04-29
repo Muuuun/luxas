@@ -65,6 +65,7 @@
 
 ## Templates
 - Word and LaTeX templates: https://pubs.acs.org/page/jacsat/submission/jacsat_templates.html
+- LaTeX: use `achemso.cls` with `\documentclass[journal=jacsat,manuscript=article]{achemso}`. See **publishers/acs.md → Minimal working template** for the full skeleton — JACS shares the ACS frontmatter conventions (label-based author/affiliation, mandatory `journal=` option, `\email{}`, TOC graphic).
 
 ## Common Pitfalls
 - Using A4 instead of US Letter paper size

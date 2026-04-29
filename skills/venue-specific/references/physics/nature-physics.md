@@ -24,7 +24,8 @@ Follows Nature Portfolio base rules (see `publishers/nature-portfolio.md`) with 
 
 ### Template
 - Nature Portfolio templates apply
-- Initial submission: single file (Word or PDF)
+- **Initial submission: single PDF or Word file** — Nature does NOT require their LaTeX class at first submission, only at acceptance. For initial submission, plain `article` class with sane formatting is accepted.
+- At acceptance: Nature accepts the manuscript as Word (preferred) or LaTeX. If LaTeX, use the official Nature class file (`nature.cls`) downloaded from their site. See `publishers/nature-portfolio.md` for the LaTeX template.
 
 ## Figures & Tables
 - Same as Nature base: 89 mm single column, 183 mm double column

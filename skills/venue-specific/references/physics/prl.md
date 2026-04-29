@@ -18,6 +18,38 @@
 - `\documentclass[aps,prl,twocolumn,superscriptaddress]{revtex4-2}`
 - Two-column layout, US Letter paper
 
+#### Minimal working template
+
+revtex4-2 differs from `article` in one critical way: **`\title{}`, `\author{}`, and `\affiliation{}` must appear AFTER `\begin{document}`, not in the preamble.** Putting them in the preamble (the article-class convention) compiles cleanly but produces a title-less PDF — revtex emits only a warning (`Class revtex4-2 Warning: No title.`), no error. Always start from this skeleton when authoring or class-switching:
+
+```latex
+\documentclass[aps,prl,twocolumn,superscriptaddress]{revtex4-2}
+\usepackage{amsmath, amssymb, graphicx}
+\usepackage{hyperref}
+
+\begin{document}                  % ← critical line
+
+\title{Your Title Here}
+\author{First Author}
+\affiliation{Institution}
+\author{Second Author}
+\affiliation{Same or other institution}
+
+\maketitle
+
+\begin{abstract}
+... ≤600 chars ...
+\end{abstract}
+
+% Body — use run-in section heads (see "Section Headings" below)
+\textit{Introduction}---Text follows here.
+
+\bibliography{references}
+\end{document}
+```
+
+When converting an existing `\documentclass{article}` document to revtex4-2, you cannot just edit the documentclass line in place — the frontmatter block must also be **moved** from the preamble to immediately after `\begin{document}`. See "Common Pitfalls" below.
+
 ### Title
 - **Title case** (capitalize first letter of each word except conjunctions/prepositions/articles)
 - Concise; no acronyms unless widely recognized
@@ -94,6 +126,8 @@
 - Can include data files, code, videos
 
 ## Common Pitfalls
+- **`\title`/`\author`/`\affiliation` in the preamble** — revtex4-2 requires these AFTER `\begin{document}`. The article-class convention (frontmatter in preamble) silently produces a title-less PDF: only a `Class revtex4-2 Warning: No title.` in `report.log`, no error, exit code 0. Particularly easy to miss when converting an existing article-class document by editing only the `\documentclass` line. See "Minimal working template" above.
+- **Trusting `pdflatex` exit code alone** — the build can succeed with broken structure (missing title, undefined refs, unresolved citations). Always grep `report.log` for `Warning:` and `Undefined` after every compile.
 - Exceeding 3,750 words (use PRL length checker)
 - Abstract exceeding 600 characters (very common rejection cause)
 - Using freestanding section headings (PRL uses run-in style only)

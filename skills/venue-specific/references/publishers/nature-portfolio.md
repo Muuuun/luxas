@@ -15,6 +15,45 @@ Applies to all Nature-branded journals (Nature, Nature Physics, Nature Chemistry
 - LaTeX or Word template required
 - Nature LaTeX template available
 
+#### Minimal working LaTeX template (`nature.cls`)
+
+`nature.cls` puts title/author AFTER `\begin{document}`. Author/affiliation linkage uses superscript labels (`\affiliation{}` is NOT used; instead each author has an inline `\affilnum{}` reference).
+
+```latex
+\documentclass{nature}
+\usepackage{amsmath, amssymb, graphicx}
+
+\begin{document}
+
+\title{Your Title Here}
+
+\author{First Author$^{1}$, Second Author$^{1,2}$ \& Third Author$^{2}$}
+
+\address{
+  $^{1}$Department, Institution One, City, Country.\\
+  $^{2}$Department, Institution Two, City, Country.
+}
+
+\maketitle
+
+\begin{abstract}
+... 150 words max, no references ...
+\end{abstract}
+
+% Body — Nature uses no section heads in main text; instead bold lead-in lines:
+\noindent
+\textbf{Lead-in phrase.} Following text...
+
+\section*{Methods}                       % Methods is a starred section (no number)
+...
+
+\bibliographystyle{naturemag}
+\bibliography{references}
+\end{document}
+```
+
+Nature's `nature.cls` is **not on CTAN** — download it from Nature's submission portal. When converting from `article`: do NOT use the article-class `\author{Name \\ Affiliation}` pattern; Nature uses inline superscript numbers cross-referenced to `\address{}`. Section heads in main text are uncommon; Nature uses bold lead-in phrases instead.
+
 ### Abstract
 - **150 words** max (Nature, Nature Physics, Nature Chemistry)
 - **200 words** for Nature Communications

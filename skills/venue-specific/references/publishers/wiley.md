@@ -48,6 +48,8 @@ Applies to Wiley journals (Angewandte, Adv. Mater., Adv. Funct. Mater., Small, e
 - **Some journals (e.g., Angewandte) mandate their specific template**
 
 ## Common Pitfalls
+- **Wiley LaTeX templates vary per journal** — there is no single Wiley `cls`. Always download the specific journal's template; do NOT class-switch from `article` by editing `\documentclass` alone. The frontmatter convention (`\title`/`\author`/`\affiliation` placement and macros) is template-specific.
+- **Trusting `pdflatex` exit code alone** — Wiley templates emit warnings (not errors) for many violations. Always grep `report.log` for `Warning:` and `Undefined`, and visually inspect the rendered PDF's first page.
 - Using a generic template when the journal mandates its own
 - RGB figures when CMYK is required
 - Not checking journal-specific citation style (varies within Wiley)

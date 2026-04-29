@@ -3,10 +3,16 @@
 Use this for **every** venue. Then add venue-specific checks from the relevant file.
 
 ## Compilation & Structure
-- [ ] Paper compiles without errors or warnings
+- [ ] Paper compiles without errors **AND without title/citation/reference warnings**. Exit code 0 is NOT enough — many class-rule violations only emit warnings. After every `pdflatex`, grep `report.log` for `Warning:`, `Undefined`, `No title`, and `Reference ... undefined`. Common silent failures:
+  - revtex4-2: `Class revtex4-2 Warning: No title.` → title-less PDF (frontmatter put in preamble instead of after `\begin{document}`)
+  - acmart: missing `\setcopyright`/`\acmDOI` warnings → broken copyright block
+  - elsarticle: missing corresponding-author label → wrong author footnote
+  - All classes: `Reference X undefined` → `??` in PDF; `Citation X undefined` → `[?]` in PDF
+- [ ] **Open the rendered PDF and check the first page** — title, authors, affiliations all visible. Compile success ≠ correct rendering.
 - [ ] No placeholder text (TODO, FIXME, XXX, TBD)
 - [ ] All sections present per venue requirements
 - [ ] Page limit respected (check venue file for exact number)
+- [ ] **Class-conversion check** — if you switched `\documentclass` (e.g. `article` → `revtex4-2`/`IEEEtran`/`acmart`/`elsarticle`/`achemso`), the frontmatter (`\title`, `\author`, `\affiliation`) almost certainly needs to be **moved or restructured**, not just inherited from the article-class layout. Open the venue's "Minimal working template" section.
 
 ## References & Citations
 - [ ] All `\ref{}` resolve (no "??" in output)
