@@ -20,7 +20,12 @@
 
 #### Minimal working template
 
-revtex4-2 differs from `article` in one critical way: **`\title{}`, `\author{}`, and `\affiliation{}` must appear AFTER `\begin{document}`, not in the preamble.** Putting them in the preamble (the article-class convention) compiles cleanly but produces a title-less PDF — revtex emits only a warning (`Class revtex4-2 Warning: No title.`), no error. Always start from this skeleton when authoring or class-switching:
+revtex4-2 differs from `article` in **two** critical ways:
+
+1. **`\title{}`, `\author{}`, `\affiliation{}` must appear AFTER `\begin{document}`** (not in the preamble like article class). Preamble placement compiles cleanly but produces a title-less PDF — revtex emits only `Class revtex4-2 Warning: No title.` in the log, no error.
+2. **`\begin{abstract}...\end{abstract}` must come BEFORE `\maketitle`** (not after, like article class). revtex4-2 treats abstract as part of the title-block metadata that `\maketitle` commits — declare title/author/affiliation/abstract first, then call `\maketitle` once at the end of the head block. With the article-class order (`\maketitle` before abstract), the title block renders without an abstract and the abstract content appears as body text where it doesn't belong.
+
+Always start from this skeleton when authoring or class-switching:
 
 ```latex
 \documentclass[aps,prl,twocolumn,superscriptaddress]{revtex4-2}
@@ -35,11 +40,11 @@ revtex4-2 differs from `article` in one critical way: **`\title{}`, `\author{}`,
 \author{Second Author}
 \affiliation{Same or other institution}
 
-\maketitle
-
 \begin{abstract}
 ... ≤600 chars ...
 \end{abstract}
+
+\maketitle                        % ← MUST come AFTER abstract
 
 % Body — use run-in section heads (see "Section Headings" below)
 \textit{Introduction}---Text follows here.
@@ -127,7 +132,8 @@ When converting an existing `\documentclass{article}` document to revtex4-2, you
 
 ## Common Pitfalls
 - **`\title`/`\author`/`\affiliation` in the preamble** — revtex4-2 requires these AFTER `\begin{document}`. The article-class convention (frontmatter in preamble) silently produces a title-less PDF: only a `Class revtex4-2 Warning: No title.` in `report.log`, no error, exit code 0. Particularly easy to miss when converting an existing article-class document by editing only the `\documentclass` line. See "Minimal working template" above.
-- **Trusting `pdflatex` exit code alone** — the build can succeed with broken structure (missing title, undefined refs, unresolved citations). Always grep `report.log` for `Warning:` and `Undefined` after every compile.
+- **`\maketitle` before `\begin{abstract}`** — revtex4-2's `\maketitle` is a commit point that emits title + authors + affiliations + abstract together. Calling it before the abstract is declared (the article-class default order) leaves the abstract out of the title block and renders the abstract content as ordinary body text. Even with the title block correct, this produces an "abstract-less" front matter. See "Minimal working template" above for the correct order.
+- **Trusting `pdflatex` exit code alone** — the build can succeed with broken structure (missing title, missing abstract, undefined refs, unresolved citations). Always grep `report.log` for `Warning:` and `Undefined` after every compile, AND open the rendered PDF to check the front matter visually.
 - Exceeding 3,750 words (use PRL length checker)
 - Abstract exceeding 600 characters (very common rejection cause)
 - Using freestanding section headings (PRL uses run-in style only)
