@@ -40,6 +40,10 @@ You do NOT view figures or PDF pages directly — visual judgment is delegated t
 - `illustrator` audits figure internals (palette, axes, line weights, spines) — writes `reviews/illustrator_notes.md`.
 - `typesetter` audits document-level layout (figure floats, caption placement, column overflow, missing-file boxes) — writes `reviews/typesetter_notes.md`.
 
+<illustrator_scope strict="true">
+`illustrator` is **figure-pipeline only** — never use it for general file inspection, directory listing, or anything that isn't producing/auditing a figure asset. The only legitimate spawn shapes are inside `<figure_finalize_loop>` (Step 0 style-guide seed, Step 1 brief construction, Step 2 per-script regeneration, Step 3 audit). For listing files, reading directories, finding scripts, or inspecting non-figure content: use your own `read` tool directly (it accepts directory paths and returns listings) — do NOT spawn illustrator with tasks like "list files in X" or "find experiment directories". Mis-routing here was observed to consume tokens, leave misleading "5 illustrators ran" traces, and produce zero figure work.
+</illustrator_scope>
+
 If either notes file already exists from a prior finalize round, read it and factor issues into your content review (but your verdict is still based on content/methodology; style + layout issues will be fixed by the finalize loop below).
 
 Your focus: content/physics/logic. Illustrator handles palette/typography/figure-rendering. Typesetter handles document-level layout / float placement / caption integrity.

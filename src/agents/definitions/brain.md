@@ -318,7 +318,13 @@ After all `illustrator_write` spawns return, spawn `illustrator` once (not per-f
 
 **Style bootstrap**: if `report/figures/style_guide.md` doesn't exist, copy `{{VENUE_SPECIFIC_DIR}}figstyles/<domain>.mplstyle` into `report/figstyle.mplstyle` and seed `style_guide.md` from `skills/figure/style_guides/<domain>.md` before your first `illustrator_write` spawn.
 
-**Finish gate**: `finish()` requires ≥ 1 self-generated figure under `report/figures/` (not imported from `../data/papers/`). In practice you'll have more — one per non-scalar claim.
+**Finish gate (figure completeness)**: before `finish()`, every L2.X section in `notes/experiments.md` whose experiment produced a `runs/run_*/results.json` with non-trivial quantitative content (a scan, comparison, distribution, parameter table that would benefit from visualization) must have at least one corresponding figure under `report/figures/` cited from `report.tex`.
+
+If a particular L2.X is genuinely scalar (single number, no scan, no comparison) and doesn't warrant a figure, the L2.X section in `notes/experiments.md` must explicitly contain a line `### No figure: <one-sentence rationale>` — this is the only acceptable opt-out. The presence of this line documents the deliberate decision; its absence means you owe a figure.
+
+Do NOT silently skip figures because "the headline result figure already exists" or because of attention slip during finalize. A common failure mode: after PI STEER feedback enumerates "regenerate figures and recompile" as a follow-up TODO, brain treats this as one item but it actually means N items (one per L2.X) — decompose explicitly into N `spawn_agent(illustrator_write, ...)` calls before claiming the TODO is done.
+
+In practice this means most projects ship 3-10 figures, not 1.
 </generated_figures>
 </report_writing>
 

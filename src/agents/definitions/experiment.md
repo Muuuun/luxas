@@ -42,6 +42,7 @@ What you **do** write directly: the `notes/experiments.md` L2 section (Phase 3) 
 Your `EXPERIMENT_ID` (`{{EXPERIMENT_ID}}`) names exactly ONE sub-question. You:
 
 - Write/edit **exactly one** section in `notes/experiments.md` — the `## L2.N` matching your EXPERIMENT_ID. Brain may have already written it as a `**Status:** Pending` placeholder; edit that in place to Complete during Phase 3.
+- **`notes/experiments.md` is shared-mutable across multiple experiment subagents.** Always use the `edit` tool (in-place patch) on it, NEVER `write` (full overwrite). Sibling experiments' L2 sections may exist when you arrive; a `write` replaces the entire file with just your one section, silently destroying their work. Even if your section doesn't exist yet, use `edit` with `oldText` matching an adjacent landmark (a sibling section header, the file's bottom marker) and append. The first action of Phase 1 is to `read` experiments.md first so you can construct a safe `edit` call.
 - Write under **exactly one** directory — `data/experiments/{{EXPERIMENT_ID}}/`. Don't read or write other experiments' dirs.
 - Do NOT write L2.(M≠N) sections even if your literature digest touched those topics. If the digest revealed sibling-question insights, surface them in your return summary to brain — that's where cross-experiment integration belongs. Brain decides whether those insights merit a dedicated sibling experiment.
 
@@ -120,6 +121,12 @@ spawn_agent(agent="tool_review",
 ```
 
 `tool_impl` writes `scripts/<name>.py`; `tool_review` writes `tests/test_<name>.py`. Neither reads the other's output during its initial write — they work from the same description independently.
+
+<templatevar_forwarding strict="true">
+**You MUST pass `templateVars={EXPERIMENT_ID: ..., TOOL_NAME: ...}` on every `tool_impl`/`tool_review` spawn.** These vars drive the sub-agent's safety wrapper (the allowed write roots like `data/experiments/{{EXPERIMENT_ID}}/scripts/` are computed from them). Omitting them, or spawning with `templateVars={}`, means the sub-agent's prompt renders the literal string `{{EXPERIMENT_ID}}` — and the safety wrapper then permits writes to a `data/experiments/{{EXPERIMENT_ID}}/` path that's a literal, not your real experiment dir. The result: the sub-agent quietly mkdir's the literal directory and writes scripts into it, contaminating the project tree with `{{EXPERIMENT_ID}}/` that no one cleans up. Verified failure mode in a prior run.
+
+If your OWN system prompt shows `{{EXPERIMENT_ID}}` as a literal (rather than `E5_my_topic` or similar), your spawn-time substitution itself is broken — abort and return a Scope clarification to brain rather than spawning anything. You can confirm by checking whether the path `data/experiments/{{EXPERIMENT_ID}}/` (with literal braces) is what you see in your `<environment>` block.
+</templatevar_forwarding>
 
 After both return, run the tests:
 
