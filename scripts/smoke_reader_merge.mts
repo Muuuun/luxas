@@ -121,5 +121,49 @@ check("empty summary reports 0 fragments",
   /merged 0 literature fragments, 0 methodology fragments/.test(resEmpty.stdout),
   resEmpty.stdout.trim());
 
+// ── 5. references.bib fragment merge + dup-key collapse ─────────
+console.log("\n6. references.d fragment merge");
+const bibRoot = join(root, "bib_test");
+mkdirSync(join(bibRoot, "report", "references.d"), { recursive: true });
+writeFileSync(join(bibRoot, "report/references.d/Vassen1988.bib"),
+  "@article{Vassen1988,\n  author = {Vassen, W.},\n  year = {1988},\n  journal = {Phys Rev A}\n}\n");
+writeFileSync(join(bibRoot, "report/references.d/Vassen_1988.bib"),
+  "@article{Vassen_1988,\n  author = {Vassen et al},\n  year = {1988}\n}\n");
+writeFileSync(join(bibRoot, "report/references.d/Wu_2022.bib"),
+  "@article{Wu_2022,\n  author = {Wu, Y.},\n  year = {2022}\n}\n");
+writeFileSync(join(bibRoot, "report/references.d/Aardvark2023.bib"),
+  "@article{Aardvark2023,\n  author = {Aardvark},\n  year = {2023}\n}\n");
+const resBib = spawnSync(MERGE, [bibRoot], { encoding: "utf-8" });
+check("bib merge exit 0", resBib.status === 0, resBib.stderr);
+check("bib merge summary mentions 1 dropped (dup-key)",
+  /3 bib entries \(1 dup-key fragments dropped\)/.test(resBib.stdout),
+  resBib.stdout.trim());
+const bib = readFileSync(join(bibRoot, "report", "references.bib"), "utf-8");
+const bibKeys = [...bib.matchAll(/@\w+\s*\{\s*([A-Za-z0-9_]+)/g)].map(m => m[1]);
+check("merged bib has 3 entries", bibKeys.length === 3, bibKeys.join(","));
+check("dup variant collapsed (only Vassen1988 kept, alpha-first)",
+  bibKeys.includes("Vassen1988") && !bibKeys.includes("Vassen_1988"),
+  bibKeys.join(","));
+check("non-dup keys preserved", bibKeys.includes("Wu_2022") && bibKeys.includes("Aardvark2023"));
+check("merge header present", /Merged from report\/references\.d\//.test(bib));
+
+// ── 6. bib idempotence ──────────────────────────────────────────
+const resBib2 = spawnSync(MERGE, [bibRoot], { encoding: "utf-8" });
+check("bib second run exit 0", resBib2.status === 0);
+const bib2 = readFileSync(join(bibRoot, "report", "references.bib"), "utf-8");
+check("bib unchanged across re-runs", bib === bib2);
+
+// ── 7. legacy migration guard: no references.d/ → bib preserved ─
+console.log("\n7. legacy migration guard");
+const legacy = join(root, "legacy");
+mkdirSync(join(legacy, "report"), { recursive: true });
+const legacyBib = "@article{Legacy2020,\n  title = {pre-fragment-era entry}\n}\n";
+writeFileSync(join(legacy, "report/references.bib"), legacyBib);
+const resLegacy = spawnSync(MERGE, [legacy], { encoding: "utf-8" });
+check("legacy run exit 0", resLegacy.status === 0);
+check("legacy summary mentions skip", /no references\.d\/ — skipped/.test(resLegacy.stdout), resLegacy.stdout.trim());
+const legacyBibAfter = readFileSync(join(legacy, "report", "references.bib"), "utf-8");
+check("legacy bib unchanged (no overwrite)", legacyBib === legacyBibAfter);
+
 console.log(`\n${failures === 0 ? "OK" : `FAIL (${failures})`}`);
 process.exit(failures === 0 ? 0 : 1);

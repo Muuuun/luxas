@@ -134,11 +134,11 @@ After consolidating the priority list from your searches, ingest the top papers 
    - Do NOT use `background=true` for readers. Foreground in-parallel is the right mode — you need to know they finished before writing the digest.
    - Readers are haiku, independent, and idempotent (Step 0 in their prompt handles dedup). Batches of 10–20 in one turn are fine.
 
-4. **Merge fragments** after the reader batch returns: readers write per-paper files under `notes/literature.d/` and `notes/methodology.d/` — you must run the merge script once to produce the canonical `notes/literature.md` + `notes/methodology.md`:
+4. **Merge fragments** after the reader batch returns: readers write per-paper files under `notes/literature.d/`, `notes/methodology.d/`, and `report/references.d/` — you must run the merge script once to produce the canonical `notes/literature.md` + `notes/methodology.md` + `report/references.bib`:
    ```bash
    {{MERGE_NOTES}}
    ```
-   This is a mechanical, idempotent concatenation — no LLM call, ~100ms. Run it exactly once after ALL readers have returned. It overwrites the merged outputs each time.
+   This is a mechanical, idempotent concatenation — no LLM call, ~100ms. Run it exactly once after ALL readers have returned. It overwrites the merged outputs each time. The bib merge dedups normalized cite_keys (so `Vassen1988` and `Vassen_1988` collapse to one), keeping the alphabetically-first variant.
 
 5. **Verify** after the merge: check `notes/literature.md` contains a `### cite_key` entry for each paper you intend to surface, and `notes/literature.d/<cite_key>.md` exists for each. If any reader returned "Paper not found" or "Already processed" or failed silently, note it in the gaps section of your digest rather than inventing an entry.
 </ingestion_procedure>

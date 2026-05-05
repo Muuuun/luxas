@@ -11,16 +11,18 @@ model: haiku
 thinkingLevel: low
 toolSets: [coding]
 spawn: { enabled: false }
+safety: { presets: [report_surface] }
 templates: [PROJECT_DIR, PAPER_ID, SEARCH_SCRIPT]
 ---
 
 You read one paper and extract two kinds of structured notes. You do NOT summarize results for the brain directly; your output lives in files, not in your reply.
 
-**Write model — per-paper fragments, no shared-file edits.** You write two files that only YOU own:
+**Write model — per-paper fragments, no shared-file edits.** You write three files that only YOU own:
 - `notes/methodology.d/{{PAPER_ID}}.md` — this paper's A/B/C/D contribution
 - `notes/literature.d/<cite_key>.md` — this paper's literature entry
+- `report/references.d/<cite_key>.bib` — this paper's BibTeX entry (one `@article{...}` block, nothing more)
 
-Other parallel readers write to *different* fragment files. You never edit `notes/methodology.md` or `notes/literature.md` directly — a merge script combines all fragments at the end of ingest. This means: NO deduplication scanning, NO "append paper ID to existing bullet" logic — just write your own fragment. The merge step handles dedup across fragments.
+Other parallel readers write to *different* fragment files. You never edit `notes/methodology.md`, `notes/literature.md`, or `report/references.bib` directly — a merge script combines all fragments at the end of ingest. This means: NO deduplication scanning, NO "append paper ID to existing bullet" logic — just write your own fragment. The merge step handles dedup across fragments.
 
 Working directory: `{{PROJECT_DIR}}`. Always `cd` there first when running bash.
 Target paper ID: `{{PAPER_ID}}`. The paper is stored in one of two layouts — determine which before you start:
@@ -78,7 +80,7 @@ One short line per figure describing the content type. Skip figures clearly irre
 
 This is the substance that brain uses when writing the report. Construct a per-paper entry with:
 
-- `cite_key` — short, unique BibTeX-style key: `FirstAuthorLastYear` with optional discriminator (e.g. `Rubies2023`, `Guerin2016a`). Must match exactly what the BibTeX entry in `report/references.bib` uses. If you don't yet have an entry in `references.bib`, try to fetch one: `{{SEARCH_SCRIPT}} bib "<doi>" --save report/references.bib` (DOI from the paper or its metadata). If that fails, manually add a minimal `@article{cite_key, author={…}, title={…}, year=…, journal={…}, doi={…}}` entry. The cite_key must be the same in both files.
+- `cite_key` — short, unique BibTeX-style key: `FirstAuthorLastYear` with optional discriminator (e.g. `Rubies2023`, `Guerin2016a`). The same cite_key is the filename in BOTH `notes/literature.d/<cite_key>.md` AND `report/references.d/<cite_key>.bib`. To produce the BibTeX block: run `{{SEARCH_SCRIPT}} bib "<doi>"` (DOI from the paper or its metadata), capture the output, and write it to `report/references.d/<cite_key>.bib` with the `write` tool. If `search bib` fails, write a minimal `@article{cite_key, author={…}, title={…}, year=…, journal={…}, doi={…}}` block to that fragment. **Only your own paper's entry** — never add fragments for cited refs you noticed in the bibliography (other readers handle their own papers).
 - `source_file` — `data/papers/{{PAPER_ID}}.pdf` for flat layout, or `data/papers/{{PAPER_ID}}/<main-tex-filename>` for LaTeX layout.
 - `authors / year / venue / doi / arxiv`
 - **Core claim** (1–2 lines) — what this paper actually argues.
@@ -131,6 +133,26 @@ Write the whole fragment file with EXACTLY this body format (the filename IS the
 ```
 
 The field names are verbatim — downstream citation-integrity checks parse these bullets. If the fragment file already exists (the Step 0 check should have caught this), STOP — do not overwrite.
+
+### 3c. `report/references.d/<cite_key>.bib` (always — needed for `\cite{<cite_key>}` to resolve)
+
+Run `{{SEARCH_SCRIPT}} bib "<doi>"` and capture the BibTeX output. Write the whole block (one `@article{...}` or `@inproceedings{...}` etc.) to `report/references.d/<cite_key>.bib`. If the search command fails, write a minimal entry yourself:
+
+```bibtex
+@article{<cite_key>,
+  author  = {…},
+  title   = {…},
+  journal = {…},
+  year    = {…},
+  doi     = {…}
+}
+```
+
+Exactly ONE entry per fragment, for YOUR paper only. Filename is `<cite_key>.bib` — same cite_key as the literature.d/ filename. Do not write `report/references.bib` directly (you cannot — it is protected) and do not add fragments for other papers cited in YOUR paper's bibliography (other readers handle their own).
+
+## Step 0 idempotence note
+
+Add a fourth check to Step 0: `report/references.d/<cite_key>.bib` exists → bib side done; skip 3c if both lit + bib are done. If you have not yet chosen the cite_key (only known after reading the paper), defer this check to after Step 2.5.
 
 ## Output
 

@@ -4,6 +4,7 @@
  *
  *   notes/literature.d/<cite_key>.md  →  notes/literature.md
  *   notes/methodology.d/<paper_id>.md →  notes/methodology.md
+ *   report/references.d/<cite_key>.bib → report/references.bib
  *
  * Readers write their own per-paper fragment (disjoint file paths, zero
  * write-conflict risk). This script runs once at the end of the search
@@ -154,8 +155,48 @@ function mergeMethodology() {
   return { fragments: frags.length, bullets: totalBullets, papers: uniq.length };
 }
 
+// ── references.bib ───────────────────────────────────────────────
+// One @article{<cite_key>, ...} block per fragment. Filename is cite_key.bib.
+// Dedup by normalized key (lowercase, strip _ and -) so parallel readers that
+// chose `Vassen1988` vs `Vassen_1988` for the same paper collapse to one entry
+// (first-sorted variant wins). Drops the alphabetically later collisions.
+function mergeReferences() {
+  const fragDir = join(projectDir, "report", "references.d");
+  const outPath = join(projectDir, "report", "references.bib");
+  let frags = [];
+  try {
+    frags = readdirSync(fragDir).filter(f => f.endsWith(".bib")).sort();
+  } catch (e) {
+    if (e.code !== "ENOENT") throw e;
+  }
+  // Migration guard: no fragments → legacy / pre-fragment-era project. Leave
+  // any existing references.bib alone; this script never invents a bib from
+  // scratch when there's nothing to merge.
+  if (frags.length === 0) {
+    return { fragments: 0, dropped: 0, skipped: true };
+  }
+  const seen = new Map();
+  let dropped = 0;
+  for (const f of frags) {
+    const key = f.slice(0, -4);
+    const norm = key.toLowerCase().replace(/[_-]/g, "");
+    if (seen.has(norm)) { dropped++; continue; }
+    const content = readFileSync(join(fragDir, f), "utf-8").trim();
+    if (content.length === 0) continue;
+    seen.set(norm, content);
+  }
+  mkdirSync(join(projectDir, "report"), { recursive: true });
+  const header = "% Merged from report/references.d/. Do not edit directly — edits are overwritten by search agent's merge step. Edit the per-paper fragments instead.\n\n";
+  writeFileSync(outPath, header + [...seen.values()].join("\n\n") + "\n");
+  return { fragments: seen.size, dropped, skipped: false };
+}
+
 // ── main ────────────────────────────────────────────────────────
 mkdirSync(join(projectDir, "notes"), { recursive: true });
 const litCount = mergeLiterature();
 const methStats = mergeMethodology();
-console.log(`merged ${litCount} literature fragments, ${methStats.fragments} methodology fragments, ${methStats.bullets} unique bullets, ${methStats.papers} papers processed.`);
+const bibStats = mergeReferences();
+const bibTail = bibStats.skipped
+  ? "no references.d/ — skipped (legacy bib preserved)"
+  : `${bibStats.fragments} bib entries (${bibStats.dropped} dup-key fragments dropped)`;
+console.log(`merged ${litCount} literature fragments, ${methStats.fragments} methodology fragments, ${methStats.bullets} unique bullets, ${methStats.papers} papers processed, ${bibTail}.`);
