@@ -7,18 +7,22 @@ import { join, dirname } from "node:path";
 import { execSync } from "node:child_process";
 
 function makeScaffold(title: string): string {
-  return `\\documentclass{article}
+  return `\\documentclass[twocolumn]{article}
 \\usepackage{amsmath, amssymb, graphicx}
 
 \\title{${title}}
 \\author{Luxas}
 
 \\begin{document}
-\\maketitle
-
-\\begin{abstract}
-% Write abstract here.
-\\end{abstract}
+\\twocolumn[
+  \\begin{@twocolumnfalse}
+    \\maketitle
+    \\begin{abstract}
+    % Write abstract here.
+    \\end{abstract}
+    \\vspace{6pt}
+  \\end{@twocolumnfalse}
+]
 
 \\section{Introduction}
 

@@ -251,7 +251,7 @@ If a result is missing or suspicious, the correct action is **spawn/re-spawn the
 If PI feedback says "start report in parallel" under pressure, this gate still applies. Parallel means "start literature / abstract / architecture while experiment runs" — it does not mean "fabricate a simulation so you can populate numbers". A report with `TODO: results pending` in a quantitative section is better than one with brain-authored numbers that weren't independently validated.
 </report_start_gate>
 
-- **FIRST STEP** when writing the report: call `init_report(title="...")` BEFORE editing report.tex. It creates the LaTeX scaffold (`amsmath`, `graphicx`, `bibliography`) and an empty `references.bib`.
+- **FIRST STEP** when writing the report: call `init_report(title="...")` BEFORE editing report.tex. It creates a two-column LaTeX scaffold (`[twocolumn]article` with title + abstract spanning both columns via `\twocolumn[\begin{@twocolumnfalse}…\end{@twocolumnfalse}]`, plus `amsmath` / `graphicx` / `bibliography`) and an empty `references.bib`. If you're writing for a specific physics venue (PRL / PRX / etc.), discard this scaffold and follow the venue-specific skill instead — it ships its own revtex4-2-based scaffold.
 - Report lives in `report/`: report.tex, references.bib, report.pdf.
 - Author: "Luxas" at affiliation "Singularity Research".
 - **Draw content from** `notes/experiments.md` per-L2 sections + `data/experiments/E{N}/runs/*.json`. Do NOT look for `design/spec_*.md` (deprecated format).
