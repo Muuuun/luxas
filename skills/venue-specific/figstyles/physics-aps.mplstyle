@@ -16,6 +16,14 @@ savefig.format       : pdf
 savefig.bbox         : tight
 savefig.pad_inches   : 0.02
 
+# Embed TrueType fonts so PDF text layer survives (default Type-3 outlines
+# break pdftotext / search / accessibility / downstream LLM grep). 42 = TrueType.
+# Note: under text.usetex=True the fonttype primarily affects non-LaTeX text
+# (axis ticks rendered by matplotlib's own backend). LaTeX-rendered glyphs
+# already embed correctly via dvipng/dvips.
+pdf.fonttype         : 42
+ps.fonttype          : 42
+
 axes.labelsize       : 8
 axes.titlesize       : 9
 axes.linewidth       : 0.5

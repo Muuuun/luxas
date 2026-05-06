@@ -15,6 +15,11 @@ savefig.format       : pdf
 savefig.bbox         : tight
 savefig.pad_inches   : 0.02
 
+# Embed TrueType fonts so PDF text layer survives (default Type-3 outlines
+# break pdftotext / search / accessibility / downstream LLM grep). 42 = TrueType.
+pdf.fonttype         : 42
+ps.fonttype          : 42
+
 axes.labelsize       : 7
 axes.titlesize       : 8
 axes.linewidth       : 0.5
