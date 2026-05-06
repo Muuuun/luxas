@@ -138,6 +138,61 @@ function isSystemReserved(abs: string, projectDir: string): boolean {
   return abs === target || abs.startsWith(target + "/");
 }
 
+// ── Credential-exfiltration guards ────────────────────────────────────────
+//
+// Tools (read/edit/write/bash) run as the same OS user as the studio, so
+// without explicit denylisting they can reach any file in $HOME. Credential
+// stores are the highest-value exfil target: read auth.json, key lands in
+// the tool result → committed to checkpoint.jsonl + log.jsonl → if studio
+// later surfaces those files (e.g. via a project-files endpoint) or they
+// get rsync'd / backed up, the key escapes.
+//
+// Two-layer defense:
+//   1. Block read/edit/write of credential paths by absolute prefix.
+//   2. Block bash commands whose text references those paths or any known
+//      key env var name. Substring match — easy to bypass with creative
+//      shell, but stops the obvious cases (cat / head / tail / xxd / printenv).
+//
+// Also strips API key env vars from process.env at brain startup
+// (src/index.ts), so even `printenv | grep KEY` returns nothing — the
+// keys are loaded once via the auth.json fallback and live in pi-agent-core's
+// memory, not the child env.
+const CREDENTIAL_PATH_SUFFIXES = [
+  "/.sisyphus/auth.json",
+  "/.codex/auth.json",
+  "/.codex/config.json",
+  "/.config/codex/auth.json",
+  "/.config/anthropic/auth.json",
+  "/.aws/credentials",
+  "/.netrc",
+  "/.ssh/id_rsa",
+  "/.ssh/id_ed25519",
+];
+
+function isCredentialPath(abs: string): boolean {
+  for (const suffix of CREDENTIAL_PATH_SUFFIXES) {
+    if (abs.endsWith(suffix)) return true;
+  }
+  return false;
+}
+
+// Substrings that, if present in a bash command, indicate a credential
+// access attempt. Match either an explicit path fragment or a known env
+// var name (covers `printenv DEEPSEEK_API_KEY`, `echo $ANTHROPIC_API_KEY`,
+// `env | grep KEY`, etc.).
+const CREDENTIAL_BASH_PATTERNS: RegExp[] = [
+  /\.sisyphus\/auth\.json/,
+  /\.codex\/(auth|config)\.json/,
+  /\.config\/codex\/auth\.json/,
+  /\.config\/anthropic\/auth\.json/,
+  /\.aws\/credentials/,
+  /\.netrc\b/,
+  /\.ssh\/id_(rsa|ed25519|dsa|ecdsa)\b/,
+  /\b(ANTHROPIC|DEEPSEEK|KIMI|MOONSHOT|OPENAI|GEMINI|GROQ)_API_KEY\b/,
+  /\bAWS_(ACCESS_KEY_ID|SECRET_ACCESS_KEY|SESSION_TOKEN)\b/,
+  /\bGITHUB_(TOKEN|PAT)\b/,
+];
+
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 function getPathArg(params: any): string {
@@ -182,6 +237,18 @@ function wrapRead(
     ...tool,
     execute: async (id: string, params: any, signal?: any) => {
       const p = getPathArg(params);
+
+      // Credential-exfil block (always-on, runs before any other gate).
+      if (p) {
+        const abs = resolve(projectDir, p);
+        if (isCredentialPath(abs)) {
+          return blocked(
+            `Read of ${p} is denied: this path stores credentials and is ` +
+            `unconditionally protected. The agent's API keys are loaded by ` +
+            `pi-agent-core internally and never need to be read by tools.`
+          );
+        }
+      }
 
       // Read-scope check: enforced before the underlying tool runs so nothing
       // leaks even through symlinks — we compare resolved absolute paths.
@@ -270,6 +337,12 @@ function wrapEdit(
       const abs = resolve(projectDir, p);
       const oldText = String(params.oldText ?? "");
       const newText = String(params.newText ?? "");
+
+      if (isCredentialPath(abs)) {
+        return blocked(
+          `Edit of ${p} is denied: credential paths are unconditionally protected.`
+        );
+      }
 
       // Reject no-op edits before fuzzy matching. Without this guard, the
       // underlying edit tool runs fuzzyFindText against text that may not
@@ -429,6 +502,12 @@ function wrapWrite(
     execute: async (id: string, params: any, signal?: any) => {
       const p = getPathArg(params);
       const abs = resolve(projectDir, p);
+
+      if (isCredentialPath(abs)) {
+        return blocked(
+          `Write of ${p} is denied: credential paths are unconditionally protected.`
+        );
+      }
 
       if (isSystemReserved(abs, projectDir)) {
         return blocked(
@@ -649,6 +728,20 @@ function wrapBash(
     ...tool,
     execute: async (id: string, params: any, signal?: any) => {
       const cmd: string = typeof params?.command === "string" ? params.command : "";
+
+      // Credential-exfil: refuse any bash command that mentions a known
+      // credential path or env-var name. Substring match — bypass-able with
+      // creative shell quoting / dynamic indirection, but stops the obvious
+      // cases (cat / head / tail / xxd / printenv / `env | grep KEY`).
+      for (const pat of CREDENTIAL_BASH_PATTERNS) {
+        if (pat.test(cmd)) {
+          return blocked(
+            `bash command references a credential path or API-key env var ` +
+            `(matched ${pat.source}). These paths/vars are off-limits — the agent's ` +
+            `keys live in pi-agent-core's memory and never need to be read by tools.`
+          );
+        }
+      }
 
       // Catch-all: destructive verb + .agent/ path segment in the same command.
       // This blocks the bypasses that single-target regex extraction misses

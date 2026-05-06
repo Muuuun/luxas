@@ -202,6 +202,20 @@ async function run(dir: string, modelName: string, userDirective?: string) {
     }
   }
 
+  // Scrub API-key env vars from process.env so any bash command this agent
+  // runs (or the sub-agents it spawns, which inherit env) cannot echo them
+  // into checkpoints/logs via `printenv` / `env | grep KEY` / `echo $KEY`.
+  // pi-agent-core's getApiKey re-resolves per LLM call via the auth.json
+  // file fallback added in c3437b1, so functionality is preserved.
+  for (const k of [
+    "ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY", "KIMI_API_KEY", "MOONSHOT_API_KEY",
+    "OPENAI_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY",
+    "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+    "GITHUB_TOKEN", "GITHUB_PAT",
+  ]) {
+    delete process.env[k];
+  }
+
   // If previous session finished, archive checkpoint + PI feedback so we start fresh
   archiveIfFinished(dir);
 

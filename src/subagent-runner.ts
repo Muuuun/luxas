@@ -29,6 +29,20 @@ import { jobOwnerAls } from "./jobs/als.js";
 // Subagents are separate processes, so the env var must be set here too.
 process.env.PI_CACHE_RETENTION ||= "short";
 
+// Defense in depth: strip API-key env vars in this child process too. The
+// parent (brain) already strips before spawning, so by the time we get here
+// these are already absent — but if a sub-agent is launched out-of-band
+// (manual invocation, future entry point), this guarantees the same posture.
+// Keys come back via the auth.json file fallback in src/auth.ts.
+for (const k of [
+  "ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY", "KIMI_API_KEY", "MOONSHOT_API_KEY",
+  "OPENAI_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY",
+  "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+  "GITHUB_TOKEN", "GITHUB_PAT",
+]) {
+  delete process.env[k];
+}
+
 // Match agent.ts: raise the SIGTERM/SIGINT listener cap so parallel
 // sub-spawns (e.g. experiment fanning out to tool_impl + tool_review) don't
 // trigger MaxListenersExceededWarning. Each subagent runs in its own process
