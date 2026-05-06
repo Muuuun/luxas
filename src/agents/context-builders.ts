@@ -3,7 +3,7 @@
  * appended to an agent's system prompt at spawn time.
  */
 
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import {
@@ -316,6 +316,31 @@ ${smartTruncate(method, 4000)}
   return parts.join("\n\n");
 }
 
+/**
+ * Find the most-recently-written illustrator notes file. Each illustrator
+ * spawn writes to reviews/illustrator_notes.{spawn_id}.md so concurrent runs
+ * don't stomp each other (e.g. one bootstrap spawn + one regen spawn writing
+ * to the same path → bootstrap wins, regen status is invisible). Returns
+ * the absolute path to the latest, or the legacy single-file path if no
+ * per-spawn files exist (older projects pre-namespacing fall back gracefully).
+ */
+function findLatestIllustratorNotes(projectDir: string): string {
+  const dir = join(projectDir, "reviews");
+  const legacy = join(dir, "illustrator_notes.md");
+  if (!existsSync(dir)) return legacy;
+  try {
+    const candidates = readdirSync(dir)
+      .filter((n) => /^illustrator_notes\..+\.md$/.test(n))
+      .map((n) => {
+        const p = join(dir, n);
+        return { p, mtime: statSync(p).mtimeMs };
+      })
+      .sort((a, b) => b.mtime - a.mtime);
+    if (candidates.length > 0) return candidates[0].p;
+  } catch {}
+  return legacy;
+}
+
 // ── Figure convergence check ─────────────────────────
 // Short-circuits the reviewer's figure_finalize_loop when every file listed
 // in reviews/illustrator_notes.md frontmatter still hashes to the recorded
@@ -324,11 +349,12 @@ ${smartTruncate(method, 4000)}
 
 function buildFigureConvergenceBlock(projectDir: string): string {
   // Visual convergence covers TWO orthogonal audits:
-  //   illustrator_notes.md — figure-internal (palette / axes / spines / etc.)
-  //   typesetter_notes.md  — document-level layout (floats / captions / overflow)
+  //   illustrator_notes.{spawn_id}.md — figure-internal (palette / axes / etc.)
+  //                                     per-spawn so concurrent runs don't stomp
+  //   typesetter_notes.md             — document-level layout (floats / overflow)
   // "converged" requires BOTH all-clear AND every recorded md5 still matches.
   // If typesetter audit is missing but report.pdf exists, the loop must run.
-  const illustratorPath = join(projectDir, "reviews", "illustrator_notes.md");
+  const illustratorPath = findLatestIllustratorNotes(projectDir);
   const typesetterPath = join(projectDir, "reviews", "typesetter_notes.md");
   const reportPdfPath = join(projectDir, "report", "report.pdf");
   const reportPdfExists = existsSync(reportPdfPath);

@@ -31,13 +31,13 @@ For all task types, also check:
   - *Signal of search miss*: newest entry > ~24 months older than `<today>`, or entries bunched entirely in pre-cutoff years — almost always the brain anchoring on training-data memory.
   - *Action*: direct the brain to re-run search with `--author "<LastName>" --from-year {THIS_YEAR-2}` for each named group, plus a forward-citation pass from existing seeds (`search citations <seed_id> --direction citations`).
   - *Evidence bar*: require the actual recent papers landing in `notes/literature.md` — do not accept "I searched broadly".
-- **Visual quality** — DO NOT view figures or PDF pages yourself. Visual work is handled by the figure-finalize loop (see `<figure_finalize_loop>` below), which you run before verdict=stop. The loop spawns illustrator (figure internals) and typesetter (PDF page layout); read `reviews/illustrator_notes.md` and `reviews/typesetter_notes.md` if present and factor style/rendering/layout issues in.
+- **Visual quality** — DO NOT view figures or PDF pages yourself. Visual work is handled by the figure-finalize loop (see `<figure_finalize_loop>` below), which you run before verdict=stop. The loop spawns illustrator (figure internals) and typesetter (PDF page layout); read the latest `reviews/illustrator_notes.*.md` (per-spawn files; pick most recent) and `reviews/typesetter_notes.md` if present and factor style/rendering/layout issues in.
 - **Language** — If RESEARCH.md explicitly specifies a report language, the report must use that language. Otherwise, the language should be inferred from all signals: RESEARCH.md language, project directory name, target audience, subject matter. For example, a project in a Chinese-named directory about Chinese policy should produce a Chinese report even if RESEARCH.md happens to be written in English. If the agent's language choice seems wrong given the context, flag it.
 </general_checks>
 
 <visual_review_delegation>
 You do NOT view figures or PDF pages directly — visual judgment is delegated to two short-lived sub-agents:
-- `illustrator` audits figure internals (palette, axes, line weights, spines) — writes `reviews/illustrator_notes.md`.
+- `illustrator` audits figure internals (palette, axes, line weights, spines) — writes `reviews/illustrator_notes.{{SPAWN_ID}}.md` (per-spawn file so concurrent illustrator runs don't stomp each other; consumers `ls -t` to pick the latest).
 - `typesetter` audits document-level layout (figure floats, caption placement, column overflow, missing-file boxes) — writes `reviews/typesetter_notes.md`.
 
 <illustrator_scope strict="true">
@@ -123,7 +123,7 @@ Edge cases:
 - `grep` returns empty AND a `<NAME>.tex` source exists under `figures/` or `report/figures/` → put it in its own single-figure brief; the illustrator will take the pgfplots / hybrid (TikZ source) path.
 - `grep` returns empty AND no `<NAME>.tex` source exists → this is an **imported asset** (a screenshot from another paper, a vendor-supplied figure, etc.). EXCLUDE it from briefs entirely; do not spawn an illustrator for it. Mention it once in the audit-step task as "skipped (imported, no editable source)".
 
-Each brief contains: the list of figures this script produces, caption + `\includegraphics` context per figure, and any prior-round patches from `illustrator_notes.md` organized per figure. Do NOT enumerate hex deltas — the illustrator reads `style_guide.md` and diffs the script itself (illustrator rule 5). PI's job is to surface content-level corrections, not pre-compute palette substitutions.
+Each brief contains: the list of figures this script produces, caption + `\includegraphics` context per figure, and any prior-round patches from the latest `reviews/illustrator_notes.*.md` organized per figure. Do NOT enumerate hex deltas — the illustrator reads `style_guide.md` and diffs the script itself (illustrator rule 5). PI's job is to surface content-level corrections, not pre-compute palette substitutions.
 
 **Step 2. Parallel regenerate — one illustrator per source script:**
 
@@ -142,7 +142,7 @@ spawn_agent(agent="illustrator",
             task="Audit canonical figures [editable list]. Read style_guide.md, then each canonical PNG. Two checks:
                   (i) Conformance — palette / markers / weights / typography per figure vs style_guide.md. Per-script illustrators self-check, but flag any palette drift they missed (e.g. 'figure uses #4477AA, guide mandates #1F2A44').
                   (ii) Cross-figure consistency — coherence across the canonical set.
-                  Note these orphans ignored: [orphan list]. Note these imported assets skipped (no editable source, do NOT audit for style conformance): [imported list]. Write reviews/illustrator_notes.md with the standard structure. End with Summary: all-clear OR <N> issues.",
+                  Note these orphans ignored: [orphan list]. Note these imported assets skipped (no editable source, do NOT audit for style conformance): [imported list]. Write reviews/illustrator_notes.{{SPAWN_ID}}.md with the standard structure. End with Summary: all-clear OR <N> issues.",
             background=false)
 ```
 
@@ -163,7 +163,7 @@ spawn_agent(agent="typesetter",
 This agent rasterizes every page via pdftoppm, reads each page image, writes text notes, and dies. Images never enter your (PI's) context.
 
 **Step 5. Read both notes files** (text only):
-- `reviews/illustrator_notes.md` — figure-internal status
+- The most recent `reviews/illustrator_notes.*.md` (each illustrator spawn writes its own per-spawn file; pick by `ls -t reviews/illustrator_notes.*.md | head -1` so prior-spawn files don't mislead) — figure-internal status
 - `reviews/typesetter_notes.md` — page-layout status
 
 If BOTH have Summary / status = "all-clear" → break the loop.

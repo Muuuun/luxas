@@ -100,6 +100,21 @@ const MODEL_MAP: Record<string, [string, string] | InlineModel> = {
     contextWindow: 1048576,
     maxTokens: 393216,
   },
+  // Moonshot vision model — vision-capable; used for illustrator/typesetter
+  // when running in --profile dual mode (deepseek text + kimi vision).
+  // Endpoint is the Moonshot CN OpenAI-compat API; key is KIMI_API_KEY.
+  k2p5: {
+    id: "moonshot-v1-32k-vision-preview",
+    name: "Moonshot v1 32k (vision)",
+    api: "openai-completions",
+    provider: "kimi-coding",
+    baseUrl: "https://api.moonshot.cn/v1",
+    reasoning: false,
+    input: ["text", "image"],
+    cost: { input: 1.0, output: 3.0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 32768,
+    maxTokens: 4096,
+  },
 };
 
 // Anthropic tier names that participate in profile redirection. When
@@ -110,15 +125,29 @@ const MODEL_MAP: Record<string, [string, string] | InlineModel> = {
 // family-level switch must not stomp.
 const ANTHROPIC_TIERS = new Set(["haiku", "sonnet", "opus"]);
 
-function applyProfile(modelKey: string): string {
+// Agents that need image inputs (figure rendering, page-layout audit).
+// In dual-mode (LUXAS_VISION_MODEL_PROFILE set), these route to the vision
+// model regardless of the family-level text profile, because deepseek-* is
+// text-only and silently produces unverified figures otherwise.
+const VISION_REQUIRED_AGENTS = new Set([
+  "illustrator",
+  "illustrator_write",
+  "typesetter",
+]);
+
+function applyProfile(modelKey: string, agentName?: string): string {
+  if (agentName && VISION_REQUIRED_AGENTS.has(agentName)) {
+    const visionProfile = process.env.LUXAS_VISION_MODEL_PROFILE;
+    if (visionProfile) return visionProfile;
+  }
   const profile = process.env.LUXAS_MODEL_PROFILE;
   if (!profile) return modelKey;
   if (ANTHROPIC_TIERS.has(modelKey)) return profile;
   return modelKey;
 }
 
-export function resolveModel(modelKey: string) {
-  const effectiveKey = applyProfile(modelKey);
+export function resolveModel(modelKey: string, agentName?: string) {
+  const effectiveKey = applyProfile(modelKey, agentName);
   const entry = MODEL_MAP[effectiveKey] ?? MODEL_MAP.sonnet;
   if (Array.isArray(entry)) return getModel(entry[0] as any, entry[1] as any);
   return entry as any;
@@ -279,10 +308,15 @@ export function buildAgentFromDefinition(opts: SpawnAgentOptions): BuiltAgent {
 
   // 1. Resolve model
   const modelKey = opts.modelOverride ?? def.model;
-  const model = modelKey === "inherit" ? resolveModel("sonnet") : resolveModel(modelKey);
+  const model = modelKey === "inherit" ? resolveModel("sonnet", opts.name) : resolveModel(modelKey, opts.name);
 
   // 2. Resolve system prompt with template variables
-  const systemPrompt = resolvePrompt(def, opts.templateVars);
+  // Inject SPAWN_ID = agentId so prompts can include the spawn-unique id in
+  // output paths (e.g. reviews/illustrator_notes.{{SPAWN_ID}}.md) — prevents
+  // single-writer races when multiple instances of the same agent type run
+  // concurrently. Caller-supplied templateVars take precedence.
+  const templateVarsWithSpawn = { SPAWN_ID: agentId, ...opts.templateVars };
+  const systemPrompt = resolvePrompt(def, templateVarsWithSpawn);
 
   // 3. Build tools from tool-sets
   let tools = resolveToolSets(def.toolSets, opts.projectDir);
@@ -300,7 +334,7 @@ export function buildAgentFromDefinition(opts: SpawnAgentOptions): BuiltAgent {
 
   const wrapper = buildSafetyWrapper(def.safety);
   if (wrapper) {
-    tools = wrapper(tools, opts.projectDir, opts.templateVars, mergedHooks);
+    tools = wrapper(tools, opts.projectDir, templateVarsWithSpawn, mergedHooks);
   }
 
   // 5. Add tool overrides (e.g., PI verdict tool)

@@ -65,6 +65,7 @@ const command = args[0] ?? "run";
 // Parse flags
 let projectDir = ".";
 let model = "opus";
+let profile: string | undefined;
 let directive: string | undefined;
 let initPrompt: string | undefined;
 let figureTarget: string | undefined;
@@ -74,6 +75,8 @@ let styleDomain: string | undefined;
 for (let i = 1; i < args.length; i++) {
   if (args[i] === "--model" && args[i + 1]) {
     model = args[++i];
+  } else if (args[i] === "--profile" && args[i + 1]) {
+    profile = args[++i];
   } else if (args[i] === "--directive" && args[i + 1]) {
     directive = args[++i];
   } else if (args[i] === "--prompt" && args[i + 1]) {
@@ -106,6 +109,20 @@ process.env.LUXAS_PROJECT_DIR = projectDir;
 // through unchanged (math agent stays gpt-5.2).
 if (model.startsWith("deepseek-")) {
   process.env.LUXAS_MODEL_PROFILE = model;
+}
+
+// Profile presets. `dual` = deepseek-v4-pro for text agents + Kimi K2.5
+// for vision-required agents (illustrator/illustrator_write/typesetter).
+// Routes around deepseek's text-only limitation that produces visually
+// unverified figures and PDF layouts.
+if (profile === "dual") {
+  process.env.LUXAS_MODEL_PROFILE = "deepseek-v4-pro";
+  process.env.LUXAS_VISION_MODEL_PROFILE = "k2p5";
+} else if (profile === "claude") {
+  // No env override — every agent uses its declared frontmatter model.
+} else if (profile) {
+  console.error(`Unknown --profile "${profile}". Valid: claude, dual.`);
+  process.exit(1);
 }
 
 if (command === "status") {
@@ -144,6 +161,8 @@ if (command === "figures") {
 
 console.error(`Unknown command: ${command}`);
 console.error("Usage: luxas <run|status|init|list|figures> [project-dir] [options]");
+console.error("  --model <id>      explicit model (legacy; e.g. deepseek-v4-pro)");
+console.error("  --profile <name>  preset: claude | dual (deepseek text + kimi vision)");
 process.exit(1);
 
 // ─── Commands ────────────────────────────────────────────
@@ -301,7 +320,7 @@ async function runFigures(dir: string, opts: { figure?: string; auditOnly?: bool
   console.log();
 
   const task = opts.auditOnly
-    ? `Figure-only pass: run ONLY the global audit step (one illustrator reads all canonical figures, writes reviews/illustrator_notes.md). Do NOT regenerate anything. Do NOT run multiple rounds.`
+    ? `Figure-only pass: run ONLY the global audit step (one illustrator reads all canonical figures, writes reviews/illustrator_notes.{{SPAWN_ID}}.md). Do NOT regenerate anything. Do NOT run multiple rounds.`
     : opts.figure
       ? `Figure-only pass: regenerate ONLY the canonical figure "${opts.figure}". Skip all other figures. Run the standard finalize loop restricted to that one figure.`
       : `Figure-only pass: run the full finalize loop on all canonical figures (parallel per-figure regeneration + global audit, up to 3 rounds).`;
