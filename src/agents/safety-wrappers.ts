@@ -120,6 +120,24 @@ const EDIT_FAILURE_PATTERNS = /Could not find the exact text|Found \d+ occurrenc
 // 2ms covers ms-rounded filesystems without false-positives on the post-write bump.
 const MTIME_TOLERANCE_MS = 2;
 
+// `.agent/` holds studio's authoritative state: run.pid, usage.log,
+// checkpoint.jsonl, conversations/, active-agents.json, etc. Sisyphus
+// itself writes these through internal in-process fs calls that DON'T
+// pass through the agent's tool wrappers, so a hard tool-level lock here
+// doesn't interfere with normal bookkeeping.
+//
+// Without this lock, a prompt-injected agent can `rm .agent/usage.log` to
+// reset its recorded spend, or rewrite run.pid to evade the budget watcher.
+// Studio has its own monotonic spend-floor + RUN_REGISTRY in-memory authority
+// as backstops, but blocking at this layer closes the attack at the cheapest
+// possible point.
+const SYSTEM_RESERVED_DIR = ".agent";
+
+function isSystemReserved(abs: string, projectDir: string): boolean {
+  const target = resolve(projectDir, SYSTEM_RESERVED_DIR);
+  return abs === target || abs.startsWith(target + "/");
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 function getPathArg(params: any): string {
@@ -252,6 +270,13 @@ function wrapEdit(
       const abs = resolve(projectDir, p);
       const oldText = String(params.oldText ?? "");
 
+      if (isSystemReserved(abs, projectDir)) {
+        return blocked(
+          `${p} is under .agent/ which is studio-reserved (run state, usage logs, ` +
+          `checkpoint, conversations). These files are written by studio internals, ` +
+          `not by tools. Do not edit them.`
+        );
+      }
       if (protectedAbs.has(abs)) {
         return blocked(`${p} is protected and cannot be edited by this agent.`);
       }
@@ -391,6 +416,13 @@ function wrapWrite(
       const p = getPathArg(params);
       const abs = resolve(projectDir, p);
 
+      if (isSystemReserved(abs, projectDir)) {
+        return blocked(
+          `${p} is under .agent/ which is studio-reserved (run state, usage logs, ` +
+          `checkpoint, conversations). These files are written by studio internals, ` +
+          `not by tools. Do not write them.`
+        );
+      }
       if (protectedAbs.has(abs)) {
         return blocked(`${p} is protected and cannot be written by this agent.`);
       }
@@ -508,7 +540,21 @@ const BASH_WRITE_PATTERNS: Array<{ re: RegExp; kind: string }> = [
   { re: /Path\s*\(\s*['"]([^'"]+)['"][^)]*\)\s*\.write_(?:text|bytes)\s*\(/g, kind: "Path.write_text/bytes" },
   // node fs.writeFileSync(path, …)
   { re: /\.writeFileSync?\s*\(\s*['"]([^'"]+)['"]/g, kind: "writeFileSync" },
+  // rm / rmdir / unlink — captures the first non-flag positional. Multi-
+  // target rm (e.g. `rm a b c`) only catches `a` here, but the catch-all
+  // DESTRUCTIVE_WITH_AGENT check below covers the multi-arg / find -delete
+  // / chflags-style bypasses.
+  { re: /\b(?:rm|rmdir|unlink)\b(?:\s+(?:-[a-zA-Z]+|--[a-zA-Z-]+(?:=\S+)?))*\s+(['"]?[^\s'"<>;&|`()]+['"]?)/g, kind: "rm/unlink" },
 ];
+
+// Catch-all: any command that combines a destructive verb with a `.agent/`
+// path segment is blocked, regardless of arg structure. Closes:
+//   - multi-arg rm:  `rm foo.txt .agent/usage.log`  (per-pattern extracts only first)
+//   - find -delete:  `find .agent -delete`
+//   - attribute-strip then delete: `chflags nouappnd .agent/usage.log; rm ...`
+//   - shell substitution / variable expansion that hides the literal target
+const DESTRUCTIVE_VERB_RE = /\b(?:rm|rmdir|unlink|chflags\s+(?:no)?(?:u|s)appnd|chattr\s+[+-]a|find\b[^|;&\n]*?-delete)\b/;
+const AGENT_PATH_RE = /(?:^|[\s/="'`(:])\.agent(?:\/|$|[\s'"`)])/;
 
 function extractBashWriteTargets(cmd: string): Array<{ target: string; kind: string }> {
   const hits: Array<{ target: string; kind: string }> = [];
@@ -572,37 +618,49 @@ function wrapBash(
   allowedWriteAbs: string[] | null,
   blockedRootsAbs: string[] | null,
 ): any {
+  // `.agent/` is ALWAYS in the effective blocklist — studio-reserved,
+  // not driven by frontmatter. Means we always wrap (no early return),
+  // and even agents with no other blocklist still get .agent protection.
+  const reservedAbs = resolve(projectDir, SYSTEM_RESERVED_DIR);
+  const effectiveBlocked: string[] = [reservedAbs, ...(blockedRootsAbs ?? [])];
   const hasAllowlist = allowedWriteAbs !== null && allowedWriteAbs.length > 0;
-  const hasBlocklist = blockedRootsAbs !== null && blockedRootsAbs.length > 0;
-  if (!hasAllowlist && !hasBlocklist) return tool;
 
-  const blockedRelPrefixes = hasBlocklist
-    ? blockedRootsAbs!.map((r) => {
-        const rel = r.startsWith(projectDir + "/") ? r.slice(projectDir.length + 1) : r;
-        return rel.endsWith("/") ? rel : rel + "/";
-      })
-    : [];
+  const blockedRelPrefixes = effectiveBlocked.map((r) => {
+    const rel = r.startsWith(projectDir + "/") ? r.slice(projectDir.length + 1) : r;
+    return rel.endsWith("/") ? rel : rel + "/";
+  });
 
   const origExecute = tool.execute;
   return {
     ...tool,
     execute: async (id: string, params: any, signal?: any) => {
       const cmd: string = typeof params?.command === "string" ? params.command : "";
+
+      // Catch-all: destructive verb + .agent/ path segment in the same command.
+      // This blocks the bypasses that single-target regex extraction misses
+      // (multi-arg rm, find -delete, attribute strips before delete).
+      if (DESTRUCTIVE_VERB_RE.test(cmd) && AGENT_PATH_RE.test(cmd)) {
+        return blocked(
+          `bash command contains a destructive op targeting .agent/ which is ` +
+          `studio-reserved (run state, usage logs). These paths cannot be ` +
+          `removed or modified by tools — Sisyphus internals manage them.`
+        );
+      }
+
       const hits = extractBashWriteTargets(cmd);
 
       for (const { target, kind } of hits) {
         // 1. Blocklist check (substring match on project-relative prefix —
         //    catches both "data/experiments/..." and "./data/experiments/..."
         //    and `cd X && > data/experiments/...` since it's a pure-string scan).
-        if (hasBlocklist) {
-          const match = bashTargetHitsBlockedRoot(target, blockedRelPrefixes);
-          if (match) {
-            return blocked(
-              `bash command attempts to ${kind} to "${target}" under protected path "${match}". ` +
-              `This bypass of allowedWriteRoots is denied. Delegate via spawn_agent to the appropriate sub-agent ` +
-              `(tool_impl for scripts/, tool_review for tests/, experiment for runs/).`,
-            );
-          }
+        //    Always-on entries: .agent/. Plus any frontmatter blockedBashWriteRoots.
+        const match = bashTargetHitsBlockedRoot(target, blockedRelPrefixes);
+        if (match) {
+          return blocked(
+            `bash command attempts to ${kind} to "${target}" under protected path "${match}". ` +
+            `This path is studio-reserved or restricted by your safety config. ` +
+            `Delegate via spawn_agent to the appropriate sub-agent if you need to write there.`,
+          );
         }
 
         // 2. Allowlist check: for in-project targets, require match against
