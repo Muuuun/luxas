@@ -178,6 +178,30 @@ async function run(dir: string, modelName: string, userDirective?: string) {
 
   const researchGoal = readFileSync(researchFile, "utf-8").trim();
 
+  // Fail-fast on missing API credentials. If the brain agent's first LLM
+  // call returns 401, pi-agent-core's loop exits gracefully with an error
+  // message that gets buried in checkpoint state, the run records 0 tokens,
+  // and the user sees "Done in 0s" — indistinguishable from a successful
+  // no-op completion. Check up front so the user gets a clear error.
+  // The studio's launchd-supervised next-server is the canonical example:
+  // its plist sets only HOME/PATH/NODE_ENV, so DEEPSEEK_API_KEY etc. don't
+  // propagate from the user's shell. Resolve via the same chain the agent
+  // would use (env → ~/.sisyphus/auth.json → undefined) before spawning.
+  {
+    const { resolveModel } = await import("./agents/spawn.js");
+    const { getApiKey } = await import("./auth.js");
+    const resolvedModel = resolveModel(modelName, "brain");
+    const provider = resolvedModel.provider;
+    const key = await getApiKey(provider);
+    if (!key) {
+      console.error(`✗ Missing API key for provider "${provider}" (model: ${resolvedModel.id ?? modelName}).`);
+      console.error(`  Set the corresponding env var (e.g. ${provider.toUpperCase()}_API_KEY) or`);
+      console.error(`  add a key to ~/.sisyphus/auth.json:`);
+      console.error(`    { "${provider === "kimi-coding" ? "kimi" : provider}": "sk-..." }`);
+      process.exit(1);
+    }
+  }
+
   // If previous session finished, archive checkpoint + PI feedback so we start fresh
   archiveIfFinished(dir);
 

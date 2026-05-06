@@ -15,7 +15,9 @@ import { homedir } from "node:os";
  */
 export async function resolveAnthropicKey(): Promise<string | undefined> {
   if (process.env.ANTHROPIC_API_KEY) return process.env.ANTHROPIC_API_KEY;
-  return undefined;
+  // Fall back to ~/.sisyphus/auth.json (alongside OAuth tokens it may already
+  // hold). Studio-spawned brain has no shell env — see readSisyphusAuthKey.
+  return readJsonKey(join(homedir(), ".sisyphus", "auth.json"), ["anthropic", "ANTHROPIC_API_KEY"]);
 }
 
 export async function resolveOpenAIKey(): Promise<string | undefined> {
@@ -125,15 +127,41 @@ async function refreshCodexToken(refreshToken: string): Promise<{ access_token: 
   }
 }
 
+/**
+ * Persistent fallback for API keys when env doesn't have them. Used when
+ * Sisyphus is spawned by a parent that lacks shell env (notably the
+ * studio's launchd-supervised next-server: launchd plist sets only
+ * HOME/PATH/NODE_ENV, so DEEPSEEK_API_KEY etc. never propagate from the
+ * user's shell). Auth file lives at ~/.sisyphus/auth.json and accepts
+ * any of these key shapes:
+ *
+ *   { "deepseek": "sk-...", "kimi": "sk-...", "moonshot": "sk-...", "openai": "sk-..." }
+ *   { "DEEPSEEK_API_KEY": "sk-...", "KIMI_API_KEY": "sk-...", ... }
+ *
+ * Existing Anthropic OAuth fields (access_token / refresh_token) coexist —
+ * resolveAnthropicKey reads the OAuth path; this helper only consumes the
+ * provider-keyed slots above.
+ */
+function readSisyphusAuthKey(...keys: string[]): string | undefined {
+  return readJsonKey(join(homedir(), ".sisyphus", "auth.json"), keys);
+}
+
 export async function resolveDeepSeekKey(): Promise<string | undefined> {
   if (process.env.DEEPSEEK_API_KEY) return process.env.DEEPSEEK_API_KEY;
-  return undefined;
+  return readSisyphusAuthKey("deepseek", "DEEPSEEK_API_KEY");
+}
+
+export async function resolveKimiKey(): Promise<string | undefined> {
+  if (process.env.KIMI_API_KEY) return process.env.KIMI_API_KEY;
+  if (process.env.MOONSHOT_API_KEY) return process.env.MOONSHOT_API_KEY;
+  return readSisyphusAuthKey("kimi", "moonshot", "KIMI_API_KEY", "MOONSHOT_API_KEY");
 }
 
 export async function getApiKey(provider: string): Promise<string | undefined> {
   if (provider === "anthropic") return resolveAnthropicKey();
   if (provider === "openai" || provider === "openai-codex") return resolveOpenAIKey();
   if (provider === "deepseek") return resolveDeepSeekKey();
+  if (provider === "kimi-coding") return resolveKimiKey();
   return undefined;
 }
 
