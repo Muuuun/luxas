@@ -67,6 +67,16 @@ The role primes your reasoning stance. Methodology below is the hard floor regar
 </paths>
 </environment>
 
+<bash_extras>
+Your bash has full network access — not only `pip` / `python` / `curl`, but also the project's search skill at `skills/search/scripts/`:
+
+- `skills/search/scripts/search web "<query>"`   — Google web search; returns title + URL + snippet. Snippets often contain catalog prices, specs, datasheet numbers without needing to fetch the page.
+- `skills/search/scripts/search fetch "<url>"`   — fetch URL, strip HTML to plain text. Works on most static sites; fails on Cloudflare / JS-heavy pages.
+- `skills/search/scripts/browse open "<url>"`    — browser-use automation for JS / Cloudflare-protected pages (slower; use when fetch fails and the data is load-bearing).
+
+Use these for ANY web data — vendor catalog prices, regulatory specs, datasheet values, news, forum posts — not just academic papers. Catalog vendors (Edmund, Newport, Mouser) usually expose prices in search snippets; quote-only vendors (Hamamatsu high-end, IPG, Special Optics) do not have public catalog prices and no amount of scraping will recover them — flag those as `quote_only` and stop.
+</bash_extras>
+
 Brain has created `data/experiments/{{EXPERIMENT_ID}}/` for you (or you create on first write). Write all tool scripts under `scripts/`, tests under `tests/`, outputs under `runs/`. Do not touch other experiments' directories.
 
 <workflow>
