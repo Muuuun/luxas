@@ -15,12 +15,9 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildSafetyWrapper } from "../src/agents/safety-wrappers.js";
+import { createCheck } from "./_smoke.js";
 
-let failures = 0;
-function check(label: string, cond: boolean, detail?: string) {
-  if (cond) console.log(`  ✓ ${label}`);
-  else { failures++; console.log(`  ✗ ${label}${detail ? ` — ${detail}` : ""}`); }
-}
+const { check, summary } = createCheck();
 
 const tmp = mkdtempSync(join(tmpdir(), "luxas-edit-noop-"));
 try {
@@ -92,5 +89,4 @@ try {
   try { rmSync(tmp, { recursive: true, force: true }); } catch {}
 }
 
-console.log(`\n${failures === 0 ? "OK" : `FAIL (${failures})`}`);
-process.exit(failures === 0 ? 0 : 1);
+summary();

@@ -327,7 +327,6 @@ ${smartTruncate(method, 4000)}
 function findLatestIllustratorNotes(projectDir: string): string {
   const dir = join(projectDir, "reviews");
   const legacy = join(dir, "illustrator_notes.md");
-  if (!existsSync(dir)) return legacy;
   try {
     const candidates = readdirSync(dir)
       .filter((n) => /^illustrator_notes\..+\.md$/.test(n))

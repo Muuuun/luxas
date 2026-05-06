@@ -229,8 +229,12 @@ export async function reconcileOnStartup(projectDir: string): Promise<ReconcileS
     }
     const now = Date.now();
     if (!pidAlive(state.pid)) {
+      // pid gone but status still "running" means bash-hardened's close
+      // handler never wrote a clean "done" — likely abnormal exit (OOM,
+      // kernel kill, or the harness died mid-write). Mark "failed" so
+      // active-agents reflects the truth.
       writeState(projectDir, {
-        ...state, status: "done", endedAt: now,
+        ...state, status: "failed", endedAt: now,
         exitCode: null, signal: null, cause: "process_gone_during_outage",
       });
       summary.markedDone++;
@@ -239,7 +243,7 @@ export async function reconcileOnStartup(projectDir: string): Promise<ReconcileS
     if (processIsOurs(state.pid, state.command)) {
       await killGroupAndWait(state.pid);
       writeState(projectDir, {
-        ...state, status: "done", endedAt: Date.now(),
+        ...state, status: "failed", endedAt: Date.now(),
         exitCode: null, signal: "SIGKILL", cause: "reconcile_orphan_killed",
       });
       summary.killedOrphans++;
@@ -295,8 +299,11 @@ export async function sweepJobs(projectDir: string): Promise<SweepSummary> {
     };
 
     if (!pidAlive(state.pid)) {
+      // Same reasoning as reconcile: pid gone while status still "running"
+      // means the in-process close handler didn't get to write "done", so
+      // this isn't a clean exit. Mark "failed".
       if (commit({
-        ...state, status: "done", endedAt: Date.now(),
+        ...state, status: "failed", endedAt: Date.now(),
         exitCode: null, signal: null, cause: "process_gone_since_last_sweep",
       })) summary.markedDone++;
       continue;
@@ -311,7 +318,7 @@ export async function sweepJobs(projectDir: string): Promise<SweepSummary> {
       if (processIsOurs(state.pid, state.command)) {
         await killGroupAndWait(state.pid);
         if (commit({
-          ...state, status: "done", endedAt: Date.now(),
+          ...state, status: "failed", endedAt: Date.now(),
           exitCode: null, signal: "SIGKILL", cause: "owner_gone",
         })) summary.killedOwnerless++;
       } else {
@@ -331,7 +338,7 @@ export async function sweepJobs(projectDir: string): Promise<SweepSummary> {
     if (processIsOurs(state.pid, state.command)) {
       await killGroupAndWait(state.pid);
       if (commit({
-        ...state, status: "done", endedAt: Date.now(),
+        ...state, status: "failed", endedAt: Date.now(),
         exitCode: null, signal: "SIGKILL", cause: "sweep_deadline_killed",
       })) summary.killedDeadline++;
       continue;

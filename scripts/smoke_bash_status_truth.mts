@@ -14,12 +14,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { jobOwnerAls } from "../src/jobs/als.js";
 import { createHardenedBashTool } from "../src/tools/bash-hardened.js";
+import { createCheck } from "./_smoke.js";
 
-let failures = 0;
-function check(label: string, cond: boolean, detail?: string) {
-  if (cond) console.log(`  ✓ ${label}`);
-  else { failures++; console.log(`  ✗ ${label}${detail ? ` — ${detail}` : ""}`); }
-}
+const { check, summary } = createCheck();
 
 const tmp = mkdtempSync(join(tmpdir(), "luxas-bash-truth-"));
 try {
@@ -93,5 +90,4 @@ try {
   try { rmSync(tmp, { recursive: true, force: true }); } catch {}
 }
 
-console.log(`\n${failures === 0 ? "OK" : `FAIL (${failures})`}`);
-process.exit(failures === 0 ? 0 : 1);
+summary();

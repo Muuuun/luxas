@@ -271,13 +271,11 @@ function wrapEdit(
       const oldText = String(params.oldText ?? "");
       const newText = String(params.newText ?? "");
 
-      // Reject no-op edits before doing any disk work or fuzzy matching.
-      // The classic mistake: agent passes the same string for oldText and
-      // newText (often when intending to "append" but using the wrong tool).
-      // Without this guard, the underlying edit tool runs fuzzyFindText
-      // against text that may not even exist, then returns a "no changes
-      // made" message that the agent re-reads as "I need to find a better
-      // anchor" and burns turns retrying with stranger oldText values.
+      // Reject no-op edits before fuzzy matching. Without this guard, the
+      // underlying edit tool runs fuzzyFindText against text that may not
+      // even exist, returns "no changes made", and the agent burns turns
+      // retrying with stranger oldText values instead of recognising the
+      // append-via-edit antipattern.
       if (oldText === newText) {
         return blocked(
           `No-op edit on ${p}: oldText === newText. ` +
