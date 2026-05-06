@@ -174,8 +174,8 @@ For all non-stop exits, prefer **incremental continuation over restart**. Preser
 **Phase 3 — Integrate.** Compose tool outputs into:
 
 1. A final run under `data/experiments/{{EXPERIMENT_ID}}/runs/run_N/results.json` with structured `invariants` (cited literature inputs) and `computed` (your derived quantities) keys.
-2. **Persist raw data for downstream plotting.** If any tool produced arrays, scans, distributions, samples, or iteration traces, save them under `runs/run_N/data/` as plot-ready artifacts (CSV for tabular scans, NPZ/NPY for numeric arrays, JSON with array fields for mixed data). `results.json` should reference these by relative path under a `computed.raw_data` key (e.g., `{"scan_p_vs_d": "data/scan.csv", "mc_samples": "data/samples.npz"}`). Scalar summaries alone are insufficient — a figure-maker later can't reconstruct a plot from just means and maxes.
-3. Figures (when applicable) under `report/figures/`. If your experiment's results merit a quantitative figure (scans, comparisons, distributions), produce the plot here or at least leave the raw data under `runs/run_N/data/` so brain or illustrator can produce the figure downstream.
+2. **Persist raw data for downstream plotting.** If any tool produced arrays, scans, distributions, samples, or iteration traces, save them under `data/experiments/{{EXPERIMENT_ID}}/runs/run_N/data/` as plot-ready artifacts (CSV for tabular scans, NPZ/NPY for numeric arrays, JSON with array fields for mixed data). `results.json` should reference these by path relative to `runs/run_N/` under a `computed.raw_data` key (e.g., `{"scan_p_vs_d": "data/scan.csv", "mc_samples": "data/samples.npz"}` — paths are anchored at the run_N dir). Scalar summaries alone are insufficient — a figure-maker later can't reconstruct a plot from just means and maxes.
+3. Figures (when applicable) under `report/figures/`. If your experiment's results merit a quantitative figure (scans, comparisons, distributions), produce the plot here or at least leave the raw data under `data/experiments/{{EXPERIMENT_ID}}/runs/run_N/data/` so brain or illustrator can produce the figure downstream.
 4. A section appended to `notes/experiments.md` under `## L2.X — <topic>`. Brain may have already written a `**Status:** Pending` placeholder for this section at spawn time — **edit** that placeholder (don't duplicate). If no placeholder exists, append a fresh section. The `**Status:**` line is the load-bearing contract — the brain's `finish()` gate reads it.
    - **Experiment dir:** path to your `data/experiments/{{EXPERIMENT_ID}}/`
    - **Key computed leaves:** 3-5 paths into `results.json` that brain will cite
@@ -183,7 +183,6 @@ For all non-stop exits, prefer **incremental continuation over restart**. Preser
    - **Headline findings** (3-5 bullets)
    - `### Alternatives considered` (≥3 architecturally distinct candidates, each with rejection reason)
    - `### Limitations`
-   - `### Open questions` (include explicit "Concerns for human review" here — brain aggregates these into the final report)
 
    Do NOT write a `### Red team` section yourself. An independent `experiment_reviewer` sub-agent is auto-spawned by the harness after you return, reads your L2 section + `results.json` + raw data + cited literature, and votes satisfied / revise. Self-review was observed to regress into template-filling and MITIGATE-away classifications; the independent-auditor pattern (same rationale as `tool_impl` / `tool_review` split) is the fix. You'll receive revise feedback (if any) as a follow-up task message telling you what to fix — iterate on existing `data/experiments/{{EXPERIMENT_ID}}/` artifacts, don't restart from scratch.
 
@@ -193,9 +192,9 @@ For all non-stop exits, prefer **incremental continuation over restart**. Preser
 Before marking `**Status:** Complete` on your L2 section, verify every item of your Evidence Contract is **satisfied** — not merely claimed. Walk the contract and check each non-negotiable commitment against concrete outputs:
 
 - **Passing tests** that exercise the commitment's semantic invariant — not just types/shapes. A commitment like "BP-OSD-class decoding" requires a test that actually decodes and checks logical error rate, not just a test that `decoder.decode()` returns the right-shaped array.
-- **Generated raw artifacts** present under `runs/run_N/data/` — numeric arrays, samples, distributions, whatever the evidence class needs for a reader to reconstruct the result.
+- **Generated raw artifacts** present under `data/experiments/{{EXPERIMENT_ID}}/runs/run_N/data/` — numeric arrays, samples, distributions, whatever the evidence class needs for a reader to reconstruct the result.
 - **Structured result fields** in `results.json.computed.*` for every required quantity the contract names.
-- **Documented limitation** in `### Open questions`'s "Concerns for human review" if a commitment is intentionally not satisfied — with enough detail that brain can decide whether to re-spawn you, escalate, or remove the L2 section from scope.
+- **Documented limitation** in `### Limitations` if a commitment is intentionally not satisfied — with enough detail that brain can decide whether to re-spawn you, escalate, or remove the L2 section from scope.
 
 If any non-negotiable commitment is unsatisfied and undocumented, Status is `Pending`, not `Complete`. Shallow completion patterns that do NOT clear this gate include: scripts land but only import/shape tests pass, simulation is scaled down to a toy regime that doesn't answer the original question, field-standard method is replaced by a hand-rolled approximation, raw data is summarized to scalar means with nothing kept for re-plotting.
 

@@ -194,7 +194,7 @@ function renderActiveAgents(running: ActiveAgent[]): string {
 }
 
 function renderCompletedArtifacts(projectDir: string): string {
-  const roots = ["design", "data/runs", "circuits", "report/figures"];
+  const roots = ["design", "data/experiments", "circuits", "report/figures"];
   const collected: { rel: string; size: number; mtime: number }[] = [];
 
   for (const root of roots) {

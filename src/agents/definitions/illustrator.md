@@ -24,8 +24,17 @@ Working directory: {{PROJECT_DIR}}
 Canonical figures live in: report/figures/       (referenced by \includegraphics in report/report.tex)
 Shared style guide (if present): report/figures/style_guide.md
 Raster assets (for hybrid pipeline): report/figures/assets/
-Plot scripts: data/scripts/plot_<topic>.py       (authoritative — they hard-code run_N paths)
-Experiment data: data/runs/run_N/                (different N = different experiments, not versions)
+
+Experiments are organized per-experiment under data/experiments/<EXPERIMENT_ID>/:
+  data/experiments/<EXPERIMENT_ID>/scripts/plot_<topic>.py    (one plot script may own multiple canonical figures; hard-codes run_N paths under the same experiment dir)
+  data/experiments/<EXPERIMENT_ID>/runs/run_N/results.json    (one experiment = its own run_N stream; multiple experiments = multiple <EXPERIMENT_ID> dirs)
+  data/experiments/<EXPERIMENT_ID>/runs/run_N/data/           (raw arrays / scans / NPZ / CSV for re-plotting)
+
+To enumerate every plot script in the project:
+  ls data/experiments/*/scripts/plot_*.py
+To resolve a single canonical figure to its source script:
+  grep -l NAME data/experiments/*/scripts/plot_*.py
+
 Audit output: reviews/illustrator_notes.md
 </environment>
 
@@ -83,7 +92,7 @@ Steps:
    truth for palette/fonts/line weights). If absent, establish a de-facto
    style from the canonical figures themselves.
 3. For EACH canonical figure, resolve its source plot script (`grep -l
-   NAME data/scripts/plot_*.py`). Walk the 12-item checklist below in
+   NAME data/experiments/*/scripts/plot_*.py`). Walk the 12-item checklist below in
    order. For each item, record `[pass]`, `[fail: <one-line reason>]`, or
    `[N/A]`. Flag only items you can concretely verify against
    `style_guide.md` or the plot script — do NOT invent issues outside
@@ -142,14 +151,14 @@ canonical_figures:
   report/figures/NAME.pdf: <md5>
   report/figures/NAME.png: <md5>
 plot_scripts:
-  data/scripts/plot_NAME.py: <md5>
+  data/experiments/<EXPERIMENT_ID>/scripts/plot_NAME.py: <md5>
 ---
 
 # Illustrator Notes (visual review only)
 
 ## Checklist per figure
 
-### report/figures/NAME.pdf (source: data/scripts/plot_NAME.py)
+### report/figures/NAME.pdf (source: data/experiments/<EXPERIMENT_ID>/scripts/plot_NAME.py)
 1. [pass]
 2. [fail: axis label 10 pt but guide says 8 pt]
 3. [pass]
@@ -229,7 +238,7 @@ Steps:
        vision self-check is one Read call away:
          plt.savefig("report/figures/<name>.pdf")
          plt.savefig("report/figures/<name>.png", dpi=150)
-   (e) Run it once: `python3 data/scripts/plot_<topic>.py` (from project
+   (e) Run it once: `python3 data/experiments/<EXPERIMENT_ID>/scripts/plot_<topic>.py` (from project
        root). One run regenerates all figures the script owns.
    (f) Read each updated PNG and check (i) matches style_guide.md
        aesthetic, (ii) reflects brief patches. If all pass, STOP.

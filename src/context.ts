@@ -410,31 +410,33 @@ function buildDataStatus(projectDir: string): string {
     lines.push("- Papers: none");
   }
 
-  const scriptsDir = join(projectDir, "data", "scripts");
+  const expRoot = join(projectDir, "data", "experiments");
   try {
-    const scripts = readdirSync(scriptsDir).filter(f => !f.startsWith(".")).sort();
-    if (scripts.length > 0) lines.push(`- Scripts: ${scripts.join(", ")}`);
-  } catch {}
-
-  const runsDir = join(projectDir, "data", "runs");
-  try {
-    const runs = readdirSync(runsDir, { withFileTypes: true });
-    const runParts: string[] = [];
-    for (const r of runs.sort((a, b) => a.name.localeCompare(b.name))) {
-      if (r.isDirectory()) {
-        const files = readdirSync(join(runsDir, r.name)).filter(f => !f.startsWith(".")).sort();
-        runParts.push(`${r.name}/ (${files.join(", ")})`);
-      } else if (!r.name.startsWith(".")) {
-        runParts.push(r.name);
-      }
+    const expEntries = readdirSync(expRoot, { withFileTypes: true })
+      .filter(e => e.isDirectory() && !e.name.startsWith("."))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    for (const exp of expEntries) {
+      const runsDir = join(expRoot, exp.name, "runs");
+      const runParts: string[] = [];
+      try {
+        for (const r of readdirSync(runsDir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+          if (r.isDirectory()) {
+            const files = readdirSync(join(runsDir, r.name)).filter(f => !f.startsWith(".")).sort();
+            runParts.push(`${r.name}/ (${files.join(", ")})`);
+          } else if (!r.name.startsWith(".")) {
+            runParts.push(r.name);
+          }
+        }
+      } catch {}
+      const scriptsDir = join(expRoot, exp.name, "scripts");
+      let scriptList = "";
+      try {
+        const scripts = readdirSync(scriptsDir).filter(f => !f.startsWith(".")).sort();
+        if (scripts.length > 0) scriptList = `; scripts: ${scripts.join(", ")}`;
+      } catch {}
+      lines.push(`- ${exp.name}: runs ${runParts.join(", ") || "(none)"}${scriptList}`);
     }
-    if (runParts.length > 0) lines.push(`- Runs: ${runParts.join("; ")}`);
   } catch {}
-
-  const allResults = readFileSafe(join(runsDir, "all_results.json"));
-  if (allResults) {
-    lines.push(`- all_results.json: ${smartTruncate(allResults, 500)}`);
-  }
 
   return `<data_status>\n${lines.join("\n")}\n</data_status>`;
 }

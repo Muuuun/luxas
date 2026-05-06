@@ -137,7 +137,7 @@ export async function createProject(baseDir: string, topic: string): Promise<str
   writeFileSync(join(dir, "notes", "literature.md"), "# Literature Notes\n\n");
   writeFileSync(join(dir, "notes", "experiments.md"), "# Experiment Notes\n\n");
 
-  for (const d of ["data/papers", "data/scripts", "data/runs", "report", "reviews", ".agent"]) {
+  for (const d of ["data/papers", "data/experiments", "report", "reviews", ".agent"]) {
     mkdirSync(join(dir, d), { recursive: true });
   }
 
@@ -157,7 +157,7 @@ export async function createProjectShell(baseDir: string, topic: string): Promis
   writeFileSync(join(dir, "notes", "literature.md"), "# Literature Notes\n\n");
   writeFileSync(join(dir, "notes", "experiments.md"), "# Experiment Notes\n\n");
 
-  for (const d of ["data/papers", "data/scripts", "data/runs", "report", "reviews", ".agent"]) {
+  for (const d of ["data/papers", "data/experiments", "report", "reviews", ".agent"]) {
     mkdirSync(join(dir, d), { recursive: true });
   }
 

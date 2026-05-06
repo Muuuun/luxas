@@ -7,9 +7,9 @@
 
 import { Type } from "@sinclair/typebox";
 import { execSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, basename } from "node:path";
-import { resolveProvrefCmd, mergeRunsOrStub } from "./provref-utils.js";
+import { applyAuthorityEscalationSection } from "./authority-escalation.js";
 
 const CompileParams = Type.Object({
   dir: Type.Optional(Type.String({ description: "Report directory (default: report/)" })),
@@ -101,11 +101,10 @@ export function createReportTools(projectDir: string) {
       const base = texfile.replace(/\.tex$/, "");
       const env = getTexEnv();
 
-      // ── Provref pipeline (merge → check → resolve) ──────────────
-      const provrefErrors = runProvrefPipeline(dir, texfile, projectDir);
-      if (provrefErrors) {
-        return { content: [{ type: "text" as const, text: provrefErrors }], details: { success: false } };
-      }
+      // Render authority-bound escalations only when the registry is non-empty.
+      // This keeps the final-report section default-omitted and removes the
+      // prompt-side pressure to invent human questions.
+      applyAuthorityEscalationSection(dir, texfile, projectDir);
 
       // Pre-compile check: figures from other papers must have \cite{}
       const citationErrors = checkFigureCitations(dir, texfile, projectDir);
@@ -155,63 +154,6 @@ export function createReportTools(projectDir: string) {
   };
 
   return [compileLatex];
-}
-
-// ── Provref pipeline ─────────────────────────────────────────────
-
-/**
- * Run provref merge → check → resolve before pdflatex.
- * Returns null on success, or an error message string on failure.
- * Silently skips if provref is not installed or report has no refs.
- */
-function runProvrefPipeline(reportDir: string, texfile: string, projectDir: string): string | null {
-  const texPath = join(reportDir, texfile);
-  if (!existsSync(texPath)) return null;
-
-  const tex = readFileSync(texPath, "utf-8");
-  if (!/\\(resultref|litref)\{/.test(tex)) return null;
-
-  const provrefCmd = resolveProvrefCmd(projectDir);
-  if (!provrefCmd) return null;
-
-  const runsDir = join(projectDir, "data", "runs");
-  const allResultsPath = join(runsDir, "all_results.json");
-  const litPath = join(projectDir, "notes", "literature_values.json");
-  const compiledDir = join(reportDir, ".compiled");
-  const cleanTexPath = join(compiledDir, "report-clean.tex");
-
-  mergeRunsOrStub(provrefCmd, runsDir, allResultsPath);
-
-  // Create empty literature file if missing (consistent with init_report behavior)
-  if (!existsSync(litPath)) {
-    mkdirSync(join(projectDir, "notes"), { recursive: true });
-    writeFileSync(litPath, "{}\n");
-  }
-
-  try {
-    execSync(
-      `${provrefCmd} check "${texPath}" --runs "${allResultsPath}" --lit "${litPath}"`,
-      { stdio: "pipe", timeout: 30_000, encoding: "utf-8" },
-    );
-  } catch (err: any) {
-    const stderr = err.stderr ?? err.message ?? String(err);
-    return (
-      "✗ provref check failed — fix broken references before compiling.\n\n" +
-      String(stderr).trim() +
-      "\n\nSee report/PROVREF_USAGE.md for the rules."
-    );
-  }
-
-  // Produce clean tex for PI review (non-fatal on failure)
-  try {
-    mkdirSync(compiledDir, { recursive: true });
-    execSync(
-      `${provrefCmd} resolve "${texPath}" --runs "${allResultsPath}" --lit "${litPath}" --output "${cleanTexPath}"`,
-      { stdio: "pipe", timeout: 30_000 },
-    );
-  } catch {}
-
-  return null;
 }
 
 // ── Figure citation enforcement ──────────────────────────────────

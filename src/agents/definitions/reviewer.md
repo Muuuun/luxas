@@ -108,7 +108,7 @@ The only project-side overrides preserved are explicit `luxas:no-restyle` sentin
 
 ```
 spawn_agent(agent="illustrator",
-            task="Seed report/figures/style_guide.md from skills/figure/style_guides/<DOMAIN>.md, copying its content essentially verbatim. Then grep for `luxas:no-restyle` markers in report/figstyle.mplstyle and data/scripts/plot_*.py, plus check report/figures/style_overrides.md — for any matches, append an 'Explicit project overrides' section to style_guide.md preserving those specific choices. Do NOT regenerate any figures.",
+            task="Seed report/figures/style_guide.md from skills/figure/style_guides/<DOMAIN>.md, copying its content essentially verbatim. Then grep for `luxas:no-restyle` markers in report/figstyle.mplstyle and data/experiments/*/scripts/plot_*.py, plus check report/figures/style_overrides.md — for any matches, append an 'Explicit project overrides' section to style_guide.md preserving those specific choices. Do NOT regenerate any figures.",
             background=false)
 ```
 
@@ -116,7 +116,7 @@ spawn_agent(agent="illustrator",
 
 **Step 1. Group canonical figures by their source plot script, then build one brief per group.**
 
-For each canonical figure, resolve its matching plot script: `grep -l NAME data/scripts/plot_*.py`. A single script often produces multiple canonical figures. Invert to `{script_path: [figures]}` — one illustrator instance owns each script, avoiding editing-race and overwrite hazards.
+For each canonical figure, resolve its matching plot script: `grep -l NAME data/experiments/*/scripts/plot_*.py`. A single script often produces multiple canonical figures. Invert to `{script_path: [figures]}` — one illustrator instance owns each script, avoiding editing-race and overwrite hazards.
 
 Edge cases:
 - `grep` returns multiple scripts for one figure → pick the script whose body contains `savefig(...NAME.pdf...)` literally.

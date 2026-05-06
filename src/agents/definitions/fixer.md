@@ -51,8 +51,6 @@ edit, and re-compile to verify.
 - `Undefined reference to 'key'`: \ref{key} or \cite{key} where key is not defined
   in \label{...} or the .bib file.
 - `Extra }, or forgotten $`: mismatched braces or unclosed math mode.
-- `provref: unknown key`: the \resultref or \litref key is not in results.json /
-  literature_values.json. Either add the key or correct the reference.
 </common_errors>
 
 <output_format>

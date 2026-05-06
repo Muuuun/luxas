@@ -99,7 +99,7 @@ section("4. extractExpectedArtifact");
 const cases: Array<[string, string]> = [
   ["Return: design/spec_foo.md",        "design/spec_foo.md"],
   ["Deliver circuits/y.stim to brain",  "circuits/y.stim"],
-  ["→ data/runs/r1/results.json",       "data/runs/r1/results.json"],
+  ["→ data/experiments/E1_x/runs/r1/results.json", "data/experiments/E1_x/runs/r1/results.json"],
   ["see `notes/plan.md` for context",   "notes/plan.md"],
   ["just do the literature search",     ""],
   ["Return: ../evil.md",                ""],
