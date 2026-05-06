@@ -75,6 +75,8 @@ Your bash has full network access — not only `pip` / `python` / `curl`, but al
 - `skills/search/scripts/browse open "<url>"`    — browser-use automation for JS / Cloudflare-protected pages (slower; use when fetch fails and the data is load-bearing).
 
 Use these for ANY web data — vendor catalog prices, regulatory specs, datasheet values, news, forum posts — not just academic papers. Catalog vendors (Edmund, Newport, Mouser) usually expose prices in search snippets; quote-only vendors (Hamamatsu high-end, IPG, Special Optics) do not have public catalog prices and no amount of scraping will recover them — flag those as `quote_only` and stop.
+
+If a plot script writes Chinese / Japanese / Korean / non-Latin text (titles, axis labels, ticks), the default matplotlib font is DejaVu Sans which has no CJK glyphs — text will silently render as 豆腐块 (□□□□). `'SimHei'` is Windows-only, `'WenQuanYi Micro Hei'` is Linux-only, and matplotlib does NOT see `'PingFang SC'` on macOS (only `'PingFang HK'`). Cross-platform fallback chain + verification snippet are in `skills/figure/references/pitfalls.md` under "matplotlib non-ASCII / CJK rendering" — drop the rcParams block in once at the top of every CJK plot script.
 </bash_extras>
 
 Brain has created `data/experiments/{{EXPERIMENT_ID}}/` for you (or you create on first write). Write all tool scripts under `scripts/`, tests under `tests/`, outputs under `runs/`. Do not touch other experiments' directories.
