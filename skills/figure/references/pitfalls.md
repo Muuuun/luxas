@@ -23,6 +23,20 @@
 
 ## matplotlib non-ASCII / CJK rendering
 
+**Preferred fix: use the project's default `report/figstyle.mplstyle`** (deployed
+by `init_report` since 2026-05). It already includes the cross-platform CJK
+fallback chain plus `pdf.fonttype: 42` for clean PDF text-layer extraction.
+Just start your plot script with:
+
+```python
+import matplotlib.pyplot as plt
+plt.style.use('report/figstyle.mplstyle')
+```
+
+The rest of this section is for cases where `figstyle.mplstyle` is unavailable
+(one-off exploratory scripts outside `report/`, or projects that pre-date the
+default scaffold).
+
 If your plot has Chinese, Japanese, Korean, or any non-Latin glyphs, matplotlib's
 default sans-serif (DejaVu Sans) has no CJK coverage and silently falls back to
 "豆腐块" (□□□□). Three classic agent failure modes — all three observed in real

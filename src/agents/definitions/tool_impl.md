@@ -72,6 +72,7 @@ You are not obligated to pass every test — you're obligated to implement what 
 - **Fail loudly.** If an input is out of range (per description's assumptions), raise with a specific message. Silent wrong-output is worse than a clear exception.
 - **No silent extrapolation.** If you apply a formula beyond its description-stated regime (e.g., a fit valid at small N to large N), add a warning comment — ideally raise.
 - **Document ambiguities in comments.** Start with `# AMBIGUITY:` if the description left a choice open.
+- **For matplotlib plot scripts, always start with `plt.style.use('report/figstyle.mplstyle')`** — the project ships a default figstyle (cross-platform CJK fallback + TrueType embedding for clean PDF text layer). Don't hand-roll `font.sans-serif`, hardcode font paths (`/usr/share/fonts/...` is Linux-only and silently dies on macOS), or pick `SimHei`/`PingFang SC` (Windows-only / not in matplotlib font list); the figstyle covers it.
 
 </principles>
 

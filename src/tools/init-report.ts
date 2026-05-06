@@ -2,9 +2,13 @@
  * init_report tool — create LaTeX scaffold for the report.
  */
 
-import { existsSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, writeFileSync, mkdirSync, copyFileSync } from "node:fs";
 import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { execSync } from "node:child_process";
+
+const LUXAS_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const GENERAL_MPLSTYLE = join(LUXAS_ROOT, "skills", "venue-specific", "figstyles", "general.mplstyle");
 
 function makeScaffold(title: string): string {
   return `\\documentclass[twocolumn]{article}
@@ -67,6 +71,15 @@ export function createInitReportTool(projectDir: string) {
 
       if (!existsSync(join(reportDir, "references.bib"))) {
         writeFileSync(join(reportDir, "references.bib"), "");
+      }
+
+      // Deploy a default figstyle so plot scripts that do
+      // `plt.style.use('report/figstyle.mplstyle')` get sensible cross-platform
+      // CJK + TrueType embedding from day one. brain may overwrite this with
+      // a venue-specific style (physics-aps / nature-science / etc.) later.
+      const figstylePath = join(reportDir, "figstyle.mplstyle");
+      if (!existsSync(figstylePath) && existsSync(GENERAL_MPLSTYLE)) {
+        copyFileSync(GENERAL_MPLSTYLE, figstylePath);
       }
 
       if (existsSync(texPath)) {

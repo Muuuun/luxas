@@ -5,7 +5,7 @@
 
 text.usetex          : False
 font.family          : sans-serif
-font.sans-serif      : Arial, Helvetica, DejaVu Sans
+font.sans-serif      : Arial, Helvetica, Arial Unicode MS, Hiragino Sans GB, PingFang HK, Heiti TC, Noto Sans CJK SC, WenQuanYi Micro Hei, Microsoft YaHei, SimHei, DejaVu Sans
 font.size            : 7
 mathtext.fontset     : stixsans
 
