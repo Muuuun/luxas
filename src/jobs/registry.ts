@@ -14,7 +14,7 @@ import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { atomicWriteJson, pidAlive, sleep } from "../utils.js";
 
-export type JobStatus = "running" | "done" | "orphaned";
+export type JobStatus = "running" | "done" | "failed" | "orphaned";
 
 export type JobCause =
   | "completed"

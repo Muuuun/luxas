@@ -66,7 +66,7 @@ interface BashResult {
   truncation?: ReturnType<typeof truncateTail>;
   jobId?: string;
   logPath?: string;
-  status?: "running" | "done";
+  status?: "running" | "done" | "failed";
 }
 
 function formatTrailer(
@@ -259,7 +259,7 @@ export function createHardenedBashTool(cwd: string, opts?: BashOptions) {
           logStream.end();
           commitTerminal({
             ...initialState,
-            status: "done", endedAt: Date.now(),
+            status: "failed", endedAt: Date.now(),
             exitCode: null, signal: null,
             cause: `spawn_error:${(err as any)?.code ?? err.message}` as JobCause,
           });
@@ -283,15 +283,22 @@ export function createHardenedBashTool(cwd: string, opts?: BashOptions) {
             : sig ? "signal"
             : "completed";
 
+          // status reflects success: only "done" if exited cleanly with code 0
+          // and no signal/timeout/abort. Anything else is "failed" so callers
+          // (job_status, brain reading active-agents) see the truth instead of
+          // a lying "done" on a crashed job.
+          const finalStatus: "done" | "failed" =
+            (code === 0 && !sig && !timedOut && !aborted) ? "done" : "failed";
+
           commitTerminal({
             ...initialState,
-            status: "done", endedAt: Date.now(),
+            status: finalStatus, endedAt: Date.now(),
             exitCode: code, signal: sig ?? null, cause,
           });
 
           const details: BashResult = {
             truncation: trunc.truncated ? trunc : undefined,
-            jobId, logPath, status: "done",
+            jobId, logPath, status: finalStatus,
           };
 
           if (timedOut) {
