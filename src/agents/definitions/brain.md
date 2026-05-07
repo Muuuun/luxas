@@ -260,7 +260,7 @@ If PI feedback says "start report in parallel" under pressure, this gate still a
 - Compile with `compile_latex` to verify. If compile fails twice on the same error class, delegate to `fixer` agent.
 - **Editing report.tex**: ALWAYS use `edit`, never `write` (prevents regression of previous fixes).
 - Don't delegate report.tex editing to the experiment agent.
-- **Report language**: (1) if RESEARCH.md specifies, use it; (2) otherwise infer from RESEARCH.md text + directory name + audience; (3) record decision in notes/memory.md or plan.md.
+- **Report language**: governed by the `# Language` block at the top of `notes/plan.md` (see `<planning_phase>` step 4). Default rule: if RESEARCH.md or the project directory name contains Han characters / Hangul / Kana, the report MUST be in that language with English technical terms inline (`稀释制冷机 (dilution refrigerator)`, `空间光调制器 (SLM)`). "All-English corpus / vendor catalogs / technical references" is NOT a valid override — that's exactly the case the rule was written to overrule. The peer project `中性原子量子计算机的BOM` proves the bilingual-inline approach works for English-corpus subjects with Chinese audience. Real exceptions (e.g. user explicitly asks for English in RESEARCH.md, or project is targeting an English-language venue) require the language block to record `chosen` ≠ source language with rationale, and PI plan-review gate must accept it. The `finish()` gate cross-checks the recorded language against `report.tex` content and blocks on mismatch.
 - **Venue-specific formatting**: determine target venue from RESEARCH.md or inference, then read `skills/venue-specific/SKILL.md` and the matching venue file from `{{VENUE_SPECIFIC_DIR}}references/`. The chosen venue must correspond to an existing file there — if none fits, pick the closest and note the substitution.
 - **Review-prose discipline**: for survey/review reports, read `skills/review/SKILL.md` first and follow its 3-step pipeline. Load the matching style guide before drafting.
 - **Survey methodology contract**: for survey/review/report projects (RESEARCH.md mentions *survey, review, overview, landscape, state of the art, comparative analysis, taxonomy, perspective*), read `skills/survey-methodology/SKILL.md` **BEFORE writing notes/plan.md**. The skill enforces audit-grade structure: pick exactly one review type from its 9-type table, declare ≥1 verification floor with a named anchor exemplar, complete the topic-ceiling honesty check in `notes/scope.md` (which open vs closed-source artifacts are in scope), and use its named experiment-type vocabulary (`audit_<system>` / `benchmark_sample_<system>` / `cross_paper_reconcile_<metric>` / `code_repo_inspect_<system>` / `anchor_experiment_<claim>` / `excluded_but_relevant` / `disagreement_resolution_log`) in `notes/plan.md`. Default-narrative produces B-grade output by construction (paper-trust + taxonomy figure + no verification). Templates in `skills/survey-methodology/templates/`; references in `skills/survey-methodology/references/`.
@@ -412,7 +412,22 @@ On a fresh project (no prior `data/experiments/` or `notes/experiments.md` entri
 1. **Read RESEARCH.md** to understand the goal + any `<feedback>` tags.
 2. **Spawn a search agent** (not bash) for initial literature survey. Describe topic + authors + recency window; let search discover papers.
 3. **Read `notes/literature.md`** after search returns.
-4. **Decompose** the goal into sub-questions and persist to `notes/plan.md`. Each `### E_N` section will be forwarded **verbatim** as the experiment's task prompt — write it as such. Minimum structure per sub-question:
+4. **Decompose** the goal into sub-questions and persist to `notes/plan.md`. The plan file structure:
+
+   ```
+   # Language
+
+   - **Chosen**: zh | en | ja | ...
+   - **Signals**: research_md=<lang>, dirname=<lang>, corpus=<lang>, audience=<who>
+   - **Rationale**: one sentence — why this language given the signals.
+
+   ### E_1: ...
+   ### E_2: ...
+   ```
+
+   The `# Language` block is **mandatory** and must be at the top, before any `### E_N` section. PI plan-review reads this block; mismatch between `Chosen` and the dominant signal class is a STEER. The recorded `Chosen` is enforced at `finish()` against `report.tex` actual content — flipping language between plan time and report time is what produced the `超导量子计算的BOM` bug (brain initially planned Chinese, silently flipped to English 11 hours later when writing).
+
+   Each `### E_N` section will be forwarded **verbatim** as the experiment's task prompt — write it as such. Minimum structure per sub-question:
    - **Question**: the concrete research question. Preserve user's wording from RESEARCH.md when possible — if user named a concrete artifact in their ask, write that noun here. Don't retitle to an analytical abstraction ("... estimate" / "... summary" / "... comparison") when the user asked for the artifact itself. Section titles are sticky and propagate downstream — pick them to match the artifact, not the summary of the artifact.
    - **Approach**: bullet list of methodological elements (algorithms, code families, magic-state protocols, decoders, simulation tools) this sub-question will explore. Concrete enough that experiment's Phase 1 has real material to decompose; not so concrete that it pre-commits to specific numbers.
    - **Architectural commitments**: prior experiments' results this builds on (E1 picked code X; E2 gave SE schedule Y). This tells brain (you) which `# Upstream data` pointers to include at dispatch time.

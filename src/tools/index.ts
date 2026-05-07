@@ -8,6 +8,7 @@ import { md5OrNull, extractFrontmatterBlock, parseAuditFrontmatter } from "../ut
 import type { Agent } from "@mariozechner/pi-agent-core";
 import { createReportTools } from "./report.js";
 import { createInitReportTool } from "./init-report.js";
+import { createAuthorityEscalationTools } from "./authority-escalation.js";
 import { createCodingToolsForProject } from "./coding.js";
 import { createSpawnAgentTool, getActiveBackgroundAgents } from "./spawn-agent.js";
 import { buildSafetyWrapper } from "../agents/safety-wrappers.js";
@@ -138,6 +139,7 @@ export function buildResearchTools(
   }
   const codingTools = brainWrapper(createCodingToolsForProject(projectDir), projectDir, templateVars);
   const reportTools = createReportTools(projectDir);
+  const authorityTools = createAuthorityEscalationTools(projectDir);
 
   // Deferred parent agent ref — set after Agent is constructed (needed for background steer)
   let parentAgentRef: Agent | undefined;
@@ -307,6 +309,42 @@ export function buildResearchTools(
         }
         if (selfGen.length === 0 && includes.length === 0) {
           return { content: [{ type: "text" as const, text: `Cannot finish: report.tex contains zero figures. Every research report needs ≥1 self-generated figure under report/figures/ visualising experiment results. See brain.md <generated_figures>.` }] };
+        }
+
+        // Language gate: cross-check plan.md `# Language`'s `Chosen:` against
+        // report.tex actual content. Catches the silent-flip failure mode
+        // observed in 超导BOM (brain planned Chinese, wrote English 11h later
+        // with no plan-side update). Detection: look for any Han character /
+        // Hangul / Kana in report.tex body. Match: chosen=zh implies CJK
+        // present; chosen=en implies CJK absent (or only present in cite keys).
+        if (existsSync(planPath)) {
+          const planText = readFileSync(planPath, "utf-8");
+          const langStart = planText.match(/^#\s*Language\b[^\n]*$/m);
+          let langBlock = "";
+          if (langStart && langStart.index !== undefined) {
+            const after = planText.slice(langStart.index + langStart[0].length);
+            const nextHeading = after.match(/\n#\s/);
+            langBlock = nextHeading ? after.slice(0, nextHeading.index) : after;
+          }
+          const chosenMatch = langBlock.match(/\*\*Chosen\*\*\s*[:：]\s*([a-z][a-z-]*)/i);
+          const chosen = chosenMatch?.[1].toLowerCase();
+          if (chosen) {
+            // Strip cite/ref blocks before CJK detection so a Chinese-named
+            // bibtex key in an English report doesn't false-positive.
+            const stripped = tex
+              .replace(/\\cite\{[^}]*\}/g, "")
+              .replace(/\\bibliography\{[^}]*\}/g, "")
+              .replace(/%[^\n]*/g, "");
+            const hasCJK = /[一-鿿가-힯぀-ヿ]/.test(stripped);
+            const expectsCJK = chosen === "zh" || chosen === "zh-cn" || chosen === "zh-tw" ||
+              chosen === "ja" || chosen === "ko";
+            if (expectsCJK && !hasCJK) {
+              return { content: [{ type: "text" as const, text: `Cannot finish: notes/plan.md's # Language block declares Chosen: ${chosen}, but report.tex contains no CJK characters in its body. The report drifted from the planned language. Either translate the report to ${chosen} (use bilingual inline for technical terms — peer project 中性原子量子计算机的BOM is the worked example) OR update notes/plan.md's # Language block with a new Chosen + rationale and re-run plan-PI gate.` }] };
+            }
+            if (!expectsCJK && hasCJK) {
+              return { content: [{ type: "text" as const, text: `Cannot finish: notes/plan.md's # Language block declares Chosen: ${chosen}, but report.tex contains CJK characters. Either translate to ${chosen} OR update plan.md's # Language block.` }] };
+            }
+          }
         }
       }
 
@@ -532,6 +570,7 @@ export function buildResearchTools(
   const tools = [
     ...reportTools,
     initReport,
+    ...authorityTools,
     ...codingTools,
     spawnTool,
     idleTool,
