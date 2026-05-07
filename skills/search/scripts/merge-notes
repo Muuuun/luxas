@@ -177,18 +177,34 @@ function mergeReferences() {
   }
   const seen = new Map();
   let dropped = 0;
+  let renamed = 0;
   for (const f of frags) {
     const key = f.slice(0, -4);
     const norm = key.toLowerCase().replace(/[_-]/g, "");
     if (seen.has(norm)) { dropped++; continue; }
-    const content = readFileSync(join(fragDir, f), "utf-8").trim();
+    let content = readFileSync(join(fragDir, f), "utf-8").trim();
     if (content.length === 0) continue;
+
+    // Normalize the inner cite_key to match the filename. CrossRef-derived
+    // BibTeX blocks sometimes use keys with underscores (`Panteleev_2022`)
+    // while the reader saved the file as `Panteleev2022.bib` (the canonical
+    // cite_key brain uses via \cite{}). When the inner key mismatches the
+    // filename, bibtex never finds it and the citation renders as [?] in
+    // the PDF. Rewrite the first `@TYPE{KEY,...}` so the entry key matches
+    // the filename. Logged so the reader-side generation bug stays visible.
+    const innerKeyMatch = content.match(/^(\s*@\w+\s*\{)\s*([^,\s]+)\s*,/m);
+    if (innerKeyMatch && innerKeyMatch[2] !== key) {
+      console.warn(`[merge-notes] normalized cite_key in ${f}: "${innerKeyMatch[2]}" → "${key}"`);
+      content = content.replace(innerKeyMatch[0], `${innerKeyMatch[1]}${key},`);
+      renamed++;
+    }
+
     seen.set(norm, content);
   }
   mkdirSync(join(projectDir, "report"), { recursive: true });
   const header = "% Merged from report/references.d/. Do not edit directly — edits are overwritten by search agent's merge step. Edit the per-paper fragments instead.\n\n";
   writeFileSync(outPath, header + [...seen.values()].join("\n\n") + "\n");
-  return { fragments: seen.size, dropped, skipped: false };
+  return { fragments: seen.size, dropped, renamed, skipped: false };
 }
 
 // ── main ────────────────────────────────────────────────────────
@@ -198,5 +214,5 @@ const methStats = mergeMethodology();
 const bibStats = mergeReferences();
 const bibTail = bibStats.skipped
   ? "no references.d/ — skipped (legacy bib preserved)"
-  : `${bibStats.fragments} bib entries (${bibStats.dropped} dup-key fragments dropped)`;
+  : `${bibStats.fragments} bib entries (${bibStats.dropped} dup-key dropped, ${bibStats.renamed} cite_key normalized)`;
 console.log(`merged ${litCount} literature fragments, ${methStats.fragments} methodology fragments, ${methStats.bullets} unique bullets, ${methStats.papers} papers processed, ${bibTail}.`);

@@ -136,7 +136,7 @@ writeFileSync(join(bibRoot, "report/references.d/Aardvark2023.bib"),
 const resBib = spawnSync(MERGE, [bibRoot], { encoding: "utf-8" });
 check("bib merge exit 0", resBib.status === 0, resBib.stderr);
 check("bib merge summary mentions 1 dropped (dup-key)",
-  /3 bib entries \(1 dup-key fragments dropped\)/.test(resBib.stdout),
+  /3 bib entries \(1 dup-key dropped/.test(resBib.stdout),
   resBib.stdout.trim());
 const bib = readFileSync(join(bibRoot, "report", "references.bib"), "utf-8");
 const bibKeys = [...bib.matchAll(/@\w+\s*\{\s*([A-Za-z0-9_]+)/g)].map(m => m[1]);
