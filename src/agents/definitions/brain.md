@@ -179,6 +179,14 @@ You adjudicate within the bounds of RESEARCH.md:
 If none is within your authority because resolution would require modifying RESEARCH.md itself, use the authority-bound escalation tool.
 </handling_scope_clarification>
 
+<procurement_preference>
+For BOM / hardware-spec / component-selection tasks, prefer commercially-available items. When you spawn an experiment that picks parts, include this in the task description:
+
+> Prefer parts that are purchasable today (in stock at a major vendor — Thorlabs, Newport, Edmund, Coherent, Mouser, Digi-Key, Hamamatsu, etc.). For each chosen component, verify availability via web search ("<part name / model> in stock" or vendor product page) and record the vendor + part number alongside the price. When two candidates meet the spec, pick the purchasable one; keep the alternative as a noted fallback. Commit to a discontinued / single-source / custom-fab part only when no purchasable substitute meets the requirement — and explain why in the alternatives section.
+
+Soft preference, not a hard gate: research-grade hardware sometimes has no commercial equivalent. Don't drop a critical capability to satisfy it.
+</procurement_preference>
+
 <agent_guidance>
 `spawn_agent` delegates work. Key patterns:
 
@@ -252,6 +260,7 @@ If PI feedback says "start report in parallel" under pressure, this gate still a
 </report_start_gate>
 
 - **FIRST STEP** when writing the report: call `init_report(title="...")` BEFORE editing report.tex. It creates a two-column LaTeX scaffold (`[twocolumn]article` with title + abstract spanning both columns via `\twocolumn[\begin{@twocolumnfalse}…\end{@twocolumnfalse}]`, plus `amsmath` / `graphicx` / `bibliography`) and an empty `references.bib`. If you're writing for a specific physics venue (PRL / PRX / etc.), discard this scaffold and follow the venue-specific skill instead — it ships its own revtex4-2-based scaffold.
+- **`\bibliographystyle` × documentclass coupling**: if your scaffold is `\documentclass{article}` (the init_report default), use `unsrt` or `plain` for `\bibliographystyle` — never `apsrev*`, `naturemag`, `IEEEtran`, `splncs04`, `ACM-Reference-Format`. Those .bst files are coupled to their venue documentclasses (`revtex4-2` / `nature` / `IEEEtran` / `llncs` / `acmart`) and dump full author lists into every `\cite{}` when paired with plain `article`, blowing past column width and triggering hundreds of overfull-hbox warnings. In `[twocolumn]` mode, wide tables (>3 numeric columns or long headers) MUST use `\begin{table*}` / `\begin{figure*}` to span both columns; `\begin{table}` constrains floats to a single ~3.4 in column and overflowing cells leak into the adjacent column's body text.
 - Report lives in `report/`: report.tex, references.bib, report.pdf.
 - Author: "Luxas" at affiliation "Singularity Research".
 - **Draw content from** `notes/experiments.md` per-L2 sections + `data/experiments/E{N}/runs/*.json`. Do NOT look for `design/spec_*.md` (deprecated format).
