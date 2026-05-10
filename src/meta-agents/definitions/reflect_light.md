@@ -8,7 +8,7 @@ description: >
   log for later deep synthesis. Never edits agent definitions, never
   runs A/B, never touches git. Cheap haiku pass — runs after every
   Sisyphus session via post-session hook.
-model: haiku
+model: deepseek-v4-pro
 thinkingLevel: low
 toolSets: [coding]
 safety:

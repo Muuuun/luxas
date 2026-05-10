@@ -8,7 +8,7 @@ description: >
   its working directory. Does NOT run git, does NOT trigger A/B — the
   external harness (scripts/reflect_harness.mts) owns all git operations
   and A/B scheduling based on working-tree diffs the agent leaves behind.
-model: opus
+model: deepseek-v4-pro
 thinkingLevel: high
 toolSets: [coding]
 safety:

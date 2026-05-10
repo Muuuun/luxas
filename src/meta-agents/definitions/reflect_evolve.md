@@ -11,7 +11,7 @@ description: >
   prohibitively expensive. Instead the user reads the rationale + diff and
   makes a plausibility judgment. Output lives in inbox/evolution/, separate
   from reflect's current/ pending.
-model: opus
+model: deepseek-v4-pro
 thinkingLevel: high
 toolSets: [coding]
 safety:
