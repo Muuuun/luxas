@@ -6,6 +6,7 @@ const defs = loadMetaAgentDefinitions();
 const expectedPreset: Record<string, readonly string[]> = {
   reflect: META_SAFETY_PRESETS.meta_scope,
   reflect_light: META_SAFETY_PRESETS.meta_scope,
+  reflect_validate: META_SAFETY_PRESETS.meta_scope,
   reflect_evolve: META_SAFETY_PRESETS.evolve_scope,
 };
 

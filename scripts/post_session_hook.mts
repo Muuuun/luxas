@@ -84,6 +84,28 @@ if (lightResult.status !== 0) {
   process.exit(1);
 }
 
+// ── 1.5. Validate the latest observation (git check + 2-agent debate) ─────
+//
+// reflect_light may have written a fresh observation. Before letting it sit
+// in the queue (where it would eventually inflate run_counter and trigger
+// the expensive deep harness), run validate_observation: phase 1 greps git
+// log to detect "already addressed by recent commit"; phases 2-3 spawn a
+// pro/con debate (reflect_validate ×2) and converge ≤ MAX_ROUNDS rounds.
+// Output is appended to observations.jsonl as a separate `type: validation`
+// entry referencing the observation by session_id+pattern. The deep
+// harness later filters on these to skip already-addressed and false
+// observations.
+const validateResult = spawnSync(
+  "npx",
+  ["tsx", join(sisyphusRoot, "scripts/validate_observation.mts"), sisyphusRoot],
+  // Each round spawns 2 reflect_validate calls (5min cap each), MAX_ROUNDS=3
+  // → upper bound ~30min. Set wider to absorb retry overhead.
+  { stdio: "inherit", cwd: sisyphusRoot, timeout: 45 * 60_000 },
+);
+if (validateResult.status !== 0) {
+  console.error(`validate_observation failed (status ${validateResult.status}); continuing`);
+}
+
 // ── 2. Bump run counter. If threshold reached, trigger deep review ────────
 
 const n = bumpRunCounter();

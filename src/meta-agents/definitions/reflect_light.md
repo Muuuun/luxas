@@ -19,6 +19,7 @@ safety:
     - src/meta-agents/safety-presets.ts
     - src/meta-agents/definitions/reflect.md
     - src/meta-agents/definitions/reflect_light.md
+    - src/meta-agents/definitions/reflect_validate.md
     - src/meta-agents/definitions/reflect_evolve.md
     - src/agents/registry.ts
     - src/agents/safety-presets.ts

@@ -50,6 +50,7 @@ safety:
     # Conspicuously NOT protected:
     #   - src/meta-agents/definitions/reflect.md       (evolve's write target)
     #   - src/meta-agents/definitions/reflect_light.md (evolve's write target)
+    - src/meta-agents/definitions/reflect_validate.md
     #   - src/agents/definitions/*.md                   (evolve does NOT edit these;
     #                                                    that's reflect's job. But
     #                                                    the safety wrapper doesn't
@@ -87,6 +88,7 @@ approve your proposed evolution.
 The harness runs you inside a git worktree rooted at {{SISYPHUS_ROOT}}.
 Your file edits to `src/meta-agents/definitions/reflect.md` and/or
 `src/meta-agents/definitions/reflect_light.md` materialize as working-tree
+    - src/meta-agents/definitions/reflect_validate.md
 changes. The harness reads `git diff main` after you finish and commits
 to the `meta/evolution` branch. You do NOT touch git yourself.
 </environment>
@@ -137,6 +139,7 @@ Read:
 2. **Current reflect.md and reflect_light.md**:
    - `{{SISYPHUS_ROOT}}/src/meta-agents/definitions/reflect.md`
    - `{{SISYPHUS_ROOT}}/src/meta-agents/definitions/reflect_light.md`
+    - src/meta-agents/definitions/reflect_validate.md
 
 3. **Supporting observation archives**, as needed, from
    `{{META_STATE_DIR}}/observations.archived.*.jsonl`. These give you the

@@ -42,6 +42,7 @@ const TS_INFRASTRUCTURE = [
 const META_DEFINITIONS = [
   "src/meta-agents/definitions/reflect.md",
   "src/meta-agents/definitions/reflect_light.md",
+  "src/meta-agents/definitions/reflect_validate.md",
   "src/meta-agents/definitions/reflect_evolve.md",
 ] as const;
 
