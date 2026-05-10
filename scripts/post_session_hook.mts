@@ -20,7 +20,7 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import {
   bumpRunCounter,
   resetRunCounter,
@@ -57,10 +57,24 @@ if (inboxLocked()) {
 }
 
 // ── 1. Run reflect_light against the just-finished session ────────────────
+//
+// SESSION_ID is computed harness-side as path.basename(sessionJsonl) and
+// passed as a separate template variable. Previously we relied on the
+// agent extracting "the basename" from SESSION_JSONL_PATH itself, but
+// deepseek-v4-pro at low-thinking consistently stripped the .done-<ts>
+// suffix down to bare "checkpoint" — destroying uniqueness, breaking the
+// validate_observation.mts dedup key, and producing empty SESSION_JSONL_PATH
+// downstream when the bare stem doesn't include a "/". 3-round debate
+// audit converged real/high; root cause is agent prompt-noncompliance under
+// ambiguous "basename" wording. Fix at the right layer (compute it here,
+// pass it as-is) rather than relying on prompt discipline.
+
+const sessionId = basename(sessionJsonl);
 
 const lightVars = {
   SISYPHUS_ROOT: sisyphusRoot,
   SESSION_JSONL_PATH: sessionJsonl,
+  SESSION_ID: sessionId,
   META_STATE_DIR: paths.stateDir,
   INBOX_DIR: paths.inboxDir,
 };

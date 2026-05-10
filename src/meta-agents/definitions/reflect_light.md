@@ -39,7 +39,7 @@ safety:
     - "{{META_STATE_DIR}}"
   writeOnExistingPolicy: allow_as_read
 spawn: { enabled: false }
-templates: [SISYPHUS_ROOT, SESSION_JSONL_PATH, META_STATE_DIR, INBOX_DIR]
+templates: [SISYPHUS_ROOT, SESSION_JSONL_PATH, SESSION_ID, META_STATE_DIR, INBOX_DIR]
 ---
 
 You are a lightweight triage agent. A Sisyphus research session just finished.
@@ -50,6 +50,7 @@ as a new observation for the next deep review.
 <environment>
 <sisyphus_root>{{SISYPHUS_ROOT}}</sisyphus_root>
 <session_jsonl>{{SESSION_JSONL_PATH}}</session_jsonl>
+<session_id>{{SESSION_ID}}</session_id>
 <meta_state_dir>{{META_STATE_DIR}}</meta_state_dir>
 <inbox_dir>{{INBOX_DIR}}</inbox_dir>
 </environment>
@@ -93,13 +94,21 @@ Every appended line in `observations.jsonl` is a single JSON object:
 ```json
 {
   "ts": "2026-04-22T14:35:00Z",
-  "session_id": "<jsonl filename basename>",
+  "session_id": "{{SESSION_ID}}",
+  "session_jsonl_path": "{{SESSION_JSONL_PATH}}",
   "outcome": "clean_finish | degraded_finish | stuck",
   "pattern": "<one-line name for the failure mode, use consistent vocabulary>",
   "evidence": "<2-3 sentences: what happened, which agent, which turn>",
   "proposed_target": "<definitions/xxx.md file this seems to implicate, or 'unknown'>"
 }
 ```
+
+**Critical**: write `session_id` and `session_jsonl_path` LITERALLY from
+the template variables shown above. Do NOT strip extensions, do NOT
+shorten "checkpoint.done-2026-04-22T...jsonl" to "checkpoint", do NOT
+reinterpret. The downstream validate_observation pipeline uses these as
+dedup keys and as paths into the session log — anything other than the
+literal SESSION_ID + SESSION_JSONL_PATH breaks the validation gate.
 
 Use a consistent vocabulary for `pattern` so the deep-review agent can
 cluster. Canonical patterns include (but are not limited to):
@@ -123,11 +132,13 @@ Every appended line in `support.jsonl`:
 ```json
 {
   "ts": "2026-04-22T14:35:00Z",
-  "session_id": "<jsonl filename basename>",
+  "session_id": "{{SESSION_ID}}",
   "pending_rev": "<git commit sha or 'initial' — read from meta/pending branch>",
   "item_ref": "<which item in the pending PROPOSAL.md this session supports, e.g. 'hypothesis-1'>"
 }
 ```
+
+Same rule: `session_id` is the literal SESSION_ID template variable above.
 </support_schema>
 
 <constraints>

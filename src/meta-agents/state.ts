@@ -10,7 +10,7 @@
  */
 
 import { mkdirSync, readFileSync, writeFileSync, existsSync, renameSync, readdirSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { pidAlive } from "../utils.js";
 
@@ -96,18 +96,65 @@ export function readVoteCounter(): number {
   return readCounter(getMetaPaths().voteCounter);
 }
 
+// Sync sleep without spawning a subprocess. Atomics.wait on a fresh
+// SharedArrayBuffer is the standard pattern — blocks the current thread
+// for ms milliseconds. Used for the brief lock-contention spin below.
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/**
+ * Atomically increment a counter file. The naive read-then-write at
+ * `bumpRunCounter` previously was a non-atomic read-modify-write — two
+ * concurrent post_session_hook processes both reading n and both writing
+ * n+1 would lose increments, intermittently delaying the deep-review
+ * threshold. Same hazard for vote counter.
+ *
+ * Approach: O_EXCL lockfile (writeFileSync with flag "wx" atomically
+ * creates-or-fails), held only across the read+write window. Stale locks
+ * from dead PIDs are auto-reaped (same pattern as inboxLocked). 5-second
+ * total budget; throws if contention persists longer (a contention storm
+ * that severe means something else is wrong).
+ */
+function bumpCounterAtomic(counterPath: string): number {
+  const lockPath = `${counterPath}.lock`;
+  // Defensive: production callers go through ensureMetaDirs() first, but
+  // some entry points (test harness, future scripts) may not.
+  mkdirSync(dirname(counterPath), { recursive: true });
+  const start = Date.now();
+  while (Date.now() - start < 5000) {
+    try {
+      writeFileSync(lockPath, `${process.pid}\n${new Date().toISOString()}\n`, { flag: "wx" });
+      try {
+        const n = readCounter(counterPath) + 1;
+        writeCounter(counterPath, n);
+        return n;
+      } finally {
+        try { unlinkSync(lockPath); } catch { /* best-effort cleanup */ }
+      }
+    } catch (e: any) {
+      if (e?.code !== "EEXIST") throw e;
+      // Reap stale lock from a dead PID before sleeping.
+      try {
+        const lockRaw = readFileSync(lockPath, "utf-8");
+        const pid = Number(lockRaw.split("\n")[0]?.trim());
+        if (Number.isFinite(pid) && pid > 0 && !pidAlive(pid)) {
+          try { unlinkSync(lockPath); } catch {}
+          continue;
+        }
+      } catch { /* lock vanished between EEXIST and read — retry immediately */ }
+      sleepSync(20);
+    }
+  }
+  throw new Error(`bumpCounterAtomic: failed to acquire ${lockPath} after 5s`);
+}
+
 export function bumpRunCounter(): number {
-  const p = getMetaPaths();
-  const n = readCounter(p.runCounter) + 1;
-  writeCounter(p.runCounter, n);
-  return n;
+  return bumpCounterAtomic(getMetaPaths().runCounter);
 }
 
 export function bumpVoteCounter(): number {
-  const p = getMetaPaths();
-  const n = readCounter(p.voteCounter) + 1;
-  writeCounter(p.voteCounter, n);
-  return n;
+  return bumpCounterAtomic(getMetaPaths().voteCounter);
 }
 
 export function resetRunCounter(): void {

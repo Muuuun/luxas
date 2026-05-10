@@ -131,6 +131,28 @@ Read, in order:
    - `{{META_STATE_DIR}}/support.jsonl` — sessions that confirmed an
      existing proposal item
 
+   `observations.jsonl` is interleaved: ordinary observation lines from
+   reflect_light AND `type: "validation"` entries from
+   `scripts/validate_observation.mts`. A validation entry references the
+   observation it judged via `validates_session_id` + `validates_pattern`,
+   and carries a `verdict` ∈ {"real", "false", "unresolved"} plus
+   per-round pro/con detail.
+
+   **Filter rule before clustering**: build a verdict map keyed by
+   `(session_id, pattern)`. For each observation, look up its verdict:
+   - `verdict: "false"` → SKIP this observation entirely. The 2-agent
+     debate already concluded it's a one-off / non-issue / already
+     addressed by a recent commit. Do NOT cluster it; do NOT propose
+     against it.
+   - `verdict: "real"` → KEEP and weight more heavily — debate confirmed
+     it's a recurring systemic issue.
+   - `verdict: "unresolved"` → KEEP at normal weight; the debate hung.
+   - No validation entry → KEEP at normal weight (validation may be
+     pending due to a race; treat as unverified-but-include).
+
+   This filter is the load-bearing reason validate_observation exists:
+   ignoring it lets false-alarm observations drive proposals.
+
 3. **Current production definitions**:
    - `src/agents/definitions/*.md` — the files you may edit
    - DO NOT read `src/meta-agents/**` (you're not editing meta layer)

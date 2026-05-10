@@ -46,9 +46,9 @@
  * `_validation_*` entry referencing its session_id+pattern.
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, appendFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, appendFileSync, mkdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { ensureMetaDirs } from "../src/meta-agents/state.js";
+import { ensureMetaDirs, inboxLocked } from "../src/meta-agents/state.js";
 
 const sisyphusRoot = process.argv[2];
 if (!sisyphusRoot || !existsSync(join(sisyphusRoot, "src/meta-agents"))) {
@@ -64,10 +64,44 @@ if (Number.isNaN(MAX_ROUNDS) || MAX_ROUNDS < 1) {
 
 const paths = ensureMetaDirs();
 const obsPath = paths.observations;
+const pendingPath = obsPath.replace(/\.jsonl$/, ".pending.jsonl");
+
+// ── Pending merge (race recovery) ───────────────────────────────────────
+//
+// If a previous validate's appendFileSync was diverted to pendingPath
+// because reflect_harness rotated observations.jsonl mid-flight (or held
+// the inbox lock), drain it back into the live ledger here — but only if
+// we are NOT currently locked, otherwise we'd just compound the race.
+// Append-then-unlink ordering: if we crash between, the pending file is
+// re-merged next run (idempotent: re-merging the same lines twice is
+// detectable via dedup but cheap to leave; cleaner would be a temp-file
+// + rename, deferred).
+if (existsSync(pendingPath) && !inboxLocked()) {
+  try {
+    const pendingBytes = readFileSync(pendingPath, "utf-8");
+    if (pendingBytes.length > 0) {
+      appendFileSync(obsPath, pendingBytes);
+      console.error(`[validate] merged ${pendingBytes.split("\n").filter(Boolean).length} pending entries into ${obsPath}`);
+    }
+    unlinkSync(pendingPath);
+  } catch (e: any) {
+    console.error(`[validate] failed to merge pending file: ${e?.message ?? e}; leaving in place`);
+  }
+}
+
 if (!existsSync(obsPath)) {
   console.error("[validate] no observations.jsonl yet — nothing to validate");
   process.exit(0);
 }
+
+// Capture the inode of observations.jsonl at startup so we can detect
+// rotation-during-validate at append time. If the inode differs at the
+// final write, reflect_harness rotated the file mid-flight and our
+// validation entry would land in a fresh, orphaned file — divert to
+// the pending ledger instead.
+const startInode: number = (() => {
+  try { return statSync(obsPath).ino; } catch { return -1; }
+})();
 
 // Find the latest observation that hasn't been validated.
 const lines = readFileSync(obsPath, "utf-8").trim().split("\n").filter(Boolean);
@@ -129,9 +163,21 @@ if (addressedByCommit) {
 
 // ── Phase 2-3: debate ───────────────────────────────────────────────────
 function runValidate(stance: "pro" | "con", priorRound: string): any {
+  // Prefer the explicit session_jsonl_path field (written by reflect_light
+  // verbatim from the SESSION_JSONL_PATH templateVar). Fall back to legacy
+  // observations that only have session_id — if it looks like a path
+  // (contains "/"), use it; otherwise pass "" and let reflect_validate
+  // operate on observation evidence alone. Bare-stem session_ids
+  // (e.g. "checkpoint") used to dominate the corpus due to agent
+  // basename-stripping; the upstream fix in post_session_hook.mts +
+  // reflect_light.md eliminates new occurrences.
+  const sessionJsonlPath: string =
+    typeof target.session_jsonl_path === "string" && target.session_jsonl_path.length > 0
+      ? target.session_jsonl_path
+      : (target.session_id?.includes("/") ? target.session_id : "");
   const vars: Record<string, string> = {
     SISYPHUS_ROOT: sisyphusRoot,
-    SESSION_JSONL_PATH: target.session_id?.includes("/") ? target.session_id : "",
+    SESSION_JSONL_PATH: sessionJsonlPath,
     META_STATE_DIR: paths.stateDir,
     OBSERVATION_JSON: JSON.stringify(target),
     STANCE: stance,
@@ -250,5 +296,26 @@ const entry = {
   rounds,
 };
 mkdirSync(paths.stateDir, { recursive: true });
-appendFileSync(obsPath, JSON.stringify(entry) + "\n");
-console.error(`[validate] appended validation entry to ${obsPath}`);
+
+// Race-safe append: if reflect_harness rotated observations.jsonl mid-
+// flight (inode changed), or if the inbox is now locked (harness about
+// to rotate), divert to the pending ledger. The next validate startup
+// will merge it back into the live file when conditions are safe.
+const safeToWrite = (() => {
+  if (inboxLocked()) return false;
+  if (startInode < 0) return true; // file didn't exist at startup; trust current
+  try {
+    const nowInode = statSync(obsPath).ino;
+    return nowInode === startInode;
+  } catch {
+    return false; // file vanished — don't write into a fresh post-rotate one
+  }
+})();
+
+if (safeToWrite) {
+  appendFileSync(obsPath, JSON.stringify(entry) + "\n");
+  console.error(`[validate] appended validation entry to ${obsPath}`);
+} else {
+  appendFileSync(pendingPath, JSON.stringify(entry) + "\n");
+  console.error(`[validate] race detected (rotation or lock) — wrote to pending ${pendingPath}; next validate run will merge`);
+}
