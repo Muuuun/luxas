@@ -146,7 +146,18 @@ function runValidate(stance: "pro" | "con", priorRound: string): any {
       "reflect_validate",
       sisyphusRoot,
       JSON.stringify(vars),
-      `Validate the observation per your STANCE=${stance}. Read AT MOST: (1) the OBSERVATION_JSON shown above, (2) the CANDIDATE_COMMIT diff if provided via git show, (3) one quick git log scan, (4) the relevant section of the session jsonl IF the observation cites specific lines. Then STOP and emit your verdict as a JSON code block. Do NOT explore further; do NOT recursively read the codebase. The orchestrator parses the LAST {...} JSON block in your output, so end your output with the verdict.`,
+      // NOTE on prompt wording: do NOT mention "orchestrator", "parser",
+      // "the script", or any other hint that there exists an enclosing
+      // process reading your output. A previous wording (~"the orchestrator
+      // parses the LAST {...} JSON block") nudged deepseek-v4-pro into
+      // grep+read-ing this very script and copy-pasting the fallback
+      // rationale string verbatim into its verdict — 12/12 invocations
+      // returned identical "agent did not emit parseable verdict JSON"
+      // rationales, all flowing through the try-path (4-key shape, no
+      // raw_output_tail). Keep the ask scoped to the agent's own task.
+      // Also: do NOT name files under scripts/ or src/meta-agents/ — the
+      // mere mention is a treasure-map for a curious agent.
+      `Validate the observation per your STANCE=${stance}. Bound your investigation: (1) the OBSERVATION_JSON shown above, (2) the CANDIDATE_COMMIT diff if provided via git show, (3) one quick git log scan, (4) the relevant section of the session jsonl IF the observation cites specific lines. Then STOP and emit your verdict as a fenced JSON code block at the end of your reply. Do NOT explore further; do NOT recursively read the codebase.`,
     ],
     // 10min cap per call (was 5min, agents were timing out mid-bash). With
     // the stricter "AT MOST 4 reads" prompt above, normal verdicts return
@@ -172,7 +183,22 @@ function runValidate(stance: "pro" | "con", priorRound: string): any {
       }
     } catch { /* keep looking */ }
   }
-  return { stance, verdict: "unresolved", rationale: "agent did not emit parseable verdict JSON", evidence_cited: [], raw_output_tail: out.slice(-500) };
+  // Sentinel rationale (not a natural-language phrase) so the try-path
+  // and fallback-path are byte-distinguishable in the appended jsonl.
+  // Previously the fallback used a plain English string that an over-
+  // eager agent could (and did) hallucinate / copy-paste, making the
+  // two paths indistinguishable in postmortem.
+  const stderr = r.stderr ?? "";
+  return {
+    stance,
+    verdict: "unresolved",
+    rationale: "__VALIDATE_FALLBACK_NO_PARSEABLE_JSON__",
+    evidence_cited: [],
+    raw_stdout_len: out.length,
+    raw_stderr_len: stderr.length,
+    raw_output_tail: out.slice(-800),
+    raw_stderr_tail: stderr.slice(-400),
+  };
 }
 
 const rounds: Array<{ round: number; pro: any; con: any }> = [];
