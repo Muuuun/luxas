@@ -1,15 +1,16 @@
 #!/usr/bin/env tsx
 /**
- * smoke_v5_paths — guard against regression to V3 layout.
+ * smoke_experiment_paths — guard against regression to a flat data/ layout.
  *
  *   1. provref / resultref / litref / mergeRuns / PROVREF surface should be 0
  *      across src/, scripts/, skills/.
- *   2. Bare `data/scripts/` and `data/runs/` (the V3 dirs) should be 0 in agent
- *      prompts and tool code (V5 layout: `data/experiments/<EID>/scripts|runs/`).
+ *   2. Bare `data/scripts/` and `data/runs/` (the old flat dirs) should be 0
+ *      in agent prompts and tool code — current layout is
+ *      `data/experiments/<EID>/scripts|runs/`.
  *   3. init_report scaffold must not reference provref / `\resultref` / PROVREF_USAGE.md.
  *   4. Project init creates data/experiments/, NOT data/scripts/ or data/runs/.
  *
- *   npx tsx scripts/smoke_v5_paths.mts
+ *   npx tsx scripts/smoke_experiment_paths.mts
  */
 import { execSync } from "node:child_process";
 import { mkdtempSync, readFileSync, existsSync, readdirSync, writeFileSync, rmSync } from "node:fs";
@@ -29,7 +30,7 @@ console.log("1. provref surface across src/, scripts/, skills/");
 function grepSurface(pattern: string): string[] {
   try {
     const out = execSync(
-      `grep -rEn "${pattern}" src/ scripts/ skills/ 2>/dev/null | grep -v node_modules | grep -v smoke_v5_paths.mts || true`,
+      `grep -rEn "${pattern}" src/ scripts/ skills/ 2>/dev/null | grep -v node_modules | grep -v smoke_experiment_paths.mts || true`,
       { cwd: ROOT, encoding: "utf-8" },
     ).trim();
     return out ? out.split("\n") : [];
@@ -43,13 +44,13 @@ check(`provref / resultref / litref / mergeRuns hits = 0`,
   provrefHits.length === 0,
   provrefHits.length ? `\n    ${provrefHits.slice(0, 5).join("\n    ")}` : undefined);
 
-// ── 2. data/scripts and data/runs (V3 dirs) should be 0 ──────────
-console.log("\n2. V3 layout strings (data/scripts, data/runs) in source");
-const v3Hits = grepSurface("data/scripts/|data/runs/")
+// ── 2. flat data/scripts and data/runs should be 0 (must be per-experiment) ──
+console.log("\n2. flat data/scripts, data/runs in source (must be per-experiment)");
+const flatHits = grepSurface("data/scripts/|data/runs/")
   .filter(line => !line.includes("data/experiments/"));
 check(`data/scripts/ and data/runs/ literal hits = 0`,
-  v3Hits.length === 0,
-  v3Hits.length ? `\n    ${v3Hits.slice(0, 5).join("\n    ")}` : undefined);
+  flatHits.length === 0,
+  flatHits.length ? `\n    ${flatHits.slice(0, 5).join("\n    ")}` : undefined);
 
 // ── 3. init_report scaffold no longer mentions provref ───────────
 console.log("\n3. init_report scaffold");
@@ -93,7 +94,7 @@ try {
     mkdirSync(join(projectDir, d), { recursive: true });
   }
   // The actual function is exercised by separate integration tests; here we
-  // just assert the source code lists the expected dirs and not the V3 ones.
+  // just assert the source code lists the expected dirs (per-experiment, not flat).
   const projectsTs = readFileSync(join(ROOT, "src/tui/projects.ts"), "utf-8");
   const mkdirLists = projectsTs.match(/for \(const d of \[[^\]]+\]\)/g) ?? [];
   check(`createProject + createProjectShell mkdir lists found (${mkdirLists.length})`,

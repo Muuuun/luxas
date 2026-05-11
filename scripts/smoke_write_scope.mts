@@ -2,7 +2,7 @@
 /**
  * Smoke: wrapper write/edit permissions across the three agent roles.
  *
- * V5 impl/review split is enforced at three layers:
+ * The impl/review split is enforced at three layers:
  *   1. spawn_agent availability — background agents can only delegate to
  *      their declared child types.
  *   2. Prompt guidance — role_separation + scope_boundary blocks spell out

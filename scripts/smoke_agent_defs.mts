@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 /**
- * Smoke: V5 agent definitions load and resolve wrappers/builders.
+ * Smoke: agent definitions load and resolve wrappers/builders.
  */
 import { loadAgentDefinitions } from "../src/agents/registry.js";
 import { buildSafetyWrapper } from "../src/agents/safety-wrappers.js";
@@ -35,7 +35,7 @@ for (const n of ["tool_impl", "tool_review"]) {
 }
 
 if (failures === 0) {
-  console.log(`\nPASS — ${checked.length} V5 agent defs load & wire up cleanly`);
+  console.log(`\nPASS — ${checked.length} agent defs load & wire up cleanly`);
   process.exit(0);
 } else {
   console.log(`\n${failures} failure(s)`);

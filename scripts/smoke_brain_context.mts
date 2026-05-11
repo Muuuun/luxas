@@ -1,7 +1,7 @@
 /**
- * V3 smoke tests — fast, no API calls.
+ * Brain-context smoke tests — fast, no API calls.
  *
- *   npx tsx scripts/smoke_v3.mts
+ *   npx tsx scripts/smoke_brain_context.mts
  *
  * Covers:
  *   1. buildBrainContext renders active_agents / completed_artifacts / plan_status
