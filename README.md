@@ -6,9 +6,13 @@
 
 <br>
 
-Give Luxas a topic in `RESEARCH.md`. It crawls the literature, downloads and reads papers, designs and runs experiments under blind impl/test split, generates publication-grade figures, writes a LaTeX report, submits it to adversarial content + figure + layout review, and produces a compiled PDF with real citations. Multi-hour, crash-recoverable, no human in the loop.
+Luxas is an open-source, multi-agent system for **autonomous scientific research**. Give it a topic in `RESEARCH.md` and it crawls the literature (OpenAlex, arXiv, CrossRef, paywalled venues via an anti-detect browser) and reads the papers it found. Then it designs and runs experiments — with impl and tests written by sibling agents blind to each other — and produces publication-grade figures from the raw results. Finally it writes a LaTeX report, submits it to adversarial content + figure + layout review, and emits a compiled PDF with real citations. Multi-hour, crash-recoverable, no human in the loop.
 
-**Luxas is a harness, not a model.** The intelligence comes from Claude (Opus / Sonnet / Haiku across roles) and OpenAI o3 for math, with one-line family-wide redirect to DeepSeek-v4 (~10× cheaper, 1M context) or Kimi via an env variable. Luxas' job is to give that intelligence a durable workspace: file-backed memory, externalized brain state, detached sub-agent processes, an independent-author pattern that blocks self-review pathologies, and deterministic finish-gates that no prompt can talk past.
+**Luxas is a harness, not a model.** The intelligence comes from Claude (Anthropic; Opus / Sonnet / Haiku across roles) and OpenAI o3 for math, with one-line family-wide redirect to DeepSeek-v4 (~10× cheaper, 1M context) or Kimi via an env variable.
+
+Luxas' job is to give that intelligence a durable workspace: file-backed memory (no embeddings, no vector store), externalized brain state, detached Node sub-agent processes, an independent-author pattern that blocks self-review pathologies, and deterministic finish-gates that no prompt can talk past.
+
+Built on top of [pi-mono](https://github.com/badlogic/pi-mono) — Mario Zechner's agent-loop / tool-lifecycle / hook primitives, vendored as `.tgz` under `vendor/`. See [Comparison](#comparison) for how Luxas differs from LangGraph, CrewAI, AutoGPT, Sakana AI Scientist, and Claude Code.
 
 <br>
 
@@ -19,9 +23,29 @@ Give Luxas a topic in `RESEARCH.md`. It crawls the literature, downloads and rea
 
 [**luxas.im**](https://luxas.im) — an autonomous research colleague: from a question to a compiled manuscript, while you sleep. Try it in the browser, no install.
 
-[Quick Start](#quick-start) · [Switching Models](#switching-models) · [How It Works](#how-it-works) · [Agents](#agents) · [Skills](#skills) · [Safety](#safety) · [Security](#security) · [Requirements](#requirements) · [FAQ](#faq)
+[Example Reports](#example-reports) · [Quick Start](#quick-start) · [How It Works](#how-it-works) · [Comparison](#comparison) · [Agents](#agents) · [Skills](#skills) · [Safety](#safety) · [Security](#security) · [FAQ](#faq) · [Citation](#citation)
 
 </div>
+
+---
+
+## Example Reports
+
+*Skip to [Quick Start](#quick-start) if you came to install.*
+
+Nine end-to-end runs are browsable at [luxas.im/gallery](https://luxas.im/gallery) — each is the full PDF the agent produced from a single one-line topic, including citations, self-generated figures, and adversarial-review notes:
+
+- **Topological Quantum Error Correction** — a survey of QEC codes, thresholds, and experimental realizations
+- **Mechanical loss of neutral atoms from optical tweezers** during fluorescence imaging — semi-classical simulation + imaging protocol optimization
+- **Ultra-fast trap-free imaging of neutral atoms** in optical tweezer arrays — feasibility analysis across atomic species
+- **Microwave superradiance in square arrays of Rydberg atoms** — cooperative decay + eigenvalue analysis + blackbody-triggered collective emission
+- **Beyond the Fermi–Hubbard model** — high-temperature superconductivity in cold-atom quantum simulators
+- **Dipolar supersolid with ultracold polar molecules** — microwave-shielded NaCs experimental pathway
+- **Superradiance in 1D waveguide QED** — numerical investigation of collective emission
+- **Raman transitions in 87Rb via a 3.4 GHz EOM** — viability vs the standard 6.8 GHz approach
+- **Fast fluorescence imaging of single atoms** — bridging the speed gap between optical lattices and tweezers
+
+Each started from a single `luxas init --prompt "..."` and ran end-to-end with no human writing in the manuscript itself. A few required restarts or `pi_pushback.md` iterations when the reviewer and brain genuinely disagreed; the harness is built around those crashes rather than against them.
 
 ---
 
@@ -96,7 +120,13 @@ Brain accounting (cost, tokens, PI counters, compaction markers) is reverse-scan
 
 ### V5 experiment workflow (Design → Impl + Review → Integrate)
 
-The `experiment` agent doesn't write code itself. It (1) **designs** by listing each tool (name, description, input/output shape), (2) for each tool spawns `tool_impl` (writes `scripts/<tool>.py` from description only) and `tool_review` (writes `tests/test_<tool>.py` from description only) in parallel, blind to each other — pytest is the only ground truth, with `SendMessage` ferrying failures back to `tool_impl` for fixes (3-revision cap), (3) **integrates** by running validated tools, landing `data/experiments/<EXP_ID>/runs/run_N/results.json`, appending a `## L2.X` section to `notes/experiments.md`. After return, the harness auto-spawns `experiment_reviewer` for adversarial post-hoc audit (`satisfied` / `revise`).
+The `experiment` agent doesn't write code itself. Three phases:
+
+1. **Design** — list each tool needed (name, description, input/output shape).
+2. **Impl + Review** — for every tool, spawn `tool_impl` (writes `scripts/<tool>.py` from the description alone) and `tool_review` (writes `tests/test_<tool>.py` from the description alone) in parallel, blind to each other. Pytest is the only ground truth; `SendMessage` ferries failures back to `tool_impl` for fixes (3-revision cap).
+3. **Integrate** — run the validated tools, land `data/experiments/<EXP_ID>/runs/run_N/results.json`, append a `## L2.X` section to `notes/experiments.md`.
+
+After return, the harness auto-spawns `experiment_reviewer` for adversarial post-hoc audit (`satisfied` / `revise`).
 
 The blind impl+test split blocks the self-circular failure where impl-and-test are written together (the impl redefines a field's semantics so its self-reported value passes its own assertion — observed live: `max_pair_distance_um` got redefined as post-move distance = 0; tests passed; the tool was wrong).
 
@@ -109,6 +139,28 @@ Two more invariants: scope reduction is `plan.md`-only — prose like "(Descoped
 ### Finalize loop (figures + layout)
 
 Before any `stop` verdict, the reviewer runs `<figure_finalize_loop>`: enumerate `\includegraphics` from `report.tex`, spawn one `illustrator` per source script to regenerate against `report/figures/style_guide.md`, one global-audit `illustrator` for figure-internals (palette / spines / typography / clipping) → `reviews/illustrator_notes.md`, one `typesetter` to rasterize the PDF page-by-page for document-level issues (float distance, caption integrity, column overflow, missing-file red boxes) → `reviews/typesetter_notes.md`. Loop breaks only when both notes report `status: all-clear`; the `<figure_convergence>` tag in reviewer context short-circuits re-audits of unchanged artifacts.
+
+---
+
+## Comparison
+
+Closest neighbours fall into two groups. **Research-domain-specific agents** (deep-research / AI-scientist class): Sakana's AI Scientist runs ML-benchmark experiments end-to-end but doesn't do literature surveys with citations. **General agent frameworks**: LangGraph (declarative graphs), CrewAI (role-based crews), AutoGPT (LLM-driven control). Claude Code is the single-session coding agent.
+
+Luxas is **research-domain-specific** with a compiled-PDF-with-real-citations as the deliverable (not arbitrary text or code), **file-backed and crash-recoverable** (replays from `log.jsonl`, no in-process state), and **multi-model out of the box** (one env var redirects the whole Anthropic family to DeepSeek-v4 or Kimi).
+
+| | Luxas | AI Scientist (Sakana) | LangGraph | CrewAI | AutoGPT | Claude Code |
+|---|---|---|---|---|---|---|
+| Control flow | file-based + hook-enforced gates | scripted pipeline | declarative graph you build | role-based crew | LLM-driven (fragile) | one chat session |
+| Crash-recoverable | ✓ stateless harness, replays from `log.jsonl` | ✗ | ✓ via checkpointer (SQLite/Postgres) | ✗ | ✗ | ✗ |
+| Detached sub-agents | ✓ Node processes + heartbeat + orphan recovery | ✗ | ✗ in-process | ✗ in-process | ✗ | ✗ |
+| Multi-model native | Claude + DeepSeek + Kimi + OpenAI o3 via one env var | OpenAI / Anthropic | DIY plumbing | DIY plumbing | OpenAI-focused | Anthropic-only |
+| Output artifact | compiled LaTeX PDF with `\resultref` number-provenance | LaTeX paper from ML experiments | whatever you wire | whatever you wire | text + files | text + code |
+| Literature survey | ✓ OpenAlex/arXiv/CrossRef/paywall browser | ✗ (uses cached refs) | ✗ | ✗ | ✗ | ✗ |
+| Adversarial self-review | content + figure-internal + PDF-layout, three layers | reviewer agent (single layer) | none built-in | none built-in | none | none |
+
+**When to use Luxas**: you have a research topic, want a literature survey or small-scale computational study, and the deliverable is a compiled report with real citations and figures. Reproducible, auditable (every number traces to a JSON key via [provref](https://github.com/Muuuun/provref)), runs unattended for multiple hours.
+
+**When NOT to use Luxas**: you want a general-purpose agent framework you can graft onto arbitrary tasks (use LangGraph or pi-agent-core directly), or you want an interactive coding session (use Claude Code).
 
 ---
 
@@ -210,8 +262,11 @@ The `finish` tool is the only clean exit; anything else is a crash and the harne
 
 ## FAQ
 
+**How much does it cost per run?**
+Anecdotally $20–80 on the default full-Claude profile and $2–10 on `--profile dual` (DeepSeek text + Kimi vision). Topic depth and reviewer iteration count dominate the spread. Every run's actual token usage lands in `<project>/.agent/usage.log`; check there for real numbers. See the cost table in [Switching Models](#switching-models).
+
 **How is this different from a single long Claude Code session?**
-Claude Code is one agent in one terminal. Luxas is a brain spawning 13 sub-agent types (see [Agents](#agents)) as detached processes, with safety via hooks + declarative frontmatter, file-based notes across compaction, a two-tier finish gate (PI STOP precondition + tool gate, both checking plan/experiments closure), and crash-recovery.
+Claude Code is one agent in one chat. Luxas is a brain spawning 13 sub-agent types (see [Agents](#agents)) as detached processes, with file-based state, deterministic finish gates, and crash-recovery. Full side-by-side in [Comparison](#comparison).
 
 **How do I add a new agent?**
 Drop a new `.md` into `src/agents/definitions/`. Declare `model`, `thinkingLevel`, `toolSets`, `templates`, `spawn`, and (if it writes) `safety`. No TypeScript change — `validateSpawnGraph` sanity-checks the graph on next startup; the agent is immediately visible to `spawn_agent`.
@@ -226,7 +281,7 @@ Re-run `luxas run <dir>`. The harness detects `checkpoint.jsonl`, replays the se
 Brain asking itself "am I done?" is useless. A separate Opus instance with no access to the brain's reasoning traces and a forced `figure_finalize_loop` before any STOP produces adversarial feedback at three layers (content + figure-internal + layout), not agreement. Its verdict lands in `reviews/pi_feedback.md` and `finish` is gated on it.
 
 **Does this actually work?**
-It runs end-to-end on literature surveys and small-scale computational research. Whether output is *publication-quality* depends on model, topic, and reviewer feedback loop — not on the harness. No SOTA claims.
+Nine end-to-end runs are linked under [Example Reports](#example-reports) — they compile, cite real papers, include self-generated figures, and converge under adversarial review. Whether *publication-quality* depends on model + topic + reviewer iterations, not on the harness; no SOTA claims.
 
 ---
 
@@ -237,6 +292,22 @@ Luxas runs Python, shell commands, and `pip install` autonomously inside project
 Security issues (sandbox escape, credential leak through agent output, command injection through a tool argument): open a GitHub issue tagged `security` rather than disclosing publicly first.
 
 ---
+
+## Citation
+
+If you use Luxas to produce reports for publication or for a study about agentic research systems, please cite:
+
+```bibtex
+@software{luxas2026,
+  author       = {Mu Qiao (GitHub: Muuuun)},
+  title        = {Luxas: an autonomous research agent for end-to-end literature
+                  survey, experiment design, and LaTeX report generation},
+  year         = {2026},
+  url          = {https://github.com/Muuuun/luxas},
+  note         = {File-backed multi-agent system on pi-mono;
+                  Claude/DeepSeek/Kimi/OpenAI multi-model harness}
+}
+```
 
 ## Acknowledgments
 
