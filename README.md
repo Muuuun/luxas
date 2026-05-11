@@ -118,7 +118,7 @@ Luxas vendors four [pi-mono](https://github.com/badlogic/pi-mono) packages as `.
 
 Brain accounting (cost, tokens, PI counters, compaction markers) is reverse-scanned from `log.jsonl` on restart. Sub-agents are detached Node processes with their own conversation files; brain talks to them via `active-agents.json` and harvests via heartbeat + orphan recovery on resume. The `idle` tool blocks the brain at zero LLM cost while background work runs. Per-project memory lives in `notes/*.md` (smart-truncated when over budget); cross-project memory in `~/.sisyphus/{projects.json,memory.md}` is auto-injected into new project context.
 
-### V5 experiment workflow (Design → Impl + Review → Integrate)
+### Experiment workflow (Design → Impl + Review → Integrate)
 
 The `experiment` agent doesn't write code itself. Three phases:
 
@@ -174,7 +174,7 @@ Luxas is **research-domain-specific** with a compiled-PDF-with-real-citations as
 | **search** | Sonnet | Literature discovery — OpenAlex / arXiv / CrossRef / citation chains / web / anti-detect browser for paywalls |
 | **reader** | Sonnet | Per-paper extraction → `notes/literature.d/<paper>.md` fragments; hook merges back into canonical `notes/literature.md` |
 | **worker** | Sonnet | Lightweight parallel worker — batch downloads, file ops |
-| **experiment** | Opus (high) | V5 orchestrator (Design → Impl+Review → Integrate). Spawns tool_impl + tool_review per tool; never writes code itself |
+| **experiment** | Opus (high) | 3-phase orchestrator (Design → Impl+Review → Integrate). Spawns tool_impl + tool_review per tool; never writes code itself |
 | **tool_impl** | Sonnet | Writes `scripts/<tool>.py` from the description only. Cannot read tests |
 | **tool_review** | Sonnet | Writes `tests/test_<tool>.py` from the description only. Cannot read impl. ≥1 adversarial test per tool |
 | **experiment_reviewer** | Opus (medium) | Auto-spawned post-experiment. Reads L2.X section, results, cited literature; verdict `satisfied` / `revise` |
