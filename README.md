@@ -17,7 +17,7 @@ Give Luxas a topic in `RESEARCH.md`. It crawls the literature, downloads and rea
 [![][pi-mono-shield]][pi-mono-link]
 [![][license-shield]][license-link]
 
-[Try it now → **luxas.im**](https://luxas.im) · no install, hand it a topic in the browser and watch a multi-hour research run end-to-end.
+[**luxas.im**](https://luxas.im) — an autonomous research colleague: from a question to a compiled manuscript, while you sleep. Try it in the browser, no install.
 
 [Quick Start](#quick-start) · [Switching Models](#switching-models) · [How It Works](#how-it-works) · [Agents](#agents) · [Skills](#skills) · [Safety](#safety) · [Security](#security) · [Requirements](#requirements) · [FAQ](#faq)
 
