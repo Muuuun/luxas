@@ -8,7 +8,7 @@
 
 Hand Luxas a research topic in `RESEARCH.md`. It will crawl the literature, download and read the papers, design and run simulations under independent-author test review, generate publication-grade figures, write a LaTeX report, submit it to adversarial review at both the content and the visual / typographic level, and produce a compiled PDF with real citations. It can run for hours, across crashes, without a human in the loop.
 
-**Luxas is a harness, not a model.** The intelligence comes from Claude (Opus for planning and adversarial review, Sonnet for workers and audits, Haiku for mechanical fixes) and OpenAI o3 for math. Luxas' job is to give that intelligence a durable workspace: file-backed memory, externalized brain state, detached sub-agent processes, an independent-author pattern that prevents self-review pathologies, and deterministic finish-gates that no prompt can talk its way past.
+**Luxas is a harness, not a model.** The intelligence comes from Claude (Opus for planning and adversarial review, Sonnet for workers and audits, Haiku for mechanical fixes), OpenAI o3 for math, with optional family-wide redirect to DeepSeek-v4 (1M context, ~10× cheaper) or Kimi via one environment variable — including a separate vision profile so the figure pipeline keeps working when the text family is text-only. Luxas' job is to give that intelligence a durable workspace: file-backed memory, externalized brain state, detached sub-agent processes, an independent-author pattern that prevents self-review pathologies, and deterministic finish-gates that no prompt can talk its way past.
 
 <br>
 
@@ -21,7 +21,7 @@ Hand Luxas a research topic in `RESEARCH.md`. It will crawl the literature, down
 
 > *"Il faut imaginer Sisyphe heureux."* — Albert Camus
 
-[Quick Start](#quick-start) · [How It Works](#how-it-works) · [Agent Definitions](#agent-definitions) · [Agents](#agents) · [Safety](#safety) · [FAQ](#faq)
+[Quick Start](#quick-start) · [Switching Models](#switching-models) · [How It Works](#how-it-works) · [Agents](#agents) · [Tools](#tools) · [Skills](#skills) · [Safety](#safety) · [Requirements](#requirements) · [FAQ](#faq)
 
 </div>
 
@@ -46,29 +46,84 @@ The CLI entry points are small: `luxas init`, `luxas run`, `luxas status`, `luxa
 
 ## Quick Start
 
+### Before you run — system dependencies
+
+`npm install` alone is not enough; agents shell out to LaTeX, Python, and tmux. Install once:
+
+```bash
+# macOS
+brew install --cask mactex      # or basictex for ~150MB instead of ~5GB
+brew install poppler tmux python@3.11
+pip3 install matplotlib numpy
+
+# Linux (Debian/Ubuntu)
+sudo apt install texlive-latex-extra texlive-fonts-recommended poppler-utils tmux python3-matplotlib python3-numpy
+```
+
+See [Requirements](#requirements) for optional extras (Wolfram, browser-use, provref).
+
+### Install + first run
+
 ```bash
 git clone https://github.com/Muuuun/luxas.git
 cd luxas
 npm install
+npm link                              # makes `luxas` available globally
+                                      # (skip if you'd rather prefix every cmd with `npx tsx src/index.ts`)
 
-# Set your API key
-export ANTHROPIC_API_KEY="your-key-here"
+# Set at least one provider key (any of these works; mix & match for multi-model runs)
+export ANTHROPIC_API_KEY="..."        # Claude (default)
+# export DEEPSEEK_API_KEY="..."       # for --model deepseek-v4-pro or LUXAS_MODEL_PROFILE
+# export KIMI_API_KEY="..."           # for LUXAS_VISION_MODEL_PROFILE=kimi-coding
 
 # Initialize a new project from a one-line prompt (PI writes RESEARCH.md for you)
-npx tsx src/index.ts init ~/research/reasoning --prompt "Survey LLM chain-of-thought reasoning"
+luxas init ~/research/reasoning --prompt "Survey LLM chain-of-thought reasoning"
 
 # Or create RESEARCH.md by hand and run
-npx tsx src/index.ts run ~/research/reasoning --model opus
+luxas run ~/research/reasoning --model opus
 
 # Check on a running or finished project
-npx tsx src/index.ts status ~/research/reasoning
+luxas status ~/research/reasoning
 
 # Re-run only the figure / typesetter finalize loop (skip content review)
-npx tsx src/index.ts figures ~/research/reasoning
+luxas figures ~/research/reasoning
 
 # List every project Luxas has ever touched
-npx tsx src/index.ts list
+luxas list
 ```
+
+### Switching models
+
+Every agent's model is declared in its `.md` frontmatter (`opus` / `sonnet` / `haiku` / `gpt-5.2` / `deepseek-v4-pro` / `deepseek-v4-flash` / `kimi-coding`). Three switching levers, in order of granularity:
+
+```bash
+# 1. Switch the brain only (sub-agents follow their own .md)
+luxas run ~/research/x --model deepseek-v4-pro
+luxas run ~/research/x --model opus
+
+# 2. Switch the whole Anthropic family in one shot (haiku/sonnet/opus → profile)
+LUXAS_MODEL_PROFILE=deepseek-v4-pro luxas run ~/research/x
+
+# 3. Cheap text + capable vision (recommended for budget-bound runs)
+LUXAS_MODEL_PROFILE=deepseek-v4-pro \
+LUXAS_VISION_MODEL_PROFILE=kimi-coding \
+  luxas run ~/research/x
+
+# 4. Default (no env, no --model) → full Claude per frontmatter
+luxas run ~/research/x
+```
+
+`LUXAS_MODEL_PROFILE` only redirects agents that declared `haiku/sonnet/opus` — provider-specific picks like `gpt-5.2` (the `math` agent's reasoning model) bypass on purpose. Vision-required agents (`illustrator`, `illustrator_write`, `typesetter`) need `LUXAS_VISION_MODEL_PROFILE` separately because DeepSeek-v4 is text-only; without it, those agents silently produce unverified figures. The resolution lives in `applyProfile()` in `src/agents/spawn.ts`.
+
+Rough cost envelope per full run, **anecdotal — varies wildly with topic, literature depth, experiment count, and reviewer iterations**. After your first run check `<project>/.agent/usage.log` for the actual breakdown.
+
+| Profile | Anecdotal $/run | Notes |
+|---|---|---|
+| Default (full Claude) | $20–80 (one runaway loop hit $70 before the 500-turn cap landed) | Best for content-heavy review work; only profile with Anthropic prompt caching |
+| `MODEL_PROFILE=deepseek-v4-pro` + Kimi vision | $2–10 | Loses ephemeral `cache_control` (brain context rebuilds every turn); figures via Kimi |
+| `--model opus` only | $20–80 | Lifts brain quality; sub-agents follow their own `.md` picks |
+
+DeepSeek and Kimi keys: `DEEPSEEK_API_KEY` / `KIMI_API_KEY`, or `~/.sisyphus/auth.json` `{deepseek, kimi}`. See [Requirements](#requirements) for the full key matrix.
 
 A run will populate the project directory with notes, downloaded papers, per-experiment artifacts, and a compiled PDF:
 
@@ -216,7 +271,7 @@ You write ONE Python tool from its description...
 |---|---|
 | `name` | Unique identifier used by `spawn_agent` |
 | `description` | Shown in the `spawn_agent` catalog that parent agents see |
-| `model` | `opus` / `sonnet` / `haiku` / `gpt-5.2` / `deepseek-v4-pro` / `deepseek-v4-flash` / `inherit` |
+| `model` | `opus` / `sonnet` / `haiku` / `gpt-5.2` / `deepseek-v4-pro` / `deepseek-v4-flash` / `kimi-coding` / `inherit`. Subject to `LUXAS_MODEL_PROFILE` redirect for the Anthropic tier. |
 | `thinkingLevel` | `off` / `low` / `medium` / `high` |
 | `toolSets` | Names from `src/agents/tool-sets.ts` (`coding`, `report`, `pi`, `wolfram`, `figure-gen`) |
 | `contextBuilder` | Optional — name of a dynamic-context builder in `src/agents/context-builders.ts` |
@@ -326,6 +381,7 @@ Skills live in `skills/` and follow the Agent Skills standard (`SKILL.md` + scri
 | `skills/figure/` | Hybrid figure pipeline — Nano Banana raster components + rembg background strip + TikZ vector assembly. Includes 11 TikZ templates (quantikz / feynman / circuitikz / chemfig / pgfplots / energy_levels / phase_space / pulse_sequence / optical_setup / hybrid_panels) and per-domain palettes / pitfalls references |
 | `skills/venue-specific/` | Formatting rules for 30+ top journals and conferences — Nature, Science, Cell, PRL, NEJM, Lancet, JACS, NeurIPS, ICML. Includes matching `figstyles/` (matplotlib) and `references/` (BibTeX) per venue |
 | `skills/review/` | Survey / synthesis discipline — 10-domain style guide, anti-stacking rules, outline-first / synthesis-rewrite pipeline (sourced from the `review_style_skills` project) |
+| `skills/survey-methodology/` | Methodology layer above `review/` — domain-specific survey construction (claim taxonomies, evidence weighting, coverage scoring) so a literature survey is a piece of analysis rather than an annotated bibliography |
 | `skills/memory/` | Cross-project memory protocol — how to read/write `~/.sisyphus/memory.md` and the per-project `notes/` |
 
 Supporting reference skills (`matplotlib-figures/`, `paper-figures/`) provide additional style guides and worked examples.
@@ -398,7 +454,7 @@ luxas/
 ├── src/
 │   ├── index.ts                    ← CLI entry (run / status / init / list / figures)
 │   ├── agent.ts                    ← 5-layer brain assembly + L3 in-place rebuild + maxTurns kill
-│   ├── auth.ts                     ← API key resolution (Anthropic / OpenAI / Brave)
+│   ├── auth.ts                     ← API key resolution (Anthropic / OpenAI / DeepSeek / Kimi / Brave; env + ~/.sisyphus/auth.json fallback)
 │   ├── context.ts                  ← state injection + two-stage compaction
 │   ├── compaction/                 ← message compaction pipeline
 │   ├── hooks.ts                    ← safety + cost limit (process.exit) + logging + state snapshots
@@ -460,7 +516,8 @@ luxas/
 - **provref** (optional but recommended) — `npm i -g provref` for the merge / check steps during compilation
 - **`WOLFRAM_APP_ID`** or local Wolfram Engine (optional) — for the math agent; falls back to sympy otherwise
 - **`OPENAI_API_KEY`** (optional) — for the math agent (o3)
-- **`DEEPSEEK_API_KEY`** (optional) — for `deepseek-v4-pro` / `deepseek-v4-flash` (1M context, dual Thinking/Non-Thinking modes via `api.deepseek.com/v1`). Useful as a Sonnet/Haiku replacement on `tool_impl` / `tool_review` / `worker` / `fixer` / `reader` where prompt caching isn't load-bearing — not recommended for `brain` or `reviewer` since DeepSeek doesn't support Anthropic-style ephemeral cache_control.
+- **`DEEPSEEK_API_KEY`** (optional) — for `deepseek-v4-pro` / `deepseek-v4-flash` (1M context, dual Thinking/Non-Thinking modes via `api.deepseek.com/v1`). Set `LUXAS_MODEL_PROFILE=deepseek-v4-pro` to redirect every `haiku/sonnet/opus` agent family-wide — ~10× cheaper than Claude but loses Anthropic-style ephemeral `cache_control` (so brain context rebuilds on every turn). Best paired with `LUXAS_VISION_MODEL_PROFILE=kimi-coding` so the figure pipeline (DeepSeek is text-only) keeps producing verified visuals.
+- **`KIMI_API_KEY`** (optional) — for `kimi-coding` (Moonshot Kimi K2). Used as the vision model in dual-profile runs (`LUXAS_VISION_MODEL_PROFILE=kimi-coding`); `illustrator` / `illustrator_write` / `typesetter` route here while everything else goes to DeepSeek.
 - **`BRAVE_API_KEY`** (optional) — for web search in the search skill
 - **browser-use** (optional) — anti-detect browser at `~/.browser-use-env/bin/browser-use` for paywalled sites
 - **`GEMINI_API_KEY`** (optional) — for `generate_raster_component` (Nano Banana) in the hybrid figure pipeline
@@ -476,7 +533,7 @@ A stateless, file-backed harness that drives Claude (and friends) through a mult
 Drop a new `.md` into `src/agents/definitions/`. Declare `model`, `thinkingLevel`, `toolSets`, `templates`, `spawn`, and (if it writes to the project) `safety`. No TypeScript changes — `validateSpawnGraph` sanity-checks the graph on next startup and the new agent is immediately visible to `spawn_agent`.
 
 **How is this different from a single long Claude Code session?**
-Claude Code is one agent in one terminal. Luxas is a brain that spawns thirteen kinds of sub-agents (search / reader / worker / experiment / tool_impl / tool_review / experiment_reviewer / math / illustrator / illustrator_write / typesetter / reviewer / fixer) as detached processes, routes each to a different model, enforces safety limits via hooks and declarative frontmatter rather than prompts, maintains file-based notes across compaction, applies a two-tier commitment-ledger gate (PI STOP precondition + `finish` tool gate, both checking plan/experiments closure), and survives its own crashes.
+Claude Code is one agent in one terminal. Luxas is a brain that spawns 13 sub-agent types (search / reader / worker / experiment / tool_impl / tool_review / experiment_reviewer / math / illustrator / illustrator_write / typesetter / reviewer / fixer; the brain itself brings the total to 14 agent types shipped), each routed to a separate model, run as detached processes, with safety limits enforced via hooks and declarative frontmatter rather than prompt. It maintains file-based notes across compaction, applies a two-tier commitment-ledger gate (PI STOP precondition + `finish` tool gate, both checking plan/experiments closure), and survives its own crashes.
 
 **Why split `tool_impl` and `tool_review` instead of letting the experiment write both?**
 Because letting one agent write impl + tests is the classic self-circular failure mode — the impl redefines a field's semantics so its own self-reported value passes its own assertion. Observed live: `max_pair_distance_um` got redefined as post-move distance = 0; tests passed; the tool was wrong. The blind-author split (tool_impl reads only the description; tool_review reads only the description; pytest is the only ground truth) blocks this.
@@ -503,6 +560,12 @@ provref is a separate tool (see the sister repo) that prevents the agent from ty
 It runs end-to-end on literature surveys and on small-scale computational research projects. Whether the output is *publication-quality* depends on the model, the topic, and the reviewer's feedback loop, not on the harness. No claims are made about SOTA.
 
 ---
+
+## Security
+
+Luxas runs Python, shell commands, and `pip install` autonomously inside the project directory; agents can spawn sub-agents that run detached processes for hours without supervision. Treat any project directory as if it were executed code: don't point Luxas at directories holding credentials, and don't run it as root. Credential surfaces are explicitly guarded — read/write/edit/bash tool wrappers block access to `~/.sisyphus/auth.json`, `~/.aws/credentials`, `~/.netrc`, `~/.ssh/id_*`, and common API-key environment variables (see `src/agents/safety-wrappers.ts`) — but this is defense-in-depth, not a sandbox.
+
+If you find a security issue (sandbox escape, credential leak through an agent's output, command injection through a tool argument), please open a GitHub issue marked `security` rather than disclosing publicly first. There is no separate disclosure inbox at this point — the project is small enough that issues route to the maintainer directly.
 
 ## Acknowledgments
 
