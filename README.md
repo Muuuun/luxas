@@ -319,8 +319,6 @@ MIT — see [LICENSE](LICENSE).
 
 <br>
 
-<div align="center"><i>One must imagine Luxas happy.</i></div>
-
 [node-shield]: https://img.shields.io/badge/node-22+-4dc9f6?style=flat-square&labelColor=0a0e14&logo=node.js&logoColor=4dc9f6
 [node-link]: https://nodejs.org/
 [typescript-shield]: https://img.shields.io/badge/typescript-5.5+-7dd8f8?style=flat-square&labelColor=0a0e14&logo=typescript&logoColor=7dd8f8
