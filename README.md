@@ -108,7 +108,7 @@ Luxas vendors four [pi-mono](https://github.com/badlogic/pi-mono) packages as `.
 
 | Layer | File | Role |
 |---|---|---|
-| **System prompt** | `src/agents/definitions/brain.md` | 3 cache-controlled blocks — methodology + smelt patches (1h cache), RESEARCH.md + skills (cache), `<active_agents>` + `<plan_status>` (mutable, in-place rebuild) |
+| **System prompt** | `src/agents/definitions/brain.md` | 3 cache-controlled blocks — methodology body (1h cache), RESEARCH.md + skills (cache), `<active_agents>` + `<plan_status>` (mutable, in-place rebuild) |
 | **Tools** | `src/tools/` | `read`/`write`/`edit`/`bash`, `compile_latex`, `init_report`, `spawn_agent`, `idle`, `request_pi_review`, figure-gen, `wolfram`, `finish` |
 | **Context transform** | `src/context.ts` | Per-agent dynamic context, two-stage compaction (60K warning → 80K compress with summary carry-over) |
 | **Hooks** | `src/hooks.ts` | RESEARCH.md write-protect, cost limit (`process.exit` on exceed), search rate limit, per-turn logging, state snapshots |
