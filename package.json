@@ -12,7 +12,7 @@
     "start": "node dist/index.js",
     "tui": "tsx src/tui.tsx",
     "setup:search": "bash skills/search/scripts/setup.sh",
-    "postinstall": "bash patches/pi-coding-agent-read-limits.sh || true"
+    "postinstall": "bash patches/pi-coding-agent-read-limits.sh || true; bash patches/pi-agent-core-no-tool-retry-guard.sh || true"
   },
   "dependencies": {
     "@mariozechner/pi-agent-core": "file:vendor/mariozechner-pi-agent-core-0.58.1.tgz",
@@ -20,7 +20,6 @@
     "@mariozechner/pi-coding-agent": "file:vendor/mariozechner-pi-coding-agent-0.58.1.tgz",
     "@mariozechner/pi-tui": "file:vendor/mariozechner-pi-tui-0.58.1.tgz",
     "@types/js-yaml": "^4.0.9",
-    "agentsmelt": "file:../agentsmelt",
     "better-sqlite3": "^11.0.0",
     "ink": "^6.8.0",
     "ink-text-input": "^6.0.0",

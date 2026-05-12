@@ -21,7 +21,6 @@ import { Type } from "@sinclair/typebox";
 import { writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { createReadTool } from "@mariozechner/pi-coding-agent";
-import { nameAgent } from "agentsmelt";
 import { getApiKey } from "./auth.js";
 import { spawnAgent } from "./agents/spawn.js";
 import { createSpawnToolFactory } from "./tools/spawn-agent.js";

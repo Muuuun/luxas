@@ -1,0 +1,39 @@
+# Citation File Format v1.2.0 — https://citation-file-format.github.io
+# Renders in GitHub's "Cite this repository" sidebar widget.
+cff-version: 1.2.0
+title: "Luxas: an autonomous research agent for end-to-end literature survey, experiment design, and LaTeX report generation"
+message: "If you use Luxas to produce reports for publication or as a subject of study about agentic research systems, please cite it as below."
+type: software
+authors:
+  - given-names: Mu
+    family-names: Qiao
+    email: mu.q.phys@gmail.com
+    affiliation: "Université Paris-Saclay"
+    alias: Muuuun
+repository-code: "https://github.com/Muuuun/luxas"
+url: "https://luxas.im"
+abstract: >-
+  Luxas is an open-source multi-agent system for autonomous scientific research.
+  Given a one-line research topic, it crawls the literature (OpenAlex, arXiv,
+  CrossRef, paywalled venues via an anti-detect browser), designs and runs
+  experiments under a blind impl/test split, generates publication-grade
+  figures, writes a LaTeX report, submits it to adversarial content + figure +
+  layout review, and produces a compiled PDF with real citations. Built on
+  pi-mono primitives, the harness is file-backed and crash-recoverable, runs
+  for multiple hours unattended, and supports family-wide redirect across
+  Claude (Anthropic), DeepSeek-v4, Kimi (Moonshot), and OpenAI o3 via a
+  single environment variable.
+keywords:
+  - autonomous-agent
+  - multi-agent-system
+  - research-agent
+  - agentic-ai
+  - large-language-models
+  - claude
+  - deepseek
+  - latex
+  - automated-scientific-research
+  - literature-survey
+license: MIT
+version: 0.1.0
+date-released: 2026-05-12

@@ -13,10 +13,6 @@
  */
 
 import { Agent } from "@mariozechner/pi-agent-core";
-import {
-  nameAgent, createSmeltReminderProvider,
-  readPatches, applyPatches, DEFAULT_BASE_DIR,
-} from "agentsmelt";
 import { streamSimple, type TextContent } from "@mariozechner/pi-ai";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { execSync } from "node:child_process";
@@ -128,12 +124,8 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
   // L3-style execution-state content (active_agents, completed_artifacts,
   // plan_status) lives in the trailer snapshot now — see context.ts.
   const brainDef = getDefinition("brain");
-  let systemText = resolvePrompt(brainDef, templateVars);
-
-  const smeltPatches = readPatches(DEFAULT_BASE_DIR, "brain");
-  if (smeltPatches.length > 0) {
-    systemText = applyPatches(systemText, smeltPatches, "brain");
-  }
+  const systemTextBase = resolvePrompt(brainDef, templateVars);
+  let systemText = systemTextBase;
 
   const semiStatic = buildSemiStaticSystemLayer(projectDir);
   if (semiStatic) {
@@ -147,9 +139,6 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
   // Reminder system — event-driven, per-turn quality nudges
   const reminders = new ReminderRegistry();
   for (const p of builtinProviders) reminders.register(p);
-
-  // AgentSmelt: dynamic knowledge injection via reminders (replaces static prompt append)
-  reminders.register(createSmeltReminderProvider({ agentRole: "brain" }));
 
   // #8: Extension bus (created early — hooks and context both need it)
   const bus = new ExtensionBus();
@@ -327,7 +316,6 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
     onPayload: payloadCapture,
     streamFn: (m, ctx, opts) => streamSimple(m, ctx, { ...opts, toolChoice: pickRequireToolChoice(m) } as any),
   });
-  nameAgent(agent, "brain", "brain");
 
   // Wire deferred refs now that agent exists
   setParentAgent(agent);     // enables background spawn_agent with steer()

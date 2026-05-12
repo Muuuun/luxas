@@ -24,17 +24,6 @@ import { dirname } from "node:path";
 import { join, resolve } from "node:path";
 import { Agent } from "@mariozechner/pi-agent-core";
 import { Type } from "@sinclair/typebox";
-// AgentSmelt autoPatch temporarily disabled: its `extractProjectDir` assumes
-// systemPrompt is a string, but commit 6ce68ab switched brain.systemPrompt to
-// TextContent[] for per-block cache-control. That mismatch crashes every
-// fresh `luxas run` at 0 tokens with `prompt.match is not a function`.
-// Existing smelt patches still apply via readPatches/applyPatches in agent.ts
-// and createSmeltReminderProvider — only the learning-loop side (tool-call
-// tracing, post-session eval, assessment drain) is paused until agentsmelt
-// learns to accept array systemPrompt. Namespace reference kept for context:
-// lessons continue to live under ~/.agentsmelt/.../sisyphus/.
-// import { autoPatch } from "agentsmelt";
-// const agentSmeltHandle = autoPatch(Agent, "sisyphus");
 import { createResearchAgent } from "./agent.js";
 import { ensureLiteratureFile } from "./methodology.js";
 import { jobOwnerAls } from "./jobs/als.js";

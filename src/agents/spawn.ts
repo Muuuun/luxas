@@ -5,7 +5,6 @@
  */
 
 import { Agent } from "@mariozechner/pi-agent-core";
-import { nameAgent } from "agentsmelt";
 import { getModel, streamSimple } from "@mariozechner/pi-ai";
 import { mkdirSync, appendFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -410,7 +409,6 @@ export function buildAgentFromDefinition(opts: SpawnAgentOptions): BuiltAgent {
       return streamSimple(m, ctx, merged);
     },
   });
-  nameAgent(agent, agentId, def.name);
   (agent as any).__smeltParent = opts.parentAgentId;
 
   // 10. Install token tracking (feeds packer with precise token counts after first turn)
