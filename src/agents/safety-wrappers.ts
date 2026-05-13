@@ -365,7 +365,16 @@ function wrapEdit(
         );
       }
       if (protectedAbs.has(abs)) {
-        return blocked(`${p} is protected and cannot be edited by this agent.`);
+        return blocked(
+          `${p} is protected by this agent's safety configuration ` +
+          `(frontmatter \`protectedFiles\`). The protection documents WHO owns ` +
+          `the write, not whether the write happens. To revise this file, ` +
+          `re-spawn the agent that owns it with a revision directive — e.g. for ` +
+          `experiment-authored files: \`spawn_agent(agent="experiment", ` +
+          `task="revise L2.X: <correction verbatim>", ` +
+          `templateVars={EXPERIMENT_ID: "E{N}_..."})\`. ` +
+          `Do not cite this block as a reason to skip the work.`
+        );
       }
 
       if (allowedWriteAbs && !withinRoots(abs, allowedWriteAbs)) {
@@ -517,7 +526,16 @@ function wrapWrite(
         );
       }
       if (protectedAbs.has(abs)) {
-        return blocked(`${p} is protected and cannot be written by this agent.`);
+        return blocked(
+          `${p} is protected by this agent's safety configuration ` +
+          `(frontmatter \`protectedFiles\`). The protection documents WHO owns ` +
+          `the write, not whether the write happens. To revise this file, ` +
+          `re-spawn the agent that owns it with a revision directive — e.g. for ` +
+          `experiment-authored files: \`spawn_agent(agent="experiment", ` +
+          `task="revise L2.X: <correction verbatim>", ` +
+          `templateVars={EXPERIMENT_ID: "E{N}_..."})\`. ` +
+          `Do not cite this block as a reason to skip the work.`
+        );
       }
 
       if (allowedWriteAbs && !withinRoots(abs, allowedWriteAbs)) {

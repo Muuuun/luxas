@@ -24,16 +24,21 @@
 
 TARGET="node_modules/@mariozechner/pi-agent-core/dist/agent-loop.js"
 MARKER="[no-tool-retry-guard patched]"
+MARKER_EXIT="[finish-tool-exit patched]"
 
 if [ ! -f "$TARGET" ]; then
   exit 0
 fi
 
+# ── Patch A: no-tool-retry-guard ─────────────────────────────────
+# When an agent with a `finish` tool emits zero tool_use, inject a steer
+# message ("call finish() now if done, else emit the tool you intended").
+# Fires for agents like brain that CAN naturally emit text-only turns
+# under tool_choice="any" (Anthropic) but shouldn't exit silently.
+
 if grep -qF "$MARKER" "$TARGET"; then
   echo "[patch] agent-loop no-tool-retry-guard already applied"
-  exit 0
-fi
-
+else
 python3 - "$TARGET" "$MARKER" <<'PYEOF'
 import sys
 
@@ -75,4 +80,53 @@ src = src.replace(old, new, 1)
 
 open(path, "w").write(src)
 print("[patch] agent-loop no-tool-retry-guard applied")
+PYEOF
+fi
+
+# ── Patch B: finish-tool-exit ────────────────────────────────────
+# When the model just called finish(), force inner-loop exit by setting
+# hasMoreToolCalls = false. Without this, providers using
+# tool_choice="required" (Kimi, deepseek-chat, openai chat — see
+# pickRequireToolChoice) can never natural-exit: every turn has tool
+# calls so `hasMoreToolCalls = toolCalls.length > 0` is always true, and
+# finish() returning success doesn't break the loop. Observed 2026-05-13
+# on Kimi typesetter (50-min spin).
+#
+# Applies AFTER patch A's modification so the anchor matches the
+# already-patched file.
+
+if grep -qF "$MARKER_EXIT" "$TARGET"; then
+  echo "[patch] agent-loop finish-tool-exit already applied"
+  exit 0
+fi
+
+python3 - "$TARGET" "$MARKER_EXIT" <<'PYEOF'
+import sys
+
+path, marker = sys.argv[1], sys.argv[2]
+src = open(path).read()
+
+# Anchor: inside the `if (hasMoreToolCalls)` branch, after results are
+# pushed but before any subsequent logic. Must work whether or not patch
+# A is applied (we don't depend on patch A's modifications).
+old = """                for (const result of toolResults) {
+                    currentContext.messages.push(result);
+                    newMessages.push(result);
+                }
+            }"""
+new = """                for (const result of toolResults) {
+                    currentContext.messages.push(result);
+                    newMessages.push(result);
+                }
+                if (toolCalls.some((c) => c?.name === \"finish\")) { // """ + marker + """
+                    hasMoreToolCalls = false;
+                }
+            }"""
+if old not in src:
+    print("[patch] FAIL: finish-tool-exit anchor (toolResults push) not found", file=sys.stderr)
+    sys.exit(1)
+src = src.replace(old, new, 1)
+
+open(path, "w").write(src)
+print("[patch] agent-loop finish-tool-exit applied")
 PYEOF

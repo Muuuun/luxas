@@ -55,6 +55,17 @@ export interface AgentDefinition {
   spawn: SpawnConfig;
   safety?: SafetyConfig;            // undefined = no wrapping (raw tools)
   systemPromptTemplate: string;     // markdown body with {{VAR}} placeholders
+  /**
+   * Hard ceiling on assistant turns for this sub-agent. When exceeded,
+   * spawn.ts aborts the agent and records stopReason="killed". Brain has
+   * its own 500-turn cap in src/agent.ts; this field covers everything
+   * spawned via spawn.ts. Undefined = no cap (use sparingly — every
+   * sub-agent should have one to bound runaway token cost from
+   * tool-loop tar pits, especially under tool_choice=required providers
+   * like Kimi/openai-completions where the natural text-only exit
+   * doesn't work).
+   */
+  maxTurns?: number;
 }
 
 // ── Cache ────────────────────────────────────────────
@@ -146,6 +157,7 @@ function parseAgentDefinition(raw: string, filename: string): AgentDefinition | 
     spawn: buildSpawnConfig(fields, filename),
     safety: buildSafetyConfig(fields, filename),
     systemPromptTemplate: body.trim(),
+    maxTurns: typeof fields.maxTurns === "number" && fields.maxTurns > 0 ? fields.maxTurns : undefined,
   };
 }
 

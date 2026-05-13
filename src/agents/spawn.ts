@@ -414,6 +414,38 @@ export function buildAgentFromDefinition(opts: SpawnAgentOptions): BuiltAgent {
   // 10. Install token tracking (feeds packer with precise token counts after first turn)
   tokenTap.install(agent);
 
+  // 11. Per-sub-agent turn budget. Brain has its own 500-turn cap in src/agent.ts;
+  // every sub-agent spawned here gets the cap declared in its frontmatter
+  // (def.maxTurns). On overrun we abort the agent (not process.exit, since this
+  // is one sub-agent inside a larger brain session) — `runWithLengthRecovery`
+  // returns; the SubAgentExit contract carries stopReason="killed" upward.
+  //
+  // Why this exists: providers that force tool_choice="required" (Kimi,
+  // deepseek-chat, openai chat — anything that isn't anthropic native or a
+  // reasoning model — see pickRequireToolChoice) cannot emit a text-only
+  // finish turn. If the prompt's natural exit is "say done, no tool call",
+  // those agents loop indefinitely. Observed 2026-05-13: typesetter on
+  // moonshot-v1-32k-vision-preview spun 50 min / 37 tool calls writing the
+  // same already-written file over and over because tool_choice="required"
+  // wouldn't let it emit the text-only "Wrote ... (status: all-clear)" exit
+  // the prompt promised. The maxTurns cap is the catch-all safety net for
+  // this and any similar tar-pit pattern, regardless of root cause.
+  if (def.maxTurns !== undefined) {
+    const cap = def.maxTurns;
+    let turnCount = 0;
+    agent.subscribe((event: any) => {
+      if (event.type === "turn_end") {
+        turnCount++;
+        if (turnCount > cap) {
+          console.error(
+            `[spawn] ${def.name} turn budget exceeded: ${turnCount} > ${cap}. Aborting sub-agent.`,
+          );
+          agent.abort();
+        }
+      }
+    });
+  }
+
   return { agent, agentId, definition: def, tokenTap, fileContextCache };
 }
 

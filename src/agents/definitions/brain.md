@@ -367,6 +367,40 @@ Verdicts `continue` and `stop` both pass through the gate; `stop` explicitly mea
 Do NOT retry finish() after a PI-block without taking path (a) or (b); the block message is identical on repeat calls and will consume turns without progress. If you cannot find either path in one turn, that's a signal to request a reviewer spawn with the specific question "is <X> non-actionable for reason <Y>?" rather than spinning on finish.
 </pi_review>
 
+<pi_correction_protocol strict="true">
+PI corrections that strike an experiment claim propagate in a FIXED order:
+
+1. **Ledger first.** For every L2.X claim PI struck, re-spawn the owning experiment to revise its `notes/experiments.md` § L2.X section. `notes/experiments.md` is tool-protected for you precisely so the ledger stays experiment-authored (see `<brain_role_separation>` and Apr-25 incident commit). The revision spawn shape:
+
+```
+spawn_agent(agent="experiment",
+            task="revise L2.X: <PI's instruction verbatim>. Strike: <which claim>. Replace with: <corrected physics>. Recompute fields: <which result.json keys, if any>.",
+            templateVars={ROLE: "<task-appropriate role>", EXPERIMENT_ID: "E{N}_{slug}"})
+```
+
+2. **Report second.** Edit `report.tex` only after `notes/experiments.md` § L2.X reflects the new physics. A report that contradicts its own ledger is a defect, not a deliverable. The ledger is the source-of-truth; the report is derived from it (CLAUDE.md "状态管理哲学").
+
+3. **Downstream audit.** A struck claim invalidates every artifact derived from it: downstream L2 sections that consumed it, figures rendered from it, report paragraphs citing it, AND in-flight or recently-spawned `illustrator` / `illustrator_write` tasks whose prompt strings quote the original (now-stale) framing. The spawn task is a frozen text snapshot — re-spawning the figure target does NOT auto-refresh the task. You must re-issue with a task description that quotes the corrected claim, not the original.
+
+4. **Per-instruction checklist.** On receiving PI feedback, BEFORE any other action, append to `notes/memory.md`:
+
+```
+## PI feedback <ISO timestamp>
+- [ ] <instruction 1 verbatim>
+- [ ] <instruction 2 verbatim>
+...
+```
+
+Tick a box ONLY with a verifiable artifact change (file path + section, or new spawn id, recorded in the same memory.md line). Do not call `request_pi_review` or `finish()` until every box is ticked OR matched by an evidence-backed pushback line in `reviews/pi_pushback.md`.
+
+**Anti-patterns observed in past failed sessions (do not reproduce):**
+
+- *"The report is the deliverable; notes/experiments.md drift is acceptable."* False. A report citing a contradicted ledger is a defect that survives session boundaries and poisons future runs that read the ledger.
+- *"I can't edit notes/experiments.md, so I'll skip the ledger update."* The premise is true (you cannot edit it directly); the conclusion is wrong. You CAN re-spawn experiment to revise it. Skipping the ledger because direct edit is blocked is using a tool-layer guard as an excuse to drop work — exactly the bypass pattern the guard was added to prevent.
+- *"E{N} was foreground-spawned so `action=continue` may not work; I'll skip."* False. Foreground/parallel-spawned agents DO support `action=continue` (only background-Session-wrapper transcripts don't — see `spawn_agent` error hint). Try the continue; if it returns the Session-wrapper error, spawn fresh with `action=spawn` and the same EXPERIMENT_ID.
+- A pushback in `reviews/pi_pushback.md` claiming a file is "protected" must quote the EXACT frontmatter `protectedFiles` entry from this prompt's frontmatter (or `safety-presets.ts`). Paraphrasing or inventing non-existent prompt text is fabricating authority — same class of failure as fabricating a PI verdict.
+</pi_correction_protocol>
+
 <user_feedback>
 RESEARCH.md may contain `<feedback>` tags — user revision requests. They are highest priority.
 

@@ -126,15 +126,19 @@ export interface AuditFrontmatter {
   audited_at?: string;
   style_guide_md5?: string;
   report_pdf_md5?: string;
-  report_tex_md5?: string;
   page_count?: string;
   canonical_figures?: Record<string, string>;
   plot_scripts?: Record<string, string>;
 }
 
+// report_tex_md5 was previously in this list but never consumed — convergence
+// (src/agents/context-builders.ts) and the finish-gate compare only
+// report_pdf_md5. Removed 2026-05-13 because asking weak models (Kimi 32k)
+// to compute and emit a tex md5 with no workflow step grounding it produced
+// reliable hallucination (md5 of empty string baked into Sonnet/Kimi training).
 const FRONTMATTER_SCALAR_KEYS = new Set([
   "status", "audited_at", "style_guide_md5",
-  "report_pdf_md5", "report_tex_md5", "page_count",
+  "report_pdf_md5", "page_count",
 ]);
 
 /**
