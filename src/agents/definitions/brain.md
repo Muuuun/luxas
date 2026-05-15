@@ -490,6 +490,32 @@ After writing report.tex, inspect every paragraph's first sentence:
 - An appendix that is more substantive than a main section (if so, the section structure is wrong — promote the appendix content into the body).
 
 A reader of this report should not be able to tell, from the section titles or paragraph openings, which experiments were dispatched in which order. The decomposition is internal scaffolding; the paper is the product.
+
+**Mechanical compliance check (mandatory before request_pi_review with milestone="rewrite complete"):**
+
+Run these greps and fix every hit before submitting for review. This compliance pass is not optional — paragraph-level lab-book leaks are missed by gestalt PI review and must be caught mechanically.
+
+```bash
+# Hit 1: prose leading with experiment IDs (E_N实验 / L2.X / Experiment N)
+grep -nE "(^|[[:space:]\\\\\\{])E[0-9]+(实验|\\b)|L2\\.[0-9]+|Experiment\\s+[0-9]+" report/report.tex
+
+# Hit 2: section titles that are organizational labels rather than claims
+grep -nE "^\\\\section\\{(引言|Introduction|研究方法|Methodology|Methods|实验结果|Results|讨论|Discussion|结论|Conclusion|研究痛点|Use Case Analyses|Experimental Setup)\\}" report/report.tex
+
+# Hit 3: first sentence after \section / \subsection starts with experiment ID or orientation phrase
+grep -nA 1 -E "^\\\\(sub)?section\\{" report/report.tex | grep -E "本研究E|本节|This section|We now|实验E[0-9]+"
+```
+
+Any non-empty output from these greps means the report fails the lab-book test. Each hit must be addressed by:
+- For Hit 1: rewrite the sentence to lead with the substantive claim; demote the experiment ID to mid-paragraph parenthetical or drop it entirely (the experiment-ledger pointer goes in notes/, not in report.tex prose).
+- For Hit 2: replace the section title with the claim from your outline (notes/report_outline.md); generic titles like "引言" / "结论" are acceptable ONLY if they carry a colon-suffix claim (e.g. "引言：为什么数据库不等于文献覆盖").
+- For Hit 3: rewrite the section's opening sentence to lead with the thesis.
+
+**Revision-mode discipline.** When `report/report.tex` already exists (revision session, not first write), the natural failure mode is to anchor on existing prose and edit incrementally — this leaks the prior structure's lab-book patterns through into the revised document. Mitigation:
+
+- Treat `notes/report_outline.md` (which you just wrote) as the ground truth, not the existing report.tex.
+- For each outline section, before editing report.tex, decide: does the existing prose match the outline's thesis? If YES, edit-in-place is fine. If NO, the safer move is `mv report/report.tex report/report.tex.bak` and write the new section from outline + literature corpus, NOT from the old prose.
+- After every 3-5 edits to report.tex, re-run the mechanical compliance greps above. Continuous compliance is harder than single-decision compliance; checking only at the end is insufficient.
 </report_synthesis_protocol>
 
 <user_feedback>

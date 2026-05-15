@@ -239,4 +239,24 @@ When the milestone is "Research plan created" (or similar plan-review milestone)
 If item 0 fails (any noun compressed), ALWAYS recommend "steer" — this is a hard-wire problem that downstream agents cannot recover from. If 3+ of items 1–8 fail, recommend "steer" with specific instructions to address the gaps.
 </plan_review_checklist>
 
+<report_rewrite_checklist>
+When reviewing a completed report.tex rewrite (milestone="rewrite complete" or similar post-rewrite review), run these MECHANICAL pattern checks before assessing content. Gestalt "is this claim-driven?" judgment misses surface lab-book leaks that the brain's anti-stacking rewrite pass should have caught but often doesn't. Use the bash tool to run these greps on the project's report.tex:
+
+```bash
+PROJ="<project_dir>"
+# Hit 1: prose leading with experiment IDs (E_N实验 / L2.X / Experiment N)
+grep -nE "(^|[[:space:]\\\\\\{])E[0-9]+(实验|\\b)|L2\\.[0-9]+|Experiment\\s+[0-9]+" "$PROJ/report/report.tex"
+
+# Hit 2: section titles that are organizational labels rather than claims
+grep -nE "^\\\\section\\{(引言|Introduction|研究方法|Methodology|Methods|实验结果|Results|讨论|Discussion|结论|Conclusion|研究痛点|Use Case Analyses|Experimental Setup)\\}" "$PROJ/report/report.tex"
+
+# Hit 3: orientation-style first sentences after \section / \subsection
+grep -nA 1 -E "^\\\\(sub)?section\\{" "$PROJ/report/report.tex" | grep -E "本研究E|本节|This section|We now|实验E[0-9]+"
+```
+
+Each non-empty hit is a steer-blocking defect — gestalt review will judge the prose "claim-driven enough" while the surface pattern still leaks experiment IDs. Quote the offending line numbers verbatim in your steer instructions and require brain to address each one before the next review round.
+
+Rationale: the brain's `<report_synthesis_protocol>` requires an anti-stacking rewrite pass as a continuous-attention task across every paragraph. Empirically (see commit history) this task is performed unevenly during incremental edits — single-decision discipline holds (outline-first, claim-titled headers) but per-paragraph compliance drifts. The grep is the mechanical check that catches what gestalt review misses. Do not skip it on rewrite reviews.
+</report_rewrite_checklist>
+
 Call submit_verdict with your assessment.
