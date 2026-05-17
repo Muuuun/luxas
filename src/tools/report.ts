@@ -143,17 +143,131 @@ export function createReportTools(projectDir: string) {
         }
       }
 
+      // pdflatex exits 0 on most layout/reference problems — they're warnings,
+      // not errors. Parse the .log so the agent sees: text spilling past column
+      // edge, floats that couldn't be placed (silently dropped), undefined cites
+      // and refs (render as [?, ?] / "??"). All of these are user-visible bugs
+      // that brain would otherwise finish() through.
+      const problems = success ? readLogProblems(dir, base) : { count: 0, report: "" };
+      if (problems.count > 0) success = false;
+
       const header = success ? "✓ Compilation succeeded\n\n" : "✗ Compilation had errors\n\n";
       const footer = success ? "" :
         "\n\n💡 If you've already tried to fix this error once, delegate to the fixer agent instead of burning expensive tokens:\n" +
         '   spawn_agent(agent="fixer", task="Fix this compile error: <paste the error above>")\n' +
         "   The fixer uses haiku and is much cheaper than debugging LaTeX syntax yourself.";
-      const text = header + outputs.join("\n\n") + footer;
+      const text = header + outputs.join("\n\n") + problems.report + footer;
       return { content: [{ type: "text" as const, text }], details: { success } };
     },
   };
 
   return [compileLatex];
+}
+
+// ── pdflatex .log problem detection ──────────────────────────────
+
+const OVERFULL_THRESHOLD_PT = 20;
+
+interface OverfullHit { pt: number; line: number; ctx: "table/align" | "paragraph" | "math/display" }
+interface StuckHit { line: number | null }
+
+/**
+ * Parse the .log for warnings that pdflatex logs but doesn't fail the build on,
+ * yet which produce user-visible PDF bugs:
+ *   • Overfull \hbox ≥ OVERFULL_THRESHOLD_PT → text spills past column edge
+ *   • A float is stuck                        → figure/table silently dropped
+ *   • Citation `X' ... undefined              → renders as [?, ?]
+ *   • Reference `X' ... undefined             → renders as "??"
+ *
+ * Underfull \vbox and Underfull \hbox are intentionally NOT surfaced: they're
+ * loose-spacing complaints (especially common in mixed CJK+English paragraphs)
+ * that are typically un-fixable without breaking content, and would lock brain
+ * into an infinite repair loop.
+ */
+function readLogProblems(
+  dir: string,
+  base: string,
+): { count: number; report: string } {
+  const logPath = join(dir, `${base}.log`);
+  if (!existsSync(logPath)) return { count: 0, report: "" };
+
+  let log: string;
+  try { log = readFileSync(logPath, "utf-8"); }
+  catch { return { count: 0, report: "" }; }
+
+  // Overfull \hbox — `[^\n]*?` lazily captures the context phrase between
+  // the pt value and the line number so we can tell tables from math from prose.
+  const overfullRe = /Overfull \\hbox \(([\d.]+)pt too wide\)([^\n]*?)\b(?:line|lines) (\d+)/g;
+  const overfull: OverfullHit[] = [];
+  for (const m of log.matchAll(overfullRe)) {
+    const pt = parseFloat(m[1]);
+    if (pt < OVERFULL_THRESHOLD_PT) continue;
+    const tag = m[2];
+    const ctx: OverfullHit["ctx"] =
+      tag.includes("alignment") ? "table/align" :
+      tag.includes("paragraph") ? "paragraph" :
+      "math/display";
+    overfull.push({ pt, line: parseInt(m[3], 10), ctx });
+  }
+
+  // Float stuck — pdflatex gave up placing a figure/table; it's dropped from
+  // the rendered PDF entirely (or pushed past the end). Brain ends up with a
+  // \ref{} pointing at nothing.
+  const stuckRe = /A float is stuck \(cannot be placed\)(?:[^\n]*?on input line (\d+))?/g;
+  const stuck: StuckHit[] = [];
+  for (const m of log.matchAll(stuckRe)) {
+    stuck.push({ line: m[1] ? parseInt(m[1], 10) : null });
+  }
+
+  // Citation / Reference undefined — pdflatex prints these once per pass per
+  // page; dedupe by key so brain sees the unique broken targets.
+  const cites = new Set<string>();
+  for (const m of log.matchAll(/Citation `([^']+)' on page \d+ undefined/g)) cites.add(m[1]);
+  const refs = new Set<string>();
+  for (const m of log.matchAll(/Reference `([^']+)' on page \d+ undefined/g)) refs.add(m[1]);
+
+  const total = overfull.length + stuck.length + cites.size + refs.size;
+  if (total === 0) return { count: 0, report: "" };
+
+  const sections: string[] = [];
+
+  if (overfull.length > 0) {
+    const sorted = overfull.sort((a, b) => b.pt - a.pt);
+    sections.push(
+      `Overfull \\hbox ≥${OVERFULL_THRESHOLD_PT}pt (text spills past column edge):\n` +
+      sorted.map((h) => `    • line ${h.line} (${h.ctx}): ${h.pt.toFixed(1)}pt too wide`).join("\n"),
+    );
+  }
+  if (stuck.length > 0) {
+    sections.push(
+      `Float stuck — figure/table couldn't be placed and was silently dropped from the PDF:\n` +
+      stuck.map((h) => `    • ${h.line !== null ? `line ${h.line}` : "(line n/a)"}`).join("\n"),
+    );
+  }
+  if (cites.size > 0) {
+    sections.push(
+      `Undefined citations (PDF renders as [?, ?]):\n` +
+      `    • ${[...cites].join(", ")}`,
+    );
+  }
+  if (refs.size > 0) {
+    sections.push(
+      `Undefined references (PDF renders as "??"):\n` +
+      `    • ${[...refs].join(", ")}`,
+    );
+  }
+
+  const report =
+    `\n\n⚠️ ${total} layout/reference problem(s) detected — these will appear as visible bugs in the PDF:\n\n  ` +
+    sections.join("\n\n  ") +
+    "\n\nCommon causes & fixes:\n" +
+    "  • Overfull math/display    → use \\begin{align} a &= b \\\\ &+ c \\end{align}\n" +
+    "  • Overfull table/align     → \\resizebox{\\columnwidth}{!}{...}, or split columns, or use \\begin{table*} for full-width\n" +
+    "  • Overfull paragraph       → insert \\allowbreak in long English/cite runs; split multi-key \\cite{} into shorter ones\n" +
+    "  • Float stuck              → shrink the figure, use \\begin{figure*}/\\begin{table*} for full-width float, or relax placement specifier (e.g. [!htbp])\n" +
+    "  • Citation undefined       → add entry to references.bib, or fix typo in \\cite{key}; remember to re-run bibtex\n" +
+    "  • Reference undefined      → add \\label{key} to the target, or fix typo in \\ref{key}";
+  return { count: total, report };
 }
 
 // ── Figure citation enforcement ──────────────────────────────────
