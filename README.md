@@ -313,6 +313,8 @@ If you use Luxas to produce reports for publication or for a study about agentic
 
 Built on [pi-mono](https://github.com/badlogic/pi-mono) by [Mario Zechner](https://mariozechner.at/). Prompt evolution via [AgentSmelt](https://github.com/Muuuun/agentsmelt). Number provenance via [provref](https://github.com/Muuuun/provref).
 
+Token sponsorship from [Deeplang 深言科技](https://www.deeplang.ai/).
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
