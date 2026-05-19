@@ -85,13 +85,13 @@ scripts/search bib "10.1038/s41586-021-03819-2" --save report/references.bib
 
 Fetches BibTeX via doi.org content negotiation, falls back to CrossRef. `--save` appends to a .bib file (deduplicates by DOI).
 
-### Web Search (Brave)
+### Web Search (Tavily / Brave)
 
 ```bash
 scripts/search web "quantum error correction review 2024" --count 10
 ```
 
-Requires `BRAVE_API_KEY` env var.
+Uses `TAVILY_API_KEY` (preferred) or falls back to `BRAVE_API_KEY`. Set at least one. Get a free Tavily key at https://app.tavily.com.
 
 ### GitHub
 

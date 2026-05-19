@@ -277,6 +277,23 @@ function normalizeCRWork(raw) {
   };
 }
 
+// ─── Tavily Web Search ───────────────────────────────────────
+
+async function tavilySearch(query, count) {
+  const key = process.env.TAVILY_API_KEY;
+  if (!key) { console.error("TAVILY_API_KEY not set"); process.exit(1); }
+  const res = await fetch("https://api.tavily.com/search", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+    body: JSON.stringify({ query, max_results: count, search_depth: "basic", topic: "general" }),
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!res.ok) { console.error(`Tavily API ${res.status}`); return; }
+  const data = await res.json();
+  const results = (data.results ?? []).map((r, i) => `[${i + 1}] ${r.title}\n    ${r.url}\n    ${r.content ?? ""}`);
+  console.log(results.join("\n\n") || "No results");
+}
+
 // ─── Brave Web Search ────────────────────────────────────────
 
 async function braveSearch(query, count) {
@@ -722,7 +739,14 @@ try {
     const query = getPositionalArgs(1);
     if (!query) { console.error("Usage: search web <query>"); process.exit(1); }
     const count = Math.min(parseInt(getFlag("count", "5")), 20);
-    await braveSearch(query, count);
+    if (process.env.TAVILY_API_KEY) {
+      await tavilySearch(query, count);
+    } else if (process.env.BRAVE_API_KEY) {
+      await braveSearch(query, count);
+    } else {
+      console.error("No search API key set. Set TAVILY_API_KEY (preferred) or BRAVE_API_KEY.");
+      process.exit(1);
+    }
 
   } else if (command === "fetch") {
     const url = args[1];
