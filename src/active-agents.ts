@@ -46,6 +46,14 @@ export interface FileTouchRecord {
 export interface SubAgentExit {
   stopReason: SubAgentStopReason;
   partialAssistantText?: string;   // present only when stopReason === "length" AND capture succeeded
+  /**
+   * Provider's errorMessage from the last assistant message when stopReason === "error".
+   * Surfaced to parent so it can distinguish terminal classes (402 balance, 429 suspended,
+   * 401 auth) from transient ones already retried at the F5 layer. Observed 2026-05-13:
+   * UWR brain spawned typesetter 4× because the 429 "account suspended" was hidden behind
+   * a bare "stopReason=error" hint and brain assumed retry would help.
+   */
+  errorMessage?: string;
   filesTouched: FileTouchRecord[]; // clean-exit best-effort; empty on killed
   elapsedMs: number;
   toolCallCount: number;           // assistant-message toolCall blocks seen
@@ -302,7 +310,17 @@ export function formatExitHint(exit: SubAgentExit | undefined, projectDir?: stri
     partialSuffix = `\n  partial (first 500 chars): ${preview}${ellipsis}`;
   }
 
-  return `${header}${touchedSuffix}${partialSuffix}`;
+  // Surface provider's errorMessage (set in buildSubAgentExit when stopReason="error").
+  // Without this, terminal errors like 429 "account suspended" appear to the parent as
+  // a bare "stopReason=error" hint with no actionable diagnosis, and the parent loops
+  // retrying. UWR 2026-05-13: brain spawned typesetter 4× because the underlying
+  // 429 Kimi-balance-exhausted was hidden.
+  let errSuffix = "";
+  if (exit.errorMessage) {
+    errSuffix = `\n  errorMessage: ${exit.errorMessage.replace(/\n/g, " ⏎ ")}`;
+  }
+
+  return `${header}${touchedSuffix}${partialSuffix}${errSuffix}`;
 }
 
 function heartbeatPath(agentDir: string, agentId: string): string {

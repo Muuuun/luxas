@@ -690,6 +690,7 @@ export function buildSubAgentExit(
 ): SubAgentExit {
   let stopReason: SubAgentStopReason = overrideStopReason ?? "unknown";
   let partialAssistantText: string | undefined;
+  let errorMessage: string | undefined;
   let toolCallCount = 0;
 
   if (agent) {
@@ -702,6 +703,11 @@ export function buildSubAgentExit(
           stopReason = normalizeStopReason(lastAssistant.stopReason);
           if (stopReason === "length") {
             partialAssistantText = extractTextContent(lastAssistant.content ?? []) || undefined;
+          }
+          // Capture provider's errorMessage so parent harvest can distinguish
+          // terminal classes (402/429/auth) from transients (F5 retries those).
+          if (stopReason === "error" && typeof (lastAssistant as any).errorMessage === "string") {
+            errorMessage = (lastAssistant as any).errorMessage.slice(0, 500);
           }
         }
       }
@@ -722,6 +728,7 @@ export function buildSubAgentExit(
   return {
     stopReason,
     partialAssistantText,
+    errorMessage,
     // Input is expected to already be deduped+sorted by the collector. Direct
     // callers that bypass the collector are responsible for normalizing.
     filesTouched: fileTouches,

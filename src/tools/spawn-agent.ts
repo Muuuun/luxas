@@ -216,6 +216,7 @@ function slimExit(exit: any) {
     revisionNumber: exit?.revisionNumber,
     endedAt: exit?.endedAt,
     filesTouched: exit?.filesTouched,
+    errorMessage: exit?.errorMessage,
   };
 }
 
