@@ -18,7 +18,7 @@
 import { Agent } from "@mariozechner/pi-agent-core";
 import { getModel } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
-import { writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { writeFileSync, mkdirSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { createReadTool } from "@mariozechner/pi-coding-agent";
 import { getApiKey } from "./auth.js";
@@ -46,6 +46,15 @@ export interface PIMonitorOptions {
   onVerdict?: (verdict: PIVerdict, toolCallCount: number) => void;
   /** Restored from session JSONL for crash recovery. */
   initialState?: { totalToolCalls: number; lastReviewAt: number; reviewCount: number };
+  /**
+   * Fix γ: when `luxas run --directive "..."` started this session, pass that
+   * verbatim string here. PI prepends it to its state with explicit framing so
+   * PI can verify brain has addressed each clause of the directive against the
+   * report/experiment artifacts — not brain's self-narrative. Closes the
+   * structural hole where PI reads RESEARCH.md (which never contains the
+   * directive) and rubber-stamps brain's "Ready to finish" milestone.
+   */
+  userDirective?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -217,6 +226,7 @@ async function evaluateProgress(
     toolCallCount,
     milestoneInfo,
     reviewCount,
+    opts.userDirective,
   );
 
   // Read research goal to select the correct PI review mode (survey vs research)
@@ -256,10 +266,14 @@ async function evaluateProgress(
         instructions: string;
       },
     ) {
+      // Normalize case/whitespace; an unrecognized verdict string must NOT
+      // silently pass as "continue" (a fail-open) — default the ambiguous
+      // case to "steer".
+      const v = params.verdict.trim().toLowerCase();
       result = {
-        verdict: (["continue", "steer", "stop"].includes(params.verdict)
-          ? params.verdict
-          : "continue") as PIVerdict["verdict"],
+        verdict: (["continue", "steer", "stop"].includes(v)
+          ? v
+          : "steer") as PIVerdict["verdict"],
         assessment: params.assessment,
         issues: params.issues ?? [],
         instructions: params.instructions ?? "",
@@ -276,25 +290,39 @@ async function evaluateProgress(
 
   const makeSpawnTool = createSpawnToolFactory(opts.projectDir, getApiKey);
 
-  // Spawn PI agent via the centralized spawner
-  await spawnAgent({
-    name: "reviewer",
-    templateVars: {},
-    prompt: fullStateText,
-    projectDir: opts.projectDir,
-    getApiKey,
-    toolOverrides: [verdictTool],
-    contextExtra: { isSurvey, isPlanReview },
-    parentAgentId: "brain",
-    createSpawnTool: makeSpawnTool,
-  });
+  // Spawn PI agent via the centralized spawner. If it returns without calling
+  // submit_verdict (transient model failure, ran out of turns, etc.), retry
+  // once before treating the non-response as a signal.
+  const spawnReviewer = () =>
+    spawnAgent({
+      name: "reviewer",
+      templateVars: {},
+      prompt: fullStateText,
+      projectDir: opts.projectDir,
+      getApiKey,
+      toolOverrides: [verdictTool],
+      contextExtra: { isSurvey, isPlanReview },
+      parentAgentId: "brain",
+      createSpawnTool: makeSpawnTool,
+    });
 
+  await spawnReviewer();
+  if (result === null) await spawnReviewer();
+
+  // A non-response must NOT silently pass as "continue" — that fail-open let
+  // projects finish on a review that never happened (observed in 5/70 runs).
+  // Return "steer" with an honest non-completion note: it blocks finish() and
+  // triggers a re-review, without fabricating issues.
   return (
     result ?? {
-      verdict: "continue",
-      assessment: "PI evaluation did not produce a structured verdict.",
+      verdict: "steer",
+      assessment:
+        "⚠️ PI review did NOT complete: the reviewer produced no structured verdict after a retry. " +
+        "This is not an approval. Re-run request_pi_review before proceeding; if it recurs, the PI " +
+        "agent is failing to call submit_verdict.",
       issues: [],
-      instructions: "",
+      instructions:
+        "Re-run the PI review. Do not treat this non-response as a passing verdict.",
     }
   );
 }
@@ -303,13 +331,84 @@ async function evaluateProgress(
 // State snapshot for PI (clean context — no conversation history)
 // ---------------------------------------------------------------------------
 
+/**
+ * H9: collect every active directive for PI's audit. Same source ordering as
+ * context.ts:collectActiveDirectives — runtime --directive first, then the
+ * union of `notes/directives/*.md`. Kept private to pi-agent.ts to avoid a
+ * circular dep with context.ts (which also has its own copy).
+ */
+const PI_MAX_DIRECTIVES = 6;
+const PI_MAX_DIRECTIVE_BYTES = 3000;
+function collectPIDirectives(
+  projectDir: string,
+  runtimeDirective: string | undefined,
+): Array<{ source?: string; text: string }> {
+  const out: Array<{ source?: string; text: string }> = [];
+  if (runtimeDirective && runtimeDirective.trim()) {
+    out.push({ source: "current --directive", text: runtimeDirective.trim().slice(0, PI_MAX_DIRECTIVE_BYTES) });
+  }
+  const dir = join(projectDir, "notes", "directives");
+  if (existsSync(dir)) {
+    let names: string[] = [];
+    try { names = readdirSync(dir).filter((n) => n.endsWith(".md")).sort().reverse(); }
+    catch { /* unreadable */ }
+    for (const name of names) {
+      if (out.length >= PI_MAX_DIRECTIVES) break;
+      try {
+        const raw = readFileSafe(join(dir, name)) ?? "";
+        const body = raw.replace(/^---[\s\S]*?---\s*/, "").trim();
+        if (!body) continue;
+        if (runtimeDirective && body === runtimeDirective.trim()) continue;
+        out.push({ source: name.replace(/\.md$/, ""), text: body.slice(0, PI_MAX_DIRECTIVE_BYTES) });
+      } catch { /* skip */ }
+    }
+  }
+  return out;
+}
+
 function buildStateForPI(
   projectDir: string,
   toolCallCount?: number,
   milestoneInfo?: { milestone: string; questions?: string },
   reviewCount?: number,
+  userDirective?: string,
 ): string {
   const parts: string[] = [];
+
+  // Fix γ + H9: surface ALL active directives ABOVE the milestone so PI
+  // audits the user's actual requirements, not just brain's framing of "what
+  // I claim to have addressed." Sources: runtime --directive (transient) +
+  // persisted notes/directives/*.md (H9 survives across resumes).
+  // Fix H1: every clause needs an explicit per-item walk, not holistic
+  // gestalt — PI's default-rubber-stamp behavior is the documented failure.
+  const directives = collectPIDirectives(projectDir, userDirective);
+  if (directives.length > 0) {
+    parts.push(
+      `# ⚠️ Active User Directive(s) — verify per-clause in artifacts\n\n` +
+      directives.map((d, i) =>
+        `**Directive ${i + 1}${d.source ? ` (${d.source})` : ""}:**\n` +
+        `> ${d.text.replace(/\n/g, "\n> ")}`
+      ).join("\n\n") +
+      `\n\n**Your audit protocol (mandatory, not optional):**\n\n` +
+      `1. **Enumerate every concrete clause / item in each directive above.** Bullets, ` +
+      `numbers, "all N X", "every Y", named entities — write them out as a checklist ` +
+      `in your assessment.\n` +
+      `2. **For EACH clause, grep the artifacts for evidence:**\n` +
+      `   - \`report/report.tex\` — does the section / table / paragraph for this clause exist?\n` +
+      `   - \`data/experiments/E*/runs/run_*/results.json\` — if the clause demands simulation / ` +
+      `experiment / verification, is there a corresponding non-trivial results.json (≥1 KB, ` +
+      `containing fidelity/trajectories/measurements — NOT \`{"status":"excluded"}\`)?\n` +
+      `   - \`notes/literature.md\` — if the directive says "don't blandly trust papers", ` +
+      `did brain re-derive the claimed exclusions, or did it cite paper values as primary evidence?\n` +
+      `3. **List per-clause status in your \`issues\`:** ✅ verified-by-artifact / 📝 narrated-only ` +
+      `(prose in report, no underlying experiment) / 📐 analytical-exclusion (cited paper or ` +
+      `derived; flag whether user's "don't blandly trust papers" tolerance allows this) / ` +
+      `❌ absent.\n` +
+      `4. **If any clause is 📝/❌, or if 📐 conflicts with the directive's "verify by simulation" ` +
+      `language, return STEER with the specific failed clause quoted.** Brain's narrative ` +
+      `framing in the milestone is NOT evidence — only the per-clause artifact walk is.\n`
+    );
+  }
 
   // Agent's milestone report (if triggered by agent)
   if (milestoneInfo) {

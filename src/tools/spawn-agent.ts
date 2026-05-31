@@ -14,7 +14,7 @@ import { spawn } from "node:child_process";
 import { spawnAgent, type SpawnAgentOptions } from "../agents/spawn.js";
 import { listAgentDescriptions, getDefinition } from "../agents/registry.js";
 import { addAgent, removeAgent, loadRegistry, isAlive, tryExtractResult, formatExitHint, parseConvJsonl } from "../active-agents.js";
-import { closeSync, openSync, readFileSync, realpathSync, unlinkSync, writeSync } from "node:fs";
+import { appendFileSync, closeSync, openSync, readFileSync, realpathSync, unlinkSync, writeSync } from "node:fs";
 import { join, dirname, sep as pathSep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { pidAlive } from "../utils.js";
@@ -458,6 +458,25 @@ export function createSpawnAgentTool(
         });
         child.unref();
 
+        // Mirror to log.jsonl so studio's SSE tail surfaces background spawns
+        // immediately. Background spawns bypass spawn.ts (they exec a detached
+        // node subagent-runner.ts), so the spawn.ts mirror doesn't fire here.
+        // Shape matches hooks.ts plus phase:"started"; snake_case agent_id /
+        // parent_agent_id matches studio's pickSpawnTarget.
+        try {
+          appendFileSync(
+            join(agentDir, "log.jsonl"),
+            JSON.stringify({
+              type: "tool_call",
+              tool: "spawn_agent",
+              phase: "started",
+              args: { agent: params.agent, agent_id: agentId, parent_agent_id: parentAgentId, background: true },
+              success: true,
+              timestamp: new Date().toISOString(),
+            }) + "\n",
+          );
+        } catch { /* observability must not crash the spawn */ }
+
         addAgent(agentDir, {
           id: agentId,
           name: params.agent,
@@ -517,7 +536,14 @@ export function createSpawnAgentTool(
       if (params.agent === "experiment" && result.success) {
         const experimentId = mergedTemplateVars.EXPERIMENT_ID;
         if (experimentId) {
-          const MAX_REVIEW_ITERATIONS = 3;
+          // Env-configurable. Default 3 preserves prior behavior.
+          // Set LUXAS_MAX_REVIEW_ITERATIONS=1 for compute-heavy runs (Monte
+          // Carlo sims) where 3 rounds × hours/round burns wallclock budget
+          // and increases deepseek emit-tool-use bug risk. Set to 0 to skip
+          // the auto-review loop entirely.
+          const envCap = parseInt(process.env.LUXAS_MAX_REVIEW_ITERATIONS ?? "", 10);
+          const MAX_REVIEW_ITERATIONS = Number.isFinite(envCap) && envCap >= 0 ? envCap : 3;
+          // MAX=0 short-circuits the loop body and falls through to return.
           for (let round = 1; round <= MAX_REVIEW_ITERATIONS; round++) {
             const reviewResult = await spawnAgent({
               name: "experiment_reviewer",
@@ -537,7 +563,11 @@ export function createSpawnAgentTool(
             });
 
             const verdictText = reviewResult.output ?? "";
-            const satisfied = /VERDICT:\s*satisfied/i.test(verdictText);
+            // Anchor to a standalone verdict line — reviewer.md emits
+            // "VERDICT: satisfied" as the LAST line. The old substring match
+            // false-passed on prose like "I cannot return VERDICT: satisfied"
+            // or "VERDICT: satisfied only after fixing X".
+            const satisfied = /^\s*#{0,6}\s*VERDICT:\s*satisfied\b[.\s]*$/im.test(verdictText);
             if (satisfied) {
               result = {
                 ...result,

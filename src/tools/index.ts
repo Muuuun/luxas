@@ -2,7 +2,7 @@
  * Tool index — assembles all research tools for the brain agent.
  */
 
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { md5OrNull, extractFrontmatterBlock, parseAuditFrontmatter } from "../utils.js";
 import type { Agent } from "@mariozechner/pi-agent-core";
@@ -47,11 +47,19 @@ interface ExperimentSection {
  */
 export function parsePlanSections(text: string): Array<{ id: string; index: number }> {
   const lines = text.split("\n");
-  const headerRE = /^###\s+(E\d+)\b/;
+  // Match `### E_N` (the documented heading form — see experiment.md) as well
+  // as `### EN`. The previous /^###\s+(E\d+)\b/ matched only `EN` and silently
+  // parsed ZERO sections on every underscore plan, making the finish-gate
+  // commitment check a no-op on exactly those projects (including the two
+  // highest-cost runs). The integer is the cross-reference key to `## L2.N`.
+  const headerRE = /^###\s+E_?(\d+)\b/;
   const sections: Array<{ id: string; index: number }> = [];
   for (const line of lines) {
     const m = line.match(headerRE);
-    if (m) sections.push({ id: m[1], index: parseInt(m[1].slice(1), 10) });
+    if (m) {
+      const index = parseInt(m[1], 10);
+      sections.push({ id: `E${index}`, index });
+    }
   }
   return sections;
 }
@@ -123,11 +131,192 @@ export interface ToolCallbacks {
   onFinish?: () => void;
 }
 
+/**
+ * Fix δ — Directive-implication finish gate.
+ *
+ * When a session is launched with `--directive` containing research-implication
+ * keywords (simulate / verify / compare / analyze / 模拟 / 验证 / 对比 / 实验 /
+ * 分析), the directive is asking for NEW work — not for a re-write of an
+ * existing report. The finish gate must therefore verify that at least one
+ * experiment directory under data/experiments/ has been created or modified
+ * since the session started. If none, brain is trying to ship without doing
+ * the work the directive demanded.
+ *
+ * Observed failure that motivated this: on the Rb-单光子双比特门 project the
+ * user appended a directive demanding Doppler-elimination scheme comparison +
+ * 对向 297 simulation, brain edited report.tex and called finish() without
+ * spawning a single new experiment. The existing PI / typesetter / language
+ * gates passed because the report itself was internally consistent — they
+ * had no window on "did new work happen since the directive arrived?".
+ *
+ * Limitations (acknowledged):
+ *  - Cannot verify content relevance: a brain that creates an empty E_fake/
+ *    directory with `mkdir` or a real experiment unrelated to the directive
+ *    will pass the gate. We require at least one regular file under the dir
+ *    (defeats `mkdir`) but cannot enforce semantic alignment with the
+ *    directive — that remains a PI / typesetter judgment call.
+ */
+const DIRECTIVE_KEYWORD_RE =
+  /模拟|simulate|simulation|验证|verify|verification|对比|对照|比较|compare|comparison|实验|experiment|分析|analy[sz]e|analysis/i;
+
+export function directiveImpliesNewWork(directive: string | undefined): string | null {
+  if (!directive) return null;
+  const m = directive.match(DIRECTIVE_KEYWORD_RE);
+  return m ? m[0] : null;
+}
+
+/**
+ * Find experiment directories under data/experiments/ that contain at least
+ * one regular file whose mtime is strictly greater than `sinceMs`. Empty dirs
+ * (created by a defensive `mkdir` to fool the gate) do not count. We walk
+ * one level (scripts/, tests/, runs/) deep — enough to catch real work,
+ * cheap enough to avoid recursive directory traversal on large run trees.
+ */
+export function findExperimentsModifiedSince(
+  projectDir: string,
+  sinceMs: number,
+): string[] {
+  const expRoot = join(projectDir, "data", "experiments");
+  if (!existsSync(expRoot)) return [];
+  const out: string[] = [];
+  let entries: string[];
+  try { entries = readdirSync(expRoot); } catch { return []; }
+  for (const name of entries) {
+    const dir = join(expRoot, name);
+    let st;
+    try { st = statSync(dir); } catch { continue; }
+    if (!st.isDirectory()) continue;
+    if (hasFileNewerThan(dir, sinceMs, 2)) out.push(name);
+  }
+  return out;
+}
+
+function hasFileNewerThan(dir: string, sinceMs: number, depth: number): boolean {
+  let entries: string[];
+  try { entries = readdirSync(dir); } catch { return false; }
+  for (const name of entries) {
+    const full = join(dir, name);
+    let st;
+    try { st = statSync(full); } catch { continue; }
+    if (st.isFile() && st.mtimeMs > sinceMs) return true;
+    if (st.isDirectory() && depth > 0) {
+      if (hasFileNewerThan(full, sinceMs, depth - 1)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * H7: when report.tex enumerates N "schemes" / "方案" via explicit count
+ * ("compared 7 schemes") or via (a)(b)(c)... enumeration, every named
+ * scheme must have a corresponding experiment dir with a substantive
+ * results.json — non-trivial size + simulation-evidence keywords, NOT a
+ * `{"status":"excluded"}` stub.
+ *
+ * Heuristic, not perfect. Misses report sections that don't use the
+ * enumeration pattern. But catches the documented Rb failure: brain wrote
+ * "六种方案中四种经数值模拟验证 ... (c) 解析排除 (d) 解析排除 (b) 开放问题"
+ * — 7 schemes declared, 4 with real results.json, 3 trivial.
+ *
+ * Caller-bypassable via reviews/directive_pushback.md (mtime-newer than the
+ * report) — preserves brain's documented-dissent path.
+ */
+function checkSchemeSymmetry(
+  projectDir: string,
+  sessionStartedAtMs: number,
+): { ok: boolean; message?: string } {
+  const reportPath = join(projectDir, "report", "report.tex");
+  if (!existsSync(reportPath)) return { ok: true };
+
+  let tex: string;
+  try { tex = readFileSync(reportPath, "utf-8"); }
+  catch { return { ok: true }; }
+
+  // Detect explicit declaration: "N 个方案" / "N schemes" / "compared N X"
+  let declared = 0;
+  const explicitRe = /(?:对比|比较|compared?|enumerated?|all|every|the\s+)\s*(\d+)\s*(?:个|种)?\s*(?:方案|schemes?|approaches?|protocols?|methods?)/gi;
+  for (const m of tex.matchAll(explicitRe)) {
+    declared = Math.max(declared, parseInt(m[1], 10));
+  }
+  // Detect (a)..(z) markers tied to "scheme"/"方案" in same paragraph
+  const enumLetters = new Set<string>();
+  const enumRe = /(?:方案|scheme)\s*\(([a-z])\)/gi;
+  for (const m of tex.matchAll(enumRe)) enumLetters.add(m[1].toLowerCase());
+  declared = Math.max(declared, enumLetters.size);
+
+  if (declared < 3) return { ok: true }; // not enumerating schemes; skip check
+
+  // Count fresh experiment dirs with substantive results.json
+  const expRoot = join(projectDir, "data", "experiments");
+  if (!existsSync(expRoot)) {
+    return { ok: false, message: `Report declares ${declared} schemes but data/experiments/ does not exist.` };
+  }
+  let substantiveCount = 0;
+  const trivialStatusRe = /^\s*\{\s*"status"\s*:\s*"(?:excluded|open|infeasible|skip)"\s*\}?\s*$/i;
+  const evidenceRe = /"(?:fidelity|infidelity|trajector|simulation|sweep|scan|ensemble|samples?|results?)"\s*:/i;
+  try {
+    for (const name of readdirSync(expRoot)) {
+      const subDir = join(expRoot, name);
+      let st; try { st = statSync(subDir); } catch { continue; }
+      if (!st.isDirectory()) continue;
+      const runsDir = join(subDir, "runs");
+      if (!existsSync(runsDir)) continue;
+      let found = false;
+      for (const run of readdirSync(runsDir)) {
+        const resultsPath = join(runsDir, run, "results.json");
+        if (!existsSync(resultsPath)) continue;
+        let rst; try { rst = statSync(resultsPath); } catch { continue; }
+        if (rst.mtimeMs < sessionStartedAtMs) continue;
+        if (rst.size < 1024) continue;
+        let body: string;
+        try { body = readFileSync(resultsPath, "utf-8"); } catch { continue; }
+        if (trivialStatusRe.test(body.trim())) continue;
+        if (!evidenceRe.test(body)) continue;
+        found = true; break;
+      }
+      if (found) substantiveCount++;
+    }
+  } catch { /* tolerate listing failures */ }
+
+  // Allow pushback override: reviews/directive_pushback.md newer than report
+  const pushbackPath = join(projectDir, "reviews", "directive_pushback.md");
+  if (existsSync(pushbackPath)) {
+    try {
+      const pst = statSync(pushbackPath);
+      const rst = statSync(reportPath);
+      if (pst.mtimeMs >= rst.mtimeMs) return { ok: true };
+    } catch { /* fall through */ }
+  }
+
+  if (substantiveCount < declared) {
+    return {
+      ok: false,
+      message:
+        `Scheme symmetry mismatch: report.tex declares/enumerates ${declared} ` +
+        `schemes (via explicit count or (a)..(z) markers tied to "方案"/"scheme") ` +
+        `but only ${substantiveCount} experiment director(ies) under ` +
+        `data/experiments/ have a substantive results.json (≥1 KB, contains ` +
+        `fidelity/trajectories/simulation evidence, NOT a {"status":"excluded"} ` +
+        `stub). ${declared - substantiveCount} scheme(s) appear in the report ` +
+        `without underlying simulation artifacts. This is the documented Rb-单光子 ` +
+        `failure pattern: directive demanded "verify N via simulation", brain ` +
+        `delivered M<N with the rest narrated as "analytically excluded".`,
+    };
+  }
+  return { ok: true };
+}
+
+export interface DirectiveGateConfig {
+  directive: string;
+  sessionStartedAtMs: number;
+}
+
 export function buildResearchTools(
   projectDir: string,
   templateVars: Record<string, string>,
   getApiKey: (provider: string) => Promise<string | undefined> | string | undefined,
   callbacks?: ToolCallbacks,
+  directiveGate?: DirectiveGateConfig,
 ): { tools: any[]; setParentAgent: (agent: Agent) => void } {
   // Brain coding tools are wrapped with read-tracking + edit safety guards
   // declared in brain.md. The wrapper is load-bearing (RESEARCH.md protection,
@@ -187,6 +376,50 @@ export function buildResearchTools(
       if (active.length > 0) {
         const list = active.map(a => `  - ${a.name}: ${a.task} (running ${Math.floor((Date.now() - a.startedAt) / 1000)}s)`).join("\n");
         return { content: [{ type: "text" as const, text: `Cannot finish: ${active.length} background agent(s) still running. Wait for them to complete before finishing.\n\nActive agents:\n${list}` }] };
+      }
+
+      // Fix δ — Directive-implication gate. See directiveImpliesNewWork above
+      // for the rationale and known limitations. Only fires when this session
+      // was launched with --directive AND the directive contains a research-
+      // implication keyword. Cost: one stat() per experiment dir.
+      if (directiveGate) {
+        const kw = directiveImpliesNewWork(directiveGate.directive);
+        if (kw) {
+          const fresh = findExperimentsModifiedSince(projectDir, directiveGate.sessionStartedAtMs);
+          if (fresh.length === 0) {
+            return { content: [{ type: "text" as const, text:
+              `Cannot finish: --directive contains research-implication keyword ` +
+              `"${kw}" but no experiment directory under data/experiments/ has ` +
+              `been modified since the session started ` +
+              `(${new Date(directiveGate.sessionStartedAtMs).toISOString()}). ` +
+              `The directive demands new analysis; the project state shows none. ` +
+              `Spawn experiment with the directive's analysis task before calling ` +
+              `finish(). If the directive is genuinely satisfiable by editing the ` +
+              `report alone (no new computation needed), say so explicitly in a ` +
+              `note to the user and ask for an updated directive.`
+            }] };
+          }
+
+          // Fix H7 — subsection-vs-results symmetry. δ above only requires
+          // ≥1 fresh experiment dir; that's trivially satisfied even when the
+          // directive demanded N schemes simulated and brain only did 4/N.
+          // This check: detect explicit enumeration in report.tex ("compared
+          // N schemes" / scheme (a)..(g) markers) and require a matching
+          // count of experiment dirs with substantive results.json
+          // (non-trivial size + simulation-evidence keywords, NOT
+          // {"status":"excluded"} stubs).
+          const symmetry = checkSchemeSymmetry(projectDir, directiveGate.sessionStartedAtMs);
+          if (!symmetry.ok) {
+            return { content: [{ type: "text" as const, text:
+              `Cannot finish: ${symmetry.message}\n\n` +
+              `Either (a) simulate the missing schemes, or ` +
+              `(b) document a pushback in reviews/directive_pushback.md ` +
+              `naming each unsimulated scheme and the reason it cannot be ` +
+              `verified within scope. If (b), the gate accepts the discrepancy ` +
+              `once pushback.md is mtime-newer than the report.`
+            }] };
+          }
+        }
       }
 
       // Plan-commitment gate: derive required experiments from notes/plan.md
