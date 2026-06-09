@@ -17,7 +17,7 @@
  *                                        (physics|biology|chemistry|earth|ml|policy|_default)
  */
 
-import { existsSync, readFileSync, readdirSync, mkdirSync, writeFileSync, renameSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, readdirSync, mkdirSync, writeFileSync, renameSync } from "node:fs";
 import { execSync, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
@@ -47,6 +47,51 @@ if (existsSync(join(browserUseDir, "browser-use")) && !process.env.PATH?.include
 import { registerProject, updateProjectAfterRun, loadProjects } from "./memory.js";
 import { ORIGINAL_REQUEST_HEADER, deriveProjectTitle } from "./utils.js";
 
+// F2 — process-level crash handlers. Without these, Node's default behavior on
+// `unhandledRejection` is to terminate the process (Node ≥15) AND on
+// `uncaughtException` to terminate too — both with NO entry written anywhere.
+// That's the documented Sisyphus failure mode: brain process disappears mid-LLM-
+// call (or mid-anything-async), no `Done in Xs` line, no error in log.jsonl,
+// the user just sees "frozen" and has to manually `luxas run` again. These
+// handlers convert every silent death into a logged `process_crash` event that
+// studio renders + the resume path sees. They do NOT prevent the death itself
+// (that's F5's job for network errors); they make every death visible.
+//
+// Best-effort: handler swallows its own throws, uses sync I/O, never awaits.
+// Tries to write to .agent/log.jsonl of the project being run (resolved from
+// process.argv if available; otherwise stderr-only).
+function _crashLog(kind: "unhandledRejection" | "uncaughtException", err: unknown): void {
+  try {
+    const msg = (err as any)?.message ?? String(err);
+    const stack = (err as any)?.stack;
+    const entry = {
+      type: "process_crash",
+      kind,
+      timestamp: new Date().toISOString(),
+      message: msg.slice(0, 500),
+      stack: typeof stack === "string" ? stack.slice(0, 4000) : undefined,
+    };
+    try { process.stderr.write(`\n[${kind}] ${entry.message}\n${entry.stack ?? ""}\n`); } catch { /* */ }
+    // Try to resolve the project dir from argv so we can write to log.jsonl
+    const argv = process.argv.slice(2);
+    let pd: string | undefined;
+    for (let i = 1; i < argv.length; i++) {
+      if (argv[i] && !argv[i].startsWith("--")) { pd = argv[i]; break; }
+    }
+    if (pd) {
+      try {
+        const logPath = join(resolve(pd), ".agent", "log.jsonl");
+        appendFileSync(logPath, JSON.stringify(entry) + "\n");
+      } catch { /* path may not exist yet at startup-time crash */ }
+    }
+  } catch { /* handler must never throw */ }
+}
+process.on("unhandledRejection", (reason) => _crashLog("unhandledRejection", reason));
+process.on("uncaughtException", (err) => {
+  _crashLog("uncaughtException", err);
+  // Node's default after uncaughtException is to exit with code 1 anyway. Let
+  // the runtime do it so finalizers (other handlers, exit hooks) still fire.
+});
 
 const args = process.argv.slice(2);
 const command = args[0] ?? "run";
@@ -206,7 +251,28 @@ async function run(dir: string, modelName: string, userDirective?: string) {
   }
 
   // If previous session finished, archive checkpoint + PI feedback so we start fresh
-  archiveIfFinished(dir);
+  const archivedFrom = archiveIfFinished(dir);
+
+  // Fix H9: persist --directive into notes/directives/<ts>.md so it survives
+  // session restart / resume. Without this, when a user runs `luxas run` again
+  // (especially in resume mode) without re-passing --directive, the original
+  // requirement evaporates — β has nothing to inject into the trailer, γ has
+  // nothing to surface to PI, and brain operates on stale assumptions or just
+  // the new PI STEER scope. The Rb-单光子 5/28 incident proved this: the
+  // original "simulate all 7 schemes" directive was nowhere in the resume
+  // context. context.ts and pi-agent.ts now read the union of all directives
+  // archived under notes/directives/ so every active directive stays visible
+  // across resumes until the user explicitly retires one.
+  persistDirectiveIfNew(dir, userDirective);
+
+  // Write a session_start marker to log.jsonl IMMEDIATELY so studio's SSE
+  // tail surfaces the new session in the UI within the first poll — without
+  // this, fresh-start sessions show "暂无事件，等待 log.jsonl…" until brain
+  // fires its first tool call (which can take minutes during context build /
+  // memory dump / cold-start LLM call). Marker shape mirrors the tool_call
+  // contract that hooks.ts uses, with type:"session_start" so studio renders
+  // it as a synthetic event distinct from real tool calls.
+  writeSessionStartMarker(dir, userDirective, archivedFrom);
 
   // Reconcile any bash jobs left running from a prior crashed/aborted session.
   // Verified-ours orphans are killed; ambiguous ones (pid reuse, missing ps)
@@ -241,9 +307,18 @@ async function run(dir: string, modelName: string, userDirective?: string) {
   console.log();
 
   // Create agent
+  // δ directive-gate scoping: enforce "an experiment was modified since this
+  // process started" only on a FRESH start. A checkpoint still present here
+  // (archiveIfFinished above already removed finished ones) means the prior
+  // session did not finish — i.e. a resume, where prior-session experiment
+  // mtimes are legitimately older than this process. The H7 content check still
+  // applies on resume.
+  const resumedFromCheckpoint = existsSync(join(dir, ".agent", "checkpoint.jsonl"));
   const { agent, hooks, restore, usageLogPath } = createResearchAgent({
     projectDir: dir,
     model: modelName,
+    directive: userDirective,
+    resumedFromCheckpoint,
   });
 
   // Console progress
@@ -469,7 +544,7 @@ function listProjects() {
   }
 }
 
-function archiveIfFinished(dir: string) {
+function archiveIfFinished(dir: string): string | undefined {
   const logJsonl = join(dir, ".agent", "log.jsonl");
   const checkpointFile = join(dir, ".agent", "checkpoint.jsonl");
 
@@ -505,7 +580,7 @@ function archiveIfFinished(dir: string) {
     } catch { /* ignore */ }
   }
 
-  if (!finished) return;
+  if (!finished) return undefined;
 
   const ts = new Date().toISOString().replace(/[:.]/g, "-");
   let donePath: string | undefined;
@@ -542,6 +617,75 @@ function archiveIfFinished(dir: string) {
       }
     } catch { /* hook failure must not break the main flow */ }
   }
+
+  return donePath;
+}
+
+/**
+ * Append a `session_start` marker to .agent/log.jsonl so studio's SSE tail
+ * surfaces a visible event for the new session within its first poll. Without
+ * this, a fresh-start session leaves log.jsonl absent (archived) and the UI
+ * displays "暂无事件，等待 log.jsonl…" until brain fires its first tool call
+ * — which can take minutes during context build / memory dump / cold LLM call.
+ *
+ * Marker shape:
+ *   { type: "session_start", directive?, archived_from?, timestamp }
+ *
+ * Idempotent: appending a duplicate marker on resume is harmless. Best-effort:
+ * any I/O error is swallowed so startup never fails on observability writes.
+ */
+function writeSessionStartMarker(
+  dir: string,
+  directive: string | undefined,
+  archivedFrom: string | undefined,
+): void {
+  try {
+    const agentDir = join(dir, ".agent");
+    mkdirSync(agentDir, { recursive: true });
+    const logPath = join(agentDir, "log.jsonl");
+    const entry: Record<string, unknown> = {
+      type: "session_start",
+      timestamp: new Date().toISOString(),
+    };
+    if (directive) entry.directive = directive.slice(0, 500);
+    if (archivedFrom) entry.archived_from = archivedFrom.split("/").pop();
+    appendFileSync(logPath, JSON.stringify(entry) + "\n");
+  } catch { /* observability write must not block startup */ }
+}
+
+/**
+ * Persist --directive into notes/directives/<ts>.md so it survives session
+ * restart / resume. context.ts and pi-agent.ts read the UNION of all files
+ * here as the active directive set, so directives accumulate (not overwrite)
+ * — user can run with new --directive on a resumed project without losing the
+ * original requirement. Dedup by content hash: re-running with the same
+ * directive string is a noop, but a different directive creates a new file.
+ *
+ * Filename: `<ISO-timestamp>.md` so chronological listing matches order of
+ * issuance. User can manually retire stale ones by moving them to
+ * `notes/directives/archived/` (read function skips that subdirectory).
+ */
+function persistDirectiveIfNew(dir: string, directive: string | undefined): void {
+  if (!directive || !directive.trim()) return;
+  try {
+    const dirDir = join(dir, "notes", "directives");
+    mkdirSync(dirDir, { recursive: true });
+    // Dedup: skip if any existing file has identical content
+    const trimmed = directive.trim();
+    for (const name of readdirSync(dirDir)) {
+      if (!name.endsWith(".md")) continue;
+      try {
+        const existing = readFileSync(join(dirDir, name), "utf-8").trim();
+        // Strip the frontmatter (we'll add it on write) for comparison
+        const body = existing.replace(/^---[\s\S]*?---\s*/, "").trim();
+        if (body === trimmed) return; // identical directive already persisted
+      } catch { /* skip unreadable files */ }
+    }
+    const ts = new Date().toISOString().replace(/[:.]/g, "-");
+    const filename = `${ts}.md`;
+    const content = `---\nissued_at: ${new Date().toISOString()}\n---\n\n${trimmed}\n`;
+    writeFileSync(join(dirDir, filename), content, "utf-8");
+  } catch { /* persistence is best-effort; never block startup */ }
 }
 
 async function initProject(dir: string, prompt?: string) {
