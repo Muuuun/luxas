@@ -12,10 +12,11 @@ const GENERAL_MPLSTYLE = join(LUXAS_ROOT, "skills", "venue-specific", "figstyles
 
 function makeScaffold(title: string): string {
   return `\\documentclass[twocolumn]{article}
-\\usepackage{amsmath, amssymb, graphicx}
+\\usepackage{amsmath, amssymb, graphicx, tabularx}
+\\providecommand{\\affiliation}[1]{}% safety net: \\affiliation is a revtex4-2/APS-only command; in [article] it is undefined and its argument text spills onto page 1 (triggers "Missing \\begin{document}"). No-op it so a stray \\affiliation can never leak.
 
 \\title{${title}}
-\\author{Luxas}
+\\author{Luxas \\\\ \\small Singularity Research}
 
 \\begin{document}
 \\twocolumn[

@@ -309,6 +309,11 @@ function checkSchemeSymmetry(
 export interface DirectiveGateConfig {
   directive: string;
   sessionStartedAtMs: number;
+  /** True on a resumed (unfinished-checkpoint) run. Scopes the δ mtime check
+   * to fresh starts only, so a resume cannot false-block finish() — prior-session
+   * experiment mtimes are legitimately older than this process. The H7
+   * scheme-symmetry content check still applies on resume. */
+  isResume?: boolean;
 }
 
 export function buildResearchTools(
@@ -385,19 +390,25 @@ export function buildResearchTools(
       if (directiveGate) {
         const kw = directiveImpliesNewWork(directiveGate.directive);
         if (kw) {
-          const fresh = findExperimentsModifiedSince(projectDir, directiveGate.sessionStartedAtMs);
-          if (fresh.length === 0) {
-            return { content: [{ type: "text" as const, text:
-              `Cannot finish: --directive contains research-implication keyword ` +
-              `"${kw}" but no experiment directory under data/experiments/ has ` +
-              `been modified since the session started ` +
-              `(${new Date(directiveGate.sessionStartedAtMs).toISOString()}). ` +
-              `The directive demands new analysis; the project state shows none. ` +
-              `Spawn experiment with the directive's analysis task before calling ` +
-              `finish(). If the directive is genuinely satisfiable by editing the ` +
-              `report alone (no new computation needed), say so explicitly in a ` +
-              `note to the user and ask for an updated directive.`
-            }] };
+          // δ mtime check: fresh-start only. On a resume, prior-session
+          // experiment mtimes are legitimately older than this process, so this
+          // would false-block a legitimate finish(); the H7 scheme-symmetry
+          // (content) check below carries the substance requirement on resume.
+          if (!directiveGate.isResume) {
+            const fresh = findExperimentsModifiedSince(projectDir, directiveGate.sessionStartedAtMs);
+            if (fresh.length === 0) {
+              return { content: [{ type: "text" as const, text:
+                `Cannot finish: --directive contains research-implication keyword ` +
+                `"${kw}" but no experiment directory under data/experiments/ has ` +
+                `been modified since the session started ` +
+                `(${new Date(directiveGate.sessionStartedAtMs).toISOString()}). ` +
+                `The directive demands new analysis; the project state shows none. ` +
+                `Spawn experiment with the directive's analysis task before calling ` +
+                `finish(). If the directive is genuinely satisfiable by editing the ` +
+                `report alone (no new computation needed), say so explicitly in a ` +
+                `note to the user and ask for an updated directive.`
+              }] };
+            }
           }
 
           // Fix H7 — subsection-vs-results symmetry. δ above only requires
@@ -526,6 +537,38 @@ export function buildResearchTools(
       const pdfPath = join(projectDir, "report/report.pdf");
       if (!existsSync(pdfPath)) {
         return { content: [{ type: "text" as const, text: `Cannot finish: report/report.pdf does not exist. Compile the report first with compile_latex, then call finish again.` }] };
+      }
+
+      // PDF-correctness gate: the SHIPPED report.pdf must not contain undefined
+      // citations, undefined control sequences, or a stale bibliography. These
+      // are filesystem ground-truth (latex .log + .bbl/.bib mtimes), so the gate
+      // cannot be performatively satisfied — and it catches the broken render
+      // regardless of HOW it was compiled (a ctex doc hand-compiled with xelatex
+      // bypasses every in-tool guard). Without this, a "successful" compile ships
+      // "?" citations and stray title-page text (the \affiliation spill).
+      {
+        const reportDir = join(projectDir, "report");
+        const logPath = join(reportDir, "report.log");
+        const renderIssues: string[] = [];
+        if (existsSync(logPath)) {
+          const log = readFileSync(logPath, "utf-8");
+          const cites = [...new Set([...log.matchAll(/Citation `([^']+)' on page \d+ undefined/g)].map((m) => m[1]))];
+          if (cites.length > 0) renderIssues.push(`undefined citation(s) [render as "?"]: ${cites.join(", ")}`);
+          if (/! Undefined control sequence/.test(log)) renderIssues.push(`undefined control sequence (e.g. a revtex-only \\affiliation in an [article] doc — its text spills onto page 1)`);
+          if (/There were undefined references/.test(log) && cites.length === 0) renderIssues.push(`undefined reference(s) [render as "??"]`);
+        }
+        const bibPath = join(reportDir, "references.bib");
+        const bblPath = join(reportDir, "report.bbl");
+        if (existsSync(bibPath) && existsSync(bblPath) && statSync(bibPath).mtimeMs > statSync(bblPath).mtimeMs) {
+          renderIssues.push(`references.bib is newer than report.bbl — bibtex did not re-run after the bibliography changed; recompile`);
+        }
+        if (renderIssues.length > 0) {
+          return { content: [{ type: "text" as const, text:
+            `Cannot finish: the compiled report.pdf has unresolved LaTeX problems (these render as "?" / "??" / stray text in the shipped PDF):\n` +
+            renderIssues.map((i) => `  - ${i}`).join("\n") +
+            `\n\nRecompile cleanly with compile_latex (it re-runs the full engine→bibtex→engine→engine sequence and auto-selects xelatex for ctex/CJK docs), then call finish again. If a \\cite key is genuinely missing from references.bib, add the reference (spawn a reader) or drop the cite.`
+          }] };
+        }
       }
 
       // Figure gate: require ≥1 self-generated figure (under report/figures/,

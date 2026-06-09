@@ -7,7 +7,7 @@
 
 import { Type } from "@sinclair/typebox";
 import { execSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join, basename } from "node:path";
 import { applyAuthorityEscalationSection } from "./authority-escalation.js";
 
@@ -106,6 +106,14 @@ export function createReportTools(projectDir: string) {
       // prompt-side pressure to invent human questions.
       applyAuthorityEscalationSection(dir, texfile, projectDir);
 
+      // Pre-compile pass: in twocolumn documents, auto-promote `\begin{table}`
+      // to `\begin{table*}` so tables span the full text width instead of
+      // being constrained to the ~3.4in column and overflowing into the
+      // adjacent column. Brain.md tells brain to do this manually but brain
+      // routinely forgets; enforcing it at the tool layer is mechanical and
+      // idempotent (already-`table*` blocks are left alone).
+      const promoted = promoteTablesInTwoColumn(dir, texfile);
+
       // Pre-compile check: figures from other papers must have \cite{}
       const citationErrors = checkFigureCitations(dir, texfile, projectDir);
       if (citationErrors.length > 0) {
@@ -115,11 +123,24 @@ export function createReportTools(projectDir: string) {
         return { content: [{ type: "text" as const, text: msg }], details: { success: false } };
       }
 
+      // Engine selection: ctex / xeCJK / fontspec (CJK text & system fonts)
+      // REQUIRE xelatex, not pdflatex. Hardcoding pdflatex made the agent
+      // abandon this tool and hand-compile CJK reports with xelatex in bash —
+      // bypassing every in-tool guard (figure-citation check, .log problem
+      // scan). Detect the engine so the tool actually runs on those docs.
+      let engine = "pdflatex";
+      try {
+        const src = readFileSync(join(dir, texfile), "utf-8");
+        if (/\\usepackage(\[[^\]]*\])?\{(ctex|xeCJK|fontspec)\}|\\documentclass(\[[^\]]*\])?\{ctexart\}/.test(src)) {
+          engine = "xelatex";
+        }
+      } catch { /* unreadable — default pdflatex */ }
+
       const steps = [
-        `pdflatex -interaction=nonstopmode ${texfile}`,
+        `${engine} -interaction=nonstopmode ${texfile}`,
         `bibtex ${base}`,
-        `pdflatex -interaction=nonstopmode ${texfile}`,
-        `pdflatex -interaction=nonstopmode ${texfile}`,
+        `${engine} -interaction=nonstopmode ${texfile}`,
+        `${engine} -interaction=nonstopmode ${texfile}`,
       ];
 
       const outputs: string[] = [];
@@ -156,12 +177,59 @@ export function createReportTools(projectDir: string) {
         "\n\n💡 If you've already tried to fix this error once, delegate to the fixer agent instead of burning expensive tokens:\n" +
         '   spawn_agent(agent="fixer", task="Fix this compile error: <paste the error above>")\n' +
         "   The fixer uses haiku and is much cheaper than debugging LaTeX syntax yourself.";
-      const text = header + outputs.join("\n\n") + problems.report + footer;
+      const promotedNote = promoted > 0
+        ? `\nℹ️  Auto-promoted ${promoted} \`\\begin{table}\` → \`\\begin{table*}\` (twocolumn doc → tables span full text width).\n`
+        : "";
+      const text = header + promotedNote + outputs.join("\n\n") + problems.report + footer;
       return { content: [{ type: "text" as const, text }], details: { success } };
     },
   };
 
   return [compileLatex];
+}
+
+// ── Auto-promote table → table* in twocolumn documents ─────────
+
+/**
+ * In a `[twocolumn]` document, `\begin{table}` constrains the float to a single
+ * ~3.4in column; wide content overflows into the adjacent column's body text.
+ * `\begin{table*}` is the natural full-width-float variant. Brain.md instructs
+ * brain to do this manually but it's a routine omission. Tool-layer rewrite is
+ * mechanical, idempotent, and content-preserving.
+ *
+ * Returns the number of `\begin{table}` blocks promoted (0 if not twocolumn or
+ * if no plain-table envs exist).
+ */
+function promoteTablesInTwoColumn(dir: string, texfile: string): number {
+  const texPath = join(dir, texfile);
+  if (!existsSync(texPath)) return 0;
+
+  let tex: string;
+  try { tex = readFileSync(texPath, "utf-8"); }
+  catch { return 0; }
+
+  // Detect twocolumn: either documentclass option or an explicit \twocolumn
+  // command at the start of a line. Both forms appear in venue-specific
+  // scaffolds (e.g. revtex4-2 uses the documentclass option; some ICML
+  // templates invoke \twocolumn after \maketitle).
+  const isTwoColumn =
+    /\\documentclass\s*\[[^\]]*\btwocolumn\b[^\]]*\]\s*\{[^}]+\}/.test(tex) ||
+    /^\s*\\twocolumn\b/m.test(tex);
+  if (!isTwoColumn) return 0;
+
+  // Replace `\begin{table}` / `\end{table}` only. The `\}` after `table` means
+  // `\begin{table*}` (already promoted) is naturally skipped — `table*` has
+  // `*` where the pattern requires `}`. Placement specifier `[t]`, `[!ht]`,
+  // etc. follows the env opener and is preserved untouched.
+  let count = 0;
+  const promoted = tex
+    .replace(/\\begin\{table\}/g, () => { count++; return "\\begin{table*}"; })
+    .replace(/\\end\{table\}/g, "\\end{table*}");
+
+  if (count === 0) return 0;
+  try { writeFileSync(texPath, promoted, "utf-8"); }
+  catch { return 0; }
+  return count;
 }
 
 // ── pdflatex .log problem detection ──────────────────────────────
@@ -226,7 +294,12 @@ function readLogProblems(
   const refs = new Set<string>();
   for (const m of log.matchAll(/Reference `([^']+)' on page \d+ undefined/g)) refs.add(m[1]);
 
-  const total = overfull.length + stuck.length + cites.size + refs.size;
+  // Undefined control sequence — e.g. a revtex-only `\affiliation` in an
+  // [article] doc; LaTeX drops the command and its argument text spills onto
+  // page 1. pdflatex/xelatex exit 0 on this, so it ships silently otherwise.
+  const ctrlSeq = (log.match(/! Undefined control sequence/g) || []).length;
+
+  const total = overfull.length + stuck.length + cites.size + refs.size + ctrlSeq;
   if (total === 0) return { count: 0, report: "" };
 
   const sections: string[] = [];
@@ -250,6 +323,11 @@ function readLogProblems(
       `    • ${[...cites].join(", ")}`,
     );
   }
+  if (ctrlSeq > 0) {
+    sections.push(
+      `Undefined control sequence ×${ctrlSeq} (a command LaTeX doesn't know — e.g. a revtex-only \\affiliation in an [article] doc; its argument text spills onto page 1). Search the .log for "! Undefined control sequence" and fix the line it names.`,
+    );
+  }
   if (refs.size > 0) {
     sections.push(
       `Undefined references (PDF renders as "??"):\n` +
@@ -262,7 +340,7 @@ function readLogProblems(
     sections.join("\n\n  ") +
     "\n\nCommon causes & fixes:\n" +
     "  • Overfull math/display    → use \\begin{align} a &= b \\\\ &+ c \\end{align}\n" +
-    "  • Overfull table/align     → \\resizebox{\\columnwidth}{!}{...}, or split columns, or use \\begin{table*} for full-width\n" +
+    "  • Overfull table/align     → a long-text/CJK cell in a bare l/c/r column won't line-wrap (it expands to natural width); \\begin{table*} and \\resizebox do NOT fix this (table* keeps natural-width columns, resizebox shrinks the font to illegibility). Convert the long-text column(s) to tabularx X-columns: add \\usepackage{tabularx}, then \\begin{tabularx}{\\columnwidth}{>{\\raggedright\\arraybackslash}X|c|c}...\\end{tabularx} — use \\textwidth instead of \\columnwidth if the float is \\begin{table*}. Only X columns line-wrap.\n" +
     "  • Overfull paragraph       → insert \\allowbreak in long English/cite runs; split multi-key \\cite{} into shorter ones\n" +
     "  • Float stuck              → shrink the figure, use \\begin{figure*}/\\begin{table*} for full-width float, or relax placement specifier (e.g. [!htbp])\n" +
     "  • Citation undefined       → add entry to references.bib, or fix typo in \\cite{key}; remember to re-run bibtex\n" +
