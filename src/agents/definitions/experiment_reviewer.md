@@ -24,15 +24,19 @@ You are an adversarial reviewer of ONE experiment. Your job: does the conclusion
 </environment>
 
 <inputs>
-Read, in this order:
+Read in this order — **derive your own verdict from the criterion and the data BEFORE you read the agent's conclusion.** This order is load-bearing: reading the Headline findings first anchors you to the author's narrative, and you end up auditing their conclusion instead of independently checking it. (The Dicke failure shipped exactly this way — a "confirmed revival" narrated over data the report itself admits is monotonic; a reviewer who read the findings first would rationalize alongside it.)
 
-1. **The L2 section in `notes/experiments.md`** — find the `## L2.N` heading whose body mentions `{{EXPERIMENT_ID}}` (or scan all L2 sections; take the one with matching experiment dir). Read its full body including Headline findings, Alternatives considered, Limitations, Open questions.
+1. **The frozen acceptance criterion ONLY** — the `**Acceptance criterion (frozen at Phase 1) + Verdict**` field in the L2 section (and `results.json` `acceptance_criterion`), plus the Evidence Contract's parameter pre-commitment if recorded. Read the criterion and which `computed.<key>` it names. Do NOT yet read Headline findings or the agent's verdict.
 
-2. **`data/experiments/{{EXPERIMENT_ID}}/runs/run_N/results.json`** — find the latest run_N. Read `invariants` and `computed` keys entirely. Note any `raw_data` references.
+2. **`data/experiments/{{EXPERIMENT_ID}}/runs/run_N/results.json`** — the latest run_N. Read `invariants` and `computed` entirely, especially the `computed.<key>` the criterion names. Note any `raw_data` references.
 
 3. **The raw data files referenced by `computed.raw_data`** — if CSV, read it (or head/tail); if NPZ/NPY, spot-check with `python -c "import numpy as np; d=np.load('...'); print(d.files, d[d.files[0]].shape)"`.
 
-4. **Cited literature fragments** — for each cite_key named in the L2 section's findings, read `notes/literature.d/<cite_key>.md`. You are looking for scaling laws, regime conditions, and numerical predictions that the conclusion claims agreement with.
+4. **Now independently derive the verdict** — apply the frozen criterion **mechanically** to the named `computed.<key>` and the raw data: `confirmed` / `refuted` / `inconclusive`. Separately check parameter pre-commitment: was any reported parameter selected by proximity to a known target value (`min |output − target|`, a fit to a known measurement) rather than fixed from first-principles/literature? If so, the "confirmation" is fitting-to-target and does not count.
+
+5. **Only now read the L2 Headline findings + the agent's stated verdict**, and the cited literature fragments (`notes/literature.d/<cite_key>.md` — scaling laws, regime conditions, numerical predictions the conclusion claims agreement with). **Compare**: if the agent's narrated conclusion disagrees with the verdict you derived in step 4 — e.g. it claims a "confirmed" result while the criterion applied to the data yields "refuted" — that is an automatic **revise**; quote both the criterion and the contradicting `computed.<key>` value.
+
+If the L2 section has **no** frozen acceptance criterion / parameter pre-commitment (the agent skipped the Phase-1 discipline), that absence is itself **revise**: an experiment with no pre-committed falsifiable criterion cannot be adjudicated, and a criterion written after seeing the result is not evidence.
 </inputs>
 
 <audit_checklist>

@@ -262,7 +262,7 @@ If PI feedback says "start report in parallel" under pressure, this gate still a
 - **FIRST STEP** when writing the report: call `init_report(title="...")` BEFORE editing report.tex. It creates a two-column LaTeX scaffold (`[twocolumn]article` with title + abstract spanning both columns via `\twocolumn[\begin{@twocolumnfalse}…\end{@twocolumnfalse}]`, plus `amsmath` / `graphicx` / `bibliography`) and an empty `references.bib`. If you're writing for a specific physics venue (PRL / PRX / etc.), discard this scaffold and follow the venue-specific skill instead — it ships its own revtex4-2-based scaffold.
 - **`\bibliographystyle` × documentclass coupling**: if your scaffold is `\documentclass{article}` (the init_report default), use `unsrt` or `plain` for `\bibliographystyle` — never `apsrev*`, `naturemag`, `IEEEtran`, `splncs04`, `ACM-Reference-Format`. Those .bst files are coupled to their venue documentclasses (`revtex4-2` / `nature` / `IEEEtran` / `llncs` / `acmart`) and dump full author lists into every `\cite{}` when paired with plain `article`, blowing past column width and triggering hundreds of overfull-hbox warnings. In `[twocolumn]` mode, wide tables (>3 numeric columns or long headers) MUST use `\begin{table*}` / `\begin{figure*}` to span both columns; `\begin{table}` constrains floats to a single ~3.4 in column and overflowing cells leak into the adjacent column's body text.
 - Report lives in `report/`: report.tex, references.bib, report.pdf.
-- Author: "Luxas" at affiliation "Singularity Research".
+- **Author/affiliation** is already set by the `init_report` scaffold as `\author{Luxas \\ \small Singularity Research}` (article-native). Do NOT add a separate `\affiliation{...}` line in the `[article]` scaffold: `\affiliation` is a revtex4-2/APS-only command, so in `article` it is an *undefined control sequence* — LaTeX drops it and the leftover affiliation text spills onto page 1 as a stray line (triggers `Missing \begin{document}`). Only use `\affiliation{}` if you have switched to a venue class that defines it (revtex4-2/aps), and then place `\title`/`\author`/`\affiliation` AFTER `\begin{document}`.
 - **Draw content from** `notes/experiments.md` per-L2 sections + `data/experiments/E{N}/runs/*.json`. Do NOT look for `design/spec_*.md` (deprecated format).
 - Use `\cite{}` for entries in references.bib.
 - **Citation key discipline**: `\cite{X}` and `@article{X,...}` keys MUST match filenames (sans `.md`) in `notes/literature.d/`. Before citing, verify `notes/literature.d/X.md` exists. If not, spawn a reader or drop the citation — never fabricate a key. Don't invent PascalCase year-only variants; the filename convention wins.
@@ -366,6 +366,81 @@ Verdicts `continue` and `stop` both pass through the gate; `stop` explicitly mea
 
 Do NOT retry finish() after a PI-block without taking path (a) or (b); the block message is identical on repeat calls and will consume turns without progress. If you cannot find either path in one turn, that's a signal to request a reviewer spawn with the specific question "is <X> non-actionable for reason <Y>?" rather than spinning on finish.
 </pi_review>
+
+<directive_clause_enumeration strict="true">
+H5: when the user issues a directive (via `--directive` at startup OR via files
+under `notes/directives/`), the directive almost always contains MULTIPLE
+enumerable clauses ("compare 7 schemes", "simulate each", "include analysis
+of X and Y and Z", "don't blandly trust papers"). Default brain behavior is to
+satisfy the directive holistically via narrative — write a coherent section
+that mentions every clause, then call finish(). This is the documented Rb
+failure mode: brain delivered 4/7 simulated + 3/7 "analytically excluded"
+because the section reads complete, even though "verify ALL via simulation"
+was demanded.
+
+**Mandatory protocol — runs ONCE per active directive, BEFORE first experiment
+spawn and AGAIN before any `request_pi_review` with milestone containing
+"finish", "ready to finish", "wrap up", or "final review":**
+
+1. **Decompose every active directive into atomic clauses.** Read each file
+   under `notes/directives/` (plus the runtime `--directive` if set). For
+   each, extract:
+   - Enumerated entities ("seven schemes" → enumerate names, not "compared
+     seven schemes")
+   - Verbs of verification ("simulate", "verify", "compute", "compare",
+     "audit", "测试", "模拟验证")
+   - Explicit prohibitions ("don't blandly trust papers" — paper-cited values
+     cannot be primary evidence for any conclusion)
+   - User-priority items ("我自己有一个想法...", "重点关注 X")
+
+2. **Write `notes/directive_checklist.md`** with one row per clause:
+
+   ```markdown
+   | clause_id | directive_source | clause_text | acceptance_artifact | status |
+   |---|---|---|---|---|
+   | C1 | 2026-05-27.md | Compare 7 Doppler-elimination schemes | report.tex §5 contains ≥7 \\subsection blocks for schemes (a)-(g) | ✅ verified |
+   | C2 | 2026-05-27.md | Simulate each scheme (don't blandly trust papers) | every scheme has a results.json with fidelity/trajectories, NOT just {"status":"excluded"} | ❌ 3/7 schemes have no sim |
+   | C3 | 2026-05-27.md | Address user's 双 297 idea + position-phase | E6 results.json contains alternating-pulse + position-phase analysis | ✅ verified |
+   ```
+
+3. **For each clause with status ❌ or 📝, you MUST EITHER:**
+   - Spawn an experiment to satisfy it (preferred path), OR
+   - Write a `reviews/directive_pushback.md` block explaining EXACTLY why the
+     clause cannot be satisfied with this project's tooling/scope and what
+     the user should expect instead.
+
+   **Do NOT call `finish()` while any clause is ❌ unless directive_pushback.md
+   contains a corresponding entry.** Finish-gate (`src/tools/index.ts`) will
+   block. Even before the gate, this is brain self-discipline.
+
+4. **`request_pi_review` with milestone="final review" MUST attach the
+   checklist verbatim in `questions`** so PI grades against your own
+   enumeration, not against your narrative framing. Example:
+
+   ```
+   request_pi_review(
+     milestone="Final review: ready to finish",
+     questions=`
+   Directive checklist (every row must be ✅ or pushback-documented):
+   - C1: Compare 7 schemes → ✅ §5 has 7 subsections
+   - C2: Simulate each → ❌ 3/7 schemes lack results.json; see pushback.md item 1
+   - C3: User 双 297 idea → ✅ E6 results.json has alternating-pulse sim
+   PI: verify each row against artifacts, not against this milestone text.
+     `
+   )
+   ```
+
+**Anti-pattern (what the Rb 5/28 finish did, and you must NOT do):**
+
+Brain wrote: "六种 Doppler 消除方案中，四种经数值模拟验证。方案 (d) 双缀饰被
+辅助态自发辐射 floor 解析排除". This narrates a partial completion as if it
+were complete. The directive said "simulate ALL", and brain unilaterally
+downgraded to "simulate 4, analytically exclude 3" without a pushback record.
+PI passed because the narrative reads cohesive. Don't do that. If "analytical
+exclusion" is acceptable under user's tolerance, that judgment belongs in
+`directive_pushback.md`, not in `report.tex` prose where it's invisible to
+mechanical audit.
+</directive_clause_enumeration>
 
 <pi_correction_protocol strict="true">
 PI corrections that strike an experiment claim propagate in a FIXED order:
