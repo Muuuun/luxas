@@ -131,6 +131,11 @@ async function compactSingleFile(
   model: Model<any>,
   apiKey: string,
 ): Promise<string> {
+  // Size the output cap to the content. The compaction prompt is "Keep ALL /
+  // Preserve ALL" (near-verbatim), so output scales with input; the old fixed
+  // 4096-token cap silently truncated large ledgers (e.g. a 70K-char
+  // experiments.md), which then passed the >10% guard and overwrote the file.
+  const cap = Math.min(model.maxTokens, Math.ceil(content.length / 3) + 1024);
   const response = await completeSimple(model, {
     systemPrompt: COMPACTION_SYSTEM_PROMPT,
     messages: [{
@@ -140,9 +145,14 @@ async function compactSingleFile(
     }],
     tools: [],
   }, {
-    maxTokens: 4096,
+    maxTokens: cap,
     apiKey,
   } as any);
 
+  // Safety floor: if the model still hit the output cap the compaction is
+  // truncated — never overwrite a Keep-ALL/Preserve-ALL ledger with an
+  // amputated copy. Return the original unchanged (the caller's >10% guard then
+  // skips the write), leaving the file uncompacted rather than corrupted.
+  if ((response as any).stopReason === "length") return content;
   return extractTextContent(response.content);
 }

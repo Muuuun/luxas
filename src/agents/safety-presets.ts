@@ -13,8 +13,8 @@ export const SAFETY_PRESETS = {
 
   /** Files that materialize the written report + its citation graph. */
   report_surface: [
-    "report.tex",
-    "references.bib",
+    "report/report.tex",
+    "report/references.bib",
     "notes/literature.md",
   ],
 

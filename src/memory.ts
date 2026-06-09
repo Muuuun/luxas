@@ -9,10 +9,10 @@
  * New projects see past research summaries in their context snapshot.
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, renameSync } from "node:fs";
 import { join, basename } from "node:path";
 import { homedir } from "node:os";
-import { readFileSafe, deriveProjectTitle } from "./utils.js";
+import { readFileSafe, deriveProjectTitle, atomicWriteJson } from "./utils.js";
 
 const SISYPHUS_DIR = join(homedir(), ".sisyphus");
 const PROJECTS_FILE = join(SISYPHUS_DIR, "projects.json");
@@ -40,13 +40,23 @@ export function loadProjects(): ProjectEntry[] {
   try {
     return JSON.parse(readFileSync(PROJECTS_FILE, "utf-8"));
   } catch {
-    return [];
+    // A corrupt/partial projects.json must NEVER silently become an empty
+    // registry — the next registerProject would overwrite it, erasing every
+    // other project. Quarantine the bad file (recoverable) and fail loud; a
+    // later run then sees no file and starts a fresh registry instead of
+    // clobbering the real one with a single entry.
+    const quarantine = `${PROJECTS_FILE}.corrupt.${Date.now()}`;
+    renameSync(PROJECTS_FILE, quarantine);
+    throw new Error(
+      `projects.json was corrupt; quarantined to ${quarantine}. ` +
+      `Recover entries from it manually if needed, then re-run.`,
+    );
   }
 }
 
 function saveProjects(projects: ProjectEntry[]): void {
   ensureDir();
-  writeFileSync(PROJECTS_FILE, JSON.stringify(projects, null, 2));
+  atomicWriteJson(PROJECTS_FILE, projects);
 }
 
 /**

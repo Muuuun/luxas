@@ -18,7 +18,7 @@ import { resolveToolSets } from "./tool-sets.js";
 import { resolveContextBuilder } from "./context-builders.js";
 import { buildSafetyWrapper, type SafetyRuntimeHooks } from "./safety-wrappers.js";
 import { jobOwnerAls } from "../jobs/als.js";
-import { classifyThrownStopReason, type SubAgentExit, type SubAgentStopReason, type FileTouchRecord } from "../active-agents.js";
+import { addAgent, removeAgent, classifyThrownStopReason, type SubAgentExit, type SubAgentStopReason, type FileTouchRecord } from "../active-agents.js";
 import { cleanMessagesForModel } from "../transform.js";
 import {
   createFileContextCache,
@@ -143,6 +143,52 @@ function applyProfile(modelKey: string, agentName?: string): string {
   if (!profile) return modelKey;
   if (ANTHROPIC_TIERS.has(modelKey)) return profile;
   return modelKey;
+}
+
+// F5-lite — transient-error retry wrapper around streamSimple. The pi-coding-agent
+// package has _isRetryableError catching `connection error / fetch failed / ECONNRESET
+// / terminated / etc.` and applying exp backoff at agent-session.js:1859, but
+// sub-agents spawned via pi-agent-core directly (every Sisyphus brain + sub-agent)
+// bypass that layer. Result: a transient DeepSeek network blip during a long-running
+// brain session terminates the process silently. This wrapper replicates pi-coding-
+// agent's regex + backoff at THIS layer (Sisyphus's streamFn) so the retry applies
+// uniformly to brain and every spawned agent.
+//
+// Scope: this catches only SYNCHRONOUS THROWS whose message matches TRANSIENT_RE.
+// It does NOT catch a graceful stopReason="error" message, because pi-ai's
+// streamSimple returns an UN-CONSUMED EventStream — the fetch runs in a detached
+// IIFE and a mid-stream rejection ("terminated") becomes an error EVENT that only
+// materializes when pi-agent-core drains the stream, downstream of this return.
+// result.stopReason is always undefined here. That class is retried in the agent
+// loop itself — patches/pi-agent-core-no-tool-retry-guard.sh (Patch C).
+//
+// Up to 3 attempts (1s, 2s, 4s backoff). Non-transient errors / non-error stops
+// pass through unchanged.
+const TRANSIENT_RE = /connection.?error|connection.?refused|fetch failed|terminated|other side closed|stream aborted|ECONNRESET|ETIMEDOUT|socket hang up|EAI_AGAIN|overloaded/i;
+const RETRY_DELAYS_MS = [1000, 2000, 4000];
+
+export async function streamWithRetry(
+  model: any,
+  ctx: any,
+  opts: any,
+): Promise<any> {
+  let lastErr: unknown;
+  for (let i = 0; i <= RETRY_DELAYS_MS.length; i++) {
+    try {
+      // Graceful stopReason="error" is handled downstream (see header note).
+      return await streamSimple(model, ctx, opts);
+    } catch (e: any) {
+      // Case (a): thrown error
+      lastErr = e;
+      const msg = e?.message ?? String(e);
+      if (!TRANSIENT_RE.test(msg) || i >= RETRY_DELAYS_MS.length) throw e;
+      try { process.stderr.write(`[stream-retry ${i + 1}/${RETRY_DELAYS_MS.length}] thrown: ${msg.slice(0, 120)}\n`); } catch { /* */ }
+      await new Promise((r) => setTimeout(r, RETRY_DELAYS_MS[i]));
+    }
+  }
+  // Should be unreachable — either we returned or threw above.
+  if (lastErr) throw lastErr;
+  throw new Error("streamWithRetry: unreachable");
 }
 
 export function resolveModel(modelKey: string, agentName?: string) {
@@ -406,7 +452,8 @@ export function buildAgentFromDefinition(opts: SpawnAgentOptions): BuiltAgent {
       const cap = opts.lengthRecovery?.state.maxTokensCap;
       const merged: any = { ...streamOpts, toolChoice: pickRequireToolChoice(m) };
       if (cap !== undefined) merged.maxTokens = cap;
-      return streamSimple(m, ctx, merged);
+      // F5-lite: replace bare streamSimple with retry-on-transient-error wrapper.
+      return streamWithRetry(m, ctx, merged);
     },
   });
   (agent as any).__smeltParent = opts.parentAgentId;
@@ -752,6 +799,8 @@ export async function spawnAgent(opts: SpawnAgentOptions): Promise<SpawnAgentRes
 
   // Hoisted so the catch block can still surface an id when build throws.
   let agentId: string = opts.resume?.agentId ?? "";
+  // Hoisted so catch can remove the registry entry on failure paths.
+  let registered = false;
 
   try {
     const built = buildAgentFromDefinition({
@@ -788,6 +837,46 @@ export async function spawnAgent(opts: SpawnAgentOptions): Promise<SpawnAgentRes
         timestamp: Date.now(),
       }) + "\n");
     }
+
+    // Observability: surface the spawn IMMEDIATELY so studio's SSE tail of
+    // log.jsonl and SpawnTree don't show "frozen" while a multi-hour subagent
+    // runs. Two writes:
+    //   1. log.jsonl tool_call entry (mirrors hooks.ts shape) — makes the
+    //      spawn visible in the chat timeline. After-hook in hooks.ts will
+    //      write the matching completion entry on return; studio dedupes
+    //      visually by spawn target.
+    //   2. active-agents.json registry — populates SpawnTree right pane.
+    //      Background spawns already register in spawn-agent.ts; this covers
+    //      foreground + parallel that bypass that branch.
+    // Field naming: snake_case (agent_id / parent_agent_id) matches studio's
+    // pickSpawnTarget (luxas-studio components/ConversationView.tsx:645) so
+    // clicking the chip drills into the child's conversation.
+    const agentDir = join(opts.projectDir, ".agent");
+    try {
+      appendFileSync(
+        join(agentDir, "log.jsonl"),
+        JSON.stringify({
+          type: "tool_call",
+          tool: "spawn_agent",
+          phase: "started",
+          args: { agent: opts.name, agent_id: agentId, parent_agent_id: opts.parentAgentId },
+          success: true,
+          timestamp: new Date().toISOString(),
+        }) + "\n",
+      );
+    } catch { /* observability must not crash the spawn */ }
+    try {
+      addAgent(agentDir, {
+        id: agentId,
+        name: opts.name,
+        task: opts.prompt.slice(0, 200),
+        mode: opts.instanceIndex !== undefined ? "parallel" : "foreground",
+        startedAt: Date.now(),
+        conversationFile: convPath,
+        status: "running",
+      });
+      registered = true;
+    } catch { /* observability must not crash the spawn */ }
 
     // Resume MUST replaceMessages before subscribing — otherwise the first
     // turn_end re-appends the full prior history and doubles the jsonl.
@@ -850,6 +939,7 @@ export async function spawnAgent(opts: SpawnAgentOptions): Promise<SpawnAgentRes
     // (installUsageTracking in usage-log.ts). No manual accumulation needed.
 
     const exit = collector.finalize();
+    if (registered) try { removeAgent(agentDir, agentId); } catch { /* registry is best-effort */ }
     return { output: output.slice(0, 50_000), elapsed: exit.elapsedMs, success: true, exit, agentId };
 
   } catch (err: any) {
@@ -857,6 +947,7 @@ export async function spawnAgent(opts: SpawnAgentOptions): Promise<SpawnAgentRes
     // classifyThrownStopReason distinguishes user-initiated abort (SIGINT/
     // agent.abort() → "killed") from real failures ("error").
     const exit = collector.finalize(classifyThrownStopReason(err));
+    if (registered && agentId) try { removeAgent(join(opts.projectDir, ".agent"), agentId); } catch { /* registry is best-effort */ }
     // Surface auth errors clearly
     if (msg.includes("API key") || msg.includes("authentication") || msg.includes("401") || msg.includes("getApiKey")) {
       return {

@@ -83,6 +83,77 @@ print("[patch] agent-loop no-tool-retry-guard applied")
 PYEOF
 fi
 
+# ── Patch C: transient-error-retry ───────────────────────────────
+# A transient network drop (errorMessage "terminated" / "fetch failed" /
+# ECONNRESET / ...) during streaming surfaces as a GRACEFUL stopReason="error"
+# message DOWNSTREAM of streamWithRetry: pi-ai's streamSimple returns an
+# un-consumed EventStream, the fetch runs in a detached IIFE, and the rejection
+# is caught there and converted to an error EVENT (never re-thrown). agent-loop.js
+# then drains the stream, sees stopReason="error", and treats it as a clean
+# terminal exit at the check below — short-circuiting every retry guard. A single
+# blip kills a multi-hour session and waits for a human restart. Observed
+# 2026-06-08 on a deepseek-v4-pro brain (Yb-collisional-gate): one "terminated"
+# at the 4h mark ended the run; checkpoint resume worked, but only by hand.
+#
+# Patch: on a TRANSIENT stopReason="error" (same regex as Sisyphus's
+# streamWithRetry), pop the error message, back off (1/2/4/8s), and re-stream the
+# SAME turn, up to a per-streak cap of 4. "aborted" and non-transient errors keep
+# the unconditional return. Bounded by the streak cap + maxTurns + cost/time hooks.
+
+MARKER_RETRY="[transient-error-retry patched]"
+if grep -qF "$MARKER_RETRY" "$TARGET"; then
+  echo "[patch] agent-loop transient-error-retry already applied"
+else
+python3 - "$TARGET" "$MARKER_RETRY" <<'PYEOF'
+import sys
+
+path, marker = sys.argv[1], sys.argv[2]
+src = open(path).read()
+
+# Declaration: a per-streak counter alongside the inner-loop state.
+old_decl = """        let hasMoreToolCalls = true;
+        let steeringAfterTools = null;"""
+new_decl = """        let hasMoreToolCalls = true;
+        let steeringAfterTools = null;
+        let __transientRetryStreak = 0; // """ + marker
+if old_decl not in src:
+    print("[patch] FAIL: transient-error-retry anchor (inner-loop state) not found", file=sys.stderr)
+    sys.exit(1)
+src = src.replace(old_decl, new_decl, 1)
+
+# Re-issue a transient error-turn instead of exiting.
+old_err = """            if (message.stopReason === "error" || message.stopReason === "aborted") {
+                await emit({ type: "turn_end", message, toolResults: [] });
+                await emit({ type: "agent_end", messages: newMessages });
+                return;
+            }"""
+new_err = """            if (message.stopReason === "error" || message.stopReason === "aborted") {
+                const __errMsg = String(message.errorMessage ?? ""); // """ + marker + """
+                const __TRANSIENT_RE = /connection.?error|connection.?refused|fetch failed|terminated|other side closed|stream aborted|ECONNRESET|ETIMEDOUT|socket hang up|EAI_AGAIN|overloaded/i;
+                if (message.stopReason === "error" && __TRANSIENT_RE.test(__errMsg) && __transientRetryStreak < 4) {
+                    const __backoff = [1000, 2000, 4000, 8000][__transientRetryStreak] ?? 8000;
+                    __transientRetryStreak++;
+                    newMessages.pop();
+                    console.error(`[transient-error-retry ${__transientRetryStreak}/4] stopReason=error (${__errMsg.slice(0, 80)}); backoff ${__backoff}ms then re-stream the turn`);
+                    await new Promise((r) => setTimeout(r, __backoff));
+                    hasMoreToolCalls = true;
+                    continue;
+                }
+                await emit({ type: "turn_end", message, toolResults: [] });
+                await emit({ type: "agent_end", messages: newMessages });
+                return;
+            }
+            __transientRetryStreak = 0; // """ + marker
+if old_err not in src:
+    print("[patch] FAIL: transient-error-retry anchor (error stop) not found", file=sys.stderr)
+    sys.exit(1)
+src = src.replace(old_err, new_err, 1)
+
+open(path, "w").write(src)
+print("[patch] agent-loop transient-error-retry applied")
+PYEOF
+fi
+
 # ── Patch B: finish-tool-exit ────────────────────────────────────
 # When the model just called finish(), force inner-loop exit by setting
 # hasMoreToolCalls = false. Without this, providers using

@@ -120,6 +120,15 @@ export interface ContextTransformerOptions {
   reminders?: ReminderRegistry;
   /** Restored from session compaction entries for crash recovery. */
   initialPreviousSummary?: string;
+  /**
+   * Fix β: when `luxas run --directive "..."` started this session, pass that
+   * verbatim string here. The trailer puts it at the TOP as
+   * `<user_directive priority="highest" new="true">…` so that on every turn
+   * the directive sits structurally above the "done" signals from notes/,
+   * experiments.md, plan.md. Without this, on a previously-finish()'d project
+   * brain pattern-matches the trailer's wrap-up state and ignores the new ask.
+   */
+  userDirective?: string;
 }
 
 export interface ContextTransformerResult {
@@ -190,6 +199,45 @@ export function buildContextTransformer(opts: ContextTransformerOptions): Contex
  * Safety: transformContext output is ephemeral (used for one LLM call, never
  * persisted to agent state). Anthropic API accepts consecutive user messages.
  */
+/**
+ * H9: collect every active directive in priority order.
+ *   1. The --directive flag on THIS process invocation (runtime; transient).
+ *   2. Every `.md` file under `notes/directives/` (persisted by index.ts on
+ *      each `luxas run --directive`). Files in `notes/directives/archived/`
+ *      are skipped — the user moves stale directives there to retire them.
+ * Returns at most MAX_TOTAL directives (newest first under disk), each
+ * truncated to MAX_BYTES so a runaway file doesn't blow the cache budget.
+ */
+const MAX_DIRECTIVES = 6;
+const MAX_DIRECTIVE_BYTES = 3000;
+function collectActiveDirectives(
+  projectDir: string,
+  runtimeDirective: string | undefined,
+): Array<{ source?: string; text: string }> {
+  const out: Array<{ source?: string; text: string }> = [];
+  if (runtimeDirective && runtimeDirective.trim()) {
+    out.push({ source: "current --directive", text: runtimeDirective.trim().slice(0, MAX_DIRECTIVE_BYTES) });
+  }
+  const dir = join(projectDir, "notes", "directives");
+  if (existsSync(dir)) {
+    let names: string[] = [];
+    try { names = readdirSync(dir).filter((n) => n.endsWith(".md")).sort().reverse(); }
+    catch { /* unreadable dir; treat as empty */ }
+    for (const name of names) {
+      if (out.length >= MAX_DIRECTIVES) break;
+      try {
+        const raw = readFileSafe(join(dir, name)) ?? "";
+        const body = raw.replace(/^---[\s\S]*?---\s*/, "").trim();
+        if (!body) continue;
+        // Dedup against runtime directive
+        if (runtimeDirective && body === runtimeDirective.trim()) continue;
+        out.push({ source: name.replace(/\.md$/, ""), text: body.slice(0, MAX_DIRECTIVE_BYTES) });
+      } catch { /* skip unreadable */ }
+    }
+  }
+  return out;
+}
+
 function injectSnapshot(messages: any[], snapshot: string): any[] {
   if (messages.length <= 2) return messages;
 
@@ -227,6 +275,31 @@ function buildResearchSnapshot(opts: ContextTransformerOptions): string {
   // Lives in the volatile trailer, not the cached prefix, so the cache isn't
   // invalidated when the date rolls over mid-run.
   parts.push(`<today>${new Date().toISOString().slice(0, 10)}</today>`);
+
+  // Fix β + H9: surface ALL active directives ABOVE every "done" signal so they
+  // can't be drowned out by the wrap-up state (experiment_notes, plan_status,
+  // pi_feedback all saying "Complete"). Sources, in priority order:
+  //   1. opts.userDirective — the --directive flag on THIS process invocation
+  //   2. notes/directives/*.md — union of all persisted directives from prior
+  //      `luxas run --directive` invocations (Fix H9, persistDirectiveIfNew)
+  // Without H9's persistence, on resume runs the user's original directive
+  // evaporates: β has nothing to inject, brain loses sight of original intent.
+  // Reading the union from disk means resumes inherit every active directive
+  // until the user manually retires one (move to notes/directives/archived/).
+  const allDirectives = collectActiveDirectives(projectDir, opts.userDirective);
+  if (allDirectives.length > 0) {
+    parts.push(
+      `<user_directive priority="highest" new="true">\n` +
+      `The user issued the directive(s) below. They take precedence over all ` +
+      `"done"/"complete" signals in this snapshot. Until you have explicitly ` +
+      `addressed EACH clause of EACH directive in the report.tex or in a new ` +
+      `experiment under data/experiments/, do not call finish().\n\n` +
+      allDirectives.map((d, i) =>
+        `### Directive ${i + 1}${d.source ? ` (from ${d.source})` : ""}\n${d.text}`
+      ).join("\n\n") +
+      `\n</user_directive>`
+    );
+  }
 
   // Execution-state snapshot (active sub-agents, completed artifacts, plan
   // status). Formerly a dedicated cache-pinned system layer (L3); moved here

@@ -19,7 +19,7 @@ import { execSync } from "node:child_process";
 import { join, isAbsolute, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getDefinition, resolvePrompt } from "./agents/registry.js";
-import { resolveModel, spawnAgent, pickRequireToolChoice } from "./agents/spawn.js";
+import { resolveModel, spawnAgent, pickRequireToolChoice, streamWithRetry } from "./agents/spawn.js";
 import { ensureMethodologyFile, ensureLiteratureFile } from "./methodology.js";
 import { buildResearchTools } from "./tools/index.js";
 import { buildContextTransformer, buildSemiStaticSystemLayer } from "./context.js";
@@ -67,6 +67,22 @@ export interface ResearchAgentOptions {
   maxTurns?: number;
   piFallbackInterval?: number; // auto PI review after N steps without check-in (default 50, 0 to disable)
   onPIVerdict?: (verdict: PIVerdict, toolCallCount: number) => void;
+  /**
+   * Optional `--directive` text. When present and containing a research-
+   * implication keyword (simulate/verify/compare/analyze/模拟/验证/对比/实验
+   * /分析), the finish gate requires at least one experiment directory under
+   * data/experiments/ to have been modified since `sessionStartedAtMs`. See
+   * Fix δ in tools/index.ts.
+   */
+  directive?: string;
+  /**
+   * True when this run resumed from an existing (unfinished) checkpoint. Scopes
+   * the δ directive-gate: the "experiment modified since session start" mtime
+   * check fires only on a fresh start, never on resume (prior-session
+   * experiment mtimes are legitimately older than this process). The H7
+   * scheme-symmetry content check still applies on resume.
+   */
+  resumedFromCheckpoint?: boolean;
 }
 
 // Brain model resolution is delegated to spawn.ts's resolveModel so the
@@ -224,9 +240,15 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
 
   // Layer 2: Tools (research tools + PI review tool)
   let finishCallback: (() => void) | undefined;
-  const { tools, setParentAgent } = buildResearchTools(projectDir, templateVars, getApiKey, {
-    onFinish: () => finishCallback?.(),
-  });
+  const sessionStartedAtMs = Date.now();
+  const directiveGate = opts.directive
+    ? { directive: opts.directive, sessionStartedAtMs, isResume: !!opts.resumedFromCheckpoint }
+    : undefined;
+  const { tools, setParentAgent } = buildResearchTools(
+    projectDir, templateVars, getApiKey,
+    { onFinish: () => finishCallback?.() },
+    directiveGate,
+  );
 
   const piMonitorOpts = {
     projectDir: projectDir,
@@ -236,6 +258,9 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
       lastReviewAt: savedState.piLastReviewAt,
       reviewCount: savedState.piReviewCount,
     } : undefined,
+    // Fix γ: pass the runtime --directive into PI's state so PI can verify
+    // brain's claimed milestones against the directive's actual asks.
+    userDirective: opts.directive,
     onVerdict: (verdict: PIVerdict, toolCallCount: number) => {
       if (verdict.verdict === "stop") {
         hooks.setPIStopped();
@@ -260,6 +285,8 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
     bus,
     reminders,
     initialPreviousSummary: session.getCompactionSummary() ?? undefined,
+    // Fix β: surface --directive in the Layer 3 trailer every turn.
+    userDirective: opts.directive,
   });
 
   // Optional payload capture for cache-behavior diagnosis.
@@ -314,7 +341,10 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
     afterToolCall: hooks.after,
     getApiKey,
     onPayload: payloadCapture,
-    streamFn: (m, ctx, opts) => streamSimple(m, ctx, { ...opts, toolChoice: pickRequireToolChoice(m) } as any),
+    // F5-lite: use streamWithRetry so transient DeepSeek/OpenAI connection errors
+    // (mid-stream "Connection error", ECONNRESET, "fetch failed", "terminated")
+    // get exp-backoff retry instead of killing the brain session.
+    streamFn: (m, ctx, opts) => streamWithRetry(m, ctx, { ...opts, toolChoice: pickRequireToolChoice(m) } as any),
   });
 
   // Wire deferred refs now that agent exists
@@ -360,12 +390,38 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
     if (event.type === "turn_end") {
       try {
         const messages = agent.state.messages;
-        const newMessages = messages.slice(lastCheckpointedMsgCount)
-          .filter((m: any) => {
-            if (m.role === "assistant" && m.stopReason === "error") return false;
-            if (m.role === "assistant" && Array.isArray(m.content) && m.content.length === 0) return false;
-            return true;
-          });
+        const sliced = messages.slice(lastCheckpointedMsgCount);
+        // F7-mini: previously, assistant messages with stopReason="error" were
+        // SILENTLY DROPPED here — meaning a mid-stream network failure left the
+        // checkpoint with zero record of the failed attempt. Resume then saw
+        // no evidence anything had happened. That's the "two state events 1.4s
+        // apart, nothing between" pattern observed in today's silent death.
+        // Now we keep dropping them from the conversation replay path (passing
+        // them downstream would corrupt the next turn's context) but ALSO emit
+        // a synthetic `error_attempt` event recording WHAT errored. studio's UI
+        // and resume's diagnostics can surface this; replay still skips it.
+        const newMessages = sliced.filter((m: any) => {
+          if (m.role === "assistant" && m.stopReason === "error") return false;
+          if (m.role === "assistant" && Array.isArray(m.content) && m.content.length === 0) return false;
+          return true;
+        });
+        for (const m of sliced) {
+          if (m.role === "assistant" && m.stopReason === "error") {
+            try {
+              const errMsg = (m as any).errorMessage ?? "(no errorMessage)";
+              const contentPreview = Array.isArray(m.content)
+                ? m.content.map((b: any) => b.type).join(",")
+                : "(unknown)";
+              session.append({
+                type: "error_attempt" as const,
+                stopReason: "error",
+                errorMessage: String(errMsg).slice(0, 1000),
+                contentPreview,
+                timestamp: new Date().toISOString(),
+              } as any);
+            } catch { /* observability write must not break the turn */ }
+          }
+        }
         for (const m of newMessages) {
           session.appendMessage(m);
         }

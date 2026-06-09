@@ -56,7 +56,15 @@ export function buildResearchHooks(opts: ResearchOptions) {
   // PI STOP enforcement — when PI says stop, block non-finalization tools
   let piStopped = init?.piStopped ?? false;
   const FINALIZATION_TOOLS = new Set([
-    "read", "write", "edit", "compile_latex", "request_pi_review", "finish",
+    "read", "write", "edit", "compile_latex", "request_pi_review", "escalate_authority_bound", "finish",
+  ]);
+  // Spawn targets that are themselves finalization helpers (audit / red-team
+  // agents required by various finish() gates). Allowing these through PI-STOP
+  // breaks the deadlock observed 2026-05-07 BOM run: PI verdict STOP blocked
+  // spawn_agent, but the typesetter finish-gate required spawn_agent typesetter,
+  // and brain looped 240+ times alternating spawn (blocked) / finish (blocked).
+  const FINALIZATION_HELPER_AGENTS = new Set([
+    "typesetter", "illustrator", "illustrator_write", "experiment_reviewer", "reviewer",
   ]);
 
   // Simple rate limiters
@@ -84,9 +92,16 @@ export function buildResearchHooks(opts: ResearchOptions) {
       }
     }
 
-    // 2. PI STOP enforcement — only allow finalization tools after PI says stop
+    // 2. PI STOP enforcement — only allow finalization tools after PI says stop.
+    // spawn_agent is allowed when the target is a finalization helper
+    // (typesetter / illustrator / experiment_reviewer / reviewer) — these
+    // are mandated by finish-gate audits, not new research.
     if (piStopped && !FINALIZATION_TOOLS.has(name)) {
-      return { block: true, reason: `PI verdict is STOP. Only finalization tools (read, write, edit, compile_latex) are allowed. Tool "${name}" is blocked.` };
+      const isFinalizationSpawn = name === "spawn_agent"
+        && FINALIZATION_HELPER_AGENTS.has(String(args.agent ?? ""));
+      if (!isFinalizationSpawn) {
+        return { block: true, reason: `PI verdict is STOP. Only finalization tools (read, write, edit, compile_latex, request_pi_review, escalate_authority_bound, finish, and spawn_agent for ${[...FINALIZATION_HELPER_AGENTS].join("/")}) are allowed. Tool "${name}"${name === "spawn_agent" ? ` (target: ${args.agent})` : ""} is blocked.` };
+      }
     }
 
     // 3. Cost limit (reads from usage.log — single source of truth).
@@ -316,4 +331,3 @@ function captureLesson(
     appendFileSync(lessonsPath, header + entry + "\n");
   } catch {}
 }
-
