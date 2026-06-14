@@ -41,8 +41,10 @@ legend.fontsize      : 8
 legend.frameon       : False
 legend.handlelength  : 1.5
 
-# Colorblind-friendly cycle (Tol bright)
-axes.prop_cycle      : cycler('color', ['4477AA', 'EE6677', '228833', 'CCBB44', '66CCEE', 'AA3377', 'BBBBBB'])
+# ML-corpus palette from skills/figure/style_guides/ml.md (teal = "our
+# method", crimson/amber = competing baseline, navy = reference, purple =
+# theory, grey = classical baseline).
+axes.prop_cycle      : cycler('color', ['2E8B7A', 'B22222', 'E8A020', '1F4E8C', '5B4EA0', 'A8A8A8'])
 
 grid.linewidth       : 0.3
 grid.alpha           : 0.4

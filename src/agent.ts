@@ -16,12 +16,13 @@ import { Agent } from "@mariozechner/pi-agent-core";
 import { streamSimple, type TextContent } from "@mariozechner/pi-ai";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { execSync } from "node:child_process";
+import { homedir } from "node:os";
 import { join, isAbsolute, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getDefinition, resolvePrompt } from "./agents/registry.js";
 import { resolveModel, spawnAgent, pickRequireToolChoice, streamWithRetry } from "./agents/spawn.js";
 import { ensureMethodologyFile, ensureLiteratureFile } from "./methodology.js";
-import { buildResearchTools } from "./tools/index.js";
+import { buildResearchTools, parseLatestPIVerdict } from "./tools/index.js";
 import { buildContextTransformer, buildSemiStaticSystemLayer } from "./context.js";
 import { buildResearchHooks } from "./hooks.js";
 import { ReminderRegistry, builtinProviders } from "./reminders.js";
@@ -125,6 +126,10 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
     EXTRACT_FIGURES: EXTRACT_FIGURES_PATH,
     MERGE_NOTES: MERGE_NOTES_PATH,
     VENUE_SPECIFIC_DIR: VENUE_SPECIFIC_DIR,
+    // Cross-project memory writes (brain.md allowedWriteRoots) resolve
+    // against this — write/edit to ~/.sisyphus/memory.md and archive/ are
+    // whitelisted; auth.json stays credential-blocked unconditionally.
+    SISYPHUS_DIR: join(homedir(), ".sisyphus"),
   };
 
   // System prompt: brain.md + smelt patches + semi-static per-project context
@@ -230,23 +235,28 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
     initialState: savedState ?? undefined,
   });
 
-  // Check if PI already said STOP in a previous session (persisted in pi_feedback.md)
-  const prevFeedback = existsSync(join(projectDir, "reviews", "pi_feedback.md"))
-    ? readFileSync(join(projectDir, "reviews", "pi_feedback.md"), "utf-8")
-    : "";
-  if (prevFeedback.includes("## Verdict: STOP")) {
+  // Check if PI already said STOP in a previous session (persisted in
+  // pi_feedback.md). The file is append-only now, so substring matching
+  // would false-positive on an old STOP superseded by a later verdict —
+  // use the latest-verdict parser instead.
+  if (parseLatestPIVerdict(projectDir)?.verdict === "stop") {
     hooks.setPIStopped();
   }
 
   // Layer 2: Tools (research tools + PI review tool)
   let finishCallback: (() => void) | undefined;
+  // Set only when the brain finish tool's gated success path fires onFinish
+  // (every "Cannot finish" branch returns before calling it). Read by
+  // index.ts to distinguish a genuine completion from a process that exited
+  // while blocked at a gate — so "✓ Done" and the registry don't lie.
+  let finishSucceeded = false;
   const sessionStartedAtMs = Date.now();
   const directiveGate = opts.directive
     ? { directive: opts.directive, sessionStartedAtMs, isResume: !!opts.resumedFromCheckpoint }
     : undefined;
   const { tools, setParentAgent } = buildResearchTools(
     projectDir, templateVars, getApiKey,
-    { onFinish: () => finishCallback?.() },
+    { onFinish: () => { finishSucceeded = true; finishCallback?.(); } },
     directiveGate,
   );
 
@@ -548,5 +558,6 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
     return 0;
   } : null;
 
-  return { agent, hooks, bus, session, piFallback, restore, checkpointPath, usageLogPath };
+  return { agent, hooks, bus, session, piFallback, restore, checkpointPath, usageLogPath,
+    didFinishSucceed: () => finishSucceeded };
 }

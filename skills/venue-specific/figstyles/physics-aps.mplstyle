@@ -49,8 +49,12 @@ legend.fontsize      : 7
 legend.frameon       : False
 legend.handlelength  : 1.5
 
-# Colorblind-friendly cycle (Tol bright)
-axes.prop_cycle      : cycler('color', ['4477AA', 'EE6677', '228833', 'CCBB44', '66CCEE', 'AA3377', 'BBBBBB'])
+# tab10 semantic set from skills/figure/style_guides/physics.md (the palette
+# ground truth for physics projects — steel blue / crimson / forest green /
+# orange / purple / black, assigned semantically and locked across the paper).
+# Crimson+forest is a deuteranopia pair: when red/green series sit adjacent,
+# differentiate by marker/linestyle too, never hue alone.
+axes.prop_cycle      : cycler('color', ['1f77b4', 'd62728', '2ca02c', 'ff7f0e', '9467bd', '000000'])
 
 grid.linewidth       : 0.3
 grid.alpha           : 0.5

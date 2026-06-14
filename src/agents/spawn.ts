@@ -99,20 +99,30 @@ const MODEL_MAP: Record<string, [string, string] | InlineModel> = {
     contextWindow: 1048576,
     maxTokens: 393216,
   },
-  // Moonshot vision model — vision-capable; used for illustrator/typesetter
+  // Kimi vision model — used for illustrator/illustrator_write/typesetter
   // when running in --profile dual mode (deepseek text + kimi vision).
   // Endpoint is the Moonshot CN OpenAI-compat API; key is KIMI_API_KEY.
+  // Cheapest vision-capable Kimi (¥0.7/4.0/21 per M, 2026-06 pricing); the
+  // previous moonshot-v1-32k-vision-preview (32k ctx / 4k out) could not hold
+  // a coding agent — every spawn died on token-limit 400s, then 429s.
+  // K2.5 is a thinking model: budget maxTokens generously, reasoning eats
+  // output tokens before content appears (2k budget → empty content).
   k2p5: {
-    id: "moonshot-v1-32k-vision-preview",
-    name: "Moonshot v1 32k (vision)",
+    id: "kimi-k2.5",
+    name: "Kimi K2.5 (vision)",
     api: "openai-completions",
     provider: "kimi-coding",
     baseUrl: "https://api.moonshot.cn/v1",
-    reasoning: false,
+    reasoning: true,
     input: ["text", "image"],
-    cost: { input: 1.0, output: 3.0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 32768,
-    maxTokens: 4096,
+    cost: { input: 0.56, output: 2.92, cacheRead: 0.1, cacheWrite: 0 },
+    contextWindow: 262144,
+    maxTokens: 65536,
+    // Moonshot rejects role:"developer" with "400 tokenization failed";
+    // pi-ai sends it for reasoning models unless told otherwise. The other
+    // params pi-ai adds (store:false, reasoning_effort, max_completion_tokens)
+    // were live-verified accepted 2026-06; re-verify on pi-ai bumps.
+    compat: { supportsDeveloperRole: false },
   },
 };
 
@@ -134,11 +144,30 @@ const VISION_REQUIRED_AGENTS = new Set([
   "typesetter",
 ]);
 
+// Verifier agents keep their declared Anthropic tier even when a family-level
+// profile (dual mode) downgrades everything else. A verifier sharing the
+// producer's prior defeats the independent-review design: in production,
+// deepseek tool_impl AND deepseek blind tests carried the same wrong
+// hyperfine constants, and deepseek reviewers passed them. Producers may be
+// downgraded for cost; the checking layer is what makes that safe.
+// (reviewer covers the PI — pi-agent.ts spawns it through this same path.)
+const QUALITY_CRITICAL_AGENTS = new Set([
+  "reviewer",
+  "experiment_reviewer",
+  // tool_review writes the BLIND TESTS — the independence that makes the
+  // impl/review split work is prior diversity, not just file separation.
+  // With both on the same downgraded family, impl and test carried the same
+  // wrong hyperfine constants and pytest passed (F4). tool_impl stays on the
+  // profile (producer); the test author does not.
+  "tool_review",
+]);
+
 function applyProfile(modelKey: string, agentName?: string): string {
   if (agentName && VISION_REQUIRED_AGENTS.has(agentName)) {
     const visionProfile = process.env.LUXAS_VISION_MODEL_PROFILE;
     if (visionProfile) return visionProfile;
   }
+  if (agentName && QUALITY_CRITICAL_AGENTS.has(agentName)) return modelKey;
   const profile = process.env.LUXAS_MODEL_PROFILE;
   if (!profile) return modelKey;
   if (ANTHROPIC_TIERS.has(modelKey)) return profile;

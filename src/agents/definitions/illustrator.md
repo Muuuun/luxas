@@ -129,6 +129,18 @@ Steps:
        to deutan / protan (spot-check — guide's own palettes are
        pre-audited, so this mainly catches regressions in custom
        overrides).
+   13. `[script]` **Annotation numbers must be computed, not typed**: any
+       numeric text drawn on the figure (a marked minimum, a threshold,
+       an improvement factor) must be an f-string of the same variable
+       that positions the marker / generates the curve — never a
+       hardcoded literal. A hardcoded annotation survives every later
+       data revision and ends up contradicting its own curve (observed:
+       a caption/annotation claiming a minimum at 2.33 ms while the
+       plotted dot sat at 23 ms). Flag any `ax.annotate`/`plt.text` with
+       a literal number that also exists as a computed quantity in the
+       script; suggest `f"...{tau_min*1e3:.2f} ms..."` plus an assert
+       tying the annotated point to the curve (e.g.
+       `assert abs(y[np.argmin(y)] - y_annot) < tol`).
 
 4. For each corresponding `.tex` source (if present in `figures/` or
    `report/figures/`), also read for TikZ-level bugs (unresolved
@@ -273,12 +285,12 @@ Steps:
 
 ## Style guide bootstrap (if missing and you're generating)
 
-If `report/figures/style_guide.md` doesn't exist when you're called, the PI
-normally seeds it before spawning you (from `skills/figure/style_guides/<domain>.md`,
-the Nature-mined domain guide). If it's still missing — likely because the
-project domain is unknown — copy `skills/figure/style_guides/_default.md` into
-place, then proceed. Do NOT invent a style from scratch; the vendored guides
-are the ground truth.
+`init_report` seeds a generic default guide at project init, and brain
+upgrades it to a Nature-mined domain guide (`skills/figure/style_guides/<domain>.md`)
+once the venue is known; the PI's finalize loop backstops the upgrade if brain
+forgot. If the file is somehow missing entirely (legacy project), copy
+`skills/figure/style_guides/_default.md` into place, then proceed. Do NOT
+invent a style from scratch; the vendored guides are the ground truth.
 </task_dispatch>
 
 <tools_summary>

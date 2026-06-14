@@ -8,6 +8,7 @@
 
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { readFileSafe, smartTruncate } from "./utils.js";
+import { buildPastResearchDigest, GLOBAL_MEMORY_PATH } from "./memory.js";
 import { findUnprocessedPapers, methodologyPath } from "./methodology.js";
 import { join, dirname } from "node:path";
 import { compactNotesIfNeeded } from "./notes-compaction.js";
@@ -372,10 +373,14 @@ before you continue. The reader is cheap (haiku, ≤30s) and idempotent.
     parts.push(`<memory_notes>\n${smartTruncate(mem, 2000)}\n</memory_notes>`);
   }
 
-  // PI feedback (injected by PI monitor)
+  // PI feedback (injected by PI monitor). File is append-only (newest review
+  // last), so keep whole TAIL reviews when it outgrows the snapshot budget —
+  // truncating mid-review could cut the newest verdict/instructions, which
+  // is the overwrite bug in miniature. Addressed instructions from old
+  // rounds live in notes/memory.md checkboxes.
   const piFeedback = readFileSafe(join(projectDir, "reviews", "pi_feedback.md"));
   if (piFeedback) {
-    parts.push(`<pi_feedback>\n${piFeedback}\n</pi_feedback>`);
+    parts.push(`<pi_feedback>\n${tailWholeReviews(piFeedback, 6000)}\n</pi_feedback>`);
   }
 
   // User feedback (manually injected, never overwritten by PI)
@@ -415,7 +420,64 @@ export function buildSemiStaticSystemLayer(projectDir: string): string {
   const skillSummary = discoverSkills(projectDir);
   if (skillSummary) parts.push(skillSummary);
 
+  // Cross-project memory. Built once per session (this layer is frozen into
+  // the cache-pinned system block at agent creation), so it cannot vary
+  // per-turn. Claim-free by construction — see buildPastResearchDigest.
+  const globalMem = readFileSafe(GLOBAL_MEMORY_PATH);
+  if (globalMem.trim().length > 20) {
+    parts.push(`<global_memory>\n${truncateGlobalMemory(globalMem, 4000)}\n</global_memory>`);
+  }
+  const pastResearch = buildPastResearchDigest(projectDir);
+  if (pastResearch) parts.push(pastResearch);
+
   return parts.join("\n\n");
+}
+
+/**
+ * Keep the newest whole reviews from an append-only feedback file
+ * (`\n\n---\n\n`-separated, newest last). The most recent review is always
+ * included in full, even when it alone exceeds the budget.
+ */
+function tailWholeReviews(feedback: string, budget: number): string {
+  if (feedback.length <= budget) return feedback;
+  const sections = feedback.split("\n\n---\n\n");
+  const keep: string[] = [];
+  let used = 0;
+  for (let i = sections.length - 1; i >= 0; i--) {
+    const cost = sections[i].length + 9; // separator overhead
+    if (keep.length > 0 && used + cost > budget) break;
+    keep.unshift(sections[i]);
+    used += cost;
+  }
+  const omitted = sections.length - keep.length;
+  return (omitted > 0 ? `(${omitted} older review(s) truncated — full history in reviews/pi_feedback.md)\n\n---\n\n` : "")
+    + keep.join("\n\n---\n\n");
+}
+
+/**
+ * Truncate ~/.sisyphus/memory.md at entry boundaries (`- **[project, date]**`
+ * bullets), keeping the preamble and the NEWEST whole entries that fit.
+ * smartTruncate would cut mid-entry and strip provenance tags — an untagged
+ * half-claim in the cache-pinned system block is exactly what the
+ * contamination rules forbid.
+ */
+function truncateGlobalMemory(mem: string, budget: number): string {
+  if (mem.length <= budget) return mem;
+  const blocks = mem.split(/\n(?=- \*\*\[)/);
+  if (blocks.length === 1) return smartTruncate(mem, budget); // no entry markers — fall back
+  const preamble = blocks[0].slice(0, budget);
+  let used = preamble.length;
+  const entries = blocks.slice(1);
+  const keep: string[] = [];
+  for (let i = entries.length - 1; i >= 0; i--) { // entries append at the end — newest last
+    const cost = entries[i].length + 1;
+    if (used + cost > budget) break;
+    keep.unshift(entries[i]);
+    used += cost;
+  }
+  const omitted = entries.length - keep.length;
+  return [preamble, ...keep].join("\n") +
+    (omitted > 0 ? `\n(… ${omitted} older entries omitted — read ~/.sisyphus/memory.md for the rest)` : "");
 }
 
 // ── Report status ──────────────────────────────

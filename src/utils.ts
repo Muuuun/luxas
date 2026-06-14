@@ -49,10 +49,64 @@ export const ORIGINAL_REQUEST_HEADER = "## Original User Request";
  * cross-project registry names (~/.sisyphus/projects.json), so the
  * derivation must stay stable across both shapes.
  */
+/**
+ * Extract the user's verbatim request region from a RESEARCH.md rendered by
+ * renderResearchDoc: the blockquote lines under "## Original (User) Request".
+ * Returns null when the file has no such section (hand-written RESEARCH.md).
+ * Anchoring on this region keeps later additions (STATE headers, <feedback>
+ * sections, result notes a human prepended/appended) out of derived titles
+ * and digest questions.
+ */
+export function originalRequestBlock(text: string): string | null {
+  const m = /^##\s+Original (?:User )?Request\s*$/im.exec(text);
+  if (!m) return null;
+  const after = text.slice(m.index + m[0].length);
+  const lines: string[] = [];
+  let started = false;
+  for (const raw of after.split(/\r?\n/)) {
+    const t = raw.trim();
+    if (!t) continue;
+    if (/^_.*_$/.test(t)) continue; // italic scaffold explainer
+    if (t.startsWith(">")) {
+      lines.push(t.replace(/^(?:>\s*)+/, ""));
+      started = true;
+      continue;
+    }
+    if (started) break; // blockquote region ended
+    break; // next section began before any quote — no usable block
+  }
+  const block = lines.join("\n").trim();
+  return block || null;
+}
+
 export function deriveProjectTitle(text: string, maxLen = 120): string {
-  const firstLine = text.split("\n").find(l => l.trim().length > 0)?.trim() ?? "";
-  const stripped = firstLine.replace(/^#+\s*/, "").replace(/[*_`[\]]/g, "").trim();
-  return stripped.slice(0, maxLen) || "Untitled";
+  // Inbox prompts start "Hi Luxas, ..." and scaffold files start with a bare
+  // "# Research Goal" header — both produced junk registry names for ~half
+  // the registry. Prefer the verbatim user request region when present, then
+  // strip salutations, blockquote markers, XML-ish wrapper tags, and
+  // structural headers; take the first line with real content. Splits on
+  // literal "\n" too: the --prompt CLI path does not unescape newlines, so
+  // some RESEARCH.md files carry them verbatim.
+  const source = originalRequestBlock(text) ?? text;
+  for (const raw of source.split(/\r?\n|\\n/)) {
+    const unquoted = raw.replace(/^(?:>\s*)+/, "").trim();
+    if (/^_.*_$/.test(unquoted)) continue; // italic-only scaffold explainer line
+    let line = unquoted
+      .replace(/^#+\s*/, "")
+      .replace(/[*_`[\]]/g, "")
+      .trim();
+    if (!line) continue;
+    line = line
+      .replace(/^<[a-zA-Z][^>]*>\s*/, "")   // unwrap leading <goal>/<research> tag
+      .replace(/\s*<\/[a-zA-Z][^>]*>$/, "") // unwrap trailing closing tag
+      .trim();
+    line = line.replace(/^(hi|hello|hey|dear)[,!.\s]+luxas[,!.:：，\s]*/i, "").trim();
+    line = line.replace(/^research goal[:：]?\s*/i, "").trim();
+    if (!line || /^<[^>]*>$/.test(line)) continue;
+    if (/^original user request$/i.test(line)) continue;
+    return line.slice(0, maxLen);
+  }
+  return "Untitled";
 }
 
 export function hasTexFiles(dir: string): boolean {

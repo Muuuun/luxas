@@ -1,6 +1,10 @@
 # Colorblind-safe Palettes
 
-## Okabe-Ito (default — used in `base.tex`)
+> **Palette ground truth is `report/figures/style_guide.md`** (seeded by
+> init_report, upgraded to a domain guide by brain). This file is a reference
+> for TikZ work only — it does not define a project default.
+
+## Okabe-Ito (used in `base.tex`)
 
 | Name        | Hex       | Use for                     |
 | ----------- | --------- | --------------------------- |

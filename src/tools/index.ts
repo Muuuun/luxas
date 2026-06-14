@@ -707,7 +707,41 @@ export function buildResearchTools(
         }] };
       }
 
+      // Freshness gate: the SHIPPED artifact must have been reviewed. Mid-run
+      // reviews don't cover a PDF compiled after the last one — observed on
+      // collisional-gate-with-tweezer: 15 PI rounds, then finish() fired
+      // 12.6s after the final compile and shipped a caption whose numbers
+      // contradicted its own curve by 10x. Mechanical like the typesetter md5
+      // gate above — no pushback escape; one request_pi_review after the
+      // final compile satisfies it.
       const piVerdict = parseLatestPIVerdict(projectDir);
+      if (currentPdfMd5) {
+        let pdfMtimeMs = 0;
+        try { pdfMtimeMs = statSync(pdfPath).mtimeMs; } catch { /* vanished — md5 gate above covers it */ }
+        // Stale-PDF dodge: now that a fresh PDF requires a fresh PI review,
+        // "edit report.tex and finish WITHOUT recompiling" becomes the free
+        // path around all three artifact gates. One stat closes it.
+        let texMtimeMs = 0;
+        try { texMtimeMs = statSync(join(projectDir, "report", "report.tex")).mtimeMs; } catch {}
+        if (texMtimeMs > pdfMtimeMs) {
+          return { content: [{ type: "text" as const, text:
+            `Cannot finish: report/report.tex was edited after the last ` +
+            `compile — the PDF you are shipping does not contain your latest ` +
+            `edits. Run compile_latex, re-run typesetter, then ` +
+            `request_pi_review(milestone="final report").`
+          }] };
+        }
+        if (pdfMtimeMs > 0 && (!piVerdict || piVerdict.reviewMtimeMs < pdfMtimeMs)) {
+          return { content: [{ type: "text" as const, text:
+            `Cannot finish: report/report.pdf was compiled AFTER the last PI ` +
+            `review${piVerdict ? "" : " (no PI review on record at all)"} — ` +
+            `the document you are about to ship has never been reviewed. ` +
+            `Call request_pi_review(milestone="final report") now; once PI ` +
+            `returns continue or stop on the current PDF, finish() is allowed.`
+          }] };
+        }
+      }
+
       if (piVerdict && piVerdict.verdict === "steer") {
         const pushbackPath = join(projectDir, "reviews", "pi_pushback.md");
         let pushbackFresh = false;
@@ -735,7 +769,12 @@ export function buildResearchTools(
       }
 
       callbacks?.onFinish?.();
-      return { content: [{ type: "text" as const, text: `Research complete: ${args.summary}` }] };
+      // details.success marks a GENUINE finish — every "Cannot finish" branch
+      // above returns no details. The vendored Patch B (finish-tool-exit)
+      // keys the agent-loop exit off this flag, so a gate-blocked finish()
+      // leaves the loop running instead of shipping a corpse. Same shape as
+      // sub-agent-exit.ts so both finish tools converge on one contract.
+      return { content: [{ type: "text" as const, text: `Research complete: ${args.summary}` }], details: { success: true } };
     },
   };
 

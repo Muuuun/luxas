@@ -1,6 +1,6 @@
 ---
 name: memory
-description: Cross-project research memory. Read past project summaries, findings, and persistent insights across all Luxas research projects.
+description: Cross-project research memory. Deep-dive past projects' notes, record corrections, and save cross-project insights across all Luxas research projects.
 compatibility: Always available. No external dependencies.
 allowed-tools: read write edit
 ---
@@ -9,63 +9,64 @@ allowed-tools: read write edit
 
 Access persistent memory that spans across research projects.
 
-## When to use
+**You do not need this skill to discover past projects** — your system prompt
+already carries a `<past_research>` digest (every past project's name, date,
+notes path, and research question) and `<global_memory>` (cross-project
+lessons). This skill is for what comes after discovery: deep-diving a relevant
+project's notes, recording corrections, and saving insights.
 
-- Starting a new research project and want to check if past work is relevant
-- Looking for papers, techniques, or code patterns from previous projects
-- Saving cross-project insights (e.g., a useful method that applies broadly)
+## Trust rule
+
+Everything read from a past project is a dated, UNVERIFIED lead — not
+established fact. Values must re-enter the current project's own evidence
+chain (reader-distilled literature, this project's experiments) before they
+appear in report.tex. Honor `## CORRECTIONS` sections wherever you find them.
 
 ## Files
 
-### ~/.sisyphus/projects.json
+### Past project notes (primary source)
 
-Project registry. JSON array of all past research projects:
+The `<past_research>` digest lists each project's live notes path:
 
-```json
-[
-  {
-    "path": "/absolute/path/to/project",
-    "name": "Project title (from RESEARCH.md)",
-    "created": "2026-03-19T...",
-    "lastRun": "2026-03-19T...",
-    "summary": "Auto-generated summary from notes/",
-    "costUsd": 0.50,
-    "tokens": 100000
-  }
-]
+```
+<path>/notes/experiments.md   ← findings, alternatives, limitations, red-team
+<path>/notes/literature.md    ← reader-distilled per-paper entries
+<path>/notes/memory.md        ← decisions, dead ends, TODOs
+<path>/data/papers/           ← downloaded PDFs (check before re-downloading)
 ```
 
-Read this to see what past research exists and their summaries.
+### ~/.sisyphus/projects.json
+
+Project registry (path, name, dates, auto-generated summary, cost). The
+digest is built from this; read it directly only for projects that fell into
+the digest's overflow index.
 
 ### ~/.sisyphus/memory.md
 
-Persistent cross-project memory. You can **read and write** this file.
+Cross-project lessons, injected into every run as `<global_memory>`. You can
+**read and write** it. Keep it SMALL; every entry starts with a provenance
+tag `[project, YYYY-MM]`. Tool/method lessons, recurring pitfalls, and
+cross-domain connections belong here — domain findings and numbers do NOT
+(they live in the source project's notes and must be re-verified wherever
+used).
 
-Use it for:
-- Insights that apply across projects (useful techniques, common pitfalls)
-- Paper references worth remembering across projects
-- Reusable code patterns or simulation approaches
-- Connections between different research topics
+### ~/.sisyphus/archive/<slug>/
 
-### ~/.sisyphus/archive/<project_slug>/
+Auto-archived copies of each project's notes + report.tex, written when a run
+completes. Fallback when the live project dir is gone.
 
-Auto-archived copies of each project's notes and results. Created when a run completes.
+## CORRECTIONS convention
 
-```
-~/.sisyphus/archive/
-  rb87_tweezer_lossless/
-    literature.md      ← literature review
-    experiments.md     ← experiment results + key numbers
-    memory.md          ← project scratchpad
-    report.tex         ← final report source
-  another_project/
-    ...
-```
+When you find that a past project's notes contain a claim that is wrong,
+**append** a `## CORRECTIONS` section to that file (live notes and archive
+copy) stating the false claim, why it is wrong, and the evidence — do not
+edit the original text. History stays intact; future readers see the
+refutation next to the claim.
 
-Each file has a header comment with the original project name and source path.
+## Write mechanics
 
-## Workflow
-
-1. `read ~/.sisyphus/projects.json` — see what past projects exist and their summaries
-2. If a past project seems relevant, browse its archive: `read ~/.sisyphus/archive/<slug>/experiments.md`
-3. Save cross-project insights to `~/.sisyphus/memory.md`
+- `~/.sisyphus/memory.md` and `~/.sisyphus/archive/` are whitelisted for your
+  write/edit tools (read before edit, as usual).
+- Another project's LIVE notes are outside your write/edit scope — append
+  corrections there via bash: `cat >> <path>/notes/experiments.md << 'EOF' ...`.
+  Append-only; never rewrite or delete in another project's tree.

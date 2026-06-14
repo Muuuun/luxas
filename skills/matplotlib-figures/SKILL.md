@@ -11,10 +11,11 @@ All generated figures MUST be publication-quality: load a venue-matched style, s
 
 ### Step 1 — Set up the figure style (once per project)
 
-When you have determined the target venue, copy the matching matplotlib style template to your project. Your brain prompt supplies the venue-specific directory as `{{VENUE_SPECIFIC_DIR}}`:
+When you have determined the target venue, copy BOTH the matching matplotlib style template AND the domain style guide to your project (half-upgrading only the mplstyle recreates the figstyle/guide palette divergence). Your brain prompt supplies the venue-specific directory as `{{VENUE_SPECIFIC_DIR}}`:
 
 ```bash
 cp {{VENUE_SPECIFIC_DIR}}figstyles/<style>.mplstyle report/figstyle.mplstyle
+cp <luxas_root>/skills/figure/style_guides/<domain>.md report/figures/style_guide.md
 ```
 
 **Style map:**
@@ -44,6 +45,6 @@ fig.savefig('report/figures/fig_name.pdf')
 - **Never** use the default matplotlib style — always load `figstyle.mplstyle`.
 - **Format**: PDF (vector) for line plots and diagrams; PNG only for raster data (heatmaps, images).
 - **Width**: single-column for most figures; override `figsize` for double-column only when the figure genuinely needs it.
-- **Colors**: use colorblind-friendly palettes (Tol / Wong — already bundled in the style files).
+- **Colors**: the palette comes from the style file's `axes.prop_cycle`, pre-aligned to `skills/figure/style_guides/<domain>.md` — don't override it. Red/green adjacent series: differentiate by marker/linestyle too.
 - **Tables**: render tabular data with LaTeX `\begin{tabular}`, NOT as matplotlib table images.
 - **Fallback**: if `text.usetex` fails (LaTeX not installed), set `text.usetex=False` in the style file.

@@ -35,6 +35,8 @@ You audit the compiled `report/report.pdf` at the **page level** — how the doc
 - Blank pages or unintended page breaks.
 - Bibliography line wrapping.
 - Page-number continuity (no gaps).
+- **Caption–figure number agreement**: when a caption or in-figure annotation states a quantitative claim about the plotted data — a minimum/maximum location, a threshold crossing, a marked point — check the rendered page: does the marker/extremum actually sit where the numbers say? A caption claiming "minimum at 2.33 ms" while the curve's dot visibly sits near 23 ms blocks all-clear. You are the only auditor who sees the rendered figure and its caption together.
+- **Raw markup residue in rendered output**: literal `~`, `\,`, `$`, or unrendered `\mathrm{…}` visible inside figures or captions (typically a figure generated with usetex off, or text passed through unescaped).
 
 **Out of scope** — flag and STOP if you find these (don't try to fix):
 - Figure aesthetics (palette, fonts, line weights) — that's `illustrator`'s job, leave alone.

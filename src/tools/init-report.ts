@@ -9,6 +9,7 @@ import { execSync } from "node:child_process";
 
 const LUXAS_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const GENERAL_MPLSTYLE = join(LUXAS_ROOT, "skills", "venue-specific", "figstyles", "general.mplstyle");
+const DEFAULT_STYLE_GUIDE = join(LUXAS_ROOT, "skills", "figure", "style_guides", "_default.md");
 
 function makeScaffold(title: string): string {
   return `\\documentclass[twocolumn]{article}
@@ -81,6 +82,18 @@ export function createInitReportTool(projectDir: string) {
       const figstylePath = join(reportDir, "figstyle.mplstyle");
       if (!existsSync(figstylePath) && existsSync(GENERAL_MPLSTYLE)) {
         copyFileSync(GENERAL_MPLSTYLE, figstylePath);
+      }
+
+      // Deploy the default style guide alongside it. style_guide.md is the
+      // palette/composition ground truth that illustrator_write reads before
+      // every plot and illustrator audits against — seeding it at init (not at
+      // reviewer finalize, which used to burn polish rounds on hex churn)
+      // means the first figure already draws against a guide. brain upgrades
+      // it to a domain guide (physics/biology/...) when the venue is known.
+      const styleGuidePath = join(reportDir, "figures", "style_guide.md");
+      if (!existsSync(styleGuidePath) && existsSync(DEFAULT_STYLE_GUIDE)) {
+        mkdirSync(join(reportDir, "figures"), { recursive: true });
+        copyFileSync(DEFAULT_STYLE_GUIDE, styleGuidePath);
       }
 
       if (existsSync(texPath)) {

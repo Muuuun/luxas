@@ -18,7 +18,7 @@
 import { Agent } from "@mariozechner/pi-agent-core";
 import { getModel } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
-import { writeFileSync, mkdirSync, existsSync, readdirSync } from "node:fs";
+import { appendFileSync, mkdirSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { createReadTool } from "@mariozechner/pi-coding-agent";
 import { getApiKey } from "./auth.js";
@@ -101,7 +101,7 @@ export function createPIReviewTool(opts: PIMonitorOptions) {
       // Persist feedback
       const feedbackPath = join(opts.projectDir, "reviews", "pi_feedback.md");
       mkdirSync(join(opts.projectDir, "reviews"), { recursive: true });
-      writeFileSync(feedbackPath, formatFeedback(verdict, totalToolCalls));
+      appendPIFeedback(feedbackPath, formatFeedback(verdict, totalToolCalls));
 
       opts.onVerdict?.(verdict, totalToolCalls);
 
@@ -176,7 +176,7 @@ export function setupPIFallbackMonitor(
         // Persist
         const feedbackPath = join(opts.projectDir, "reviews", "pi_feedback.md");
         mkdirSync(join(opts.projectDir, "reviews"), { recursive: true });
-        writeFileSync(feedbackPath, formatFeedback(verdict, toolCallCount));
+        appendPIFeedback(feedbackPath, formatFeedback(verdict, toolCallCount));
 
         opts.onVerdict?.(verdict, toolCallCount);
 
@@ -514,6 +514,19 @@ function buildStateForPI(
 // ---------------------------------------------------------------------------
 // Format PI feedback for pi_feedback.md
 // ---------------------------------------------------------------------------
+
+/**
+ * Append-only persistence for PI feedback. Overwriting destroyed prior
+ * rounds' instructions mid-run (observed: a ">=3 ramp shapes" instruction
+ * silently vanished and the report shipped without it). Append keeps the
+ * full instruction history auditable; parseLatestPIVerdict takes the LAST
+ * verdict match so gate semantics are unchanged, and the context snapshot
+ * truncates from the head so the newest reviews stay visible.
+ */
+function appendPIFeedback(path: string, section: string): void {
+  const sep = existsSync(path) ? "\n\n---\n\n" : "";
+  appendFileSync(path, sep + section);
+}
 
 function formatFeedback(verdict: PIVerdict, toolCallCount: number): string {
   const lines = [

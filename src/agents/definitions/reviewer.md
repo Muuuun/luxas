@@ -91,7 +91,7 @@ grep -nE '\\\\includegraphics' report/report.tex
 
 Each `\includegraphics[...]{figures/NAME.pdf}` inside `report/report.tex` → canonical figure. Physical path: `report/figures/NAME.pdf`. Everything else in `report/figures/` is an orphan from earlier experiments — **do not audit or regenerate orphans**, just note their names in the final notes. The canonical list and orphan list do not change between rounds.
 
-**P2. Seed `report/figures/style_guide.md` if missing** (one-off, skip if it exists):
+**P2. Upgrade `report/figures/style_guide.md` if it's missing OR still the stock default** (one-off; `init_report` seeds the generic `_default` guide at project init, so "exists" alone doesn't mean brain did the domain upgrade — check the first line: `# Default Figure Style Guide` means stock. Skip only when a domain guide is already in place, or when P0's DOMAIN is `_default` — no-venue projects intentionally keep the generic guide):
 
 The base style for this project is the Nature domain guide at `skills/figure/style_guides/<DOMAIN>.md` where `<DOMAIN>` is the label from P0. These are ~1k-word prose guides distilled from real Nature papers in the domain (palette with hex, marker conventions, typography, signature moves, etc.) — they are **the** ground truth for what figures should look like.
 

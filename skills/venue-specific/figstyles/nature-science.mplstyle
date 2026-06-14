@@ -42,7 +42,10 @@ legend.fontsize      : 6
 legend.frameon       : False
 legend.handlelength  : 1.2
 
-# Nature-style color cycle
+# Okabe-Ito (matches the _default.md guide). Nature spans every domain, so no
+# single cycle fits — when brain seeds a domain guide (physics/biology/...),
+# that guide's palette is ground truth: update this prop_cycle line to match
+# at seed time, before the first illustrator_write spawn.
 axes.prop_cycle      : cycler('color', ['0072B2', 'D55E00', '009E73', 'CC79A7', 'F0E442', '56B4E9', 'E69F00'])
 
 grid.linewidth       : 0.3

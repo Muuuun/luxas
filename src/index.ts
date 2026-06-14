@@ -44,7 +44,7 @@ const browserUseDir = join(process.env.HOME ?? "", ".browser-use-env", "bin");
 if (existsSync(join(browserUseDir, "browser-use")) && !process.env.PATH?.includes(browserUseDir)) {
   process.env.PATH = `${browserUseDir}:${process.env.PATH}`;
 }
-import { registerProject, updateProjectAfterRun, loadProjects } from "./memory.js";
+import { registerProject, updateProjectAfterRun, loadProjects, selectPastProjects } from "./memory.js";
 import { ORIGINAL_REQUEST_HEADER, deriveProjectTitle } from "./utils.js";
 
 // F2 — process-level crash handlers. Without these, Node's default behavior on
@@ -296,13 +296,13 @@ async function run(dir: string, modelName: string, userDirective?: string) {
   // Register in global project registry
   registerProject(dir);
 
-  const pastProjects = loadProjects().filter(p => p.path !== dir && p.summary);
+  const pastProjects = selectPastProjects(dir);
   console.log(`\n📚 Luxas — Autonomous Research Agent`);
   console.log(`   Project: ${dir}`);
   console.log(`   Model: ${modelName}`);
   console.log(`   Goal: ${researchGoal.split("\n")[0].slice(0, 80)}`);
   if (pastProjects.length > 0) {
-    console.log(`   Memory: ${pastProjects.length} past project(s) in context`);
+    console.log(`   Memory: ${pastProjects.length} past project(s) in <past_research> digest`);
   }
   console.log();
 
@@ -314,7 +314,7 @@ async function run(dir: string, modelName: string, userDirective?: string) {
   // mtimes are legitimately older than this process. The H7 content check still
   // applies on resume.
   const resumedFromCheckpoint = existsSync(join(dir, ".agent", "checkpoint.jsonl"));
-  const { agent, hooks, restore, usageLogPath } = createResearchAgent({
+  const { agent, hooks, restore, usageLogPath, didFinishSucceed } = createResearchAgent({
     projectDir: dir,
     model: modelName,
     directive: userDirective,
@@ -378,10 +378,22 @@ async function run(dir: string, modelName: string, userDirective?: string) {
   const totals = readUsageTotals(usageLogPath);
   const totalTokens = totals.inputTokens + totals.outputTokens;
   const cost = totals.cost.toFixed(4);
-  console.log(`\n✓ Done in ${elapsed}s | $${cost} | ${totalTokens} tokens`);
+  // A live process exit is NOT the same as a finished study: the loop also
+  // ends on a gate-blocked finish, a maxTurns/budget cap, or a graceful
+  // stopReason=error. Only didFinishSucceed() means the brain's gated finish
+  // passed. Say which one happened so the registry and any inbox dispatcher
+  // reading stdout don't treat a blocked run as complete.
+  const finished = didFinishSucceed();
+  if (finished) {
+    console.log(`\n✓ Done in ${elapsed}s | $${cost} | ${totalTokens} tokens`);
+  } else {
+    console.log(`\n⚠ Exited WITHOUT a successful finish() in ${elapsed}s | $${cost} | ${totalTokens} tokens`);
+    console.log(`  The checkpoint is live — resume with: luxas run ${dir}`);
+  }
 
-  // Save project summary to global registry
-  updateProjectAfterRun(dir, totals.cost, totalTokens);
+  // Save project summary to global registry (records the blocked state so the
+  // summary doesn't claim completion the run never reached).
+  updateProjectAfterRun(dir, totals.cost, totalTokens, { finished });
 
   // Clean up browser-use daemon if it was started during this session
   try { execSync("browser-use close --all", { stdio: "pipe", timeout: 5000 }); } catch { /* not running */ }

@@ -205,6 +205,7 @@ For all non-stop exits, prefer **incremental continuation over restart**. Preser
    - **Status:** `Complete` (the common case — all tools pass pytest, results.json exists) or `Pending` (if any tool is WIP — flag to brain so it can decide whether to re-spawn you or remove the L2 section from scope). Do NOT leave the status line out.
    - **Acceptance criterion (frozen at Phase 1) + Verdict:** restate the criterion verbatim and the verdict (`confirmed` / `refuted` / `inconclusive`) you get by applying it **mechanically** to the named `computed.<key>`. The **Headline findings must be consistent with this verdict** — you may not narrate a "confirmed" headline when the criterion applied to the data yields "refuted". If the data refutes the hypothesis, the refutation IS the finding (report it; do not tune a parameter to manufacture the predicted outcome).
    - **Headline findings** (3-5 bullets)
+   - **Figure candidates:** one line per plottable artifact — `<runs/run_N/data/<file>> → <suggested plot type + the claim it would settle>`. Brain's figure pass keys off this line; an artifact you don't list here is a figure that silently never gets made. If the experiment is genuinely scalar (single numbers — no scan, no comparison, no distribution), write `### No figure: <one-sentence rationale>` instead. Exactly one of the two MUST be present.
    - `### Alternatives considered` (≥3 architecturally distinct candidates, each with rejection reason)
    - `### Limitations`
 

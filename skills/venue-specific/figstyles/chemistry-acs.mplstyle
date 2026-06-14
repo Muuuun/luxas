@@ -39,8 +39,12 @@ legend.fontsize      : 6
 legend.frameon       : False
 legend.handlelength  : 1.2
 
-# Colorblind-friendly cycle
-axes.prop_cycle      : cycler('color', ['0072B2', 'D55E00', '009E73', 'CC79A7', 'F0E442', '56B4E9', 'E69F00'])
+# Chemistry-corpus palette from skills/figure/style_guides/chemistry.md
+# (navy/cobalt = reference, brick = experimental, forest = control,
+# amber = Fe/annotation, magenta = headline condition, slate = neutral).
+# Brick+forest is a deuteranopia pair: when red/green series sit adjacent,
+# differentiate by marker/linestyle too, never hue alone.
+axes.prop_cycle      : cycler('color', ['2B6CBF', 'C0392B', '27AE60', 'E67E22', 'D63F8C', '5F6368'])
 
 grid.linewidth       : 0.3
 grid.alpha           : 0.4

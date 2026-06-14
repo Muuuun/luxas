@@ -155,13 +155,24 @@ PYEOF
 fi
 
 # ── Patch B: finish-tool-exit ────────────────────────────────────
-# When the model just called finish(), force inner-loop exit by setting
-# hasMoreToolCalls = false. Without this, providers using
+# Exit the inner loop only when finish() actually SUCCEEDED — keyed off
+# the toolResult's `details.success === true`, which both finish tools set
+# ONLY on their success path (src/tools/index.ts brain finish,
+# src/tools/sub-agent-exit.ts). Without this, providers using
 # tool_choice="required" (Kimi, deepseek-chat, openai chat — see
 # pickRequireToolChoice) can never natural-exit: every turn has tool
 # calls so `hasMoreToolCalls = toolCalls.length > 0` is always true, and
-# finish() returning success doesn't break the loop. Observed 2026-05-13
-# on Kimi typesetter (50-min spin).
+# finish() returning doesn't break the loop. Observed 2026-05-13 on Kimi
+# typesetter (50-min spin).
+#
+# 2026-06-12 fix: the original condition keyed off the finish CALL, not its
+# RESULT — so a gate-BLOCKED finish (e.g. the PDF-correctness gate catching
+# an undefined citation on Yb-vs-Rb) still exited the loop, shipping a
+# corpse: checkpoint left live, registry marked done, completion email sent.
+# Every finish gate was decorative at the loop layer. Keying off
+# details.success makes a blocked finish return its block text to the agent
+# for another turn (bounded by maxTurns + cost/time hooks), while a real
+# finish still exits — including sub-agents under tool_choice="required".
 #
 # Applies AFTER patch A's modification so the anchor matches the
 # already-patched file.
@@ -189,7 +200,7 @@ new = """                for (const result of toolResults) {
                     currentContext.messages.push(result);
                     newMessages.push(result);
                 }
-                if (toolCalls.some((c) => c?.name === \"finish\")) { // """ + marker + """
+                if (toolResults.some((r) => r?.toolName === \"finish\" && r?.details?.success === true)) { // """ + marker + """
                     hasMoreToolCalls = false;
                 }
             }"""

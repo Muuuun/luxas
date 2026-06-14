@@ -55,6 +55,8 @@ Your audit must confront the following questions. Each "yes" below is revise-wor
 6. **"Alternatives considered" quality.** Are the ≥3 alternatives architecturally distinct, or are they syntactic restatements of the same mechanism? Distinct = different underlying physics (e.g., Burnham-Chiao Bessel ringing vs free-induction decay vs optical precursors). Restated = same thing with different name.
 
 7. **Extrapolation leaps.** Prior-project data at N=2000 extrapolated to N=20,000 with power-law fit — did the experiment validate the extrapolation regime, or just trust R² within the fit range? One decade of extrapolation is usually fine; two is always revise-worthy without validation.
+
+8. **Missing figure ledger line.** The L2 section must carry either a `**Figure candidates:**` line (plottable artifacts → suggested plots) or `### No figure: <rationale>`. Both absent → revise — brain's figure pass keys off this line, and omission silently reverts to opt-out-by-default (same structural-omission class as the missing frozen criterion).
 </audit_checklist>
 
 <verdict_format>
