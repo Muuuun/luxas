@@ -157,11 +157,18 @@ export async function resolveKimiKey(): Promise<string | undefined> {
   return readSisyphusAuthKey("kimi", "moonshot", "KIMI_API_KEY", "MOONSHOT_API_KEY");
 }
 
+export async function resolveGLMKey(): Promise<string | undefined> {
+  if (process.env.GLM_API_KEY) return process.env.GLM_API_KEY;
+  if (process.env.ZHIPUAI_API_KEY) return process.env.ZHIPUAI_API_KEY;
+  return readSisyphusAuthKey("glm", "zhipu", "GLM_API_KEY", "ZHIPUAI_API_KEY");
+}
+
 export async function getApiKey(provider: string): Promise<string | undefined> {
   if (provider === "anthropic") return resolveAnthropicKey();
   if (provider === "openai" || provider === "openai-codex") return resolveOpenAIKey();
   if (provider === "deepseek") return resolveDeepSeekKey();
   if (provider === "kimi-coding") return resolveKimiKey();
+  if (provider === "glm") return resolveGLMKey();
   return undefined;
 }
 

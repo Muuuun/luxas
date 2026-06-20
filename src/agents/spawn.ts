@@ -124,6 +124,26 @@ const MODEL_MAP: Record<string, [string, string] | InlineModel> = {
     // were live-verified accepted 2026-06; re-verify on pi-ai bumps.
     compat: { supportsDeveloperRole: false },
   },
+  // GLM-5.2 (Zhipu / bigmodel) — runs the non-PI reviewer agents
+  // (experiment_reviewer, tool_review). OpenAI-compat endpoint; key is the
+  // "glm" slot in ~/.sisyphus/auth.json (getApiKey("glm")). A reasoning model
+  // — like kimi it rejects role:"developer", so supportsDeveloperRole:false.
+  "glm-5.2": {
+    id: "glm-5.2",
+    name: "GLM-5.2",
+    api: "openai-completions",
+    provider: "glm",
+    baseUrl: "https://open.bigmodel.cn/api/paas/v4",
+    reasoning: true,
+    input: ["text"],
+    // List price 8 / 28 / 2 RMB per-M (input/output/cache-read), converted to
+    // the "$" unit the usage log displays at ~7.2 RMB/USD (same magnitude as the
+    // deepseek-v4-pro entry). 1M usable context, 128K max output.
+    cost: { input: 1.11, output: 3.89, cacheRead: 0.28, cacheWrite: 0 },
+    contextWindow: 1048576,
+    maxTokens: 131072,
+    compat: { supportsDeveloperRole: false },
+  },
 };
 
 // Anthropic tier names that participate in profile redirection. When
@@ -144,21 +164,25 @@ const VISION_REQUIRED_AGENTS = new Set([
   "typesetter",
 ]);
 
-// Verifier agents keep their declared Anthropic tier even when a family-level
-// profile (dual mode) downgrades everything else. A verifier sharing the
-// producer's prior defeats the independent-review design: in production,
-// deepseek tool_impl AND deepseek blind tests carried the same wrong
-// hyperfine constants, and deepseek reviewers passed them. Producers may be
-// downgraded for cost; the checking layer is what makes that safe.
-// (reviewer covers the PI — pi-agent.ts spawns it through this same path.)
-const QUALITY_CRITICAL_AGENTS = new Set([
+// Verifier agents must NOT share the producer's prior — a verifier on the same
+// family as the producer defeats independent review: in production, deepseek
+// tool_impl AND deepseek blind tests carried the same wrong hyperfine
+// constants, and deepseek reviewers passed them. So the checking layer is
+// pinned off the producer profile. Two destinations:
+//
+//  PI ("reviewer", spawned by pi-agent.ts) keeps its declared Anthropic tier —
+//  the flagship adversarial monitor stays on Claude unconditionally.
+const PI_REVIEWER_AGENTS = new Set([
   "reviewer",
+]);
+//  The experiment-layer reviewers route to GLM-5.2 — a third prior, independent
+//  of BOTH the deepseek producer AND the Anthropic PI, and routed there
+//  UNCONDITIONALLY (every profile), not just in dual mode. tool_review authors
+//  the BLIND TESTS, so its prior diversity is what makes the impl/review split
+//  real (F4: same-family impl+test passed the same wrong constants). tool_impl
+//  stays on the profile (producer); the test author does not.
+const GLM_REVIEWER_AGENTS = new Set([
   "experiment_reviewer",
-  // tool_review writes the BLIND TESTS — the independence that makes the
-  // impl/review split work is prior diversity, not just file separation.
-  // With both on the same downgraded family, impl and test carried the same
-  // wrong hyperfine constants and pytest passed (F4). tool_impl stays on the
-  // profile (producer); the test author does not.
   "tool_review",
 ]);
 
@@ -167,7 +191,10 @@ function applyProfile(modelKey: string, agentName?: string): string {
     const visionProfile = process.env.LUXAS_VISION_MODEL_PROFILE;
     if (visionProfile) return visionProfile;
   }
-  if (agentName && QUALITY_CRITICAL_AGENTS.has(agentName)) return modelKey;
+  // Non-PI reviewers always run on GLM-5.2 (independent prior); PI keeps its
+  // declared Anthropic tier. Both checked before the producer-profile downgrade.
+  if (agentName && GLM_REVIEWER_AGENTS.has(agentName)) return "glm-5.2";
+  if (agentName && PI_REVIEWER_AGENTS.has(agentName)) return modelKey;
   const profile = process.env.LUXAS_MODEL_PROFILE;
   if (!profile) return modelKey;
   if (ANTHROPIC_TIERS.has(modelKey)) return profile;
