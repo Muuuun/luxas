@@ -109,6 +109,7 @@ After consolidating the priority list from your searches, ingest the top papers 
    - **must-read** — core references for the project's main claims (typically 5–12 papers).
    - **secondary** — useful context, competing approaches, recent work (typically 5–15 papers).
    - **peripheral** — only surface in the digest; do not download.
+   - **Recency floor (non-negotiable):** the top 3 on-topic results from the recency search (`--sort date`, year ≥ {THIS_YEAR-1}) are auto-**secondary** — download and spawn a reader on them. They never drop to peripheral for having few or zero citations: a citation count is a lagging signal a frontier paper *cannot* have yet, so it must not gate recent on-topic work. This is the symmetric completion of 2b, which already force-includes recent forward-citing papers.
 
 2. **Download** every must-read and secondary paper. Prefer arXiv when available:
    ```bash

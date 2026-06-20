@@ -124,7 +124,13 @@ function normalizeOAWork(raw) {
 }
 
 function formatPaper(p, prefix, i) {
-  let line = `[${prefix}${i + 1}] ${p.title} (${p.year ?? "?"}, ${p.cites} cites)`;
+  // Year stays (the disambiguator the new-paper case needs); cite count is
+  // deliberately NOT on the triage surface. A brand-new on-topic paper carries a
+  // literal "0 cites" that a triage agent reads as low-impact and drops — this is
+  // how arXiv 2606.05060 (a June-2026 neutral-atom gate paper) got surfaced as a
+  // result yet never read. Citations are a lagging signal the frontier cannot
+  // have yet; keep them flowing internally (p.cites) but off the agent's surface.
+  let line = `[${prefix}${i + 1}] ${p.title} (${p.year ?? "?"})`;
   const ids = [];
   if (p.id) ids.push(`ID: ${p.id}`);
   if (p.arxiv) ids.push(`arXiv: ${p.arxiv}`);
