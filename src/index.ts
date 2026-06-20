@@ -560,32 +560,27 @@ function archiveIfFinished(dir: string): string | undefined {
   const logJsonl = join(dir, ".agent", "log.jsonl");
   const checkpointFile = join(dir, ".agent", "checkpoint.jsonl");
 
-  // Check both log and checkpoint for finish signal
+  // A session counts as FINISHED only when a finish TOOL RESULT recorded
+  // details.success === true — i.e. finish() actually passed every gate. A
+  // finish CALL, or a gate-BLOCKED finish (which returns normal content WITHOUT
+  // details.success, yet the afterToolCall log still marks success=true because
+  // the tool did not throw), must NOT count. The old checks counted both:
+  // `lastEntry.success` is true for a blocked finish, and `block.name ===
+  // "finish"` fires on the mere CALL. That over-trigger archived a LIVE,
+  // unfinished checkpoint and forced a from-scratch restart — which then
+  // cold-start-wiped the notes ledger (experiments.md → 0 bytes) and broke every
+  // subsequent resume. The authoritative "finish succeeded" signal is the
+  // checkpoint toolResult's details.success.
   let finished = false;
-
-  // Check log.jsonl last line
-  if (existsSync(logJsonl)) {
-    try {
-      const lastLine = readFileSync(logJsonl, "utf-8").trim().split("\n").pop() ?? "";
-      const lastEntry = JSON.parse(lastLine);
-      if (lastEntry.tool === "finish" && lastEntry.success) finished = true;
-    } catch { /* ignore */ }
-  }
-
-  // Check checkpoint for finish tool call (covers case where log was already archived)
-  if (!finished && existsSync(checkpointFile)) {
+  if (existsSync(checkpointFile)) {
     try {
       const lines = readFileSync(checkpointFile, "utf-8").trim().split("\n");
-      // Check last few lines for a finish tool result
-      for (const line of lines.slice(-5)) {
+      for (const line of lines.slice(-12)) {
         try {
           const entry = JSON.parse(line);
-          // Check for tool_use with finish name, or tool_result referencing finish
-          if (entry.role === "assistant" && Array.isArray(entry.content)) {
-            for (const block of entry.content) {
-              if (block.type === "toolCall" && block.name === "finish") finished = true;
-              if (block.type === "tool_use" && block.name === "finish") finished = true;
-            }
+          const m: any = (entry as any)?.message ?? entry;
+          if (m?.role === "toolResult" && m?.toolName === "finish" && m?.details?.success === true) {
+            finished = true;
           }
         } catch { /* skip unparseable lines */ }
       }

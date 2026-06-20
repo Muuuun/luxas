@@ -7,7 +7,7 @@
  */
 
 import { existsSync, readdirSync, statSync } from "node:fs";
-import { readFileSafe, smartTruncate } from "./utils.js";
+import { readFileSafe, smartTruncate, parseFollowUps } from "./utils.js";
 import { buildPastResearchDigest, GLOBAL_MEMORY_PATH } from "./memory.js";
 import { findUnprocessedPapers, methodologyPath } from "./methodology.js";
 import { join, dirname } from "node:path";
@@ -264,6 +264,42 @@ function injectSnapshot(messages: any[], snapshot: string): any[] {
 }
 
 /**
+ * Surface the experiment-authored generative forks (### FollowUp blocks) as a
+ * first-class, UNTRUNCATED state block above the done-signals — so the brain
+ * reads an OPEN lead as a candidate next ACTION (a continue-vs-report fork),
+ * not as report prose buried under smartTruncate. An OPEN lead is one whose
+ * proposed experiment has not run yet (no `## L2.N` / `## E_N` section). A
+ * `FollowUp: NONE` or an already-run lead produces no row, so a genuinely
+ * drained frontier emits nothing and the brain proceeds to the report.
+ */
+function buildResearchFrontier(projectDir: string): string {
+  try {
+    const exp = readFileSafe(join(projectDir, "notes", "experiments.md"));
+    if (!exp) return "";
+    const leads = parseFollowUps(exp);
+    const ran = new Set<number>();
+    for (const m of exp.matchAll(/^##\s+(?:L2\.|E_?)(\d+)\b/gm)) ran.add(parseInt(m[1], 10));
+    const open = leads.filter(l => !l.isNone && !ran.has(l.num));
+    if (open.length === 0) return "";
+    const rows = open.map(l =>
+      `- [OPEN] ${l.leadId} (from ${l.sourceSection}${l.effort ? `, effort: ${l.effort.slice(0, 48)}` : ""})` +
+      (l.question ? `\n    Question: ${l.question}` : "") +
+      (l.decisionRule ? `\n    Decision rule: ${l.decisionRule}` : "")
+    ).join("\n");
+    return `<research_frontier priority="high">\n` +
+      `Open generative leads your OWN completed experiments proposed but did NOT run.\n` +
+      `Each is a candidate next ACTION — a continue-vs-report fork — NOT report prose.\n` +
+      `write_report is also a candidate action. Do NOT finish() while an OPEN lead\n` +
+      `could change a headline finding: either dispatch the experiment, or record in\n` +
+      `notes/memory.md a line  FRONTIER-DECLINE: <leadId> — <why, citing its Decision\n` +
+      `rule>. A lead that only enriches future-work is a legitimate DEFER; a lead that\n` +
+      `could flip a claim you will SHIP is not.\n\n${rows}\n</research_frontier>`;
+  } catch {
+    return "";
+  }
+}
+
+/**
  * Build a snapshot of current research state from files on disk.
  */
 function buildResearchSnapshot(opts: ContextTransformerOptions): string {
@@ -301,6 +337,14 @@ function buildResearchSnapshot(opts: ContextTransformerOptions): string {
       `\n</user_directive>`
     );
   }
+
+  // Research frontier: experiment-authored generative forks (### FollowUp
+  // blocks), surfaced as candidate-next-action state ABOVE the done-signals —
+  // same tier as the directive. Without this the forks were clipped by
+  // smartTruncate and read only as report prose, so the brain never saw the
+  // continue-vs-report decision they encode. See buildResearchFrontier.
+  const frontier = buildResearchFrontier(projectDir);
+  if (frontier) parts.push(frontier);
 
   // Execution-state snapshot (active sub-agents, completed artifacts, plan
   // status). Formerly a dedicated cache-pinned system layer (L3); moved here

@@ -93,8 +93,16 @@ export async function compactNotesIfNeeded(
   const outcomes = await Promise.allSettled(
     candidates.map(async ({ file, path, content, prompt }) => {
       const cleaned = await compactSingleFile(content, file, prompt, model, apiKey);
-      // Only write if meaningfully shorter (>10% reduction)
-      if (cleaned.length < content.length * 0.9) {
+      // Write only on a meaningful BUT non-degenerate reduction: >10% smaller AND
+      // still at least half the original. The old shrinkage-only guard was
+      // one-sided — an empty / truncated / refused LLM response (cleaned.length
+      // ≈ 0) passes `< 0.9×` and overwrites a load-bearing ledger with nothing.
+      // Observed wiping a 33K experiments.md to 0 bytes on every 664-message
+      // resume (context compaction → notes compaction → deepseek returns empty),
+      // which then breaks the plan-commitment finish gate. A real "keep ALL /
+      // preserve ALL" compaction stays well above half size; a collapse is
+      // rejected and the original is kept on disk.
+      if (cleaned.length < content.length * 0.9 && cleaned.length >= content.length * 0.5) {
         writeFileSync(path, cleaned);
         return { file, before: content.length, after: cleaned.length };
       }

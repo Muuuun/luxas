@@ -266,3 +266,66 @@ export function smartTruncate(text: string, maxChars: number): string {
 
   return `${headerSection}...(earlier content truncated, ${lines.length} total lines, use read tool for full file)\n\n${tail.trim()}`;
 }
+
+/**
+ * A generative fork an experiment authored into notes/experiments.md.
+ * experiment.md H6 (fail_forward_protocol) makes every completed experiment
+ * append either `### FollowUp: NONE — <argument>` or `### FollowUp: E_{N}_<slug>`
+ * with a Question / Estimated effort / Decision rule body. These were only ever
+ * read in report-writing mode (experiments.md is framed as "report source"),
+ * and smartTruncate(exp,2000) clipped every block but the file tail to a bare
+ * header — so the forks were invisible to the brain as control flow.
+ *
+ * The id regex tolerates the literal `E_{N}_slug` BRACE form the template emits
+ * (observed in the wild: `E_{4}_bb_logical_spread`); a bare `E_\d+` silently
+ * misses it — the dead-regex failure class (see project_finish_gate_regex_deadgate).
+ */
+export interface FollowUpLead {
+  leadId: string;        // normalized: "E_4_bb_logical_spread" (braces stripped)
+  num: number;           // 4  (-1 for NONE)
+  sourceSection: string; // "L2.3" / "E_3"
+  isNone: boolean;
+  question: string;
+  effort: string;
+  decisionRule: string;
+}
+
+export function parseFollowUps(text: string): FollowUpLead[] {
+  const lines = text.split("\n");
+  const out: FollowUpLead[] = [];
+  let sourceSection = "";
+  const sectionRE = /^##\s+(L2\.\d+|E_?\d+)\b/;
+  const fuRE = /^###\s+FollowUp:\s*(.*)$/i;
+  const headerRE = /^#{2,3}\s/;
+  for (let i = 0; i < lines.length; i++) {
+    const sm = lines[i].match(sectionRE);
+    if (sm) { sourceSection = sm[1]; continue; }
+    const fm = lines[i].match(fuRE);
+    if (!fm) continue;
+    const rest = fm[1].trim();
+    const body: string[] = [];
+    for (let j = i + 1; j < lines.length && !headerRE.test(lines[j]); j++) body.push(lines[j]);
+    const blockBody = body.join("\n");
+    if (/^NONE\b/i.test(rest)) {
+      out.push({ leadId: "NONE", num: -1, sourceSection, isNone: true, question: "", effort: "", decisionRule: rest.replace(/^NONE\s*[—-]?\s*/i, "") });
+      continue;
+    }
+    // Match the lead id tolerant of EVERY observed shape: `E_{4}_slug` (brace
+    // template), `E4_slug` (no brace), AND `E5 — Title` / `E5: ...` (bare number,
+    // no underscore-slug at all — the slug is optional). The earlier
+    // `\d+\}?_\S+` REQUIRED an underscore+slug and silently dropped the bare
+    // `E5 — …` form an experiment actually authored, so the disposition gate
+    // never saw that open lead and the brain finished with it dangling — the
+    // dead-regex failure class, this time in the frontier parser itself.
+    const idm = rest.match(/E_?\{?(\d+)\}?(?:_([A-Za-z0-9_]+))?/);
+    if (!idm) continue;
+    const num = parseInt(idm[1], 10);
+    const field = (name: string): string => {
+      const re = new RegExp(`\\*\\*${name}[^*]*\\*\\*\\s*[:：]?\\s*([\\s\\S]*?)(?=\\n\\s*-\\s*\\*\\*|\\n#{2,3}\\s|$)`, "i");
+      const m = blockBody.match(re);
+      return m ? m[1].trim().replace(/\s+/g, " ") : "";
+    };
+    out.push({ leadId: idm[2] ? `E_${num}_${idm[2]}` : `E_${num}`, num, sourceSection, isNone: false, question: field("Question"), effort: field("Estimated effort"), decisionRule: field("Decision rule") });
+  }
+  return out;
+}

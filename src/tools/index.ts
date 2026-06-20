@@ -4,7 +4,7 @@
 
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { md5OrNull, extractFrontmatterBlock, parseAuditFrontmatter } from "../utils.js";
+import { md5OrNull, extractFrontmatterBlock, parseAuditFrontmatter, parseFollowUps, readFileSafe } from "../utils.js";
 import type { Agent } from "@mariozechner/pi-agent-core";
 import { createReportTools } from "./report.js";
 import { createInitReportTool } from "./init-report.js";
@@ -534,6 +534,46 @@ export function buildResearchTools(
         return { content: [{ type: "text" as const, text: lines.join("\n") }] };
       }
 
+      // Frontier-disposition gate (Step 3): every OPEN generative lead an
+      // experiment authored (`### FollowUp: E_{N}_slug`, not yet run) must be
+      // DISPOSED before finish — either run (its `## L2.N` section now exists)
+      // or explicitly declined via a `FRONTIER-DECLINE: <leadId>` line in
+      // notes/memory.md. PRESENCE check only: the decline's content is never
+      // judged (a prior-sharing judge would rubber-stamp it). This stops a
+      // generative fork the agent's OWN experiment surfaced from being shipped
+      // as report prose — the magic-state E_4 failure mode.
+      if (existsSync(expNotesPath)) {
+        const followUps = parseFollowUps(readFileSync(expNotesPath, "utf-8"));
+        const ranNums = new Set<number>();
+        for (const s of ledgerSections) {
+          const m = s.header.match(/(?:L2\.|E_?)(\d+)/);
+          if (m) ranNums.add(parseInt(m[1], 10));
+        }
+        const memText = readFileSafe(join(projectDir, "notes", "memory.md"));
+        // Match a decline by lead NUMBER, not the full slug — the slug drifts
+        // across the FollowUp formats experiments actually author (`E_4_slug`,
+        // `E4_slug`, bare `E5 — Title`), so keying the disposition on `E_N`
+        // alone is the only robust join. (A decline line is `FRONTIER-DECLINE:
+        // E5 — <reason>` or `… E_4_slug — <reason>`.)
+        const declinedNums = new Set(
+          [...memText.matchAll(/FRONTIER-DECLINE:\s*E_?\{?(\d+)\}?/gi)]
+            .map(m => parseInt(m[1], 10))
+        );
+        const undisposed = followUps.filter(l => !l.isNone && !ranNums.has(l.num) && !declinedNums.has(l.num));
+        if (undisposed.length > 0) {
+          const list = undisposed.map(l =>
+            `  - ${l.leadId} (from ${l.sourceSection})` +
+            (l.decisionRule ? `\n      Decision rule: ${l.decisionRule.slice(0, 220)}` : "")
+          ).join("\n");
+          return { content: [{ type: "text" as const, text:
+            `Cannot finish: ${undisposed.length} open generative lead(s) your own experiment(s) proposed are undisposed — a continue-vs-report fork left as report prose:\n${list}\n\n` +
+            `For EACH, either dispatch the experiment (its \`## L2.N\` Complete section then satisfies this gate), OR add to notes/memory.md a line:\n` +
+            `  FRONTIER-DECLINE: <leadId> — <why it would not change a headline finding you ship, citing its Decision rule>\n\n` +
+            `This is a PRESENCE check — the decline's content is not judged. Decline a lead ONLY if resolving it would not flip a claim you ship; if it could, run it.`
+          }] };
+        }
+      }
+
       const pdfPath = join(projectDir, "report/report.pdf");
       if (!existsSync(pdfPath)) {
         return { content: [{ type: "text" as const, text: `Cannot finish: report/report.pdf does not exist. Compile the report first with compile_latex, then call finish again.` }] };
@@ -585,6 +625,23 @@ export function buildResearchTools(
         }
         if (selfGen.length === 0 && includes.length === 0) {
           return { content: [{ type: "text" as const, text: `Cannot finish: report.tex contains zero figures. Every research report needs ≥1 self-generated figure under report/figures/ visualising experiment results. See brain.md <generated_figures>.` }] };
+        }
+
+        // Requester-voice gate: report.tex must never reference the research
+        // requester or the act of being asked. RESEARCH.md is internal routing
+        // ground-truth, not a quotable source — but the verbatim-request /
+        // noun-preservation discipline (brain.md top-of-file) bleeds the
+        // requester into the report's motivation slot. Observed across 7 reports
+        // (magic-state "用户明确指出…", 量子化学 "用户的核心问题", Rb-单光子
+        // "\subsection{用户的交替对射方案}", …). Conservative backstop: match
+        // requester-FRAMING phrases only, never the bare word 用户 (a legitimate
+        // domain term in end-user subjects: 用户隐私/用户行为).
+        const requesterVoice = tex
+          .replace(/%[^\n]*/g, "")
+          .match(/用户(?:提出|明确指出|希望|想要|猜测|假设|问及|关于)|回答用户|用户的[^，。\n]{0,10}问题|\\(?:sub)*section\*?\{[^}]*用户|the user (?:asked|wants|requested|explicitly)|as requested by|the requester/g);
+        if (requesterVoice) {
+          const uniq = [...new Set(requesterVoice)].slice(0, 6);
+          return { content: [{ type: "text" as const, text: `Cannot finish: report.tex references the research requester — found ${requesterVoice.length} requester-voice phrase(s): ${uniq.join(", ")}. A report is a third-person academic document for a reader who never saw RESEARCH.md; the user and the act of being asked must not appear. Rewrite each into literature-grounded motivation or scientific scope — "本文研究…" / "本文聚焦于…", not "用户提出…" / "回答用户…的问题". See brain.md report-voice rule. Bare domain uses of 用户 (用户隐私/用户行为) are fine — only requester framing is blocked.` }] };
         }
 
         // Language gate: cross-check plan.md `# Language`'s `Chosen:` against
