@@ -8,7 +8,7 @@
 import { Type } from "@sinclair/typebox";
 import { execSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { join, basename } from "node:path";
+import { join, basename, resolve } from "node:path";
 import { applyAuthorityEscalationSection } from "./authority-escalation.js";
 
 const CompileParams = Type.Object({
@@ -96,7 +96,15 @@ export function createReportTools(projectDir: string) {
       _toolCallId: string,
       params: { dir?: string; texfile?: string },
     ) {
-      const dir = params.dir ? join(projectDir, params.dir) : join(projectDir, "report");
+      // resolve(), not join(): the brain sometimes passes an ABSOLUTE dir.
+      // join(projectDir, "/abs/path") concatenates into a doubled, nonexistent
+      // path, so execSync's cwd is ENOENT and EVERY compile step dies before
+      // latex runs ("spawnSync /bin/sh ENOENT"). The PDF then never refreshes,
+      // the tex-after-compile finish gate blocks forever, and the brain spins
+      // on finish() — observed as a 60-call $24 dead loop on
+      // magic-fountain-spread. resolve() takes an absolute arg as-is and only
+      // joins a relative one.
+      const dir = resolve(projectDir, params.dir ?? "report");
       const texfile = params.texfile ?? "report.tex";
       const base = texfile.replace(/\.tex$/, "");
       const env = getTexEnv();
