@@ -117,8 +117,12 @@ export function updateProjectAfterRun(
 
   const entry = projects[idx];
   entry.lastRun = new Date().toISOString();
-  entry.costUsd += costUsd;
-  entry.tokens += tokens;
+  // usage.log is the cumulative single source of truth (never truncated, seeds
+  // from existing on resume), so costUsd/tokens here are already the all-sessions
+  // total — mirror them, don't accumulate. Accumulating double-counts every
+  // resume and every orphan-stub recovery that is later finalized cleanly.
+  entry.costUsd = costUsd;
+  entry.tokens = tokens;
   if (opts?.finished !== undefined) entry.lastRunFinished = opts.finished;
 
   // Generate summary from project notes

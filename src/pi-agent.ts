@@ -311,20 +311,40 @@ async function evaluateProgress(
 
   // A non-response must NOT silently pass as "continue" — that fail-open let
   // projects finish on a review that never happened (observed in 5/70 runs).
-  // Return "steer" with an honest non-completion note: it blocks finish() and
-  // triggers a re-review, without fabricating issues.
-  return (
-    result ?? {
-      verdict: "steer",
+  // BUT that danger is specific to the FINISH/milestone gate. At the plan gate
+  // (optional per design; downstream experiments are still independently
+  // reviewed) a fail-closed "steer" on an infra non-completion deadlocks the
+  // pipeline: a re-run hits the same failure (e.g. dual-profile pins the
+  // reviewer to Anthropic while the producer profile still runs, so an
+  // exhausted Anthropic balance fails every reviewer spawn) and brain can never
+  // dispatch experiments. Branch: plan review proceeds with an honest
+  // non-approval note; every other gate keeps the fail-closed steer.
+  if (result) return result;
+  if (isPlanReview) {
+    return {
+      verdict: "continue",
       assessment:
-        "⚠️ PI review did NOT complete: the reviewer produced no structured verdict after a retry. " +
-        "This is not an approval. Re-run request_pi_review before proceeding; if it recurs, the PI " +
-        "agent is failing to call submit_verdict.",
+        "⚠️ PI plan-review did NOT complete: the reviewer produced no structured verdict after a retry " +
+        "(typically a transient/credit/infra failure — e.g. the Anthropic-pinned reviewer is unfunded while " +
+        "the producer profile still runs). This is NOT an endorsement of the plan. The plan gate is optional and " +
+        "downstream experiments are still independently reviewed, so proceed rather than deadlock.",
       issues: [],
       instructions:
-        "Re-run the PI review. Do not treat this non-response as a passing verdict.",
-    }
-  );
+        "Proceed with experiment dispatch. Record in your pushback/notes that the plan PI-review could not run; " +
+        "rely on your own RESEARCH.md cross-check and the downstream experiment_reviewer gates. Do not represent " +
+        "the plan as PI-approved. Optionally retry request_pi_review later if the infra recovers.",
+    };
+  }
+  return {
+    verdict: "steer",
+    assessment:
+      "⚠️ PI review did NOT complete: the reviewer produced no structured verdict after a retry. " +
+      "This is not an approval. Re-run request_pi_review before proceeding; if it recurs, the PI " +
+      "agent is failing to call submit_verdict.",
+    issues: [],
+    instructions:
+      "Re-run the PI review. Do not treat this non-response as a passing verdict.",
+  };
 }
 
 // ---------------------------------------------------------------------------

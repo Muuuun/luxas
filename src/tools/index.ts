@@ -2,7 +2,7 @@
  * Tool index — assembles all research tools for the brain agent.
  */
 
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
 import { md5OrNull, extractFrontmatterBlock, parseAuditFrontmatter, parseFollowUps, readFileSafe } from "../utils.js";
 import type { Agent } from "@mariozechner/pi-agent-core";
@@ -338,6 +338,18 @@ export function buildResearchTools(
   // Deferred parent agent ref — set after Agent is constructed (needed for background steer)
   let parentAgentRef: Agent | undefined;
 
+  // F2 escape hatch (debate-adjudicated 2026-06-21): a gate-blocked finish() returns
+  // without details.success, so onFinish never fires and the loop has NO terminating
+  // edge — a brain that wants to stop but won't dispose its frontier leads spins
+  // finish() to the turn cap (observed: 441 calls, ~$22 burned). Count consecutive
+  // frontier-gate blocks; on the Kth force a clean exit, shipping current artifacts
+  // with the open leads honestly marked UNDISPOSED (not forged as "declined").
+  let blockedFinishStreak = 0;
+  // Fix 3 (2026-06-22): total finish() attempts past the background lock. A global
+  // runaway backstop for finish-loop variants that evade the frontier-only F2 streak
+  // (e.g. the finish→edit→compile→typesetter cycle looping on freshness/typesetter gates).
+  let finishCallCount = 0;
+
   // Use a proxy object so spawn tool picks up the agent ref when it's set later
   const spawnTool = createSpawnAgentTool(
     projectDir, templateVars, getApiKey,
@@ -372,15 +384,53 @@ export function buildResearchTools(
           type: "string" as const,
           description: "One-line summary of what was accomplished.",
         },
+        decline: {
+          type: "array" as const,
+          description: "Optional: dispose open frontier leads in THIS call instead of hand-editing notes/memory.md. Each {leadId, reason} writes a FRONTIER-DECLINE line. Decline a lead ONLY if running it would not flip a claim you ship; if it could, run it instead.",
+          items: {
+            type: "object" as const,
+            properties: {
+              leadId: { type: "string" as const },
+              reason: { type: "string" as const },
+            },
+            required: ["leadId", "reason"],
+          },
+        },
       },
       required: ["summary"],
     },
-    execute: async (args: { summary: string }) => {
+    execute: async (args: { summary: string; decline?: Array<{ leadId: string; reason: string }> }) => {
+      // F3 (debate-adjudicated 2026-06-21): dispose frontier leads passed in-call,
+      // collapsing dispose+finish into the one call the brain was already making.
+      // Writes the FRONTIER-DECLINE lines the frontier gate's presence check (below)
+      // reads from notes/memory.md, so a willing brain clears the gate before the F2 cap arms.
+      if (args.decline?.length) {
+        const lines = args.decline.map(d => `FRONTIER-DECLINE: ${d.leadId} — ${d.reason}`).join("\n");
+        appendFileSync(join(projectDir, "notes", "memory.md"), `\n${lines}\n`);
+      }
+
       // Hard lock: cannot finish while background agents are still running
       const active = getActiveBackgroundAgents(projectDir);
       if (active.length > 0) {
         const list = active.map(a => `  - ${a.name}: ${a.task} (running ${Math.floor((Date.now() - a.startedAt) / 1000)}s)`).join("\n");
         return { content: [{ type: "text" as const, text: `Cannot finish: ${active.length} background agent(s) still running. Wait for them to complete before finishing.\n\nActive agents:\n${list}` }] };
+      }
+
+      // Fix 3 (2026-06-22): global runaway-finish backstop. F2 (blockedFinishStreak)
+      // only counts CONSECUTIVE blocks at the frontier gate; a finish→edit→compile→
+      // typesetter cycle loops on the freshness/typesetter gates and never trips it
+      // (a run reached 68 finish calls / ~$53 before being killed). Count EVERY finish()
+      // attempt past the background lock and force-exit a runaway. A legitimate finish
+      // passes on attempt 1; only a cross-gate livelock reaches the cap.
+      if (++finishCallCount >= 12) {
+        callbacks?.onFinish?.();
+        return { content: [{ type: "text" as const, text:
+          `Force-exit (runaway-finish backstop): finish() has been called ${finishCallCount} ` +
+          `times and kept being blocked by a finish gate — almost always the report freshness/` +
+          `typesetter cycle (every recompile makes report.pdf newer than the last PI review, ` +
+          `re-blocking finish). Shipping current artifacts as-is so a gate livelock cannot burn ` +
+          `the budget.` }],
+          details: { success: true } };
       }
 
       // Fix δ — Directive-implication gate. See directiveImpliesNewWork above
@@ -561,6 +611,16 @@ export function buildResearchTools(
         );
         const undisposed = followUps.filter(l => !l.isNone && !ranNums.has(l.num) && !declinedNums.has(l.num));
         if (undisposed.length > 0) {
+          // F2 escape hatch: a gate-blocked finish() has no terminating edge; cap
+          // consecutive blocks so a non-disposing brain can't spin to the turn cap.
+          if (++blockedFinishStreak >= 3) {
+            callbacks?.onFinish?.();
+            return { content: [{ type: "text" as const, text:
+              `Force-exit (runaway-cost backstop): 3 consecutive blocked finish() calls with open frontier leads. ` +
+              `Shipping current artifacts. Leads left UNDISPOSED (not declined): ${undisposed.map(l => l.leadId).join(", ")}. ` +
+              `Dispose properly next time via finish(decline:[{leadId,reason}]) or by running the leads.`
+            }], details: { success: true } };
+          }
           const list = undisposed.map(l =>
             `  - ${l.leadId} (from ${l.sourceSection})` +
             (l.decisionRule ? `\n      Decision rule: ${l.decisionRule.slice(0, 220)}` : "")
@@ -572,6 +632,7 @@ export function buildResearchTools(
             `This is a PRESENCE check — the decline's content is not judged. Decline a lead ONLY if resolving it would not flip a claim you ship; if it could, run it.`
           }] };
         }
+        blockedFinishStreak = 0; // frontier satisfied this call — re-arm the F2 cap
       }
 
       const pdfPath = join(projectDir, "report/report.pdf");
@@ -822,6 +883,40 @@ export function buildResearchTools(
             `Do NOT retry finish() without taking one of these paths; the ` +
             `block will repeat identically.`
           }] };
+        }
+      }
+
+      // Fix 2 (2026-06-22, debate-adjudicated): ledger-vs-report consistency backstop.
+      // A false claim ("the published STCP construction fails / contradicts Theorem 4")
+      // shipped because the PI itself authored it (shared priors with the brain) and every
+      // gate above is content-blind. This catches the high-harm class: the report asserting
+      // a definitive validity verdict the project's OWN ledger records as merely sufficient
+      // or unresolved. Heuristic + overridable (pi_pushback); the reviewer.md
+      // methodology_claim_verification block is the primary, in-PI defense. "Ground truth
+      // from inputs, not outputs" — the principle tool_review enforces, applied to this seam.
+      {
+        const reportTex = readFileSafe(join(projectDir, "report", "report.tex"));
+        const ledgerTxt = readFileSafe(join(projectDir, "notes", "experiments.md"));
+        const harm = reportTex.match(/the correct necessary condition|contradict\w*[^.\n]{0,40}\btheorem\b|\bfails?\b[^.\n]{0,40}\bnecessary condition\b/i);
+        const hedge = ledgerTxt.match(/sufficient[^.\n]{0,25}\bnot\b[^.\n]{0,10}necessary|\bnot\s+necessary\b|\bunresolved\b|\binconclusive\b|did not compare/i);
+        if (harm && hedge) {
+          const pushbackPath = join(projectDir, "reviews", "pi_pushback.md");
+          let pushbackFresh = false;
+          try {
+            const ledgerMtimeMs = statSync(join(projectDir, "notes", "experiments.md")).mtimeMs;
+            pushbackFresh = statSync(pushbackPath).mtimeMs > ledgerMtimeMs;
+          } catch { /* no pushback file — not fresh */ }
+          if (!pushbackFresh) {
+            return { content: [{ type: "text" as const, text:
+              `Cannot finish: the report asserts a definitive validity verdict that may contradict your own ledger (the ledger is source-of-truth).\n` +
+              `  report/report.tex asserts: "...${harm[0].trim()}..."\n` +
+              `  notes/experiments.md records: "...${hedge[0].trim()}..."\n\n` +
+              `A SUFFICIENT check failing does not prove the validity condition fails; and a published/cited result is not "invalid" on the strength of your own reconstruction. Pick one:\n` +
+              `  (a) reconcile the report to the ledger's actual verdict (e.g. "our reconstruction disagrees with our check — likely a discrepancy, unresolved"), then recompile + re-review; or\n` +
+              `  (b) if the ledger line is stale and the report is right, update/retract that ledger line; or\n` +
+              `  (c) if this is a false flag (the two lines are about different claims), write reviews/pi_pushback.md explaining why the report is consistent with the ledger. Once its mtime is newer than notes/experiments.md, finish() is allowed.`
+            }] };
+          }
         }
       }
 

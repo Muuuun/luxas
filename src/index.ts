@@ -45,6 +45,7 @@ if (existsSync(join(browserUseDir, "browser-use")) && !process.env.PATH?.include
   process.env.PATH = `${browserUseDir}:${process.env.PATH}`;
 }
 import { registerProject, updateProjectAfterRun, loadProjects, selectPastProjects } from "./memory.js";
+import { readUsageTotals } from "./usage-log.js";
 import { ORIGINAL_REQUEST_HEADER, deriveProjectTitle } from "./utils.js";
 
 // F2 — process-level crash handlers. Without these, Node's default behavior on
@@ -105,6 +106,7 @@ let initPrompt: string | undefined;
 let figureTarget: string | undefined;
 let auditOnly = false;
 let styleDomain: string | undefined;
+let maxCost: number | undefined;
 
 for (let i = 1; i < args.length; i++) {
   if (args[i] === "--model" && args[i + 1]) {
@@ -123,6 +125,8 @@ for (let i = 1; i < args.length; i++) {
     auditOnly = true;
   } else if (args[i] === "--style-domain" && args[i + 1]) {
     styleDomain = args[++i];
+  } else if (args[i] === "--max-cost" && args[i + 1]) {
+    maxCost = parseFloat(args[++i]);
   } else if (!args[i].startsWith("--")) {
     projectDir = args[i];
   }
@@ -175,7 +179,7 @@ if (command === "list") {
 }
 
 if (command === "run") {
-  await run(projectDir, model, directive);
+  await run(projectDir, model, directive, maxCost);
   process.exit(0);
 }
 
@@ -201,7 +205,7 @@ process.exit(1);
 
 // ─── Commands ────────────────────────────────────────────
 
-async function run(dir: string, modelName: string, userDirective?: string) {
+async function run(dir: string, modelName: string, userDirective?: string, maxCostUsd?: number) {
   // Validate project
   const researchFile = join(dir, "RESEARCH.md");
   if (!existsSync(researchFile)) {
@@ -294,7 +298,24 @@ async function run(dir: string, modelName: string, userDirective?: string) {
   sweepInterval.unref();
 
   // Register in global project registry
-  registerProject(dir);
+  const projectEntry = registerProject(dir);
+
+  // Recover an orphaned registry stub: a prior session that did real work but
+  // was hard-killed (SIGKILL/OOM/shutdown) before the end-of-run finalize below
+  // leaves this entry as the registerProject stub — empty summary, zero cost,
+  // no lastRunFinished — even though notes/ and report/ are populated. A
+  // try/finally can't catch a SIGKILL, so reconcile here at startup, same
+  // pattern as reconcileOnStartup (jobs) and archiveIfFinished (checkpoints).
+  // finished := a compiled report.pdf exists (the shippable deliverable),
+  // matching generateProjectSummary's own "Report: completed" signal.
+  if (projectEntry.summary === "" && projectEntry.tokens === 0 && projectEntry.lastRunFinished === undefined) {
+    const orphan = readUsageTotals(join(dir, ".agent", "usage.log"));
+    if (orphan.calls > 0) {
+      const reportDone = existsSync(join(dir, "report", "report.pdf"));
+      updateProjectAfterRun(dir, orphan.cost, orphan.inputTokens + orphan.outputTokens, { finished: reportDone });
+      console.log(`  ⟳ Recovered orphaned registry entry from a prior killed session ($${orphan.cost.toFixed(2)}, finished=${reportDone})`);
+    }
+  }
 
   const pastProjects = selectPastProjects(dir);
   console.log(`\n📚 Luxas — Autonomous Research Agent`);
@@ -319,6 +340,7 @@ async function run(dir: string, modelName: string, userDirective?: string) {
     model: modelName,
     directive: userDirective,
     resumedFromCheckpoint,
+    maxCostUsd,
   });
 
   // Console progress
@@ -373,7 +395,6 @@ async function run(dir: string, modelName: string, userDirective?: string) {
     console.error(`\n✗ Agent error: ${err.message}`);
   }
 
-  const { readUsageTotals } = await import("./usage-log.js");
   const elapsed = Math.floor((Date.now() - t0) / 1000);
   const totals = readUsageTotals(usageLogPath);
   const totalTokens = totals.inputTokens + totals.outputTokens;

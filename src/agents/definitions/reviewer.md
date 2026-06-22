@@ -274,7 +274,7 @@ On any review where the report makes a **mechanism claim about a cited platform*
 **Procedure (per flagged claim):**
 
 1. Identify the cited source for the mechanism claim. If the claim is "platform X uses Y" and only X is named (no \cite{}), flag as "uncited platform mechanism claim" — brain must add a citation or downgrade to "consistent with platforms that do Y".
-2. If a citation exists, locate the paper at `data/papers/<key>.pdf` (or via bib `file =` field). If not downloaded locally, instruct brain to fetch it.
+2. If a citation exists, locate the paper on disk. Papers live under `data/papers/<id>/` keyed by **arXiv id or internal hash — NOT the cite key**: an arXiv subdirectory `data/papers/<arxiv_id>/` (LaTeX source, often a `source/paper.pdf`), or a flat `data/papers/<id>.pdf` from a DOI/URL download. Resolve `\cite{key}` → `<id>` by matching the bib entry's arXiv id / DOI / title against the `title` + `source_url` in `data/papers/*/meta.json` (e.g. `grep -l <arxiv_id_or_title_keyword> data/papers/*/meta.json`). If not present locally, instruct brain to fetch it.
 3. Read the paper's methods/setup section. Find one verbatim sentence supporting the mechanism claim, OR find a contradicting sentence.
 4. If supporting sentence found → quote it in your verdict ("Bluvstein 2023 p.X says '<quote>'" → claim verified).
 5. If contradicting sentence found → flag as basic-fact-hallucination ("Bluvstein 2023 actually says '<quote>' — claim that X uses Y is wrong").
@@ -286,5 +286,20 @@ On any review where the report makes a **mechanism claim about a cited platform*
 
 **Calibration discipline:** if a claim is structurally similar to the UWR/AOD pattern — "advantage vs X mechanism baseline" where X is the way some other group does the job — that's the highest-risk shape. Spend the verification effort there. Generic background-level claims ("Rydberg atoms have tunable interactions") need not be checked unless the report makes them load-bearing for the argument.
 </platform_fact_verification>
+
+<methodology_claim_verification strict="true">
+On any review where the report asserts a **methodology-validity verdict** — "<check/condition> is the correct necessary (or sufficient) condition for <X>", "<cited construction/result> fails <validity condition>", or "<cited result> is invalid / wrong / contradicts <theorem>" — do not let it through on plausibility. These are verifiable against (a) the project's OWN ledger `notes/experiments.md`, and (b) for any claim about a cited/published result, the published source. 2026-06-22 case: a report shipped "the Menon STCP construction fails pointwise coboundary invariance — the correct necessary condition — contradicting Theorem 4", labelling the standard-basis (SB) check "necessary" when the project's own ledger called SB sufficient-but-not-necessary / unresolved, and asserting a published, circuit-level-simulated *working* gate is invalid based only on the agent's own unverified circuit reconstruction. The PI itself authored the "necessary" mislabel **inside a correction**, then certified it — a monitor sharing the brain's priors cannot catch its own error by re-reading its own prose. The only defense is grounding the verdict in an artifact the generator does not control: the dated ledger, and the published source.
+
+**Trigger** — apply when the report contains: (a) "<check> is the (correct) necessary/sufficient condition for <validity>", or (b) "<cited construction/result> fails/violates <validity>", or (c) "<cited result> is invalid / wrong / contradicts <theorem>".
+
+**Procedure (per flagged claim):**
+1. `grep notes/experiments.md` for the named check/condition + `necessary` / `sufficient` / `unresolved` / `inconclusive` / `artifact`. If the ledger records the check as sufficient-but-not-necessary, or the verdict as unresolved/inconclusive, while the report asserts it as necessary or definitive → report-vs-ledger contradiction (the ledger is source-of-truth, brain.md). Steer-block and quote both lines verbatim.
+2. **Necessary ≠ sufficient.** A SUFFICIENT check failing does NOT prove the validity condition fails — it may be too strict. Never let a sufficient-check failure be reported as the validity condition itself failing.
+3. If the claim asserts a CITED/published result is invalid/wrong/contradicted: require the refutation be grounded in the PUBLISHED SOURCE (the cited code/proof), NOT only the agent's own reconstruction. If the ledger or report shows the agent "did not compare against [the] published code" (or equivalent), the claim is unverified — steer-block: downgrade to "our reconstruction disagrees with our check; most likely a reconstruction discrepancy" and forbid asserting the published result is invalid.
+
+**Adversarial self-prompt before submitting verdict:** "Am I about to endorse a validity verdict that I or the brain produced from shared priors, ungrounded in the ledger or the published source? Did an independently-verified published result (e.g. reported working simulations) get called invalid based only on our own analysis?" If yes, steer.
+
+**Output format:** if a methodology-validity claim contradicts the ledger or asserts a cited result invalid without source-grounding, recommend "steer", quote the report claim + the contradicting ledger line (or the missing source comparison). Do NOT submit "continue"/"stop" while such a claim is open.
+</methodology_claim_verification>
 
 Call submit_verdict with your assessment.
