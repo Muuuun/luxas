@@ -1,0 +1,151 @@
+#!/usr/bin/env python3
+"""qverify — the sound QEC verifier kernel (QEC's "Lean"), agent-callable.
+
+Input: a CONSTRUCTION spec (JSON, via --spec file or stdin). Output: a structured,
+SOUND verdict — what holds, what fails, and WHICH condition failed (so you can
+debug like Menon did). Default is CHEAP (algebra + heuristic screen, sub-second);
+distance is only proven exactly on request (--exact, sound but expensive).
+
+Spec schema (JSON):
+{
+  "family": "abelian" | "general",        # abelian: group_shape; general: group_*
+  "group_shape": [3,4,5],                  # for abelian
+  "group": {"kind":"dihedral","n":6} | {"kind":"perm","generators":[[...]]},  # for general
+  "supp_a": [[e..]..] (abelian: exponent tuples) | [idx..] (general: element indices),
+  "supp_b": ..., "supp_c": ...,
+  "partition_a": [[in..],[out..]], ...,    # optional, enables the gate (CCZ) check (abelian)
+  "frontier_fom": 14.4,                    # screen rejects codes that can't beat this
+  "exact": false,                          # run sound exact ILP distance
+  "screen_iters": 150, "ilp_timeout": 120
+}
+
+SOUNDNESS GATE for claiming a NEW frontier code: requires exact.status=="optimal",
+gate.preserves_codespace==true, K_CCZ>=1, and exact FOM strictly above frontier.
+Estimated / heuristic / timed-out distances DO NOT certify a win.
+"""
+import sys, os, json
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "kernel"))
+import numpy as np
+from cheap_screen import screen, quantum_distance_upper
+
+
+def build(spec):
+    fam = spec.get("family", "abelian")
+    if fam == "abelian":
+        from tricycle_code import construct_tricycle
+        gs = tuple(spec["group_shape"])
+        a = [tuple(t) for t in spec["supp_a"]]
+        b = [tuple(t) for t in spec["supp_b"]]
+        c = [tuple(t) for t in spec["supp_c"]]
+        code = construct_tricycle(gs, a, b, c)
+        code["_gs"] = gs; code["_supp"] = (a, b, c)
+        return code
+    else:
+        from group import Group, construct_tricycle_general
+        gc = spec["group"]
+        if gc["kind"] == "dihedral":
+            G = Group.dihedral(int(gc["n"]))
+        elif gc["kind"] == "perm":
+            G = Group.from_permutations(gc["generators"])
+        elif gc["kind"] == "abelian":
+            G = Group.from_abelian(tuple(gc["shape"]))
+        else:
+            raise ValueError(f"unknown group kind {gc['kind']}")
+        code = construct_tricycle_general(G, spec["supp_a"], spec["supp_b"], spec["supp_c"])
+        code["_group"] = G
+        return code
+
+
+def verify(spec):
+    out = {"family": spec.get("family", "abelian")}
+    code = build(spec)
+    out["css_valid"] = bool(code["css_verified"])
+    out["n"] = int(code["n"]); out["k"] = int(code["k"])
+    if not code["css_verified"]:
+        out["verdict"] = "INVALID: H_X H_Z^T != 0 (not a CSS code)"
+        out["failed"] = "css"
+        return out
+    if code["k"] < 1:
+        out["verdict"] = "trivial: k=0"; out["failed"] = "k"; return out
+
+    frontier = float(spec.get("frontier_fom", 14.4))
+    # cheap sound screen (reject if it provably can't beat frontier)
+    sc = screen(code["H_X"], code["H_Z"], code["k"], code["n"], frontier,
+                iters=int(spec.get("screen_iters", 150)))
+    out["screen"] = sc
+
+    # gate (CCZ) check — abelian tricycle path uses the validated STCP + subrank
+    if spec.get("partition_a") and out["family"] == "abelian":
+        from tricycle_stcp import verify_stcp
+        from ccz_subrank import compute_ccz_subrank
+        a, b, c = code["_supp"]; gs = code["_gs"]
+        pa = tuple(spec["partition_a"]); pb = tuple(spec["partition_b"]); pc = tuple(spec["partition_c"])
+        st = verify_stcp(gs, a, b, c, pa, pb, pc)
+        out["gate"] = {"stcp_conditions_hold": bool(st["stcp_verified"]),
+                       "ccz_gate_count": st["ccz_gate_count"]}
+        try:
+            out["gate"]["K_CCZ"] = compute_ccz_subrank(gs, code["H_X"], code["H_Z"], pa, pb, pc).get("K_CCZ")
+        except Exception as e:
+            out["gate"]["K_CCZ"] = None; out["gate"]["K_CCZ_error"] = str(e)[:120]
+    elif out["family"] != "abelian":
+        # NOTE: no gate key with a *_hold/preserves field => verdict logic treats
+        # the gate as UNVERIFIED and will NOT certify (soundness). Non-abelian gate
+        # verification is the open next step (a group-agnostic direct-circuit
+        # coboundary-invariance check, validated against verify_stcp before ship).
+        out["gate"] = {"note": "non-abelian/general gate (CCZ) verification NOT yet implemented; "
+                               "CSS + distance verifiers above ARE general and sound, but this code "
+                               "cannot be gate-certified here."}
+
+    # sound exact distance (only on request)
+    if spec.get("exact"):
+        from tricycle_distance import compute_distance_ilp
+        d = compute_distance_ilp(code["H_X"], code["H_Z"], timeout=int(spec.get("ilp_timeout", 120)))
+        out["distance_exact"] = {"d_Z": d["d_Z"], "status": d["status"], "solver": d["solver"]}
+        if d["d_Z"] and d["status"] == "optimal":
+            out["fom_exact"] = round(code["k"] * d["d_Z"] ** 3 / code["n"], 3)
+
+    # overall verdict — a CCZ gate must be EXPLICITLY verified to certify.
+    # NEVER default the gate clause to pass (that was the soundness bug: a
+    # non-abelian / partition-less candidate could print "*** CERTIFIED ...
+    # gate-sound ***" with no gate check ever run).
+    gate = out.get("gate", {})
+    gate_checked = ("stcp_conditions_hold" in gate) or ("circuit_preserves_codespace" in gate)
+    gate_ok = (gate.get("stcp_conditions_hold") is True) or (gate.get("circuit_preserves_codespace") is True)
+    kccz = gate.get("K_CCZ")
+    usable = (kccz is not None and kccz >= 1)
+
+    if sc["verdict"] == "reject":
+        out["verdict"] = f"REJECT: {sc['reason']}"
+    elif spec.get("exact") and out.get("fom_exact") is not None:
+        beats = out["fom_exact"] > frontier
+        if beats and gate_checked and gate_ok and usable:
+            out["verdict"] = (f"*** CERTIFIED: FOM={out['fom_exact']} > {frontier}, "
+                              f"exact distance + gate verified (K_CCZ={kccz}) ***")
+        elif beats and not gate_checked:
+            extra = ("Supply partition_a/b/c to run the (validated) abelian gate check."
+                     if out["family"] == "abelian" else
+                     "Non-abelian gate verification is NOT yet implemented (the open next step); "
+                     "this code is CSS- and distance-verified but cannot be gate-CERTIFIED here.")
+            out["verdict"] = (f"FOM_exact={out['fom_exact']} beats {frontier}, but GATE UNVERIFIED — "
+                              f"NOT certified. {extra}")
+        else:
+            out["verdict"] = (f"valid code, FOM_exact={out['fom_exact']} "
+                              f"({'beats' if beats else 'below'} frontier; "
+                              f"gate_ok={gate_ok}, K_CCZ={kccz}); NOT a certified win")
+    else:
+        out["verdict"] = (f"PROMOTE (FOM_upper={sc['fom_upper']} >= {frontier}); "
+                          f"run with exact=true + a gate check to certify")
+    return out
+
+
+def main():
+    args = sys.argv[1:]
+    if args and args[0] == "--spec":
+        spec = json.load(open(args[1]))
+    else:
+        spec = json.load(sys.stdin)
+    print(json.dumps(verify(spec), indent=2, default=lambda o: int(o) if isinstance(o, np.integer) else str(o)))
+
+
+if __name__ == "__main__":
+    main()
