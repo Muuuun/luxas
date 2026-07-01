@@ -26,4 +26,7 @@ __pycache__/
 # Local debug scripts (tracked tests use scripts/test_*.mts)
 scripts/check_*.mts
 scripts/repro_*.mts
+scripts/smoke_*.mts
+scripts/_probe_*.mts
+scripts/*.mts.disabled
 
