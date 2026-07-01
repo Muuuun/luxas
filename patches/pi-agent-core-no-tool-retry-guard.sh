@@ -96,9 +96,12 @@ fi
 # at the 4h mark ended the run; checkpoint resume worked, but only by hand.
 #
 # Patch: on a TRANSIENT stopReason="error" (same regex as Sisyphus's
-# streamWithRetry), pop the error message, back off (1/2/4/8s), and re-stream the
-# SAME turn, up to a per-streak cap of 4. "aborted" and non-transient errors keep
-# the unconditional return. Bounded by the streak cap + maxTurns + cost/time hooks.
+# streamWithRetry), pop the error message, back off (1/2/4/8/16/30s), and re-stream
+# the SAME turn, up to a per-streak cap of 6 (~61s — provider blips routinely exceed
+# the old 15s/4-retry window; 2026-06-24 deepseek outage killed 4 runs at 4/15s). On
+# exhaustion it logs a loud TRANSIENT-EXHAUSTED line (tripwire to widen the cap).
+# "aborted" and non-transient errors keep the unconditional return. Bounded by the
+# streak cap + maxTurns + cost/time hooks.
 
 MARKER_RETRY="[transient-error-retry patched]"
 if grep -qF "$MARKER_RETRY" "$TARGET"; then
@@ -130,14 +133,17 @@ old_err = """            if (message.stopReason === "error" || message.stopReaso
 new_err = """            if (message.stopReason === "error" || message.stopReason === "aborted") {
                 const __errMsg = String(message.errorMessage ?? ""); // """ + marker + """
                 const __TRANSIENT_RE = /connection.?error|connection.?refused|fetch failed|terminated|other side closed|stream aborted|ECONNRESET|ETIMEDOUT|socket hang up|EAI_AGAIN|overloaded/i;
-                if (message.stopReason === "error" && __TRANSIENT_RE.test(__errMsg) && __transientRetryStreak < 4) {
-                    const __backoff = [1000, 2000, 4000, 8000][__transientRetryStreak] ?? 8000;
+                if (message.stopReason === "error" && __TRANSIENT_RE.test(__errMsg) && __transientRetryStreak < 6) {
+                    const __backoff = [1000, 2000, 4000, 8000, 16000, 30000][__transientRetryStreak] ?? 30000;
                     __transientRetryStreak++;
                     newMessages.pop();
-                    console.error(`[transient-error-retry ${__transientRetryStreak}/4] stopReason=error (${__errMsg.slice(0, 80)}); backoff ${__backoff}ms then re-stream the turn`);
+                    console.error(`[transient-error-retry ${__transientRetryStreak}/6] stopReason=error (${__errMsg.slice(0, 80)}); backoff ${__backoff}ms then re-stream the turn`);
                     await new Promise((r) => setTimeout(r, __backoff));
                     hasMoreToolCalls = true;
                     continue;
+                }
+                if (message.stopReason === "error" && __TRANSIENT_RE.test(__errMsg)) {
+                    console.error(`[transient-error-retry] TRANSIENT-EXHAUSTED after 6 retries (~61s) — giving up turn: ${__errMsg.slice(0, 120)}`);
                 }
                 await emit({ type: "turn_end", message, toolResults: [] });
                 await emit({ type: "agent_end", messages: newMessages });

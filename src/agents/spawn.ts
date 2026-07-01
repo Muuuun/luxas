@@ -220,7 +220,7 @@ function applyProfile(modelKey: string, agentName?: string): string {
 //
 // Up to 3 attempts (1s, 2s, 4s backoff). Non-transient errors / non-error stops
 // pass through unchanged.
-const TRANSIENT_RE = /connection.?error|connection.?refused|fetch failed|terminated|other side closed|stream aborted|ECONNRESET|ETIMEDOUT|socket hang up|EAI_AGAIN|overloaded/i;
+export const TRANSIENT_RE = /connection.?error|connection.?refused|fetch failed|terminated|other side closed|stream aborted|ECONNRESET|ETIMEDOUT|socket hang up|EAI_AGAIN|overloaded/i;
 const RETRY_DELAYS_MS = [1000, 2000, 4000];
 
 export async function streamWithRetry(

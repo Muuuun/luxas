@@ -46,6 +46,7 @@ if (existsSync(join(browserUseDir, "browser-use")) && !process.env.PATH?.include
 }
 import { registerProject, updateProjectAfterRun, loadProjects, selectPastProjects } from "./memory.js";
 import { readUsageTotals } from "./usage-log.js";
+import { TRANSIENT_RE } from "./agents/spawn.js";
 import { ORIGINAL_REQUEST_HEADER, deriveProjectTitle } from "./utils.js";
 
 // F2 — process-level crash handlers. Without these, Node's default behavior on
@@ -405,6 +406,21 @@ async function run(dir: string, modelName: string, userDirective?: string, maxCo
   // passed. Say which one happened so the registry and any inbox dispatcher
   // reading stdout don't treat a blocked run as complete.
   const finished = didFinishSucceed();
+  // Exit signal for the external supervisor (sisyphus-inbox): distinguish a
+  // clean finish from a death the run can recover from. lastErrTransient=true
+  // means the brain loop exhausted the in-loop transient-retry (6/~61s) on a
+  // network blip, NOT a gate-block or budget cap — the supervisor should
+  // relaunch-with-backoff; otherwise it must NOT (a deterministic stop would
+  // thrash, as the 2026-06-24 relaunch loop did).
+  const lastMsg = agent.state.messages[agent.state.messages.length - 1];
+  const lastErrTransient = (lastMsg as any)?.stopReason === "error"
+    && TRANSIENT_RE.test(String((lastMsg as any)?.errorMessage ?? ""));
+  try {
+    writeFileSync(
+      join(dir, ".agent", "last_exit.json"),
+      JSON.stringify({ finished, lastErrTransient, ts: Date.now() }),
+    );
+  } catch { /* non-fatal */ }
   if (finished) {
     console.log(`\n✓ Done in ${elapsed}s | $${cost} | ${totalTokens} tokens`);
   } else {
