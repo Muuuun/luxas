@@ -86,6 +86,18 @@ export function getTexEnv(): Record<string, string> {
   } as Record<string, string>;
 }
 
+// First CJK font present on this machine, or null. fc-list ships with
+// fontconfig on macOS and texlive-full Linux. Cached: the font set doesn't
+// change within a run.
+let cachedCJKFont: string | null | undefined;
+function pickCJKFont(): string | null {
+  if (cachedCJKFont !== undefined) return cachedCJKFont;
+  for (const f of ["PingFang SC", "Noto Sans CJK SC", "Songti SC", "Source Han Sans SC", "WenQuanYi Zen Hei"]) {
+    try { if (execSync(`fc-list "${f}"`, { stdio: "pipe" }).length) return (cachedCJKFont = f); } catch { /* fc-list absent / no match */ }
+  }
+  return (cachedCJKFont = null);
+}
+
 export function createReportTools(projectDir: string) {
   const compileLatex = {
     name: "compile_latex",
@@ -131,18 +143,35 @@ export function createReportTools(projectDir: string) {
         return { content: [{ type: "text" as const, text: msg }], details: { success: false } };
       }
 
+      // Pre-compile check: CJK characters with no CJK package is the one
+      // garble path that ships SILENTLY — pdflatex (and plain xelatex without
+      // a CJK font) drop every CJK glyph emitting only un-surfaced "Missing
+      // character" warnings, so the PDF "compiles", passes every gate, and
+      // only a human notices the mojibake (observed: a 4529-char zh report).
+      // Block it like the figure-citation check: refuse and tell the agent the
+      // exact two lines to add. Once added, the engine-detect below flips to
+      // xelatex on its own — no source mutation, no new engine logic.
+      let src = "";
+      try { src = readFileSync(join(dir, texfile), "utf-8"); } catch { /* unreadable */ }
+      const hasCJKPkg = /\\usepackage(\[[^\]]*\])?\{(ctex|xeCJK|fontspec)\}|\\documentclass(\[[^\]]*\])?\{ctexart\}/.test(src);
+      const hasCJK = /[㐀-䶿一-鿿぀-ヿ가-힯]/.test(src);
+      if (hasCJK && !hasCJKPkg) {
+        const f = pickCJKFont();
+        const fontLine = f
+          ? `  \\setCJKmainfont{${f}}`
+          : `  \\setCJKmainfont{...}   % no CJK font found — install: macOS \`brew install font-noto-sans-cjk-sc\`, Linux \`apt install fonts-noto-cjk\``;
+        const msg = "✗ CJK check failed — source contains CJK characters but no CJK package; "
+          + "pdflatex/plain-xelatex drops these glyphs silently (the PDF compiles but is mojibake). "
+          + "Add immediately after \\documentclass{...}:\n"
+          + "  \\usepackage{xeCJK}\n" + fontLine + "\nThen recompile.";
+        return { content: [{ type: "text" as const, text: msg }], details: { success: false } };
+      }
+
       // Engine selection: ctex / xeCJK / fontspec (CJK text & system fonts)
       // REQUIRE xelatex, not pdflatex. Hardcoding pdflatex made the agent
       // abandon this tool and hand-compile CJK reports with xelatex in bash —
-      // bypassing every in-tool guard (figure-citation check, .log problem
-      // scan). Detect the engine so the tool actually runs on those docs.
-      let engine = "pdflatex";
-      try {
-        const src = readFileSync(join(dir, texfile), "utf-8");
-        if (/\\usepackage(\[[^\]]*\])?\{(ctex|xeCJK|fontspec)\}|\\documentclass(\[[^\]]*\])?\{ctexart\}/.test(src)) {
-          engine = "xelatex";
-        }
-      } catch { /* unreadable — default pdflatex */ }
+      // bypassing every in-tool guard. Same package signal as the CJK check.
+      const engine = hasCJKPkg ? "xelatex" : "pdflatex";
 
       const steps = [
         `${engine} -interaction=nonstopmode ${texfile}`,
