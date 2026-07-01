@@ -318,6 +318,22 @@ def _solve_ilp_pulp(
         print(f"[DEBUG] e_vals (first 20): {e_vals[:20].tolist()}")
 
     st = "optimal" if prob.status == pulp.LpStatusOptimal else "feasible"
+    # Soundness guard for the HiGHS-via-PuLP LpStatus bug: PuLP maps HiGHS
+    # kTimeLimit (feasible-but-not-proven) to LpStatusOptimal, mislabeling a
+    # timed-out solution "optimal" (the false "solver-certified optimal"
+    # failure). The real proof signal is the highspy model status, attached to
+    # the LpProblem as prob.solverModel; only kOptimal means optimality was
+    # actually proven. Downgrade to "feasible" otherwise. No-op for solvers
+    # without this API (CBC/Gurobi take their own status paths above).
+    if st == "optimal":
+        sm = getattr(prob, "solverModel", None)
+        if sm is not None and hasattr(sm, "getModelStatus"):
+            try:
+                import highspy
+                if sm.getModelStatus() != highspy.HighsModelStatus.kOptimal:
+                    st = "feasible"
+            except Exception:
+                pass
     return obj_val, e_vals, st
 
 

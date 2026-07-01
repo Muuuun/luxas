@@ -1,13 +1,6 @@
 ---
 name: qec-construct
-description: >
-  Verifier-in-the-loop CONSTRUCTION of quantum error-correcting codes with
-  transversal non-Clifford gates (CCZ/T). Use when the task is to INVENT or
-  improve a code/construction (not merely search a known family). Provides a
-  sound, cheap algebraic verifier (qverify, "QEC's Lean") so you can propose an
-  algebraic construction, get instant ground-truthed feedback, debug failures,
-  and iterate — the way AlphaProof uses Lean. Targets the under-explored
-  non-abelian region. NOT for blind random/grid search over supports.
+description: Verifier-in-the-loop CONSTRUCTION of quantum error-correcting codes with transversal non-Clifford gates (CCZ/T). Use when the task is to INVENT or improve a code/construction (not merely search a known family). Provides a sound, cheap algebraic verifier (qverify, "QEC's Lean") so you can propose an algebraic construction, get instant ground-truthed feedback, debug failures, and iterate — the way AlphaProof uses Lean. Targets the under-explored non-abelian region. NOT for blind random/grid search over supports.
 ---
 
 # qec-construct — a QEC verifier-in-the-loop
