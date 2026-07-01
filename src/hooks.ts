@@ -41,7 +41,7 @@ export interface CostTracker {
 
 export function buildResearchHooks(opts: ResearchOptions) {
   const init = opts.initialState;
-  const maxCost = opts.maxCostUsd ?? Infinity;  // No default cost limit; pass --max-cost to set one
+  const maxCost = opts.maxCostUsd ?? 250;  // Default runaway backstop ($250 ≈ 2× largest observed legit run); override per-run with --max-cost
   const logFile = join(opts.projectDir, ".agent", "log.jsonl");
 
   // Ensure log directory exists
