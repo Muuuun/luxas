@@ -386,7 +386,7 @@ export function buildResearchTools(
         },
         decline: {
           type: "array" as const,
-          description: "Optional: dispose open frontier leads in THIS call instead of hand-editing notes/memory.md. Each {leadId, reason} writes a FRONTIER-DECLINE line. Decline a lead ONLY if running it would not flip a claim you ship; if it could, run it instead.",
+          description: "Optional: dispose open frontier leads in THIS call instead of hand-editing notes/memory.md. Each {leadId, reason} writes a FRONTIER-DECLINE line. Decline a lead ONLY if running it could neither flip nor undermine the soundness of a claim you ship; if it could, run it instead.",
           items: {
             type: "object" as const,
             properties: {
@@ -629,7 +629,7 @@ export function buildResearchTools(
             `Cannot finish: ${undisposed.length} open generative lead(s) your own experiment(s) proposed are undisposed — a continue-vs-report fork left as report prose:\n${list}\n\n` +
             `For EACH, either dispatch the experiment (its \`## L2.N\` Complete section then satisfies this gate), OR add to notes/memory.md a line:\n` +
             `  FRONTIER-DECLINE: <leadId> — <why it would not change a headline finding you ship, citing its Decision rule>\n\n` +
-            `This is a PRESENCE check — the decline's content is not judged. Decline a lead ONLY if resolving it would not flip a claim you ship; if it could, run it.`
+            `This is a PRESENCE check — the decline's content is not judged. Decline a lead ONLY if resolving it could neither flip nor undermine the soundness of a claim you ship; if it could, run it.`
           }] };
         }
         blockedFinishStreak = 0; // frontier satisfied this call — re-arm the F2 cap

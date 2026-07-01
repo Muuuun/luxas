@@ -293,7 +293,7 @@ function buildResearchFrontier(projectDir: string): string {
       `could change a headline finding: either dispatch the experiment, or record in\n` +
       `notes/memory.md a line  FRONTIER-DECLINE: <leadId> — <why, citing its Decision\n` +
       `rule>. A lead that only enriches future-work is a legitimate DEFER; a lead that\n` +
-      `could flip a claim you will SHIP is not.\n\n${rows}\n</research_frontier>`;
+      `could flip OR undermine the soundness of a claim you will SHIP is not.\n\n${rows}\n</research_frontier>`;
   } catch {
     return "";
   }
