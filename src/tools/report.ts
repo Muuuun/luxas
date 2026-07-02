@@ -153,9 +153,16 @@ export function createReportTools(projectDir: string) {
       // xelatex on its own — no source mutation, no new engine logic.
       let src = "";
       try { src = readFileSync(join(dir, texfile), "utf-8"); } catch { /* unreadable */ }
-      const hasCJKPkg = /\\usepackage(\[[^\]]*\])?\{(ctex|xeCJK|fontspec)\}|\\documentclass(\[[^\]]*\])?\{ctexart\}/.test(src);
+      // needsXelatex: any package that requires the unicode engine (fontspec
+      // included — pdflatex can't use it). handlesCJK: packages that ACTUALLY
+      // render CJK. fontspec is necessary-but-NOT-sufficient for CJK — it sets
+      // the Latin font but maps no CJK glyphs, so a fontspec-only zh report
+      // still ships mojibake and must NOT satisfy the guard (the 2026-07-02
+      // qd-vs-atom report did exactly this: fontspec, no xeCJK → garbled PDF).
+      const needsXelatex = /\\usepackage(\[[^\]]*\])?\{(ctex|xeCJK|fontspec)\}|\\documentclass(\[[^\]]*\])?\{ctexart\}/.test(src);
+      const handlesCJK = /\\usepackage(\[[^\]]*\])?\{(ctex|xeCJK)\}|\\documentclass(\[[^\]]*\])?\{ctexart\}|\\setCJKmainfont/.test(src);
       const hasCJK = /[㐀-䶿一-鿿぀-ヿ가-힯]/.test(src);
-      if (hasCJK && !hasCJKPkg) {
+      if (hasCJK && !handlesCJK) {
         const f = pickCJKFont();
         const fontLine = f
           ? `  \\setCJKmainfont{${f}}`
@@ -171,7 +178,7 @@ export function createReportTools(projectDir: string) {
       // REQUIRE xelatex, not pdflatex. Hardcoding pdflatex made the agent
       // abandon this tool and hand-compile CJK reports with xelatex in bash —
       // bypassing every in-tool guard. Same package signal as the CJK check.
-      const engine = hasCJKPkg ? "xelatex" : "pdflatex";
+      const engine = needsXelatex ? "xelatex" : "pdflatex";
 
       const steps = [
         `${engine} -interaction=nonstopmode ${texfile}`,
