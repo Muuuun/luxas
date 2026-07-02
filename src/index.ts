@@ -241,6 +241,36 @@ async function run(dir: string, modelName: string, userDirective?: string, maxCo
     }
   }
 
+  // Register this run with the studio dashboard / `luxas status`: readRunStatus
+  // keys off <project>/.agent/run.pid. Write it ourselves so EVERY launch path
+  // (CLI, SSH, inbox) registers — not just studio's startRun. Claim it only if
+  // absent or stale (a prior pid that's dead); never clobber a live sibling's
+  // record (studio writes its own, carrying owner/quota metadata). A dead pid
+  // left by a crash is self-healed by readRunStatus on its next poll.
+  try {
+    mkdirSync(join(dir, ".agent"), { recursive: true });
+    const runPidFile = join(dir, ".agent", "run.pid");
+    let claim = true;
+    if (existsSync(runPidFile)) {
+      try {
+        const prev = JSON.parse(readFileSync(runPidFile, "utf-8"));
+        if (typeof prev.pid === "number" && prev.pid > 0) {
+          try { process.kill(prev.pid, 0); claim = false; } catch { /* dead → reclaim */ }
+        }
+      } catch { /* unparseable → reclaim */ }
+    }
+    if (claim) {
+      writeFileSync(runPidFile, JSON.stringify({
+        pid: process.pid,
+        startedAt: Date.now(),
+        model: modelName,
+        cwd: process.cwd(),
+        cmd: process.argv.join(" "),
+        cmdMarker: "src/index.ts",
+      }, null, 2));
+    }
+  } catch { /* dashboard registration is best-effort — never block the run */ }
+
   // Scrub API-key env vars from process.env so any bash command this agent
   // runs (or the sub-agents it spawns, which inherit env) cannot echo them
   // into checkpoints/logs via `printenv` / `env | grep KEY` / `echo $KEY`.
