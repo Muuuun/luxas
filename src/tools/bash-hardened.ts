@@ -23,6 +23,7 @@
 
 import { spawn } from "node:child_process";
 import { createWriteStream, type WriteStream } from "node:fs";
+import { totalmem } from "node:os";
 import { Type, type Static } from "@sinclair/typebox";
 import {
   truncateTail, formatSize, DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES,
@@ -36,6 +37,13 @@ import { currentJobOwner } from "../jobs/als.js";
 const DEFAULT_TIMEOUT_SEC = 600;
 const MAX_TIMEOUT_SEC = 30 * 60;
 export const FOREGROUND_BUDGET_MS = 90_000;
+
+// Per-experiment memory ceiling, auto-sized to the machine: cap experiment-tier
+// python at 75% of total RAM so a runaway allocation fails with a clean
+// MemoryError instead of the kernel OOM-killer (which takes down the whole run —
+// brain + every sibling experiment — as it did 2026-07-02). 75% leaves headroom
+// for the brain, sibling experiments, and the inbox/studio services.
+const EXPERIMENT_MEM_CAP_KB = Math.floor((totalmem() / 1024) * 0.75);
 
 const bashSchema = Type.Object({
   command: Type.String({ description: "Bash command to execute" }),
@@ -117,8 +125,15 @@ export function createHardenedBashTool(cwd: string, opts?: BashOptions) {
       const ownerAgentType = owner?.agentType ?? "unknown";
       const projectDir = owner?.projectDir ?? cwd;
 
+      // Cap address space for the python-heavy experiment-tier agents only;
+      // brain/light bash runs node tools (search) that reserve huge virtual
+      // address space, so leave it uncapped. See EXPERIMENT_MEM_CAP_KB above.
+      const cmd = /experiment|tool_impl|tool_review/i.test(ownerAgentType)
+        ? `ulimit -v ${EXPERIMENT_MEM_CAP_KB} 2>/dev/null; ${params.command}`
+        : params.command;
+
       return new Promise((resolve, reject) => {
-        const child = spawn("bash", ["-c", params.command], {
+        const child = spawn("bash", ["-c", cmd], {
           cwd,
           detached: true,
           stdio: ["ignore", "pipe", "pipe"],
