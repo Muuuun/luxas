@@ -7,7 +7,7 @@
 
 import { Type } from "@sinclair/typebox";
 import { execSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join, basename, resolve } from "node:path";
 import { applyAuthorityEscalationSection } from "./authority-escalation.js";
 
@@ -213,18 +213,39 @@ export function createReportTools(projectDir: string) {
       // edge, floats that couldn't be placed (silently dropped), undefined cites
       // and refs (render as [?, ?] / "??"). All of these are user-visible bugs
       // that brain would otherwise finish() through.
-      const problems = success ? readLogProblems(dir, base) : { count: 0, report: "" };
-      if (problems.count > 0) success = false;
+      const hardFailure = !success;
+      const verdict = success ? parseCompileVerdict(dir, base) : null;
+      if (verdict && !verdict.ok) success = false;
 
-      const header = success ? "✓ Compilation succeeded\n\n" : "✗ Compilation had errors\n\n";
-      const footer = success ? "" :
+      // Message shape is load-bearing: the 2026-07-02 table-overlap shipped
+      // because brain quoted the engine's "Output written on report.pdf" tail
+      // against the ✗ header ("the system might be treating warnings as
+      // errors") and finished anyway. Verdict first, raw engine output last,
+      // header pre-empts the exit-0 rationalization. Raw outputs are NOT
+      // suppressed — bibtex's real errors live there.
+      const header = success
+        ? "✓ Compilation succeeded\n\n"
+        : hardFailure
+          ? "✗ Compilation had errors\n\n"
+          : `✗ PDF written but NOT shippable — ${verdict!.count > 0 ? `${verdict!.count} user-visible defect(s)` : "engine errors"} listed below. ` +
+            `The engine's exit 0 / "Output written" line means the file EXISTS, not that it is correct.` +
+            (gateBlockingIssues(verdict!).length > 0
+              ? " finish() will block on the citation/reference problems until they are fixed."
+              : "") +
+            "\n\n";
+      // fixer is scoped to "ONE precise edit" syntax fixes (fixer.md) — a
+      // layout rework like a tabularx conversion violates its own constraints,
+      // so only advertise the delegation for hard engine errors.
+      const footer = hardFailure ?
         "\n\n💡 If you've already tried to fix this error once, delegate to the fixer agent instead of burning expensive tokens:\n" +
         '   spawn_agent(agent="fixer", task="Fix this compile error: <paste the error above>")\n' +
-        "   The fixer uses haiku and is much cheaper than debugging LaTeX syntax yourself.";
+        "   The fixer uses haiku and is much cheaper than debugging LaTeX syntax yourself." : "";
       const promotedNote = promoted > 0
         ? `\nℹ️  Auto-promoted ${promoted} \`\\begin{table}\` → \`\\begin{table*}\` (twocolumn doc → tables span full text width).\n`
         : "";
-      const text = header + promotedNote + outputs.join("\n\n") + problems.report + footer;
+      const problemsBlock = verdict && !verdict.ok
+        ? verdict.report + "\n\n── engine output ──\n" : "";
+      const text = header + promotedNote + problemsBlock + outputs.join("\n\n") + footer;
       return { content: [{ type: "text" as const, text }], details: { success } };
     },
   };
@@ -276,94 +297,244 @@ function promoteTablesInTwoColumn(dir: string, texfile: string): number {
   return count;
 }
 
-// ── pdflatex .log problem detection ──────────────────────────────
+// ── Compile verdict — single source of truth over the LaTeX .log ─────────
+//
+// ONE parser, three consumers: the compile_latex tool result, the Layer-3
+// research-snapshot "last compile" line (context.ts), and the finish()
+// PDF-correctness gate (tools/index.ts). The 2026-07-02 table-overlap
+// shipped because each consumer ran its own regexes over the same log and
+// disagreed — the tool said ✗ while the snapshot said "warnings only" —
+// and the brain quoted the disagreement to overrule the tool. A shared
+// verdict makes that disagreement unrepresentable.
+//
+// Underfull \vbox and Underfull \hbox are intentionally NOT surfaced: they're
+// loose-spacing complaints (especially common in mixed CJK+English paragraphs)
+// that are typically un-fixable without breaking content, and would lock brain
+// into an infinite repair loop.
 
 const OVERFULL_THRESHOLD_PT = 20;
 
-interface OverfullHit { pt: number; line: number; ctx: "table/align" | "paragraph" | "math/display" }
-interface StuckHit { line: number | null }
+export interface OverfullHit {
+  pt: number;
+  line: number;
+  /** "table" = line-attributed to a tabular block in the source. The log
+   *  alone labels a bare-tabular overflow "in paragraph" — routing by the
+   *  log ctx would prescribe \allowbreak for what needs a table* / tabularx
+   *  rework. */
+  ctx: "table" | "table/align" | "paragraph" | "math/display";
+  /** `<base>.tex` or `<base>.bbl` — a log line number past the .tex's end
+   *  is in the generated bibliography; telling brain to edit that line of
+   *  the .tex sends it thrashing on innocent lines. */
+  file: string;
+  fix: string;
+}
+export interface StuckHit { line: number | null }
 
-/**
- * Parse the .log for warnings that pdflatex logs but doesn't fail the build on,
- * yet which produce user-visible PDF bugs:
- *   • Overfull \hbox ≥ OVERFULL_THRESHOLD_PT → text spills past column edge
- *   • A float is stuck                        → figure/table silently dropped
- *   • Citation `X' ... undefined              → renders as [?, ?]
- *   • Reference `X' ... undefined             → renders as "??"
- *
- * Underfull \vbox and Underfull \hbox are intentionally NOT surfaced: they're
- * loose-spacing complaints (especially common in mixed CJK+English paragraphs)
- * that are typically un-fixable without breaking content, and would lock brain
- * into an infinite repair loop.
- */
-function readLogProblems(
-  dir: string,
-  base: string,
-): { count: number; report: string } {
-  const logPath = join(dir, `${base}.log`);
-  if (!existsSync(logPath)) return { count: 0, report: "" };
+export interface CompileVerdict {
+  ok: boolean;
+  count: number;
+  overfull: OverfullHit[];
+  stuck: StuckHit[];
+  cites: string[];
+  refs: string[];
+  /** LaTeX's end-of-run "There were undefined references" summary — kept as
+   *  a catch-all so per-page regex drift can't silently narrow detection. */
+  refsSummary: boolean;
+  ctrlSeq: number;
+  /** Any `!`-prefixed engine error in the log (nonstopmode plows through). */
+  engineErrors: boolean;
+  bblStale: boolean;
+  /** .log older than .pdf — the verdict does not describe the shipped PDF
+   *  (hand-compile under another jobname / stale-log path). */
+  logStale: boolean;
+  logMissing: boolean;
+  /** Discrete, alphabetically sorted problem classes for the Layer-3
+   *  snapshot — byte-stable across rebuilds over an unchanged log. */
+  tags: string[];
+  report: string;
+}
 
-  let log: string;
-  try { log = readFileSync(logPath, "utf-8"); }
-  catch { return { count: 0, report: "" }; }
+interface TabularBlock { begin: number; end: number; float: "bare" | "table" | "table*" }
 
-  // Overfull \hbox — `[^\n]*?` lazily captures the context phrase between
-  // the pt value and the line number so we can tell tables from math from prose.
-  const overfullRe = /Overfull \\hbox \(([\d.]+)pt too wide\)([^\n]*?)\b(?:line|lines) (\d+)/g;
+function scanTabularBlocks(tex: string): TabularBlock[] {
+  const blocks: TabularBlock[] = [];
+  const floatStack: ("table" | "table*")[] = [];
+  const open: TabularBlock[] = [];
+  const lines = tex.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    // Strip unescaped %-comments: a commented-out tabular would otherwise
+    // create a phantom block and re-attribute a prose overfull as "table".
+    const line = lines[i].replace(/(^|[^\\])%.*$/, "$1");
+    if (/\\begin\{table\*\}/.test(line)) floatStack.push("table*");
+    else if (/\\begin\{table\}/.test(line)) floatStack.push("table");
+    if (/\\begin\{tabular\*?\}|\\begin\{tabularx\}/.test(line)) {
+      open.push({ begin: i + 1, end: -1, float: floatStack[floatStack.length - 1] ?? "bare" });
+    }
+    if (/\\end\{tabular\*?\}|\\end\{tabularx\}/.test(line)) {
+      const b = open.pop();
+      if (b) { b.end = i + 1; blocks.push(b); }
+    }
+    if (/\\end\{table\*?\}/.test(line)) floatStack.pop();
+  }
+  return blocks;
+}
+
+function tableFix(float: TabularBlock["float"]): string {
+  switch (float) {
+    case "bare":
+      return "bare tabular wider than the column — wrap it in \\begin{table*}[t]\\centering … \\end{table*} (full-width float, one edit); if cells hold long wrapping text, convert those columns to tabularx X-columns instead";
+    case "table":
+      return "the table float is single-column — change \\begin{table}…\\end{table} to \\begin{table*}…\\end{table*}; if it still overflows, convert long-text columns to tabularx X-columns";
+    case "table*":
+      return "already a full-width float, so the natural-width columns exceed \\textwidth — convert the long-text column(s) to \\begin{tabularx}{\\textwidth}{…X…} (only X columns line-wrap; \\resizebox shrinks the font to illegibility)";
+  }
+}
+
+function defaultFix(ctx: OverfullHit["ctx"]): string {
+  switch (ctx) {
+    case "table/align":
+      return "a long-text/CJK cell in a bare l/c/r column won't line-wrap (it expands to natural width); convert the long-text column(s) to tabularx X-columns: add \\usepackage{tabularx}, then \\begin{tabularx}{\\columnwidth}{>{\\raggedright\\arraybackslash}X|c|c}…\\end{tabularx} — use \\textwidth if the float is \\begin{table*}. Only X columns line-wrap";
+    case "paragraph":
+      return "insert \\allowbreak in long English/cite runs; split multi-key \\cite{} into shorter ones";
+    default:
+      return "use \\begin{align} a &= b \\\\ &+ c \\end{align} to break the display across lines";
+  }
+}
+
+export function parseCompileVerdict(reportDir: string, base?: string): CompileVerdict {
+  // Default is pinned to "report": the finish gate, the snapshot line and the
+  // typesetter suspects all audit the SHIPPED report/report.pdf, whose engine
+  // transcript is report.log by jobname. Resolving "the newest .log" instead
+  // was verified to be a whitewash hole — any newer sibling compile
+  // (supplement.tex, a hand-compiled scratch doc) would replace the gate's
+  // evidence and let a broken report.pdf ship (it also re-anchored the
+  // bblStale check to a nonexistent sibling .bbl). compile_latex passes the
+  // base it actually compiled, so non-report compiles are still judged
+  // correctly in the tool result.
+  const resolvedBase = base ?? "report";
+  const logPath = join(reportDir, `${resolvedBase}.log`);
+
+  let log = "";
+  let logMissing = true;
+  try { log = readFileSync(logPath, "utf-8"); logMissing = false; } catch { /* no compile yet */ }
+
+  // Source structure for line-number attribution.
+  let texLineCount = Infinity;
+  let tabularBlocks: TabularBlock[] = [];
+  try {
+    const tex = readFileSync(join(reportDir, `${resolvedBase}.tex`), "utf-8");
+    texLineCount = tex.split("\n").length;
+    tabularBlocks = scanTabularBlocks(tex);
+  } catch { /* no attribution possible */ }
+
   const overfull: OverfullHit[] = [];
-  for (const m of log.matchAll(overfullRe)) {
-    const pt = parseFloat(m[1]);
-    if (pt < OVERFULL_THRESHOLD_PT) continue;
-    const tag = m[2];
-    const ctx: OverfullHit["ctx"] =
-      tag.includes("alignment") ? "table/align" :
-      tag.includes("paragraph") ? "paragraph" :
-      "math/display";
-    overfull.push({ pt, line: parseInt(m[3], 10), ctx });
-  }
-
-  // Float stuck — pdflatex gave up placing a figure/table; it's dropped from
-  // the rendered PDF entirely (or pushed past the end). Brain ends up with a
-  // \ref{} pointing at nothing.
-  const stuckRe = /A float is stuck \(cannot be placed\)(?:[^\n]*?on input line (\d+))?/g;
   const stuck: StuckHit[] = [];
-  for (const m of log.matchAll(stuckRe)) {
-    stuck.push({ line: m[1] ? parseInt(m[1], 10) : null });
+  const cites = new Set<string>();
+  const refs = new Set<string>();
+  let refsSummary = false;
+  let ctrlSeq = 0;
+  let engineErrors = false;
+
+  if (!logMissing) {
+    // `[^\n]*?` lazily captures the context phrase between the pt value and
+    // the line number so we can tell tables from math from prose.
+    const overfullRe = /Overfull \\hbox \(([\d.]+)pt too wide\)([^\n]*?)\b(?:line|lines) (\d+)/g;
+    for (const m of log.matchAll(overfullRe)) {
+      const pt = parseFloat(m[1]);
+      if (pt < OVERFULL_THRESHOLD_PT) continue;
+      const line = parseInt(m[3], 10);
+      const tag = m[2];
+      let ctx: OverfullHit["ctx"] =
+        tag.includes("alignment") ? "table/align" :
+        tag.includes("paragraph") ? "paragraph" :
+        "math/display";
+      let file = `${resolvedBase}.tex`;
+      let fix: string;
+      if (line > texLineCount) {
+        file = `${resolvedBase}.bbl`;
+        fix = `the overflow is in the generated bibliography, not the .tex — fix the long entry/URL in references.bib (wrap URLs in \\url{}), then recompile. Do NOT edit line ${line} of ${resolvedBase}.tex`;
+      } else {
+        const block = tabularBlocks.find((b) => line >= b.begin - 1 && line <= b.end + 1);
+        if (block) {
+          ctx = "table";
+          fix = tableFix(block.float);
+        } else {
+          fix = defaultFix(ctx);
+        }
+      }
+      overfull.push({ pt, line, ctx, file, fix });
+    }
+
+    // Float stuck — pdflatex gave up placing a figure/table; it's dropped from
+    // the rendered PDF entirely (or pushed past the end). Brain ends up with a
+    // \ref{} pointing at nothing.
+    const stuckRe = /A float is stuck \(cannot be placed\)(?:[^\n]*?on input line (\d+))?/g;
+    for (const m of log.matchAll(stuckRe)) {
+      stuck.push({ line: m[1] ? parseInt(m[1], 10) : null });
+    }
+
+    // Citation / Reference undefined — pdflatex prints these once per pass per
+    // page; dedupe by key so brain sees the unique broken targets.
+    for (const m of log.matchAll(/Citation `([^']+)' on page \d+ undefined/g)) cites.add(m[1]);
+    for (const m of log.matchAll(/Reference `([^']+)' on page \d+ undefined/g)) refs.add(m[1]);
+    refsSummary = /There were undefined references/.test(log);
+
+    // Undefined control sequence — e.g. a revtex-only `\affiliation` in an
+    // [article] doc; LaTeX drops the command and its argument text spills onto
+    // page 1. pdflatex/xelatex exit 0 on this, so it ships silently otherwise.
+    ctrlSeq = (log.match(/! Undefined control sequence/g) || []).length;
+
+    engineErrors = /^!/m.test(log);
   }
 
-  // Citation / Reference undefined — pdflatex prints these once per pass per
-  // page; dedupe by key so brain sees the unique broken targets.
-  const cites = new Set<string>();
-  for (const m of log.matchAll(/Citation `([^']+)' on page \d+ undefined/g)) cites.add(m[1]);
-  const refs = new Set<string>();
-  for (const m of log.matchAll(/Reference `([^']+)' on page \d+ undefined/g)) refs.add(m[1]);
+  let bblStale = false;
+  try {
+    if (statSync(join(reportDir, "references.bib")).mtimeMs >
+        statSync(join(reportDir, `${resolvedBase}.bbl`)).mtimeMs) bblStale = true;
+  } catch { /* no bib or no bbl — nothing to compare */ }
 
-  // Undefined control sequence — e.g. a revtex-only `\affiliation` in an
-  // [article] doc; LaTeX drops the command and its argument text spills onto
-  // page 1. pdflatex/xelatex exit 0 on this, so it ships silently otherwise.
-  const ctrlSeq = (log.match(/! Undefined control sequence/g) || []).length;
+  let logStale = false;
+  try {
+    // 5s tolerance: the engine writes the .pdf before it closes the .log.
+    if (statSync(join(reportDir, `${resolvedBase}.pdf`)).mtimeMs -
+        statSync(logPath).mtimeMs > 5000) logStale = true;
+  } catch { /* no pdf or no log */ }
 
-  const total = overfull.length + stuck.length + cites.size + refs.size + ctrlSeq;
-  if (total === 0) return { count: 0, report: "" };
+  const count = overfull.length + stuck.length + cites.size + refs.size +
+    (refsSummary && cites.size === 0 && refs.size === 0 ? 1 : 0) + ctrlSeq;
+  const ok = count === 0 && !engineErrors;
+
+  const tagSet = new Set<string>();
+  for (const h of overfull) {
+    tagSet.add(h.ctx === "table" || h.ctx === "table/align" ? "overfull-table"
+      : h.ctx === "paragraph" ? "overfull-paragraph" : "overfull-math");
+  }
+  if (stuck.length > 0) tagSet.add("float-stuck");
+  if (cites.size > 0) tagSet.add("undefined-citations");
+  if (refs.size > 0 || refsSummary) tagSet.add("undefined-references");
+  if (ctrlSeq > 0) tagSet.add("undefined-control-sequence");
+  if (engineErrors) tagSet.add("engine-error");
+  if (bblStale) tagSet.add("stale-bibliography");
+  if (logStale) tagSet.add("stale-log");
+  const tags = [...tagSet].sort();
 
   const sections: string[] = [];
-
   if (overfull.length > 0) {
-    const sorted = overfull.sort((a, b) => b.pt - a.pt);
+    const sorted = [...overfull].sort((a, b) => b.pt - a.pt);
     sections.push(
-      `Overfull \\hbox ≥${OVERFULL_THRESHOLD_PT}pt (text spills past column edge):\n` +
-      sorted.map((h) => `    • line ${h.line} (${h.ctx}): ${h.pt.toFixed(1)}pt too wide`).join("\n"),
+      `Overfull \\hbox ≥${OVERFULL_THRESHOLD_PT}pt (content spills past the column edge into the neighbour):\n` +
+      sorted.map((h) => `    • ${h.file} line ${h.line} (${h.ctx}): ${h.pt.toFixed(1)}pt (~${(h.pt / 28.45).toFixed(1)} cm) too wide — ${h.fix}`).join("\n"),
     );
   }
   if (stuck.length > 0) {
     sections.push(
       `Float stuck — figure/table couldn't be placed and was silently dropped from the PDF:\n` +
-      stuck.map((h) => `    • ${h.line !== null ? `line ${h.line}` : "(line n/a)"}`).join("\n"),
+      stuck.map((h) => `    • ${h.line !== null ? `line ${h.line}` : "(line n/a)"} — shrink the figure, use \\begin{figure*}/\\begin{table*} for a full-width float, or relax the placement specifier (e.g. [!htbp])`).join("\n"),
     );
   }
   if (cites.size > 0) {
     sections.push(
-      `Undefined citations (PDF renders as [?, ?]):\n` +
+      `Undefined citations (PDF renders as [?, ?]) — add the entry to references.bib or fix the typo in \\cite{key}, then recompile:\n` +
       `    • ${[...cites].join(", ")}`,
     );
   }
@@ -372,24 +543,39 @@ function readLogProblems(
       `Undefined control sequence ×${ctrlSeq} (a command LaTeX doesn't know — e.g. a revtex-only \\affiliation in an [article] doc; its argument text spills onto page 1). Search the .log for "! Undefined control sequence" and fix the line it names.`,
     );
   }
-  if (refs.size > 0) {
+  if (refs.size > 0 || (refsSummary && cites.size === 0)) {
     sections.push(
-      `Undefined references (PDF renders as "??"):\n` +
-      `    • ${[...refs].join(", ")}`,
+      `Undefined references (PDF renders as "??") — add \\label{key} to the target or fix the typo in \\ref{key}:` +
+      (refs.size > 0 ? `\n    • ${[...refs].join(", ")}` : ""),
     );
   }
 
-  const report =
-    `\n\n⚠️ ${total} layout/reference problem(s) detected — these will appear as visible bugs in the PDF:\n\n  ` +
-    sections.join("\n\n  ") +
-    "\n\nCommon causes & fixes:\n" +
-    "  • Overfull math/display    → use \\begin{align} a &= b \\\\ &+ c \\end{align}\n" +
-    "  • Overfull table/align     → a long-text/CJK cell in a bare l/c/r column won't line-wrap (it expands to natural width); \\begin{table*} and \\resizebox do NOT fix this (table* keeps natural-width columns, resizebox shrinks the font to illegibility). Convert the long-text column(s) to tabularx X-columns: add \\usepackage{tabularx}, then \\begin{tabularx}{\\columnwidth}{>{\\raggedright\\arraybackslash}X|c|c}...\\end{tabularx} — use \\textwidth instead of \\columnwidth if the float is \\begin{table*}. Only X columns line-wrap.\n" +
-    "  • Overfull paragraph       → insert \\allowbreak in long English/cite runs; split multi-key \\cite{} into shorter ones\n" +
-    "  • Float stuck              → shrink the figure, use \\begin{figure*}/\\begin{table*} for full-width float, or relax placement specifier (e.g. [!htbp])\n" +
-    "  • Citation undefined       → add entry to references.bib, or fix typo in \\cite{key}; remember to re-run bibtex\n" +
-    "  • Reference undefined      → add \\label{key} to the target, or fix typo in \\ref{key}";
-  return { count: total, report };
+  const report = count > 0
+    ? `⚠️ ${count} layout/reference problem(s) detected — these appear as visible bugs in the PDF:\n\n  ` +
+      sections.join("\n\n  ")
+    : engineErrors
+      ? `⚠️ the engine reported errors (lines starting with "!") — search the .log for "!" and fix the line it names`
+      : "";
+
+  return {
+    ok, count, overfull, stuck, cites: [...cites], refs: [...refs], refsSummary,
+    ctrlSeq, engineErrors, bblStale, logStale, logMissing, tags, report,
+  };
+}
+
+/**
+ * Exactly the verdict classes the finish() gate blocks on. Living next to the
+ * parser means the compile message, the snapshot consequence line, and the
+ * gate can never disagree about what blocks — a consequence claim that the
+ * gate doesn't enforce is exactly the "warnings only" bug in a new coat.
+ */
+export function gateBlockingIssues(v: CompileVerdict): string[] {
+  const issues: string[] = [];
+  if (v.cites.length > 0) issues.push(`undefined citation(s) [render as "?"]: ${v.cites.join(", ")}`);
+  if (v.ctrlSeq > 0) issues.push(`undefined control sequence (e.g. a revtex-only \\affiliation in an [article] doc — its text spills onto page 1)`);
+  if (v.refsSummary && v.cites.length === 0) issues.push(`undefined reference(s) [render as "??"]`);
+  if (v.bblStale) issues.push(`references.bib is newer than report.bbl — bibtex did not re-run after the bibliography changed; recompile`);
+  return issues;
 }
 
 // ── Figure citation enforcement ──────────────────────────────────

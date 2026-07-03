@@ -11,6 +11,7 @@ import {
   md5OrNull, parseAuditFrontmatter, extractFrontmatterBlock,
 } from "../utils.js";
 import { loadRegistry, type ActiveAgent } from "../active-agents.js";
+import { parseCompileVerdict } from "../tools/report.js";
 
 export type ContextBuilder = (projectDir: string, extra?: Record<string, any>) => string;
 
@@ -57,6 +58,7 @@ const CONTEXT_BUILDERS: Record<string, ContextBuilder> = {
   brain: buildBrainContext,
   experiment: buildExperimentContext,
   reviewer: buildPIContext,
+  typesetter: buildTypesetterContext,
 };
 
 export function resolveContextBuilder(name: string | undefined): ContextBuilder | undefined {
@@ -243,6 +245,33 @@ function renderPlanStatus(projectDir: string): string {
   const piVerdict = piVerdictMatch ? piVerdictMatch[1].toLowerCase() : "unknown";
 
   return `<plan_status hash="${hash}" lines="${lines}">\nnotes/plan.md snapshot: ${subqMatches.length} Q-style sub-questions, ${artifactMatches.length} artifact paths mentioned.\nLast PI verdict parsed from plan.md: ${piVerdict}.\nUse read tool for full plan — this block shows only summary counts for quick reference.\n</plan_status>`;
+}
+
+// ── Typesetter context ──
+//
+// Deterministic suspects from the engine log, injected at spawn time. The
+// 2026-07-02 audit passed a page whose table overlapped the neighbouring
+// column ("[N/A] No table") — an open-ended 10-item × 8-page checklist
+// dilutes attention. The engine already measured every ≥20pt overflow;
+// hand the auditor that list. Attention direction ONLY: the auditor
+// confirms visual form, it does not adjudicate whether the defect exists
+// (vision must never overrule the log — Kimi hallucinates [pass]).
+
+function buildTypesetterContext(projectDir: string): string {
+  const v = parseCompileVerdict(join(projectDir, "report"));
+  if (v.logMissing) return "";
+  const suspects: string[] = [];
+  for (const h of [...v.overfull].sort((a, b) => b.pt - a.pt)) {
+    suspects.push(`- ${h.file} line ${h.line} (${h.ctx}): ${h.pt.toFixed(1)}pt (~${(h.pt / 28.45).toFixed(1)} cm) of content extends past the column edge — find the page rendering this source region and record what it collides with`);
+  }
+  for (const s of v.stuck) {
+    suspects.push(`- a float${s.line !== null ? ` near source line ${s.line}` : ""} could not be placed — look for a figure/table missing from the pages or dumped at the document end`);
+  }
+  if (suspects.length === 0) return "";
+  return `<compile_log_suspects>
+The LaTeX engine measured these defects in the compiled PDF — they are facts from the compile log, not hypotheses. Locate each one's visual form on the rendered pages and report it under the matching checklist item. Your audit does NOT adjudicate whether they exist: a page that "looks fine" means you have not found the right page yet.
+${suspects.join("\n")}
+</compile_log_suspects>`;
 }
 
 // ── PI context (extracted from pi-agent.ts) ──

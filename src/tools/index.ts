@@ -6,7 +6,7 @@ import { existsSync, readFileSync, readdirSync, statSync, appendFileSync } from 
 import { join } from "node:path";
 import { md5OrNull, extractFrontmatterBlock, parseAuditFrontmatter, parseFollowUps, readFileSafe } from "../utils.js";
 import type { Agent } from "@mariozechner/pi-agent-core";
-import { createReportTools } from "./report.js";
+import { createReportTools, parseCompileVerdict, gateBlockingIssues } from "./report.js";
 import { createInitReportTool } from "./init-report.js";
 import { createAuthorityEscalationTools } from "./authority-escalation.js";
 import { createCodingToolsForProject } from "./coding.js";
@@ -648,21 +648,13 @@ export function buildResearchTools(
       // bypasses every in-tool guard). Without this, a "successful" compile ships
       // "?" citations and stray title-page text (the \affiliation spill).
       {
+        // Same parser + same blocking predicate as the compile_latex message
+        // and the snapshot line (report.ts parseCompileVerdict) — three
+        // consumers, one verdict. The gate's blocking classes live in
+        // gateBlockingIssues so a consequence claim elsewhere can't drift
+        // from what actually blocks here.
         const reportDir = join(projectDir, "report");
-        const logPath = join(reportDir, "report.log");
-        const renderIssues: string[] = [];
-        if (existsSync(logPath)) {
-          const log = readFileSync(logPath, "utf-8");
-          const cites = [...new Set([...log.matchAll(/Citation `([^']+)' on page \d+ undefined/g)].map((m) => m[1]))];
-          if (cites.length > 0) renderIssues.push(`undefined citation(s) [render as "?"]: ${cites.join(", ")}`);
-          if (/! Undefined control sequence/.test(log)) renderIssues.push(`undefined control sequence (e.g. a revtex-only \\affiliation in an [article] doc — its text spills onto page 1)`);
-          if (/There were undefined references/.test(log) && cites.length === 0) renderIssues.push(`undefined reference(s) [render as "??"]`);
-        }
-        const bibPath = join(reportDir, "references.bib");
-        const bblPath = join(reportDir, "report.bbl");
-        if (existsSync(bibPath) && existsSync(bblPath) && statSync(bibPath).mtimeMs > statSync(bblPath).mtimeMs) {
-          renderIssues.push(`references.bib is newer than report.bbl — bibtex did not re-run after the bibliography changed; recompile`);
-        }
+        const renderIssues = gateBlockingIssues(parseCompileVerdict(reportDir));
         if (renderIssues.length > 0) {
           return { content: [{ type: "text" as const, text:
             `Cannot finish: the compiled report.pdf has unresolved LaTeX problems (these render as "?" / "??" / stray text in the shipped PDF):\n` +

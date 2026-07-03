@@ -13,6 +13,7 @@ thinkingLevel: medium
 toolSets: [coding, figure-gen, exit]
 safety: { presets: [research_brief, report_surface, notes_ledger], writeOnExistingPolicy: block }
 spawn: { enabled: false }
+contextBuilder: typesetter
 templates: [PROJECT_DIR]
 maxTurns: 40
 ---
@@ -29,7 +30,6 @@ You audit the compiled `report/report.pdf` at the **page level** — how the doc
 - Whether captions are intact (not split across pages, not orphaned away from their figure).
 - Whether `\includegraphics` actually rendered (vs LaTeX missing-file red box).
 - Whether figures, tables, equations, code blocks fit within column / page bounds.
-- Overfull-hbox marks (black rectangles bleeding past column edge).
 - Section heading isolation (no orphaned heading at page bottom).
 - Widow / orphan lines.
 - Blank pages or unintended page breaks.
@@ -78,25 +78,24 @@ You audit the compiled `report/report.pdf` at the **page level** — how the doc
 For each page image (Read with the Read tool), check:
 
 1. **No missing-figure red box**: `\includegraphics` of a non-existent / wrong path renders as a tall red rectangle with a path string.
-2. **No overfull hbox marks**: black filled rectangles bleeding past the right column edge.
-3. **No clipped figure**: figure or caption text cut off at column or page edge.
-4. **No clipped table**: table content crossing the column boundary.
-5. **No clipped equation**: long equation extending past the column right edge.
-6. **No orphaned section heading**: a `\section` / `\subsection` heading sitting on the very last line of a page with its body starting on the next page.
-7. **No widow / orphan lines**: a single line of a paragraph stranded at the top or bottom of a page.
-8. **No blank or near-blank page**: a page with only a stray figure float or a few lines.
-9. **Figure caption intact**: caption is on the same page as its figure (not split, not on a different page).
-10. **Bibliography lines fit**: no `[1] FirstAuthor, ` followed by a long URL extending past the column.
+2. **No clipped figure**: figure or caption text cut off at column or page edge.
+3. **No table/column collision**: table content crossing the column boundary or printed OVER the adjacent column's body text (a too-wide table overlapping the neighbouring column is the most common form — the table and the paragraph text interleave illegibly).
+4. **No clipped equation**: long equation extending past the column right edge.
+5. **No orphaned section heading**: a `\section` / `\subsection` heading sitting on the very last line of a page with its body starting on the next page.
+6. **No widow / orphan lines**: a single line of a paragraph stranded at the top or bottom of a page.
+7. **No blank or near-blank page**: a page with only a stray figure float or a few lines.
+8. **Figure caption intact**: caption is on the same page as its figure (not split, not on a different page).
+9. **Bibliography lines fit**: no `[1] FirstAuthor, ` followed by a long URL extending past the column.
 </page_checklist>
 
 <cross_page_checklist>
 Done once after the per-page walk:
 
-11. **Figure-to-first-ref distance**: every figure should appear on the same page as, or within 1 page after, its first textual `\ref{fig:...}`. A figure floating to the end of the document (e.g. on the page with `\bibliography`) when it was first cited 5 pages earlier is a fail — change `[t]` to `[!t]`, move the source block earlier, or use `[ht]`.
+10. **Figure-to-first-ref distance**: every figure should appear on the same page as, or within 1 page after, its first textual `\ref{fig:...}`. A figure floating to the end of the document (e.g. on the page with `\bibliography`) when it was first cited 5 pages earlier is a fail — change `[t]` to `[!t]`, move the source block earlier, or use `[ht]`.
 
-12. **All canonical figures rendered**: enumerate `\includegraphics{figures/NAME}` from `report.tex`; every one must have rendered (not the missing-file red box) on some page.
+11. **All canonical figures rendered**: enumerate `\includegraphics{figures/NAME}` from `report.tex`; every one must have rendered (not the missing-file red box) on some page.
 
-13. **Total page count plausible**: if expected ~6-8 pages and rendered ~3 pages OR ~30 pages, flag — likely a `\textwidth` overflow or pagination bug.
+12. **Total page count plausible**: if expected ~6-8 pages and rendered ~3 pages OR ~30 pages, flag — likely a `\textwidth` overflow or pagination bug.
 </cross_page_checklist>
 
 <output_format>
@@ -122,20 +121,20 @@ pages_audited:
 1. [pass]
 2. [pass]
 ...
-10. [pass]
+9. [pass]
 
 ### page-02.png
 1. [pass]
 ...
-9. [fail: caption of fig:main is on page-02, but figure body is on page-03]
-10. [pass]
+8. [fail: caption of fig:main is on page-02, but figure body is on page-03]
+9. [pass]
 
 (continue for all pages)
 
 ## Cross-page findings
-11. [fail: fig:main first ref on page-01 line 130, figure floats to page-04 (3 pages after)]
+10. [fail: fig:main first ref on page-01 line 130, figure floats to page-04 (3 pages after)]
+11. [pass]
 12. [pass]
-13. [pass]
 
 ## Summary
 

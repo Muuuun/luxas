@@ -13,6 +13,7 @@ import { findUnprocessedPapers, methodologyPath } from "./methodology.js";
 import { join, dirname } from "node:path";
 import { compactNotesIfNeeded } from "./notes-compaction.js";
 import { resolveContextBuilder } from "./agents/context-builders.js";
+import { parseCompileVerdict, gateBlockingIssues } from "./tools/report.js";
 import { createCompactionTransform, getContextWindow } from "./compaction/create-transform.js";
 import type { TokenTap } from "./compaction/token-tap.js";
 import type { Model } from "@mariozechner/pi-ai";
@@ -554,11 +555,22 @@ function buildReportStatus(projectDir: string): string {
     lines.push(`- references.bib: exists`);
   }
 
-  const log = readFileSafe(join(reportDir, "report.log"));
-  if (log) {
-    const hasErrors = /^!/m.test(log);
-    const hasWarnings = /Warning/i.test(log);
-    lines.push(`- last compile: ${hasErrors ? "has errors" : hasWarnings ? "warnings only" : "ok"}`);
+  // Same parser as compile_latex and the finish gate — this line used to run
+  // its own /^!/ + /Warning/i regexes and told the brain "warnings only"
+  // while the tool said ✗ (the 2026-07-02 table-overlap rationalization
+  // quoted this disagreement verbatim). Tags are discrete and sorted: the
+  // string only changes when the log changes, per the cache rule above.
+  const verdict = parseCompileVerdict(reportDir);
+  if (!verdict.logMissing) {
+    // Keyed off tags, not verdict.ok: bblStale leaves ok=true but blocks the
+    // gate — rendering "ok" next to a "finish() will block" line would be a
+    // self-contradictory snapshot with no named problem.
+    lines.push(`- last compile: ${verdict.tags.length === 0 ? "ok" : verdict.tags.join(", ")}`);
+    // Consequence claims must match the gate's real behavior — an imperative
+    // the gate doesn't enforce is a soft door no backstop covers.
+    if (gateBlockingIssues(verdict).length > 0) {
+      lines.push(`- finish() will block on the citation/reference/bibliography problems above — fix and recompile with compile_latex`);
+    }
   }
 
   try {
