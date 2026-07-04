@@ -36,11 +36,12 @@ Out of scope: whether a value is physically correct (reviewer's job), layout (ty
 </scope>
 
 <workflow>
-1. Compute the report PDF md5 (from bash, verbatim into frontmatter):
+1. Compute the digest of your read set (from bash, output verbatim into frontmatter as `sources_md5`). This keys the finish-gate to the SOURCE files you audit — a layout-only recompile of the PDF does not invalidate your sweep, but any edit to these files does:
    ```bash
-   md5() { if command -v md5sum >/dev/null 2>&1; then md5sum "$1" | awk '{print $1}'; else md5 -q "$1"; fi; }
-   md5 report/report.pdf
+   md5cmd() { if command -v md5sum >/dev/null 2>&1; then md5sum | awk '{print $1}'; else md5 -q; fi; }
+   cat report/report.tex notes/experiments.md $(ls data/experiments/*/runs/run_*/results.json 2>/dev/null | sort) 2>/dev/null | md5cmd
    ```
+   Run this command exactly as written and copy its output — never type an md5 from memory.
 2. Read report.tex fully. Build a list of every named quantity that appears MORE than once (in the report, or in report + ledger/results.json). Grep the ledger and results.json for the same quantity names and symbols.
 3. For each multi-occurrence quantity, tabulate: value, location (file + section/table), stated conditions.
 4. Judge each row set: consistent / contradictory / conditions-unstated.
@@ -49,7 +50,7 @@ Out of scope: whether a value is physically correct (reviewer's job), layout (ty
 ```markdown
 ---
 status: clean | contradictions
-report_pdf_md5: <verbatim bash output>
+sources_md5: <verbatim bash output>
 quantities_checked: <N>
 contradictions_found: <M>
 ---
@@ -74,6 +75,6 @@ Resolution required: reconcile to ONE value with a cited source (results.json le
 <hard_rules>
 - Ground truth from the FILES, not from memory: every value you cite must be quoted from a file you read this session.
 - Never edit report.tex, the ledger, or results.json — you write ONLY reviews/contradiction_sweep.md (and temp files under reviews/).
-- If report/report.pdf or report.tex is missing, write status: contradictions with a note saying what's missing.
+- If report/report.tex is missing, write status: contradictions with a note saying what's missing.
 - Your final message: one line, `status: clean|contradictions, N quantities checked, M contradictions`.
 </hard_rules>

@@ -30,6 +30,7 @@
 
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 
 export interface IntegrityIssue {
   kind: "number-provenance" | "experiment-citation" | "disclosure" | "results-schema";
@@ -81,11 +82,27 @@ export function extractNumbers(raw: string): number[] {
   return out;
 }
 
-/** Two-sided resolution: equal within 0.5% relative tolerance. */
+/** Round to one significant figure (mantissa integer + exponent). */
+function sig1(v: number): string {
+  if (v === 0) return "0";
+  const exp = Math.floor(Math.log10(Math.abs(v)));
+  return `${Math.round(v / Math.pow(10, exp))}e${exp}`;
+}
+
+/**
+ * Two-sided resolution: equal within 0.5% relative tolerance, OR same value
+ * at one significant figure. The loose branch exists because abstracts
+ * legitimately round ("~2×10⁻⁵" against a computed 1.87e-5 is 7% off — a
+ * false block without it, gate-cost debate F5). The precision cost is
+ * accepted: this gate checks PROVENANCE, not exactness; semantic drift
+ * between rounded claims is the contradiction_auditor's job.
+ */
 function resolves(v: number, evidence: number[]): boolean {
+  const vSig = sig1(v);
   for (const e of evidence) {
     if (v === e) return true;
     if (Math.abs(v - e) <= 0.005 * Math.max(Math.abs(v), Math.abs(e))) return true;
+    if (vSig === sig1(e)) return true;
   }
   return false;
 }
@@ -289,6 +306,38 @@ export function reportIntegrityIssues(projectDir: string): IntegrityIssue[] {
   }
 
   return issues;
+}
+
+/**
+ * md5 over the contradiction_auditor's actual read set: report.tex +
+ * experiments.md + every results.json (lexicographically sorted relative
+ * paths), matching the shell pipeline in contradiction_auditor.md's workflow
+ * step 1 byte-for-byte. PDF-md5 keying was a category error — pdflatex embeds timestamps, so a
+ * no-op recompile of unchanged sources produced a new PDF md5 and re-fired
+ * the audit (gate-cost debate F3). The auditor audits VALUES in these source
+ * files; keying on them means prose-preserving recompiles don't invalidate it.
+ */
+export function evidenceSourcesDigest(projectDir: string): string {
+  const hash = createHash("md5");
+  const feed = (p: string) => { try { hash.update(readFileSync(p)); } catch { /* missing — contributes nothing, like cat */ } };
+  feed(join(projectDir, "report", "report.tex"));
+  feed(join(projectDir, "notes", "experiments.md"));
+  const root = join(projectDir, "data", "experiments");
+  const resultPaths: string[] = [];
+  if (existsSync(root)) {
+    for (const exp of readdirSync(root)) {
+      const runsDir = join(root, exp, "runs");
+      if (!existsSync(runsDir)) continue;
+      for (const run of readdirSync(runsDir)) {
+        if (!/^run_\d+$/.test(run)) continue;
+        const p = join(runsDir, run, "results.json");
+        if (existsSync(p)) resultPaths.push(`data/experiments/${exp}/runs/${run}/results.json`);
+      }
+    }
+  }
+  resultPaths.sort();
+  for (const rel of resultPaths) feed(join(projectDir, rel));
+  return hash.digest("hex");
 }
 
 /** Render issues for tool output. */

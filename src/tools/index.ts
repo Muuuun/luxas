@@ -2,12 +2,12 @@
  * Tool index — assembles all research tools for the brain agent.
  */
 
-import { existsSync, readFileSync, readdirSync, statSync, appendFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync, appendFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { md5OrNull, extractFrontmatterBlock, parseAuditFrontmatter, parseFollowUps, readFileSafe } from "../utils.js";
 import type { Agent } from "@mariozechner/pi-agent-core";
 import { createReportTools, parseCompileVerdict, gateBlockingIssues } from "./report.js";
-import { reportIntegrityIssues, formatIntegrityIssues } from "./report-integrity.js";
+import { reportIntegrityIssues, formatIntegrityIssues, evidenceSourcesDigest } from "./report-integrity.js";
 import { createInitReportTool } from "./init-report.js";
 import { createAuthorityEscalationTools } from "./authority-escalation.js";
 import { createCodingToolsForProject } from "./coding.js";
@@ -351,6 +351,25 @@ export function buildResearchTools(
   // (e.g. the finish→edit→compile→typesetter cycle looping on freshness/typesetter gates).
   let finishCallCount = 0;
 
+/**
+ * Gate-cost telemetry: a force-exited run (12-call backstop) was previously
+ * indistinguishable from a clean finish in the registry. finish_stats.json
+ * records how the run exited and how many finish() attempts it took; the
+ * per-gate block texts are already in .agent/log.jsonl for offline
+ * attribution. Best-effort — never let telemetry block a finish.
+ */
+function writeFinishStats(projectDir: string, finishCalls: number, forceExited: boolean): void {
+  try {
+    const dir = join(projectDir, ".agent");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "finish_stats.json"), JSON.stringify({
+      finish_calls: finishCalls,
+      force_exited: forceExited,
+      at: new Date().toISOString(),
+    }, null, 2) + "\n");
+  } catch { /* telemetry must never block finish */ }
+}
+
   // Use a proxy object so spawn tool picks up the agent ref when it's set later
   const spawnTool = createSpawnAgentTool(
     projectDir, templateVars, getApiKey,
@@ -425,6 +444,7 @@ export function buildResearchTools(
       // passes on attempt 1; only a cross-gate livelock reaches the cap.
       if (++finishCallCount >= 12) {
         callbacks?.onFinish?.();
+        writeFinishStats(projectDir, finishCallCount, true);
         return { content: [{ type: "text" as const, text:
           `Force-exit (runaway-finish backstop): finish() has been called ${finishCallCount} ` +
           `times and kept being blocked by a finish gate — almost always the report freshness/` +
@@ -764,6 +784,39 @@ export function buildResearchTools(
       //
       // continue/stop verdicts pass through; stop explicitly means "wrap up
       // and ship" so finish is the right call.
+      // Report-integrity gate (2026-07-04, debate-adjudicated "write-only
+      // evidence store" fix): the report must READ BACK the evidence store —
+      // abstract numbers resolve to results.json/notes, no citing incomplete
+      // E_N, ledger disclosures survive to the report. Ordered BEFORE the
+      // typesetter/auditor/PI gates deliberately: this check is O(ms) and its
+      // remedy (edit report.tex → recompile) invalidates those expensive
+      // audits, so failing fast here saves a full tail iteration (gate-cost
+      // debate F1). Escape for false positives (e.g. E_2 as a physics
+      // symbol): reviews/integrity_pushback.md with mtime newer than
+      // report.tex — same contract as pi_pushback.
+      {
+        const blocking = reportIntegrityIssues(projectDir).filter((i) => i.blocking);
+        if (blocking.length > 0) {
+          const pushbackPath = join(projectDir, "reviews", "integrity_pushback.md");
+          let pushbackFresh = false;
+          try {
+            const texMtimeMs = statSync(join(projectDir, "report", "report.tex")).mtimeMs;
+            pushbackFresh = statSync(pushbackPath).mtimeMs > texMtimeMs;
+          } catch { /* no pushback file — not fresh */ }
+          if (!pushbackFresh) {
+            return { content: [{ type: "text" as const, text:
+              `Cannot finish: the report diverges from the evidence store ` +
+              `(notes/ + results.json are source-of-truth):\n\n` +
+              formatIntegrityIssues(blocking) +
+              `\n\nFix the report or the evidence store so they agree, recompile, ` +
+              `then finish. If a flag is genuinely false (explain which and why), ` +
+              `write reviews/integrity_pushback.md; once its mtime is newer than ` +
+              `report/report.tex, finish() is allowed through.`
+            }] };
+          }
+        }
+      }
+
       // Document-level layout gate, orthogonal to illustrator (figure
       // internals) and reviewer (content). No pushback escape — layout
       // failures are mechanical, not judgment calls; if the audit is
@@ -842,10 +895,10 @@ export function buildResearchTools(
       {
         const fmB = extractFrontmatterBlock(sweepSrc);
         const sfm = fmB ? parseAuditFrontmatter(fmB) : {} as Record<string, string | undefined>;
-        if (!fmB || !sfm.status || !sfm.report_pdf_md5) {
+        if (!fmB || !sfm.status || !sfm.sources_md5) {
           return { content: [{ type: "text" as const, text:
             `Cannot finish: reviews/contradiction_sweep.md is missing YAML frontmatter ` +
-            `keys (status, report_pdf_md5). Re-spawn contradiction_auditor.`
+            `keys (status, sources_md5). Re-spawn contradiction_auditor.`
           }] };
         }
         if (sfm.status !== "clean") {
@@ -858,12 +911,18 @@ export function buildResearchTools(
             (summaryMatch ? `Contradictions:\n${summaryMatch[1].trim().slice(0, 1500)}` : "")
           }] };
         }
-        const pdfMd5Now = md5OrNull(pdfPath);
-        if (pdfMd5Now && pdfMd5Now !== sfm.report_pdf_md5) {
+        // Keyed on the SOURCE files the auditor reads (report.tex + ledger +
+        // results.json), not the PDF — pdflatex embeds timestamps, so a no-op
+        // recompile changes the PDF md5 and would re-fire the audit for
+        // nothing. Prose/value edits change this digest; layout-only
+        // recompiles don't.
+        const digestNow = evidenceSourcesDigest(projectDir);
+        if (digestNow !== sfm.sources_md5) {
           return { content: [{ type: "text" as const, text:
-            `Cannot finish: reviews/contradiction_sweep.md swept a different report.pdf ` +
-            `(recorded md5 ${sfm.report_pdf_md5.slice(0, 12)}…, current ` +
-            `${pdfMd5Now.slice(0, 12)}…). Re-spawn contradiction_auditor on the current PDF.`
+            `Cannot finish: reviews/contradiction_sweep.md swept different source files ` +
+            `(recorded sources_md5 ${sfm.sources_md5.slice(0, 12)}…, current ` +
+            `${digestNow.slice(0, 12)}…) — report.tex, notes/experiments.md or a ` +
+            `results.json changed since the sweep. Re-spawn contradiction_auditor.`
           }] };
         }
       }
@@ -963,36 +1022,8 @@ export function buildResearchTools(
         }
       }
 
-      // Report-integrity gate (2026-07-04, debate-adjudicated "write-only
-      // evidence store" fix): the report must READ BACK the evidence store —
-      // abstract numbers resolve to results.json/notes, no citing incomplete
-      // E_N, ledger disclosures survive to the report. Escape for false
-      // positives (e.g. E_2 as a physics symbol): reviews/integrity_pushback.md
-      // with mtime newer than report.tex — same contract as pi_pushback.
-      {
-        const blocking = reportIntegrityIssues(projectDir).filter((i) => i.blocking);
-        if (blocking.length > 0) {
-          const pushbackPath = join(projectDir, "reviews", "integrity_pushback.md");
-          let pushbackFresh = false;
-          try {
-            const texMtimeMs = statSync(join(projectDir, "report", "report.tex")).mtimeMs;
-            pushbackFresh = statSync(pushbackPath).mtimeMs > texMtimeMs;
-          } catch { /* no pushback file — not fresh */ }
-          if (!pushbackFresh) {
-            return { content: [{ type: "text" as const, text:
-              `Cannot finish: the report diverges from the evidence store ` +
-              `(notes/ + results.json are source-of-truth):\n\n` +
-              formatIntegrityIssues(blocking) +
-              `\n\nFix the report or the evidence store so they agree, recompile, ` +
-              `then finish. If a flag is genuinely false (explain which and why), ` +
-              `write reviews/integrity_pushback.md; once its mtime is newer than ` +
-              `report/report.tex, finish() is allowed through.`
-            }] };
-          }
-        }
-      }
-
       callbacks?.onFinish?.();
+      writeFinishStats(projectDir, finishCallCount, false);
       // details.success marks a GENUINE finish — every "Cannot finish" branch
       // above returns no details. The vendored Patch B (finish-tool-exit)
       // keys the agent-loop exit off this flag, so a gate-blocked finish()

@@ -645,7 +645,7 @@ You are done when:
    - Every number in the **abstract** resolves to a `results.json` computed leaf or a value quoted in `notes/` — never an extrapolation or a from-memory figure. If a headline number comes from a scaling-law extrapolation beyond the computed range, either compute the point or state the computed range instead.
    - The report never references an experiment `E_N` whose ledger section is not `Status: Complete`.
    - Every `[unverified …]` / `[unanchored …]` tag and every tool_review-degradation note in `notes/` has a corresponding disclosure in the report (Limitations).
-   - `reviews/contradiction_sweep.md` exists with `status: clean` for the current PDF — spawn `contradiction_auditor` after typesetter, before the final PI review. If it finds contradictions, reconcile each one (one value with a cited source, or state the differing conditions at both sites), recompile, re-sweep.
+   - `reviews/contradiction_sweep.md` exists with `status: clean` for the current sources (keyed on report.tex + ledger + results.json — layout-only recompiles do NOT invalidate it) — spawn `contradiction_auditor` after typesetter, before the final PI review. If it finds contradictions, reconcile each one (one value with a cited source, or state the differing conditions at both sites), recompile, re-sweep.
 
 When done, call `finish()` with a one-line summary. Don't keep re-reading files once criteria are met.
 </completion_criteria>
