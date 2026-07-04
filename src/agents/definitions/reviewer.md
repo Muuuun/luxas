@@ -300,6 +300,8 @@ On any review where the report asserts a **methodology-validity verdict** — "<
 **Adversarial self-prompt before submitting verdict:** "Am I about to endorse a validity verdict that I or the brain produced from shared priors, ungrounded in the ledger or the published source? Did an independently-verified published result (e.g. reported working simulations) get called invalid based only on our own analysis?" If yes, steer.
 
 **Output format:** if a methodology-validity claim contradicts the ledger or asserts a cited result invalid without source-grounding, recommend "steer", quote the report claim + the contradicting ledger line (or the missing source comparison). Do NOT submit "continue"/"stop" while such a claim is open.
+
+**Negative-claim discipline (same trigger family):** an upper-bound or non-existence claim ("at most N", "only", "cannot", "does not exist", "ruled out", "不存在/仅有/排除") is legitimate ONLY if backed by a computation that proves the bound (exhaustive enumeration, theorem-grade check) recorded in results.json. A failed search over candidate constructions proves nothing about existence — blind-tested producer models convert "not found" into "does not exist" at 90-100% rate (interpretation-fidelity study, 2026-07-05), and the correct form is "not found under ⟨constructions tested⟩" with downstream advice in assumption framing ("plan around the verified X until Y is computed"). When you see an at-most/non-existence headline, check results.json for the proving computation; absent → steer with the exact rewrite.
 </methodology_claim_verification>
 
 Call submit_verdict with your assessment.

@@ -20,7 +20,7 @@ safety:
     - "data/experiments/{{EXPERIMENT_ID}}/scripts/"
     - "data/experiments/{{EXPERIMENT_ID}}/tests/"
   writeOnExistingPolicy: block
-spawn: { enabled: true, allowedTypes: [tool_impl, tool_review, math, reader] }
+spawn: { enabled: true, allowedTypes: [tool_impl, tool_review, math, reader, ledger_writer] }
 templates: [PROJECT_DIR, ROLE, EXPERIMENT_ID]
 ---
 
@@ -200,7 +200,18 @@ For all non-stop exits, prefer **incremental continuation over restart**. Preser
    - **Anchor rule for load-bearing constants**: every `invariants` constant the headline depends on (g-factors, branching ratios, scattering rates, thresholds) is recorded as `{"value": ..., "source": "<cite_key>", "anchored_to": "<the MEASURED observable in that paper this value reproduces>"}`, not a bare number. A wrong-from-memory constant passes every self-consistency check downstream (observed: a g_I off by 3.6× was "confirmed" by its own invariant check — the check verified arithmetic against the wrong input). `anchored_to` forces one retrieval against a measured quantity. A constant you cannot anchor may drive an exploratory scenario, but tag its outputs `[unanchored]` in the ledger — they may NOT enter the report abstract.
 2. **Persist raw data for downstream plotting.** If any tool produced arrays, scans, distributions, samples, or iteration traces, save them under `data/experiments/{{EXPERIMENT_ID}}/runs/run_N/data/` as plot-ready artifacts (CSV for tabular scans, NPZ/NPY for numeric arrays, JSON with array fields for mixed data). `results.json` should reference these by path relative to `runs/run_N/` under a `computed.raw_data` key (e.g., `{"scan_p_vs_d": "data/scan.csv", "mc_samples": "data/samples.npz"}` — paths are anchored at the run_N dir). Scalar summaries alone are insufficient — a figure-maker later can't reconstruct a plot from just means and maxes.
 3. Figures (when applicable) under `report/figures/`. If your experiment's results merit a quantitative figure (scans, comparisons, distributions), produce the plot here or at least leave the raw data under `data/experiments/{{EXPERIMENT_ID}}/runs/run_N/data/` so brain or illustrator can produce the figure downstream.
-4. A section appended to `notes/experiments.md` under `## L2.X — <topic>`. Brain may have already written a `**Status:** Pending` placeholder for this section at spawn time — **edit** that placeholder (don't duplicate). If no placeholder exists, append a fresh section. The `**Status:**` line is the load-bearing contract — the brain's `finish()` gate reads it.
+4. A section in `notes/experiments.md` under `## L2.X — <topic>` — **written by a `ledger_writer` sub-agent you spawn, not by you.** The interpretation-fidelity study located the dominant error class in exactly this turn: after 90 messages of context, producer models write "at most X / does not exist" from failed searches and drop recorded caveats. A fresh-context opus writer fed pinned facts is the measured fix. Spawn it as your LAST act of Phase 3, after results.json is final:
+
+   ```
+   spawn_agent(agent="ledger_writer", background=false, task="L2 section: L2.X — <topic>.
+     Acceptance criterion (frozen at Phase 1, verbatim): <...>.
+     Alternatives considered: <your ≥3 candidates + rejection reasons>.
+     Recorded limitations: <your list — include every degradation: tool_review failures,
+     unverified pairings, quoted-not-reproduced constants, unexhausted search spaces>.
+     Figure candidates: <one line per plottable artifact, or 'No figure: <rationale>'>.")
+   ```
+
+   The writer reads results.json itself and writes numbers ONLY from there. Review its section when it returns: if it misstates a fact, re-spawn it with the correction — do NOT edit the section's claims yourself (writing conclusions is the act being isolated from your context). The `**Status:**` line is the load-bearing contract — the brain's `finish()` gate reads it. Section contents (the writer knows this format; your task message supplies the inputs marked above):
    - **Experiment dir:** path to your `data/experiments/{{EXPERIMENT_ID}}/`
    - **Key computed leaves:** 3-5 paths into `results.json` that brain will cite
    - **Status:** `Complete` (the common case — all tools pass pytest, results.json exists) or `Pending` (if any tool is WIP — flag to brain so it can decide whether to re-spawn you or remove the L2 section from scope). Do NOT leave the status line out.

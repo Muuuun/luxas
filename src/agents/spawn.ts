@@ -174,15 +174,25 @@ const VISION_REQUIRED_AGENTS = new Set([
 //  the flagship adversarial monitor stays on Claude unconditionally.
 const PI_REVIEWER_AGENTS = new Set([
   "reviewer",
-]);
-//  The experiment-layer reviewers route to GLM-5.2 — a third prior, independent
-//  of BOTH the deepseek producer AND the Anthropic PI, and routed there
-//  UNCONDITIONALLY (every profile), not just in dual mode. tool_review authors
-//  the BLIND TESTS, so its prior diversity is what makes the impl/review split
-//  real (F4: same-family impl+test passed the same wrong constants). tool_impl
-//  stays on the profile (producer); the test author does not.
-const GLM_REVIEWER_AGENTS = new Set([
+  // experiment_reviewer moved here from GLM (2026-07-05, interpretation-fidelity
+  // study, github.com/Muuuun/interpretation-fidelity): its duties include
+  // auditing negative-result claims, and GLM-5.2's blind-tested hard-error rate
+  // on exactly that claim class is 95% (n=20) vs opus 40% — it cannot catch
+  // what it commits itself. Its mechanical half (ledger-vs-results.json fraud
+  // checks) worked fine on GLM; the epistemic half is the load-bearing one.
   "experiment_reviewer",
+  // ledger_writer writes the L2 conclusions — the ONE turn where computed
+  // facts become recorded knowledge, and the turn the producer model fails at
+  // (deepseek: 100% hard-error on search-failure interpretation, n=20).
+  "ledger_writer",
+]);
+//  tool_review stays on GLM-5.2 — a third prior, independent of BOTH the
+//  deepseek producer AND the Anthropic PI, routed there UNCONDITIONALLY
+//  (every profile). It authors BLIND TESTS whose arbiter is pytest, not its
+//  own judgment, so GLM's weak epistemic-interpretation dimension is not
+//  exposed in this role; its family diversity is what makes the impl/review
+//  split real (same-family impl+test passed the same wrong constants).
+const GLM_REVIEWER_AGENTS = new Set([
   "tool_review",
 ]);
 

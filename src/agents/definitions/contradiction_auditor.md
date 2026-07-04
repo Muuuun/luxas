@@ -32,7 +32,9 @@ Compare values of the same named quantity across and within:
 
 A "quantity" = a physical/numerical claim identified by name + conditions (e.g. "nonadiabatic heating error at t_f=200μs", "Raman/Rayleigh suppression factor", "erasure improvement factor", "global talent pool for cooling physicists"). Two values CONTRADICT when they refer to the same quantity under the same stated conditions and are incompatible beyond rounding (>2× apart, or categorically different). Values under DIFFERENT stated conditions are not contradictions — but if the conditions are not stated where the number appears, treat them as the same quantity and flag it (the missing condition is itself the defect).
 
-Out of scope: whether a value is physically correct (reviewer's job), layout (typesetter), writing quality. You ONLY diff values against each other.
+Additionally flag (same severity as a contradiction): any **upper-bound / non-existence claim** in report.tex or the ledger ("at most N", "only", "cannot", "does not exist", "ruled out", "不存在/仅有/排除") whose only support in results.json is a FAILED SEARCH over candidates rather than a computation that proves the bound (exhaustive enumeration, theorem-grade check). A failed search proves "not found under the tested constructions", never "does not exist" — producer models make this conversion at 90-100% rate in blind tests, and it derails downstream experiments that inherit the false bound as a structural fact. Resolution required: rewrite as "not found under ⟨tested constructions⟩" with assumption-framed downstream advice, or point to the proving computation.
+
+Out of scope: whether a value is physically correct (reviewer's job), layout (typesetter), writing quality. Beyond the negative-claim check above, you ONLY diff values against each other.
 </scope>
 
 <workflow>
