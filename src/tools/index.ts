@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { md5OrNull, extractFrontmatterBlock, parseAuditFrontmatter, parseFollowUps, readFileSafe } from "../utils.js";
 import type { Agent } from "@mariozechner/pi-agent-core";
 import { createReportTools, parseCompileVerdict, gateBlockingIssues } from "./report.js";
+import { reportIntegrityIssues, formatIntegrityIssues } from "./report-integrity.js";
 import { createInitReportTool } from "./init-report.js";
 import { createAuthorityEscalationTools } from "./authority-escalation.js";
 import { createCodingToolsForProject } from "./coding.js";
@@ -817,6 +818,56 @@ export function buildResearchTools(
         }] };
       }
 
+      // Contradiction-sweep gate (2026-07-04, debate-adjudicated): same
+      // quantity, incompatible values across report/ledger/results.json must
+      // be reconciled before shipping. Both headline physics errors in the
+      // reviewed shuttling runs co-occurred with internal contradictions
+      // (9-OoM adjacent tables; four incompatible Raman magnitudes), so an
+      // unreconciled diff is a cheap detector for the expensive error class.
+      // Same md5-keyed contract as typesetter; the escape is fixing the
+      // documents and re-running the auditor, not prose.
+      const sweepPath = join(projectDir, "reviews", "contradiction_sweep.md");
+      const sweepSrc = existsSync(sweepPath) ? readFileSync(sweepPath, "utf-8") : null;
+      if (sweepSrc === null) {
+        return { content: [{ type: "text" as const, text:
+          `Cannot finish: reviews/contradiction_sweep.md is missing. The ` +
+          `report has not been swept for internal contradictions. Spawn the auditor:\n\n` +
+          `  spawn_agent(agent="contradiction_auditor", task="Sweep report/report.tex, ` +
+          `notes/experiments.md and results.json for same-quantity contradictions per ` +
+          `your prompt. Write reviews/contradiction_sweep.md.", background=false)\n\n` +
+          `Once it returns status: clean (and the PDF hasn't been recompiled since), ` +
+          `finish() is allowed.`
+        }] };
+      }
+      {
+        const fmB = extractFrontmatterBlock(sweepSrc);
+        const sfm = fmB ? parseAuditFrontmatter(fmB) : {} as Record<string, string | undefined>;
+        if (!fmB || !sfm.status || !sfm.report_pdf_md5) {
+          return { content: [{ type: "text" as const, text:
+            `Cannot finish: reviews/contradiction_sweep.md is missing YAML frontmatter ` +
+            `keys (status, report_pdf_md5). Re-spawn contradiction_auditor.`
+          }] };
+        }
+        if (sfm.status !== "clean") {
+          const summaryMatch = sweepSrc.match(/##\s*Contradictions\s*\n+([\s\S]*?)(?=\n##\s*Checked|\s*$)/);
+          return { content: [{ type: "text" as const, text:
+            `Cannot finish: reviews/contradiction_sweep.md status is "${sfm.status}". ` +
+            `Reconcile each contradiction (one value with a cited source, or state the ` +
+            `differing conditions at both sites), recompile, then re-spawn ` +
+            `contradiction_auditor.\n\n` +
+            (summaryMatch ? `Contradictions:\n${summaryMatch[1].trim().slice(0, 1500)}` : "")
+          }] };
+        }
+        const pdfMd5Now = md5OrNull(pdfPath);
+        if (pdfMd5Now && pdfMd5Now !== sfm.report_pdf_md5) {
+          return { content: [{ type: "text" as const, text:
+            `Cannot finish: reviews/contradiction_sweep.md swept a different report.pdf ` +
+            `(recorded md5 ${sfm.report_pdf_md5.slice(0, 12)}…, current ` +
+            `${pdfMd5Now.slice(0, 12)}…). Re-spawn contradiction_auditor on the current PDF.`
+          }] };
+        }
+      }
+
       // Freshness gate: the SHIPPED artifact must have been reviewed. Mid-run
       // reviews don't cover a PDF compiled after the last one — observed on
       // collisional-gate-with-tweezer: 15 PI rounds, then finish() fired
@@ -907,6 +958,35 @@ export function buildResearchTools(
               `  (a) reconcile the report to the ledger's actual verdict (e.g. "our reconstruction disagrees with our check — likely a discrepancy, unresolved"), then recompile + re-review; or\n` +
               `  (b) if the ledger line is stale and the report is right, update/retract that ledger line; or\n` +
               `  (c) if this is a false flag (the two lines are about different claims), write reviews/pi_pushback.md explaining why the report is consistent with the ledger. Once its mtime is newer than notes/experiments.md, finish() is allowed.`
+            }] };
+          }
+        }
+      }
+
+      // Report-integrity gate (2026-07-04, debate-adjudicated "write-only
+      // evidence store" fix): the report must READ BACK the evidence store —
+      // abstract numbers resolve to results.json/notes, no citing incomplete
+      // E_N, ledger disclosures survive to the report. Escape for false
+      // positives (e.g. E_2 as a physics symbol): reviews/integrity_pushback.md
+      // with mtime newer than report.tex — same contract as pi_pushback.
+      {
+        const blocking = reportIntegrityIssues(projectDir).filter((i) => i.blocking);
+        if (blocking.length > 0) {
+          const pushbackPath = join(projectDir, "reviews", "integrity_pushback.md");
+          let pushbackFresh = false;
+          try {
+            const texMtimeMs = statSync(join(projectDir, "report", "report.tex")).mtimeMs;
+            pushbackFresh = statSync(pushbackPath).mtimeMs > texMtimeMs;
+          } catch { /* no pushback file — not fresh */ }
+          if (!pushbackFresh) {
+            return { content: [{ type: "text" as const, text:
+              `Cannot finish: the report diverges from the evidence store ` +
+              `(notes/ + results.json are source-of-truth):\n\n` +
+              formatIntegrityIssues(blocking) +
+              `\n\nFix the report or the evidence store so they agree, recompile, ` +
+              `then finish. If a flag is genuinely false (explain which and why), ` +
+              `write reviews/integrity_pushback.md; once its mtime is newer than ` +
+              `report/report.tex, finish() is allowed through.`
             }] };
           }
         }

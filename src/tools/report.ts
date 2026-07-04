@@ -10,6 +10,7 @@ import { execSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join, basename, resolve } from "node:path";
 import { applyAuthorityEscalationSection } from "./authority-escalation.js";
+import { reportIntegrityIssues, formatIntegrityIssues } from "./report-integrity.js";
 
 const CompileParams = Type.Object({
   dir: Type.Optional(Type.String({ description: "Report directory (default: report/)" })),
@@ -245,7 +246,21 @@ export function createReportTools(projectDir: string) {
         : "";
       const problemsBlock = verdict && !verdict.ok
         ? verdict.report + "\n\n── engine output ──\n" : "";
-      const text = header + promotedNote + problemsBlock + outputs.join("\n\n") + footer;
+      // Report-integrity check (see report-integrity.ts): surfaced here for
+      // visibility while iterating; finish() is where blocking happens, so a
+      // flagged report still compiles and can be inspected/fixed.
+      let integrityBlock = "";
+      if (!hardFailure) {
+        const issues = reportIntegrityIssues(projectDir);
+        if (issues.length > 0) {
+          integrityBlock = "\n\n── report-integrity (evidence-store cross-check) ──\n" +
+            formatIntegrityIssues(issues) +
+            (issues.some((i) => i.blocking)
+              ? "\n\nItems marked [blocks finish] will block finish() until report and evidence store agree."
+              : "") + "\n";
+        }
+      }
+      const text = header + promotedNote + problemsBlock + outputs.join("\n\n") + integrityBlock + footer;
       return { content: [{ type: "text" as const, text }], details: { success } };
     },
   };

@@ -27,7 +27,7 @@ safety:
   writeOnExistingPolicy: block
 spawn:
   enabled: true
-  allowedTypes: [search, reader, worker, experiment, math, reviewer, fixer, illustrator, illustrator_write, typesetter]
+  allowedTypes: [search, reader, worker, experiment, math, reviewer, fixer, illustrator, illustrator_write, typesetter, contradiction_auditor]
 templates: [PROJECT_DIR, SEARCH_SCRIPT, EXTRACT_FIGURES, VENUE_SPECIFIC_DIR, MERGE_NOTES, SISYPHUS_DIR]
 ---
 
@@ -641,6 +641,11 @@ You are done when:
 4. `report.tex` compiles cleanly and covers the research goal from RESEARCH.md, drawing on literature + experiments' notes sections + `data/experiments/*/runs/run_*/results.json` values cited inline.
 5. Every `\cite{key}` corresponds to a `notes/literature.d/key.md` file.
 6. All `<feedback>` items in RESEARCH.md are addressed.
+7. **Report-integrity gates pass** (finish() enforces these mechanically — the report must READ BACK the evidence store):
+   - Every number in the **abstract** resolves to a `results.json` computed leaf or a value quoted in `notes/` — never an extrapolation or a from-memory figure. If a headline number comes from a scaling-law extrapolation beyond the computed range, either compute the point or state the computed range instead.
+   - The report never references an experiment `E_N` whose ledger section is not `Status: Complete`.
+   - Every `[unverified …]` / `[unanchored …]` tag and every tool_review-degradation note in `notes/` has a corresponding disclosure in the report (Limitations).
+   - `reviews/contradiction_sweep.md` exists with `status: clean` for the current PDF — spawn `contradiction_auditor` after typesetter, before the final PI review. If it finds contradictions, reconcile each one (one value with a cited source, or state the differing conditions at both sites), recompile, re-sweep.
 
 When done, call `finish()` with a one-line summary. Don't keep re-reading files once criteria are met.
 </completion_criteria>
