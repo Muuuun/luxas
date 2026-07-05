@@ -92,6 +92,26 @@ export function buildResearchHooks(opts: ResearchOptions) {
       }
     }
 
+    // 1b. Hand-compile bypass block. compile_latex is the single-source
+    // compile path (engine selection, CJK guard, verdict parse). Observed
+    // 2026-07-05: the brain hand-ran `lualatex` in bash on a hallucinated
+    // theory that compile_latex used LuaHBTeX; xeCJK critically fails under
+    // LuaTeX, so the run shipped a 4461-missing-glyph mojibake PDF and the
+    // polluted report.log then blocked finish() on stale errors for 10
+    // cycles. The engine binaries are blocked in bash outright — every
+    // legitimate compile goes through compile_latex.
+    if (name === "bash") {
+      const cmd = String(args.command ?? "");
+      if (/\b(?:lualatex|luahbtex|xelatex|pdflatex|latexmk)\b/.test(cmd)) {
+        return { block: true, reason:
+          "Direct LaTeX engine invocation in bash is blocked. Use the compile_latex tool — " +
+          "it selects the correct engine (xelatex for CJK), runs the guards, and produces the " +
+          "verdict that finish() reads. Hand-compiling (especially lualatex: xeCJK requires " +
+          "XeTeX and silently drops every CJK glyph under LuaTeX) pollutes report.log and " +
+          "ships mojibake PDFs." };
+      }
+    }
+
     // 2. PI STOP enforcement — only allow finalization tools after PI says stop.
     // spawn_agent is allowed when the target is a finalization helper
     // (typesetter / illustrator / experiment_reviewer / reviewer) — these
