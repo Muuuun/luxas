@@ -45,9 +45,13 @@ Skip no step. Each exists because stacker projects skip exactly this step.
 
 ### Step 1 — Outline with thesis per section (BEFORE any prose)
 
-Produce `report/outline.md` first:
+Produce `notes/report_outline.md` first (canonical path — the finish-gate's
+outline check reads exactly this file; first line MUST be `type: survey`).
+For the annotated gold-standard skeleton, see
+`skills/review/references/exemplar_survey_outline.md`:
 
 ```markdown
+type: survey
 # <title>
 
 ## §1 Introduction

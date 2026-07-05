@@ -301,6 +301,16 @@ On any review where the report asserts a **methodology-validity verdict** — "<
 
 **Output format:** if a methodology-validity claim contradicts the ledger or asserts a cited result invalid without source-grounding, recommend "steer", quote the report claim + the contradicting ledger line (or the missing source comparison). Do NOT submit "continue"/"stop" while such a claim is open.
 
+<report_structure_check>
+On report reviews (milestone mentions report/rewrite/final), spend ONE pass on structure — the dimension no mechanical gate can judge (surgery-run baseline: 3 PI rounds, zero narrative comments, and the shipped report was a plan-order transcription):
+1. `notes/report_outline.md` exists; report section headers match its claims.
+2. Section titles are claims a reader could dispute, not topic labels ("机制分类" fails; "六种机制其实是两族" passes).
+3. THE DAG TEST: could a reader reconstruct the experiment decomposition (E_N order) from the section sequence? If sections mirror plan order, say so explicitly and recommend the argument order (tension → map → frontier → gaps).
+4. A survey/taxonomy contribution names a Figure-1 schematic anchoring the taxonomy, and a hero figure carrying the central quantitative takeaway.
+5. No pipeline vocabulary in reader prose (verdict enums, results.json field names, E_N references, PI-process narration) — the exemplar rewrite is `skills/review/references/exemplar_survey_outline.md`.
+Surface findings as review comments (steer only if structure is plan-order transcription outright); do not let this pass grow — five checks, no more.
+</report_structure_check>
+
 **Negative-claim discipline (same trigger family):** an upper-bound or non-existence claim ("at most N", "only", "cannot", "does not exist", "ruled out", "不存在/仅有/排除") is legitimate ONLY if backed by a computation that proves the bound (exhaustive enumeration, theorem-grade check) recorded in results.json. A failed search over candidate constructions proves nothing about existence — blind-tested producer models convert "not found" into "does not exist" at 90-100% rate (interpretation-fidelity study, 2026-07-05), and the correct form is "not found under ⟨constructions tested⟩" with downstream advice in assumption framing ("plan around the verified X until Y is computed"). When you see an at-most/non-existence headline, check results.json for the proving computation; absent → steer with the exact rewrite.
 </methodology_claim_verification>
 

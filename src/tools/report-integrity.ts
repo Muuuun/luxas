@@ -33,7 +33,7 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 
 export interface IntegrityIssue {
-  kind: "number-provenance" | "experiment-citation" | "disclosure" | "results-schema";
+  kind: "number-provenance" | "experiment-citation" | "disclosure" | "results-schema" | "harness-vocab" | "outline";
   blocking: boolean;
   text: string;
 }
@@ -284,6 +284,64 @@ export function reportIntegrityIssues(projectDir: string): IntegrityIssue[] {
         `report (typically in a Limitations paragraph) or resolve the underlying uncertainty and ` +
         `remove the tag from the notes.`,
     });
+  }
+
+  // 5. Harness vocabulary in reader prose (storytelling debate, 2026-07-05).
+  //    The surgery survey shipped a table caption citing an internal JSON
+  //    field ("E2 分类实验中的 comparison_matrix.code_family_scope 字段") and a
+  //    section conclusion phrased in adjudication enums ("通过 INCONCLUSIVE
+  //    （而非 REFUTED）裁决"). The reader gets the FIELD's story; the pipeline's
+  //    vocabulary stays in notes/. Deliberately tight patterns — do NOT extend
+  //    into a euphemism arms race (a euphemized recurrence is evidence for the
+  //    generative position, not for a longer blacklist). Escape: the existing
+  //    integrity_pushback hatch (reports legitimately ABOUT these tokens).
+  {
+    const prose = body.replace(/\\texttt\{[^}]*\}|\\verb\|[^|]*\|/g, " ");
+    const hits: string[] = [];
+    const vocabPatterns: Array<[RegExp, string]> = [
+      [/(通过|判定为|裁决为?)\s*(INCONCLUSIVE|REFUTED|CONFIRMED)|(INCONCLUSIVE|REFUTED|CONFIRMED)\s*(（|\()?而非/, "adjudication enum narrated as prose"],
+      [/\b[a-z]+(?:_[a-z]+)+\.[a-z]+(?:_[a-z]+)*\b/, "internal JSON field path in prose"],
+      [/E\d+\s*(实验|分类实验|对比实验)?(中的|通过|的裁决)/, "experiment-pipeline reference in reader prose"],
+      [/PI\s*(反馈|修订|review|steer)/i, "PI-review process narrated in the report"],
+    ];
+    for (const [re, label] of vocabPatterns) {
+      const m = prose.match(re);
+      if (m) hits.push(`${label}: "…${m[0].slice(0, 60)}…"`);
+    }
+    if (hits.length > 0) {
+      issues.push({
+        kind: "harness-vocab", blocking: true,
+        text: `Report prose contains pipeline-internal vocabulary the reader cannot interpret:\n  - ${hits.join("\n  - ")}\n` +
+          `Rewrite in the field's terms (e.g. "open rather than closed: no obstruction proven, no adaptation demonstrated" ` +
+          `instead of "INCONCLUSIVE 而非 REFUTED 裁决"; cite the literature, not results.json fields). The pipeline's ` +
+          `vocabulary belongs in notes/, never in report.tex prose.`,
+      });
+    }
+  }
+
+  // 6. Outline existence + format (storytelling debate, 2026-07-05). Six
+  //    brain.md mandates were silently skipped in the surgery run — the
+  //    outline never existed and nothing checked. Existence + first-line
+  //    format is all this gate claims to verify (mechanical class); outline
+  //    QUALITY is the PI's structure check. Path is canonical:
+  //    notes/report_outline.md (skills/review/SKILL.md was unified to it —
+  //    a gate demanding path A while a skill writes path B is the PI-STEER
+  //    deadlock pathology, caught pre-ship by the second-order debate).
+  {
+    const outlinePath = join(projectDir, "notes", "report_outline.md");
+    let firstLine = "";
+    try {
+      firstLine = readFileSync(outlinePath, "utf-8").split("\n").find((l) => l.trim().length > 0)?.trim() ?? "";
+    } catch { /* missing */ }
+    if (!/^type:\s*\S+/.test(firstLine)) {
+      issues.push({
+        kind: "outline", blocking: true,
+        text: `notes/report_outline.md is ${firstLine === "" ? "missing or empty" : `present but its first line is "${firstLine.slice(0, 60)}" instead of "type: <article-type>"`}. ` +
+          `Write the reader-facing outline BEFORE report prose (see skills/narrative/SKILL.md, or the survey exemplar at ` +
+          `skills/review/references/exemplar_survey_outline.md for surveys): first line "type: <empirical|feasibility|comparison|survey|policy-zh>", ` +
+          `then claim-anchored section titles. The outline is a checkpoint artifact — gates and PI review key off it.`,
+      });
+    }
   }
 
   // 4. results.json shape (warning only — legacy projects predate the schema).
