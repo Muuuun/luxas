@@ -611,12 +611,20 @@ grep -nE "^\\\\section\\{(引言|Introduction|研究方法|Methodology|Methods|�
 
 # Hit 3: first sentence after \section / \subsection starts with experiment ID or orientation phrase
 grep -nA 1 -E "^\\\\(sub)?section\\{" report/report.tex | grep -E "本研究E|本节|This section|We now|实验E[0-9]+"
+
+# Hit 4: process narration — the pipeline's own machinery narrated as content.
+# Observed (surgery run): a body paragraph explaining "分类器通过关键词匹配…提取信息,
+# 分类信心分为低中高三档, 23/31 篇为低信心" — the reader wants the FIELD, not the
+# classifier. Methodology/coverage transparency belongs in the 方法与范围 appendix
+# (below), never in body prose.
+grep -nE "分类器|关键词匹配|keyword match|置信度分为|信心分[为档]|curated 条目|从.{0,12}(notes/|literature\.md)|our (classifier|pipeline|extraction)|本文的.{0,8}(分类|提取|筛选)(实验|流程|方法)" report/report.tex
 ```
 
 Any non-empty output from these greps means the report fails the lab-book test. Each hit must be addressed by:
 - For Hit 1: rewrite the sentence to lead with the substantive claim; demote the experiment ID to mid-paragraph parenthetical or drop it entirely (the experiment-ledger pointer goes in notes/, not in report.tex prose).
 - For Hit 2: replace the section title with the claim from your outline (notes/report_outline.md); generic titles like "引言" / "结论" are acceptable ONLY if they carry a colon-suffix claim (e.g. "引言：为什么数据库不等于文献覆盖").
 - For Hit 3: rewrite the section's opening sentence to lead with the thesis.
+- For Hit 4: MOVE the content, don't delete it. All methodology/coverage disclosure (how sources were classified, confidence tiers, corpus boundaries, search-modality degradation, [unverified]-class caveats that apply report-wide) lives in ONE designated container: a final unnumbered section `\section*{方法与范围声明}` (or `Methods and Scope Statement` for en reports) before the bibliography. Honesty and narrative stop competing for the same paragraph: the body tells the FIELD's story; the appendix carries the pipeline's confession. The disclosure-propagation gate reads the whole .tex, so disclosures in the appendix still satisfy it.
 
 **Revision-mode discipline.** When `report/report.tex` already exists (revision session, not first write), the natural failure mode is to anchor on existing prose and edit incrementally — this leaks the prior structure's lab-book patterns through into the revised document. Mitigation:
 

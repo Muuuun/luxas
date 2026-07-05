@@ -265,13 +265,13 @@ export function reportIntegrityIssues(projectDir: string): IntegrityIssue[] {
     .map((f) => { try { return readFileSync(join(projectDir, "notes", f), "utf-8"); } catch { return ""; } })
     .join("\n");
   const tags: string[] = [];
-  const tagRE = /\[(unverified[^\]]*|unanchored[^\]]*)\]/gi;
+  const tagRE = /\[(unverified[^\]]*|unanchored[^\]]*|search-degraded[^\]]*)\]/gi;
   let tm: RegExpExecArray | null;
   while ((tm = tagRE.exec(notesText))) tags.push(`[${tm[1]}]`);
   const reviewDegraded =
     /tool_review[^.\n]{0,80}(unavailable|429|failed|not\s+run)|429[^.\n]{0,60}tool_review/i.test(notesText);
   const reportDiscloses =
-    /unverified|not\s+independently\s+(?:verified|tested|reviewed)|未[经]?独立|未验证|独立(?:测试|验证|评审)不可用/i.test(body);
+    /unverified|not\s+independently\s+(?:verified|tested|reviewed)|未[经]?独立|未验证|独立(?:测试|验证|评审)不可用|search[^.\n]{0,40}(?:degraded|unavailable)|(?:corpus|literature|coverage)[^.\n]{0,50}(?:limited|restricted|incomplete)|(?:检索|搜索)[^.。\n]{0,30}(?:不可用|受限|降级)|(?:语料|文献覆盖)[^.。\n]{0,30}(?:受限|有限|不完整)/i.test(body);
   if ((tags.length > 0 || reviewDegraded) && !reportDiscloses) {
     const what = [
       tags.length > 0 ? `${tags.length} unverified/unanchored tag(s) in notes (e.g. ${[...new Set(tags)].slice(0, 3).join(", ")})` : "",

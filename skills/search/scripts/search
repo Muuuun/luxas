@@ -79,7 +79,31 @@ async function fetchWithRetry(url, { maxRetries = 3, initialBackoffMs = 3000, ti
     }
   }
   console.error(`[search] ${lastRes.status} after ${maxRetries} attempts: ${url.slice(0, 120)}`);
+  recordSearchDegradation(url, lastRes.status);
   return lastRes;
+}
+
+// Persist modality-degradation so the report-integrity disclosure gate can see
+// it. 2026-07-05 (surgery run): web-search unavailability lived only in this
+// stderr line + the search agent's ephemeral digest; the report shipped with a
+// silently restricted corpus (an entire technique family missed) and zero
+// disclosure. The marker goes to notes/memory.md — the file the disclosure
+// gate already scans — deduped per host so a flaky API writes one line, not
+// fifty. Script-level, not prompt-level: the agent forgetting to write this
+// is the failure mode this replaces.
+function recordSearchDegradation(url, status) {
+  try {
+    const root = process.env.LUXAS_PROJECT_DIR || process.cwd();
+    const notesDir = join(root, "notes");
+    if (!existsSync(notesDir)) return; // standalone CLI use — stderr only
+    const host = new URL(url).hostname;
+    const memPath = join(notesDir, "memory.md");
+    const existing = existsSync(memPath) ? readFileSync(memPath, "utf-8") : "";
+    if (existing.includes(`[search-degraded: ${host}`)) return; // one marker per modality
+    const line = `\n[search-degraded: ${host} — HTTP ${status} after retries, ${new Date().toISOString().slice(0, 10)}. Literature coverage may be restricted; the report must disclose the coverage limitation.]\n`;
+    writeFileSync(memPath, existing + line);
+    console.error(`[search] degradation marker written to notes/memory.md (${host})`);
+  } catch { /* marker is best-effort; never break the search itself */ }
 }
 
 // ─── OpenAlex ────────────────────────────────────────────────
