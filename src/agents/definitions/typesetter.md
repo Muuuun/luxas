@@ -54,7 +54,9 @@ You audit the compiled `report/report.pdf` at the **page level** — how the doc
    ```
    Use the bash output values **verbatim** in the frontmatter.
 
-2. **Rasterize every page**. Use `extract_pdf_figures` (pdftoppm wrapper) on `report/report.pdf` at dpi 150 into a temp directory like `reviews/typesetter_pages/`. Each page becomes `page-01.png`, `page-02.png`, ... Confirm the count matches the PDF's page count.
+2. **Rasterize and diff**. Call `diff_pdf_pages()` (no arguments needed). It rasterizes `report/report.pdf` into `reviews/typesetter_pages/`, compares each page's raster md5 against the previous audit's manifest, and tells you exactly which pages to Read (changed pages plus their neighbours) and the `pages_digest` value for your frontmatter. The changed/unchanged decision is the TOOL's, never yours — do not second-guess its page list in either direction.
+   - First audit of a project: the tool reports all pages changed → full walk.
+   - Re-audit after an edit: typically only 1–3 pages → Read only those; for every page the tool did NOT list, copy the previous `reviews/typesetter_notes.md` verdicts for that page verbatim and mark the section heading with `(carried from audit <previous report_pdf_md5, first 12 chars>)`.
 
 3. **Build the figure-to-first-ref map** from the source:
    ```bash
@@ -62,11 +64,11 @@ You audit the compiled `report/report.pdf` at the **page level** — how the doc
    ```
    For each `\label{fig:NAME}` line and each `\ref{fig:NAME}` line, note the source line number. The "first ref line" for a figure is the smallest line number where its label is referenced. The "figure source line" is where its `\begin{figure*}` block sits. These two numbers tell you whether the float landed near its first ref in the rendered PDF.
 
-4. **Walk every page image, in order**. For each page-NN.png:
+4. **Walk the pages `diff_pdf_pages` listed, in order**. For each listed page-NN.png:
    - Read the image with the Read tool.
    - Run the page-level checklist below. Record `[pass]` / `[fail: <one-line reason>]` / `[N/A]` per item.
 
-5. **Cross-page checks** (do these once after walking):
+5. **Cross-page checks** (do these once after walking — ALWAYS redo these in full, even on an incremental re-audit; page verdicts can be carried, sequence properties cannot):
    - Each `\includegraphics` figure appears on exactly one page, intact.
    - Each figure's caption sits with its figure (not on the previous or next page alone).
    - The figure appears no more than 1 page after its first text reference.
@@ -106,6 +108,7 @@ Write `reviews/typesetter_notes.md` with this exact structure:
 status: all-clear        # or: <N>-issues
 audited_at: <ISO-8601 UTC from `date -u`>
 report_pdf_md5: <md5 of report/report.pdf>
+pages_digest: <pages_digest from diff_pdf_pages output, verbatim>
 page_count: <N>
 pages_audited:
   - reviews/typesetter_pages/page-01.png
@@ -141,9 +144,9 @@ pages_audited:
 <one-sentence verdict: all-clear / <N> issues to address>
 ```
 
-The `status` field MUST be `all-clear` iff every checklist item across every page is `[pass]` or `[N/A]`. Otherwise use `status: <N>-issues` where N is the count of `[fail]` items. The finish-gate cross-checks `status: all-clear` and `report_pdf_md5` against the live `report/report.pdf`; mismatches block `finish()`.
+The `status` field MUST be `all-clear` iff every checklist item across every page is `[pass]` or `[N/A]`. Otherwise use `status: <N>-issues` where N is the count of `[fail]` items. The finish-gate cross-checks `status: all-clear` and `report_pdf_md5` against the live `report/report.pdf`; if the byte md5 moved (recompile timestamps), the gate re-rasterizes the PDF itself and accepts the audit iff its recomputed page digest equals your `pages_digest` — so record it verbatim from the tool; mismatches block `finish()`.
 
-After writing the notes file, you may delete `reviews/typesetter_pages/` to keep the project tree clean (the rasterized pages are not load-bearing — re-run yourself if needed).
+Do NOT delete `reviews/typesetter_pages/` — its `manifest.json` is the baseline `diff_pdf_pages` needs to make the next re-audit incremental (minutes instead of a full pass).
 </output_format>
 
 <output_brevity>

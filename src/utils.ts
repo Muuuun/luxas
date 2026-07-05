@@ -180,6 +180,7 @@ export interface AuditFrontmatter {
   audited_at?: string;
   style_guide_md5?: string;
   report_pdf_md5?: string;
+  pages_digest?: string;
   sources_md5?: string;
   page_count?: string;
   canonical_figures?: Record<string, string>;
@@ -193,7 +194,7 @@ export interface AuditFrontmatter {
 // reliable hallucination (md5 of empty string baked into Sonnet/Kimi training).
 const FRONTMATTER_SCALAR_KEYS = new Set([
   "status", "audited_at", "style_guide_md5",
-  "report_pdf_md5", "sources_md5", "page_count",
+  "report_pdf_md5", "pages_digest", "sources_md5", "page_count",
 ]);
 
 /**

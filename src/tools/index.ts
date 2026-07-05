@@ -9,6 +9,7 @@ import type { Agent } from "@mariozechner/pi-agent-core";
 import { createReportTools, parseCompileVerdict, gateBlockingIssues } from "./report.js";
 import { reportIntegrityIssues, formatIntegrityIssues, evidenceSourcesDigest } from "./report-integrity.js";
 import { createInitReportTool } from "./init-report.js";
+import { pdfPagesDigest } from "./figure-gen.js";
 import { createAuthorityEscalationTools } from "./authority-escalation.js";
 import { createCodingToolsForProject } from "./coding.js";
 import { createSpawnAgentTool, getActiveBackgroundAgents } from "./spawn-agent.js";
@@ -817,6 +818,67 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
         }
       }
 
+      // Contradiction-sweep gate (2026-07-04, debate-adjudicated): same
+      // quantity, incompatible values across report/ledger/results.json must
+      // be reconciled before shipping. Both headline physics errors in the
+      // reviewed shuttling runs co-occurred with internal contradictions
+      // (9-OoM adjacent tables; four incompatible Raman magnitudes), so an
+      // unreconciled diff is a cheap detector for the expensive error class.
+      // The escape is fixing the documents and re-running the auditor, not
+      // prose. Ordered BEFORE the typesetter gate (2026-07-05 tail debate):
+      // sweep findings force content edits that invalidate the expensive
+      // vision audit, so content must settle first — the surgery run burned
+      // two full ~30min typesetter passes to the old order.
+      const sweepPath = join(projectDir, "reviews", "contradiction_sweep.md");
+      const sweepSrc = existsSync(sweepPath) ? readFileSync(sweepPath, "utf-8") : null;
+      if (sweepSrc === null) {
+        return { content: [{ type: "text" as const, text:
+          `Cannot finish: reviews/contradiction_sweep.md is missing. The ` +
+          `report has not been swept for internal contradictions. Spawn the auditor:\n\n` +
+          `  spawn_agent(agent="contradiction_auditor", task="Sweep report/report.tex, ` +
+          `notes/experiments.md and results.json for same-quantity contradictions per ` +
+          `your prompt. Write reviews/contradiction_sweep.md.", background=false)\n\n` +
+          `Run the sweep (and any content fixes it forces) BEFORE the typesetter ` +
+          `audit — every content edit invalidates a typesetter pass, and typesetter ` +
+          `is the most expensive auditor. Once the sweep returns status: clean, ` +
+          `finish() proceeds to the layout gate.`
+        }] };
+      }
+      {
+        const fmB = extractFrontmatterBlock(sweepSrc);
+        const sfm = fmB ? parseAuditFrontmatter(fmB) : {} as Record<string, string | undefined>;
+        if (!fmB || !sfm.status || !sfm.sources_md5) {
+          return { content: [{ type: "text" as const, text:
+            `Cannot finish: reviews/contradiction_sweep.md is missing YAML frontmatter ` +
+            `keys (status, sources_md5). Re-spawn contradiction_auditor.`
+          }] };
+        }
+        if (sfm.status !== "clean") {
+          const summaryMatch = sweepSrc.match(/##\s*Contradictions\s*\n+([\s\S]*?)(?=\n##\s*Checked|\s*$)/);
+          return { content: [{ type: "text" as const, text:
+            `Cannot finish: reviews/contradiction_sweep.md status is "${sfm.status}". ` +
+            `Reconcile each contradiction (one value with a cited source, or state the ` +
+            `differing conditions at both sites), recompile, then re-spawn ` +
+            `contradiction_auditor.\n\n` +
+            (summaryMatch ? `Contradictions:\n${summaryMatch[1].trim().slice(0, 1500)}` : "")
+          }] };
+        }
+        // Keyed on the SOURCE files the auditor reads (report.tex + ledger +
+        // results.json), not the PDF — pdflatex embeds timestamps, so a no-op
+        // recompile changes the PDF md5 and would re-fire the audit for
+        // nothing. Prose/value edits change this digest; layout-only
+        // recompiles don't.
+        const digestNow = evidenceSourcesDigest(projectDir);
+        if (digestNow !== sfm.sources_md5) {
+          return { content: [{ type: "text" as const, text:
+            `Cannot finish: reviews/contradiction_sweep.md swept different source files ` +
+            `(recorded sources_md5 ${sfm.sources_md5.slice(0, 12)}…, current ` +
+            `${digestNow.slice(0, 12)}…) — report.tex, notes/experiments.md or a ` +
+            `results.json changed since the sweep. Re-spawn contradiction_auditor.`
+          }] };
+        }
+      }
+
       // Document-level layout gate, orthogonal to illustrator (figure
       // internals) and reviewer (content). No pushback escape — layout
       // failures are mechanical, not judgment calls; if the audit is
@@ -863,66 +925,22 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
       }
       const currentPdfMd5 = md5OrNull(pdfPath);
       if (currentPdfMd5 && currentPdfMd5 !== fm.report_pdf_md5) {
-        return { content: [{ type: "text" as const, text:
-          `Cannot finish: reviews/typesetter_notes.md audited a different ` +
-          `report.pdf (recorded md5 ${fm.report_pdf_md5.slice(0, 12)}…, ` +
-          `current ${currentPdfMd5.slice(0, 12)}…). Re-spawn typesetter ` +
-          `to audit the current PDF.`
-        }] };
-      }
-
-      // Contradiction-sweep gate (2026-07-04, debate-adjudicated): same
-      // quantity, incompatible values across report/ledger/results.json must
-      // be reconciled before shipping. Both headline physics errors in the
-      // reviewed shuttling runs co-occurred with internal contradictions
-      // (9-OoM adjacent tables; four incompatible Raman magnitudes), so an
-      // unreconciled diff is a cheap detector for the expensive error class.
-      // Same md5-keyed contract as typesetter; the escape is fixing the
-      // documents and re-running the auditor, not prose.
-      const sweepPath = join(projectDir, "reviews", "contradiction_sweep.md");
-      const sweepSrc = existsSync(sweepPath) ? readFileSync(sweepPath, "utf-8") : null;
-      if (sweepSrc === null) {
-        return { content: [{ type: "text" as const, text:
-          `Cannot finish: reviews/contradiction_sweep.md is missing. The ` +
-          `report has not been swept for internal contradictions. Spawn the auditor:\n\n` +
-          `  spawn_agent(agent="contradiction_auditor", task="Sweep report/report.tex, ` +
-          `notes/experiments.md and results.json for same-quantity contradictions per ` +
-          `your prompt. Write reviews/contradiction_sweep.md.", background=false)\n\n` +
-          `Once it returns status: clean (and the PDF hasn't been recompiled since), ` +
-          `finish() is allowed.`
-        }] };
-      }
-      {
-        const fmB = extractFrontmatterBlock(sweepSrc);
-        const sfm = fmB ? parseAuditFrontmatter(fmB) : {} as Record<string, string | undefined>;
-        if (!fmB || !sfm.status || !sfm.sources_md5) {
+        // Byte md5 moved — but the PDF embeds timestamps, so this fires on
+        // every recompile even when nothing visible changed. Before demanding
+        // a ~30min vision re-audit, recompute the page-raster digest HERE
+        // (gate-side, unforgeable): if the rendered pages are byte-identical
+        // to what the typesetter audited, the audit still describes this PDF.
+        const digestNow = pdfPagesDigest(pdfPath);
+        const rasterMatch = digestNow !== null && fm.pages_digest !== undefined &&
+          digestNow === fm.pages_digest;
+        if (!rasterMatch) {
           return { content: [{ type: "text" as const, text:
-            `Cannot finish: reviews/contradiction_sweep.md is missing YAML frontmatter ` +
-            `keys (status, sources_md5). Re-spawn contradiction_auditor.`
-          }] };
-        }
-        if (sfm.status !== "clean") {
-          const summaryMatch = sweepSrc.match(/##\s*Contradictions\s*\n+([\s\S]*?)(?=\n##\s*Checked|\s*$)/);
-          return { content: [{ type: "text" as const, text:
-            `Cannot finish: reviews/contradiction_sweep.md status is "${sfm.status}". ` +
-            `Reconcile each contradiction (one value with a cited source, or state the ` +
-            `differing conditions at both sites), recompile, then re-spawn ` +
-            `contradiction_auditor.\n\n` +
-            (summaryMatch ? `Contradictions:\n${summaryMatch[1].trim().slice(0, 1500)}` : "")
-          }] };
-        }
-        // Keyed on the SOURCE files the auditor reads (report.tex + ledger +
-        // results.json), not the PDF — pdflatex embeds timestamps, so a no-op
-        // recompile changes the PDF md5 and would re-fire the audit for
-        // nothing. Prose/value edits change this digest; layout-only
-        // recompiles don't.
-        const digestNow = evidenceSourcesDigest(projectDir);
-        if (digestNow !== sfm.sources_md5) {
-          return { content: [{ type: "text" as const, text:
-            `Cannot finish: reviews/contradiction_sweep.md swept different source files ` +
-            `(recorded sources_md5 ${sfm.sources_md5.slice(0, 12)}…, current ` +
-            `${digestNow.slice(0, 12)}…) — report.tex, notes/experiments.md or a ` +
-            `results.json changed since the sweep. Re-spawn contradiction_auditor.`
+            `Cannot finish: reviews/typesetter_notes.md audited a different ` +
+            `report.pdf (recorded md5 ${fm.report_pdf_md5.slice(0, 12)}…, ` +
+            `current ${currentPdfMd5.slice(0, 12)}…` +
+            (fm.pages_digest ? `; page rasters also differ` : ``) +
+            `). Re-spawn typesetter to audit the current PDF — it will use ` +
+            `diff_pdf_pages to re-read only the pages that visually changed.`
           }] };
         }
       }

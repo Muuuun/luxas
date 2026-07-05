@@ -13,8 +13,10 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import { mkdirSync, existsSync, readdirSync, unlinkSync, statSync } from "node:fs";
+import { mkdirSync, existsSync, readdirSync, unlinkSync, statSync, readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { join, dirname, isAbsolute, resolve as resolvePath, basename, relative as relativePath } from "node:path";
+import { tmpdir } from "node:os";
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { readFileSafe } from "../utils.js";
 import { getTexEnv } from "./report.js";
@@ -286,10 +288,116 @@ export function createExtractPdfFiguresTool(projectDir: string) {
   };
 }
 
+// --- Per-page raster digest (2026-07-05, typesetter-tail debate) ---------
+//
+// The PDF byte md5 is timestamp-poisoned: a no-op recompile changes it and
+// used to force a full ~30min vision re-audit. Page RASTERS are deterministic
+// (verified: identical PNGs across recompiles of unchanged content), so
+// freshness is keyed on them instead. The diff is computed HERE, never by the
+// auditing LLM — instrument-assigned freshness, same contract as
+// evidenceSourcesDigest (forged-md5 incident class).
+
+const md5hex = (buf: Buffer | string) => createHash("md5").update(buf).digest("hex");
+
+/** Rasterize a PDF and md5 each page. Returns page-ordered files+md5s, or null on failure. */
+function rasterPageMd5s(pdfAbs: string, outDirAbs: string, dpi = 150): { files: string[]; md5s: string[] } | null {
+  mkdirSync(outDirAbs, { recursive: true });
+  for (const f of readdirSync(outDirAbs)) {
+    if (/^page-\d+\.png$/.test(f)) unlinkSync(join(outDirAbs, f));
+  }
+  const r = spawnSync("pdftoppm", ["-r", String(dpi), "-png", pdfAbs, join(outDirAbs, "page")], {
+    env: getTexEnv(), encoding: "utf-8", timeout: 120_000,
+  });
+  if (r.status !== 0) return null;
+  // pdftoppm pads page numbers to uniform width per-run, so numeric sort is
+  // needed only to be safe across widths.
+  const files = readdirSync(outDirAbs)
+    .filter((f) => /^page-\d+\.png$/.test(f))
+    .sort((a, b) => parseInt(a.match(/\d+/)![0], 10) - parseInt(b.match(/\d+/)![0], 10));
+  return { files, md5s: files.map((f) => md5hex(readFileSync(join(outDirAbs, f)))) };
+}
+
+/**
+ * Digest of a PDF's page rasters (md5 of concatenated per-page md5s).
+ * Used by the finish gate to accept typesetter notes whose visual content
+ * still matches, even though the PDF byte md5 moved (timestamps). Recomputed
+ * gate-side so a lying frontmatter cannot pass.
+ */
+export function pdfPagesDigest(pdfAbs: string): string | null {
+  if (!existsSync(pdfAbs)) return null;
+  const tmp = mkdtempSync(join(tmpdir(), "pages-digest-"));
+  try {
+    const res = rasterPageMd5s(pdfAbs, tmp);
+    return res ? md5hex(res.md5s.join("\n")) : null;
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+export function createDiffPdfPagesTool(projectDir: string) {
+  return {
+    name: "diff_pdf_pages",
+    label: "Diff PDF Pages",
+    description:
+      "Rasterize report/report.pdf into reviews/typesetter_pages/ and compare " +
+      "per-page raster md5s against the manifest from the previous audit. " +
+      "Returns which pages changed (plus their ±1 neighbours, for cross-page " +
+      "checks) and the pages_digest for the audit frontmatter. First run (no " +
+      "manifest) reports all pages changed. The changed-page decision is " +
+      "computed here, never by you.",
+    parameters: Type.Object({
+      pdfPath: Type.Optional(Type.String({
+        description: "Relative path to the PDF. Default: report/report.pdf.",
+      })),
+    }),
+    async execute(_toolCallId: string, params: { pdfPath?: string }) {
+      const pdfAbs = resolveInProject(projectDir, params.pdfPath ?? "report/report.pdf");
+      if (!existsSync(pdfAbs)) return fail(`PDF not found: ${params.pdfPath ?? "report/report.pdf"}`);
+      const outDirAbs = join(projectDir, "reviews", "typesetter_pages");
+      const manifestPath = join(outDirAbs, "manifest.json");
+      let prior: string[] | null = null;
+      try { prior = JSON.parse(readFileSync(manifestPath, "utf-8")).page_md5s ?? null; } catch { /* no/bad manifest → full audit */ }
+
+      const res = rasterPageMd5s(pdfAbs, outDirAbs);
+      if (!res) return fail("pdftoppm failed rasterizing the PDF.");
+      const { files, md5s } = res;
+      const digest = md5hex(md5s.join("\n"));
+      writeFileSync(manifestPath, JSON.stringify({ page_md5s: md5s, pages_digest: digest }, null, 2));
+
+      const n = md5s.length;
+      const changed: number[] = [];
+      for (let i = 0; i < n; i++) {
+        if (!prior || prior[i] !== md5s[i]) changed.push(i + 1);
+      }
+      if (prior && prior.length !== n) {
+        for (let i = 0; i < n; i++) if (!changed.includes(i + 1)) changed.push(i + 1);
+        changed.sort((a, b) => a - b);
+      }
+      const audit = new Set<number>();
+      for (const p of changed) {
+        if (p > 1) audit.add(p - 1);
+        audit.add(p);
+        if (p < n) audit.add(p + 1);
+      }
+      const auditPages = [...audit].sort((a, b) => a - b);
+      const pageFile = (p: number) => `reviews/typesetter_pages/${files[p - 1]}`;
+      const lines = [
+        `Pages: ${n}. Changed since last audit: ${changed.length ? changed.join(", ") : "none"}.`,
+        `pages_digest: ${digest}`,
+        auditPages.length
+          ? `Read and audit these pages (changed ∪ neighbours):\n${auditPages.map((p) => "  - " + pageFile(p)).join("\n")}`
+          : `No pages changed — carry all prior verdicts forward.`,
+      ];
+      return ok(lines.join("\n"), { pagesDigest: digest, pageCount: n, changedPages: changed, auditPages });
+    },
+  };
+}
+
 export function createFigureGenTools(projectDir: string) {
   return [
     createGenerateRasterComponentTool(projectDir),
     createCompileTikzTool(projectDir),
     createExtractPdfFiguresTool(projectDir),
+    createDiffPdfPagesTool(projectDir),
   ];
 }
