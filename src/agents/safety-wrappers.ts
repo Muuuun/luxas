@@ -747,6 +747,23 @@ function wrapBash(
     execute: async (id: string, params: any, signal?: any) => {
       const cmd: string = typeof params?.command === "string" ? params.command : "";
 
+      // Hand-compile bypass: LaTeX engines are blocked in EVERY agent's bash,
+      // not just the brain's hooks. 2026-07-05: after the brain-level hook
+      // shipped, the PI reviewer sub-agents kept hand-running lualatex during
+      // audits (6 reviewer sessions), re-polluting report.log and re-shipping
+      // a 4469-missing-glyph mojibake PDF — sub-agent bash never passes
+      // through brain hooks, only through this wrapper. compile_latex is the
+      // single-source compile path (xelatex for CJK, guards, verdict).
+      if (/\b(?:lualatex|luahbtex|xelatex|pdflatex|latexmk)\b/.test(cmd)) {
+        return blocked(
+          "Direct LaTeX engine invocation is not allowed from any agent's bash. " +
+          "Compiling is the brain's job via the compile_latex tool (it selects xelatex " +
+          "for CJK sources; lualatex silently drops every CJK glyph and pollutes " +
+          "report.log). If you need a fresh PDF, report that need back to the brain " +
+          "instead of compiling yourself."
+        );
+      }
+
       // Credential-exfil: refuse any bash command that mentions a known
       // credential path or env-var name. Substring match — bypass-able with
       // creative shell quoting / dynamic indirection, but stops the obvious
