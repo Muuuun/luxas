@@ -109,11 +109,15 @@ let auditOnly = false;
 let styleDomain: string | undefined;
 let maxCost: number | undefined;
 
+let explicitModel = false;
+let explicitProfile = false;
 for (let i = 1; i < args.length; i++) {
   if (args[i] === "--model" && args[i + 1]) {
     model = args[++i];
+    explicitModel = true;
   } else if (args[i] === "--profile" && args[i + 1]) {
     profile = args[++i];
+    explicitProfile = true;
   } else if (args[i] === "--directive" && args[i + 1]) {
     directive = args[++i];
   } else if (args[i] === "--prompt" && args[i + 1]) {
@@ -140,6 +144,32 @@ projectDir = resolve(projectDir);
 // --papers-dir flags against project root instead of cwd, so `cd data/papers
 // && search source X` can't produce a nested data/papers/data/papers path.
 process.env.LUXAS_PROJECT_DIR = projectDir;
+
+// Launch-config persistence — a resume MUST inherit the original launch's
+// model/profile unless explicitly overridden. 2026-07-05 incident: a project
+// launched under `--profile dual` (deepseek producers) was resumed twice with
+// a bare `luxas run`; every experiment/tool_impl silently fell back to its
+// declared opus tier and one 40-minute session burned $144 (~4x the dual-
+// profile cost) before exhausting the API balance. The ambient default is a
+// footgun precisely because resume is the common manual operation.
+if (command === "run") {
+  const runCfgPath = join(projectDir, ".agent", "run_config.json");
+  try {
+    const saved = JSON.parse(readFileSync(runCfgPath, "utf-8"));
+    if (!explicitModel && saved.model) model = saved.model;
+    if (!explicitProfile && saved.profile !== undefined) {
+      profile = saved.profile ?? undefined;
+      if (saved.profile) console.error(`↺ Inherited --profile ${saved.profile} from the original launch (.agent/run_config.json); pass --profile explicitly to override.`);
+    }
+    if (explicitProfile && (saved.profile ?? undefined) !== profile) {
+      console.error(`⚠ Profile override: original launch used --profile ${saved.profile ?? "(none)"}, this resume uses --profile ${profile ?? "(none)"}. Cost characteristics will differ.`);
+    }
+  } catch { /* first run — nothing to inherit */ }
+  try {
+    mkdirSync(join(projectDir, ".agent"), { recursive: true });
+    writeFileSync(runCfgPath, JSON.stringify({ model, profile: profile ?? null, savedAt: new Date().toISOString() }, null, 2) + "\n");
+  } catch { /* persistence is best-effort */ }
+}
 
 // Family-level model switch. When --model is a deepseek model, every
 // anthropic-tier slot (haiku/sonnet/opus declared in agent frontmatter)
