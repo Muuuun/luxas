@@ -209,6 +209,30 @@ export function createReportTools(projectDir: string) {
         }
       }
 
+      // Engine-identity assertion. 2026-07-05: a fixer agent had (on 07-02)
+      // planted xelatex→lualatex shim scripts in node_modules/.bin and ~/bin;
+      // every subsequent "xelatex" invocation silently ran LuaHBTeX, xeCJK
+      // critically fails under LuaTeX, and multiple projects shipped mojibake
+      // PDFs while exit codes stayed 0. The log's first line names the engine
+      // that ACTUALLY ran — assert it matches the engine we selected, and if
+      // not, name the hijacking binary so the fix is one `rm`.
+      try {
+        const logHead = readFileSync(join(dir, `${base}.log`), "utf-8").slice(0, 80);
+        const expected = engine === "xelatex" ? "XeTeX" : "pdfTeX";
+        if (!logHead.includes(expected)) {
+          let resolved = "";
+          try { resolved = execSync(`which -a ${engine} | head -3`, { encoding: "utf-8", env }).trim(); } catch {}
+          return { content: [{ type: "text" as const, text:
+            `✗ Engine hijack detected: compile_latex invoked \`${engine}\` but the log header says ` +
+            `"${logHead.split("\n")[0]}" — a shim/wrapper in PATH is substituting a different engine ` +
+            `(xeCJK silently drops every CJK glyph under LuaTeX; the PDF would be mojibake).\n` +
+            `\`which -a ${engine}\` resolves to:\n${resolved}\n\n` +
+            `Do NOT work around this by switching packages or hand-compiling. Report it via ` +
+            `escalate_authority_bound — removing the shim is a human/ops action.` }],
+            details: { success: false } };
+        }
+      } catch { /* log unreadable — the verdict parse below will surface it */ }
+
       // pdflatex exits 0 on most layout/reference problems — they're warnings,
       // not errors. Parse the .log so the agent sees: text spilling past column
       // edge, floats that couldn't be placed (silently dropped), undefined cites

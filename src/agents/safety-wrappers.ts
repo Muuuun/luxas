@@ -747,6 +747,23 @@ function wrapBash(
     execute: async (id: string, params: any, signal?: any) => {
       const cmd: string = typeof params?.command === "string" ? params.command : "";
 
+      // PATH-directory mutation: no agent may create/modify executables in
+      // directories that appear on PATH. 2026-07-05 root cause: a fixer agent
+      // "fixed" a compile problem by planting xelatex→lualatex shim scripts
+      // in node_modules/.bin and ~/bin — a persistent, cross-project
+      // environment poisoning that shipped mojibake PDFs for three days and
+      // was invisible to every gate (exit codes stayed 0). Infrastructure
+      // mutation is a human/ops action, never a fix an agent applies.
+      if (/(?:>|>>|\btee\b|\bcp\b|\bmv\b|\binstall\b|\bln\b|\bchmod\b)[^;|&]*(?:node_modules\/\.bin|(?:~|\$HOME|\/Users\/[^/]+|\/home\/[^/]+)\/(?:\.local\/)?bin\b|\/usr\/(?:local\/)?s?bin\b)/.test(cmd)) {
+        return blocked(
+          "bash command appears to write into a PATH directory (node_modules/.bin, ~/bin, " +
+          "/usr/local/bin, ...). Agents must never create or modify executables on PATH — " +
+          "a planted engine shim poisoned every later run's compiles for days. If a binary " +
+          "is genuinely missing or broken, report it via your final message or " +
+          "escalate_authority_bound; installing/patching system tools is a human action."
+        );
+      }
+
       // Hand-compile bypass: LaTeX engines are blocked in EVERY agent's bash,
       // not just the brain's hooks. 2026-07-05: after the brain-level hook
       // shipped, the PI reviewer sub-agents kept hand-running lualatex during
