@@ -65,6 +65,11 @@ export function buildResearchHooks(opts: ResearchOptions) {
   // and brain looped 240+ times alternating spawn (blocked) / finish (blocked).
   const FINALIZATION_HELPER_AGENTS = new Set([
     "typesetter", "illustrator", "illustrator_write", "experiment_reviewer", "reviewer",
+    // Both are finish-gate mandated (2026-07-05). Omitting contradiction_auditor
+    // created a genuine deadlock: the finish gate demands a clean sweep while the
+    // PI-STEER hook blocked spawning the only agent that can produce it — the brain
+    // was cornered into hand-writing sweep files with forged/placeholder md5s.
+    "contradiction_auditor", "ledger_writer",
   ]);
 
   // Simple rate limiters
