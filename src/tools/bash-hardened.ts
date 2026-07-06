@@ -22,7 +22,8 @@
  */
 
 import { spawn } from "node:child_process";
-import { createWriteStream, type WriteStream } from "node:fs";
+import { createWriteStream, mkdirSync, writeFileSync, type WriteStream } from "node:fs";
+import { join } from "node:path";
 import { totalmem } from "node:os";
 import { Type, type Static } from "@sinclair/typebox";
 import {
@@ -315,6 +316,28 @@ export function createHardenedBashTool(cwd: string, opts?: BashOptions) {
             truncation: trunc.truncated ? trunc : undefined,
             jobId, logPath, status: finalStatus,
           };
+
+          // Passive pytest capture (2026-07-06): when the command invoked
+          // pytest, tee the machine-readable outcome to .agent/pytest/. This
+          // makes "tested: passing" an instrument-assigned claim — the
+          // harness records what pytest said; results.json prose can be
+          // checked against it. Observation only: never mutate the agent's
+          // command (adding --junitxml would be the engine-shim direction).
+          if (/\bpytest\b/.test(params.command)) {
+            try {
+              const summary = fullOutput.match(/^(=+ .*(passed|failed|error|no tests ran).* =+)$/m)?.[1]
+                ?? fullOutput.match(/^(\d+ (?:passed|failed|error)[^\n]*|no tests ran[^\n]*)$/m)?.[1] ?? null;
+              const expMatch = params.command.match(/data\/experiments\/([A-Za-z0-9_]+)/);
+              const dir = join(projectDir, ".agent", "pytest");
+              mkdirSync(dir, { recursive: true });
+              writeFileSync(join(dir, `${jobId}.json`), JSON.stringify({
+                jobId, command: params.command, cwd,
+                experiment: expMatch?.[1] ?? null,
+                exitCode: code, signal: sig ?? null, timedOut,
+                summary, endedAt: Date.now(),
+              }, null, 2));
+            } catch { /* capture is best-effort; never fail the tool for it */ }
+          }
 
           if (timedOut) {
             const err: any = new Error(

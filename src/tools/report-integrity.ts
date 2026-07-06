@@ -265,7 +265,7 @@ export function reportIntegrityIssues(projectDir: string): IntegrityIssue[] {
     .map((f) => { try { return readFileSync(join(projectDir, "notes", f), "utf-8"); } catch { return ""; } })
     .join("\n");
   const tags: string[] = [];
-  const tagRE = /\[(unverified[^\]]*|unanchored[^\]]*|search-degraded[^\]]*)\]/gi;
+  const tagRE = /\[(unverified[^\]]*|unanchored[^\]]*|extrapolated[^\]]*|search-degraded[^\]]*)\]/gi;
   let tm: RegExpExecArray | null;
   while ((tm = tagRE.exec(notesText))) tags.push(`[${tm[1]}]`);
   const reviewDegraded =
@@ -361,6 +361,72 @@ export function reportIntegrityIssues(projectDir: string): IntegrityIssue[] {
         `(verdict ∈ confirmed|refuted|inconclusive, computed{}). Downstream gates key off these — ` +
         `fix the experiment output format.`,
     });
+  }
+
+  // 5. Fabricated test provenance (blocking — shipped failure 2026-07-06: a
+  // project's results.json claimed "(tested: passing)" while ZERO test files
+  // existed anywhere; tool_review had been down on API 429 all run and the
+  // claim was authored as prose). A "tested" claim is only utterable when
+  // tests/ actually contains test files. Keyed off structured state (file
+  // presence), not self-report.
+  {
+    const fakeTested: string[] = [];
+    for (const e of experiments) {
+      if (!e.latestResults) continue;
+      let raw = "";
+      try { raw = readFileSync(e.latestResults, "utf-8"); } catch { continue; }
+      if (!/tested\s*:?\s*(passing|passed|pass|通过)/i.test(raw)) continue;
+      let hasTests = false;
+      try {
+        hasTests = readdirSync(join(e.dir, "tests")).some((f) => /^test_.*\.py$/.test(f));
+      } catch { /* no tests dir */ }
+      if (!hasTests) fakeTested.push(e.id);
+    }
+    if (fakeTested.length > 0) {
+      issues.push({
+        kind: "results-schema", blocking: true,
+        text: `results.json for ${fakeTested.join(", ")} claims "tested: passing" but the experiment's ` +
+          `tests/ directory contains no test_*.py files — a test claim with no tests is fabricated ` +
+          `provenance. Either author the tests (spawn tool_review) or remove the claim and disclose ` +
+          `"untested — reviewer unavailable" in the ledger.`,
+      });
+    }
+  }
+
+  // 6. Tests present but no captured pytest run (warning only — the passive
+  // capture in bash-hardened.ts only exists for runs after 2026-07-06, so
+  // legacy projects legitimately have no artifacts). Promote to blocking
+  // only after a corpus scan, per the overfull-verdict Phase-1/2 pattern.
+  {
+    let captures: Set<string> | null = null; // experiment ids with an exit-0 pytest run
+    try {
+      captures = new Set(
+        readdirSync(join(projectDir, ".agent", "pytest"))
+          .filter((f) => f.endsWith(".json"))
+          .map((f) => {
+            try {
+              const j = JSON.parse(readFileSync(join(projectDir, ".agent", "pytest", f), "utf-8"));
+              return j.exitCode === 0 ? String(j.experiment ?? "") : "";
+            } catch { return ""; }
+          })
+          .filter(Boolean),
+      );
+    } catch { /* no capture dir — pre-capture project, stay silent */ }
+    if (captures && captures.size > 0) {
+      const untested = experiments.filter((e) => {
+        let hasTests = false;
+        try { hasTests = readdirSync(join(e.dir, "tests")).some((f) => /^test_.*\.py$/.test(f)); } catch {}
+        return hasTests && !captures!.has(e.dir.split("/").pop()!);
+      }).map((e) => e.id);
+      if (untested.length > 0) {
+        issues.push({
+          kind: "results-schema", blocking: false,
+          text: `${untested.join(", ")} have test files but no captured passing pytest run ` +
+            `(.agent/pytest/). Tests that never ran verify nothing — run pytest in the ` +
+            `experiment directory.`,
+        });
+      }
+    }
   }
 
   return issues;

@@ -56,7 +56,9 @@ Your audit must confront the following questions. Each "yes" below is revise-wor
 
 7. **Extrapolation leaps.** Prior-project data at N=2000 extrapolated to N=20,000 with power-law fit — did the experiment validate the extrapolation regime, or just trust R² within the fit range? One decade of extrapolation is usually fine; two is always revise-worthy without validation.
 
-8. **Missing figure ledger line.** The L2 section must carry either a `**Figure candidates:**` line (plottable artifacts → suggested plots) or `### No figure: <rationale>`. Both absent → revise — brain's figure pass keys off this line, and omission silently reverts to opt-out-by-default (same structural-omission class as the missing frozen criterion).
+8. **Unverified witness.** If results.json carries a solution witness (a cut, permutation, assignment under `computed.raw_data`), recheck the claimed property by direct computation on the witness (a few bash/python lines: does the cut achieve the reported ratio, is the permutation actually an automorphism by the rank test) before voting. A witness you could recheck cheaply but didn't is not audited. A claim whose witness fails its own property is revise, whatever the prose says.
+
+9. **Missing figure ledger line.** The L2 section must carry either a `**Figure candidates:**` line (plottable artifacts → suggested plots) or `### No figure: <rationale>`. Both absent → revise — brain's figure pass keys off this line, and omission silently reverts to opt-out-by-default (same structural-omission class as the missing frozen criterion).
 </audit_checklist>
 
 <verdict_format>
