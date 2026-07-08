@@ -351,6 +351,10 @@ export function buildResearchTools(
   // runaway backstop for finish-loop variants that evade the frontier-only F2 streak
   // (e.g. the finish→edit→compile→typesetter cycle looping on freshness/typesetter gates).
   let finishCallCount = 0;
+  // Finish attempts rejected by the background-agent lock (which returns before
+  // finishCallCount increments — see the gate comment). Separate cap, generous
+  // enough for legitimate wait-and-retry patterns.
+  let bgBlockedFinishCount = 0;
 
 /**
  * Gate-cost telemetry: a force-exited run (12-call backstop) was previously
@@ -430,9 +434,25 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
         appendFileSync(join(projectDir, "notes", "memory.md"), `\n${lines}\n`);
       }
 
-      // Hard lock: cannot finish while background agents are still running
+      // Hard lock: cannot finish while background agents are still running.
+      // bgBlockedFinishCount (2026-07-09): this lock returns BEFORE the
+      // finishCallCount backstop below, so a run stuck here never trips it —
+      // observed: 3 zombie registry entries blocked finish() 357×, brain spun
+      // 733 finish calls to the 500-turn cap while PI had already said STOP
+      // three times. The zombie sweep in getActiveBackgroundAgents fixes the
+      // dead-entry case; this counter is the belt for a genuinely-alive-but-
+      // hung agent. 30 blocked attempts ≈ no legitimate wait pattern.
       const active = getActiveBackgroundAgents(projectDir);
       if (active.length > 0) {
+        if (++bgBlockedFinishCount >= 30) {
+          callbacks?.onFinish?.();
+          writeFinishStats(projectDir, finishCallCount, true);
+          return { content: [{ type: "text" as const, text:
+            `Force-exit (background-lock backstop): finish() has been blocked ${bgBlockedFinishCount} ` +
+            `times by background agents that never complete. Shipping current artifacts; the ` +
+            `still-registered agents are recorded in .agent/active-agents.json as UNFINISHED.` }],
+            details: { success: true } };
+        }
         const list = active.map(a => `  - ${a.name}: ${a.task} (running ${Math.floor((Date.now() - a.startedAt) / 1000)}s)`).join("\n");
         return { content: [{ type: "text" as const, text: `Cannot finish: ${active.length} background agent(s) still running. Wait for them to complete before finishing.\n\nActive agents:\n${list}` }] };
       }

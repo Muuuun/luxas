@@ -13,7 +13,7 @@ import type { Agent as AgentType } from "@mariozechner/pi-agent-core";
 import { spawn } from "node:child_process";
 import { spawnAgent, type SpawnAgentOptions } from "../agents/spawn.js";
 import { listAgentDescriptions, getDefinition } from "../agents/registry.js";
-import { addAgent, removeAgent, loadRegistry, isAlive, tryExtractResult, formatExitHint, parseConvJsonl } from "../active-agents.js";
+import { addAgent, removeAgent, loadRegistry, isAlive, markFailed, tryExtractResult, formatExitHint, parseConvJsonl } from "../active-agents.js";
 import { appendFileSync, closeSync, openSync, readFileSync, realpathSync, unlinkSync, writeSync } from "node:fs";
 import { join, dirname, sep as pathSep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -220,9 +220,30 @@ function slimExit(exit: any) {
   };
 }
 
+// Zombie sweep threshold: subagent-runner touches the heartbeat every 30s
+// (subagent-runner.ts:93). 5 minutes of silence = 10 missed beats = the
+// runner is dead, whatever the registry entry claims.
+const ZOMBIE_HEARTBEAT_MS = 5 * 60_000;
+
 export function getActiveBackgroundAgents(projectDir?: string) {
   if (!projectDir) return [];
-  return loadRegistry(join(projectDir, ".agent"));
+  const agentDir = join(projectDir, ".agent");
+  const out: ReturnType<typeof loadRegistry> = [];
+  for (const a of loadRegistry(agentDir)) {
+    // done/failed entries await collection — they must not block finish().
+    if (a.status && a.status !== "running") continue;
+    // Liveness check (2026-07-09): a "running" entry whose markDone/markFailed
+    // never fired is otherwise immortal — observed: 3 entries with heartbeats
+    // 4h stale blocked finish() 357× until the 500-turn cap killed the run.
+    // The isAlive machinery existed all along; this gate just never used it.
+    if (!isAlive(agentDir, a.id, ZOMBIE_HEARTBEAT_MS)) {
+      markFailed(agentDir, a.id,
+        "zombie-swept: heartbeat stale >5min — runner died without a completion callback");
+      continue;
+    }
+    out.push(a);
+  }
+  return out;
 }
 
 /**
