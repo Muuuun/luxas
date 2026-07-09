@@ -393,6 +393,38 @@ export function reportIntegrityIssues(projectDir: string): IntegrityIssue[] {
     }
   }
 
+  // 5b. Cannot-comply blockers (blocking — 2026-07-09 debate verdict on the
+  // counterfeit-instruments class). computed.cannot_comply is the structured
+  // third option between "satisfy the requirement" and "fake it" (observed:
+  // identically-zero detectors + a self-cancelling observable shipped because
+  // the builder had no other exit). This check is the channel's consumer edge:
+  // an unresolved blocker must reach the brain's finish path, or the channel
+  // is one more write-only artifact.
+  {
+    const blocked: string[] = [];
+    for (const e of experiments) {
+      if (!e.latestResults) continue;
+      try {
+        const j = JSON.parse(readFileSync(e.latestResults, "utf-8"));
+        const cc = j?.computed?.cannot_comply;
+        if (Array.isArray(cc) && cc.length > 0) {
+          blocked.push(`${e.id}: ${cc.map((c: any) => String(c?.requirement ?? "?").slice(0, 80)).join("; ")}`);
+        }
+      } catch { /* malformed handled by check 4 */ }
+    }
+    if (blocked.length > 0) {
+      issues.push({
+        kind: "results-schema", blocking: true,
+        text: `Unresolved cannot-comply blocker(s):\n  ${blocked.join("\n  ")}\n` +
+          `A sub-agent reported a requirement satisfiable only by a degenerate artifact. ` +
+          `Resolve it: fix the requirement (re-spawn the experiment with a corrected description), ` +
+          `descope the experiment honestly, or — if genuinely acceptable — move the entry to ` +
+          `computed.cannot_comply_resolved with a "resolution" field explaining the disposition. ` +
+          `Do not ship a report over an open counterfeit-pressure point.`,
+      });
+    }
+  }
+
   // 6. Tests present but no captured pytest run (warning only — the passive
   // capture in bash-hardened.ts only exists for runs after 2026-07-06, so
   // legacy projects legitimately have no artifacts). Promote to blocking

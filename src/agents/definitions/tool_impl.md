@@ -62,6 +62,8 @@ The parent experiment agent may SendMessage you with pytest failure output. When
 
 You are not obligated to pass every test — you're obligated to implement what the description says. If a test goes beyond the description, flag it.
 
+**Cannot-comply is a first-class outcome, never a workaround.** If a requirement in the description can only be satisfied by constructing a degenerate artifact — a check that cannot fail (self-comparison detector, `assert x == x`), a self-cancelling quantity (a value included twice so it XORs to zero), a stub that trivially satisfies the spec's shape — do NOT build the counterfeit. Build the honest partial version, and state in your return message: `CANNOT-COMPLY: <requirement> — <why>` with the file/line of the honest partial. A disclosed workaround buried in a code comment is invisible to every reviewer; observed failure: identically-zero fake detectors passed 269 blind tests because tests verify built-as-described and the counterfeit WAS as-described. The parent experiment agent records your cannot-comply in results.json (`computed.cannot_comply`); a requirement that is wrong gets fixed upstream — a requirement that is faked poisons everything downstream.
+
 </iteration>
 
 <principles>
