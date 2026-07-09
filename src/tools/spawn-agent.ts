@@ -14,7 +14,7 @@ import { spawn } from "node:child_process";
 import { spawnAgent, type SpawnAgentOptions } from "../agents/spawn.js";
 import { listAgentDescriptions, getDefinition } from "../agents/registry.js";
 import { addAgent, removeAgent, loadRegistry, isAlive, markFailed, tryExtractResult, formatExitHint, parseConvJsonl } from "../active-agents.js";
-import { appendFileSync, closeSync, openSync, readFileSync, realpathSync, unlinkSync, writeSync } from "node:fs";
+import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, realpathSync, unlinkSync, writeSync } from "node:fs";
 import { join, dirname, sep as pathSep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { pidAlive } from "../utils.js";
@@ -237,8 +237,13 @@ export function getActiveBackgroundAgents(projectDir?: string) {
     // 4h stale blocked finish() 357× until the 500-turn cap killed the run.
     // The isAlive machinery existed all along; this gate just never used it.
     if (!isAlive(agentDir, a.id, ZOMBIE_HEARTBEAT_MS)) {
+      let stderrTail = "";
+      try {
+        const raw = readFileSync(join(agentDir, "runner-logs", `${a.id.replace(/[/\\]/g, "_")}.err`), "utf-8").trim();
+        if (raw) stderrTail = `\nRunner stderr (tail):\n${raw.slice(-2000)}`;
+      } catch { /* no forensics file — pre-capture spawn */ }
       markFailed(agentDir, a.id,
-        "zombie-swept: heartbeat stale >5min — runner died without a completion callback");
+        "zombie-swept: heartbeat stale >5min — runner died without a completion callback" + stderrTail);
       continue;
     }
     out.push(a);
@@ -473,10 +478,25 @@ export function createSpawnAgentTool(
           args.push("--template-vars", JSON.stringify(bgTemplateVars));
         }
 
+        // Crash forensics (2026-07-10): stdio:"ignore" discarded every crash's
+        // stack trace — including V8 OOM aborts, which no in-process handler
+        // can catch. The runner's own last-resort console.error existed all
+        // along and wrote to /dev/null. Reader of these files: the failure
+        // report in getActiveBackgroundAgents' zombie sweep path and whoever
+        // triages the next death.
+        let stdio: ("ignore" | number)[] = ["ignore", "ignore", "ignore"];
+        let errFd: number | null = null;
+        try {
+          const logDir = join(agentDir, "runner-logs");
+          mkdirSync(logDir, { recursive: true });
+          errFd = openSync(join(logDir, `${agentId.replace(/[/\\]/g, "_")}.err`), "a");
+          stdio = ["ignore", errFd, errFd];
+        } catch { /* forensics must not block the spawn */ }
         const child = spawn("node", args, {
           detached: true,
-          stdio: "ignore",
+          stdio,
         });
+        if (errFd !== null) { try { closeSync(errFd); } catch { /* child holds its own copy */ } }
         child.unref();
 
         // Mirror to log.jsonl so studio's SSE tail surfaces background spawns

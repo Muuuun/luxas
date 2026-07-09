@@ -94,6 +94,24 @@ async function main() {
     touchHeartbeat(agentDir, args.id);
   }, 30_000);
 
+  // Crash forensics (2026-07-10, debate-adjudicated): anything thrown OUTSIDE
+  // the awaited chain — floating promises from subscribe callbacks, timers,
+  // socket errors — exits node without reaching the catch below, leaving a
+  // "running" registry entry whose heartbeat just goes stale (observed: 3
+  // runners died this way in 10 minutes, killing E6; zero bytes of evidence
+  // because stderr was stdio:"ignore" until the same commit). Mark the death
+  // with its reason, log it (stderr now lands in .agent/runner-logs/), and
+  // exit — a post-crash runner whose heartbeat interval keeps ticking would
+  // mask its own death from the liveness sweep.
+  const die = (kind: string) => (err: unknown) => {
+    const msg = `${kind}: ${(err as any)?.stack || String(err)}`;
+    try { markFailed(agentDir, args.id, msg.slice(0, 4000)); } catch { /* registry locked/corrupt — stderr still records it */ }
+    console.error(`subagent-runner ${msg}`);
+    process.exit(1);
+  };
+  process.on("uncaughtException", die("uncaughtException"));
+  process.on("unhandledRejection", die("unhandledRejection"));
+
   // Collector + recovery controller are declared here so the catch block can
   // still finalize() when buildAgentFromDefinition / agent.prompt throws
   // before attach(). Recovery also outlives the try because its attempt count

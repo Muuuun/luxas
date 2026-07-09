@@ -1132,7 +1132,18 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
             // markFailed path that subagent-runner takes on catch() fires exit
             // from its collector; a SIGKILL'd runner never reaches that catch,
             // so this harness-side path is the only source of exit metadata.
-            markFailed(agentDir, a.id, "heartbeat stale — process died without updating status", {
+            // Crash forensics consumer edge (2026-07-10): the runner's stderr
+            // now lands in .agent/runner-logs/<id>.err — attach its tail so
+            // the parent sees WHY (V8 OOM abort vs unhandled rejection vs
+            // provider error), not just "stale". Without this read, the log
+            // files would be one more write-only artifact.
+            let stderrTail = "";
+            try {
+              const errPath = join(agentDir, "runner-logs", `${a.id.replace(/[/\\]/g, "_")}.err`);
+              const raw = readFileSync(errPath, "utf-8").trim();
+              if (raw) stderrTail = `\nRunner stderr (tail):\n${raw.slice(-2000)}`;
+            } catch { /* no stderr captured (pre-forensics spawn or clean silence) */ }
+            markFailed(agentDir, a.id, "heartbeat stale — process died without updating status" + stderrTail, {
               stopReason: "killed",
               filesTouched: [],
               elapsedMs: Date.now() - a.startedAt,
