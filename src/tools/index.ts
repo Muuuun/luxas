@@ -351,10 +351,6 @@ export function buildResearchTools(
   // runaway backstop for finish-loop variants that evade the frontier-only F2 streak
   // (e.g. the finish→edit→compile→typesetter cycle looping on freshness/typesetter gates).
   let finishCallCount = 0;
-  // Finish attempts rejected by the background-agent lock (which returns before
-  // finishCallCount increments — see the gate comment). Separate cap, generous
-  // enough for legitimate wait-and-retry patterns.
-  let bgBlockedFinishCount = 0;
 
 /**
  * Gate-cost telemetry: a force-exited run (12-call backstop) was previously
@@ -435,26 +431,24 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
       }
 
       // Hard lock: cannot finish while background agents are still running.
-      // bgBlockedFinishCount (2026-07-09): this lock returns BEFORE the
-      // finishCallCount backstop below, so a run stuck here never trips it —
-      // observed: 3 zombie registry entries blocked finish() 357×, brain spun
-      // 733 finish calls to the 500-turn cap while PI had already said STOP
-      // three times. The zombie sweep in getActiveBackgroundAgents fixes the
-      // dead-entry case; this counter is the belt for a genuinely-alive-but-
-      // hung agent. 30 blocked attempts ≈ no legitimate wait pattern.
+      // 2026-07-10 (debate-adjudicated): this branch used to reject with advisory
+      // prose and count blocks toward a 30-call force-exit backstop. The backstop
+      // guillotined a healthy run — the zombie sweep in getActiveBackgroundAgents
+      // means anything reaching this lock is alive by construction, so the counter
+      // could only ever hit legitimate waits (observed: live experiment force-exited
+      // at minute 16 with 0 effective finishes, all audits skipped). Now the lock
+      // IS the wait: same harness-side poll/sweep/harvest as idle, zero LLM cost,
+      // then the harvest returns to the brain so results round-trip through the
+      // ledger before the gates run. Dead agents get stale-swept inside the wait
+      // (zombie deadlock structurally impossible); an alive-but-hung agent costs
+      // one cheap turn per 10-min timeout, bounded by the wall-clock cap in hooks.
       const active = getActiveBackgroundAgents(projectDir);
       if (active.length > 0) {
-        if (++bgBlockedFinishCount >= 30) {
-          callbacks?.onFinish?.();
-          writeFinishStats(projectDir, finishCallCount, true);
-          return { content: [{ type: "text" as const, text:
-            `Force-exit (background-lock backstop): finish() has been blocked ${bgBlockedFinishCount} ` +
-            `times by background agents that never complete. Shipping current artifacts; the ` +
-            `still-registered agents are recorded in .agent/active-agents.json as UNFINISHED.` }],
-            details: { success: true } };
-        }
-        const list = active.map(a => `  - ${a.name}: ${a.task} (running ${Math.floor((Date.now() - a.startedAt) / 1000)}s)`).join("\n");
-        return { content: [{ type: "text" as const, text: `Cannot finish: ${active.length} background agent(s) still running. Wait for them to complete before finishing.\n\nActive agents:\n${list}` }] };
+        const blob = await waitAndHarvestBackground(projectDir, 600_000);
+        return { content: [{ type: "text" as const, text:
+          `finish() deferred: background agent(s) were still running. Waited and harvested:\n\n` +
+          `${blob}\n\n` +
+          `Integrate these results (notes/experiments.md ledger, report) as needed, then call finish() again.` }] };
       }
 
       // Fix 3 (2026-06-22): global runaway-finish backstop. F2 (blockedFinishStreak)
@@ -1099,8 +1093,36 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
       },
     },
     execute: async (args: { timeout_ms?: number }) => {
+      const body = await waitAndHarvestBackground(projectDir, args.timeout_ms ?? 600_000);
+      return { content: [{ type: "text" as const, text: body }] };
+    },
+  };
+
+  const tools = [
+    ...reportTools,
+    initReport,
+    ...authorityTools,
+    ...codingTools,
+    spawnTool,
+    idleTool,
+    finishTool,
+  ];
+
+  return {
+    tools,
+    setParentAgent: (agent: Agent) => { parentAgentRef = agent; },
+  };
+}
+
+/**
+ * Shared wait/sweep/harvest body for `idle` and the finish() background lock
+ * (2026-07-10, debate-adjudicated): one owner for the waiting semantics so the
+ * two callers can never drift. Polls the registry at 2s cadence, zombie-sweeps
+ * stale heartbeats (with stderr forensics), and returns all completions as one
+ * text blob. Never throws.
+ */
+export async function waitAndHarvestBackground(projectDir: string, timeout: number): Promise<string> {
       const agentDir = join(projectDir, ".agent");
-      const timeout = args.timeout_ms ?? 600_000;
       const start = Date.now();
       const pollMs = 2000;
 
@@ -1182,22 +1204,5 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
       } else {
         body = `${harvested.length} background agent(s) completed:\n\n` + harvested.join("\n\n---\n\n");
       }
-      return { content: [{ type: "text" as const, text: body }] };
-    },
-  };
-
-  const tools = [
-    ...reportTools,
-    initReport,
-    ...authorityTools,
-    ...codingTools,
-    spawnTool,
-    idleTool,
-    finishTool,
-  ];
-
-  return {
-    tools,
-    setParentAgent: (agent: Agent) => { parentAgentRef = agent; },
-  };
+      return body;
 }
