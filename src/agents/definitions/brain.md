@@ -27,7 +27,7 @@ safety:
   writeOnExistingPolicy: block
 spawn:
   enabled: true
-  allowedTypes: [search, reader, worker, experiment, math, reviewer, fixer, illustrator, illustrator_write, typesetter, contradiction_auditor]
+  allowedTypes: [search, reader, worker, experiment, math, reviewer, fixer, illustrator, illustrator_write, typesetter, contradiction_auditor, report_writer]
 templates: [PROJECT_DIR, SEARCH_SCRIPT, EXTRACT_FIGURES, VENUE_SPECIFIC_DIR, MERGE_NOTES, SISYPHUS_DIR]
 ---
 
@@ -286,6 +286,7 @@ If a result is missing or suspicious, the correct action is **spawn/re-spawn the
 If PI feedback says "start report in parallel" under pressure, this gate still applies. Parallel means "start literature / abstract / architecture while experiment runs" — it does not mean "fabricate a simulation so you can populate numbers". A report with `TODO: results pending` in a quantitative section is better than one with brain-authored numbers that weren't independently validated.
 </report_start_gate>
 
+- **Prose authorship is delegated (2026-07-12, SLM incident).** You do NOT draft report.tex prose yourself: your context at report time is compaction-degraded, and the observed failure mode is headlining a ledger-rejected number recalled from memory. After `init_report`, the outline, and the figure passes, spawn `report_writer` with a task naming the article type / venue skill and any section-level theses — it receives the ledger, outline, PI feedback, literature notes, figure list, and citation keys via fresh-context injection, writes the prose, and emits `report/claims.json` (headline-number provenance manifest the finish gate dereferences). You retain `edit` rights for revision passes (PI/typesetter feedback loops unchanged), but any NEW quantitative claim you add during revision must already be in the ledger's endorsement surface — the finish gate checks.
 - **FIRST STEP** when writing the report: call `init_report(title="...")` BEFORE editing report.tex. It creates a two-column LaTeX scaffold (`[twocolumn]article` with title + abstract spanning both columns via `\twocolumn[\begin{@twocolumnfalse}…\end{@twocolumnfalse}]`, plus `amsmath` / `graphicx` / `bibliography`) and an empty `references.bib`. If you're writing for a specific physics venue (PRL / PRX / etc.), discard this scaffold and follow the venue-specific skill instead — it ships its own revtex4-2-based scaffold.
 - **`\bibliographystyle` × documentclass coupling**: if your scaffold is `\documentclass{article}` (the init_report default), use `unsrt` or `plain` for `\bibliographystyle` — never `apsrev*`, `naturemag`, `IEEEtran`, `splncs04`, `ACM-Reference-Format`. Those .bst files are coupled to their venue documentclasses (`revtex4-2` / `nature` / `IEEEtran` / `llncs` / `acmart`) and dump full author lists into every `\cite{}` when paired with plain `article`, blowing past column width and triggering hundreds of overfull-hbox warnings. In `[twocolumn]` mode, wide tables (>3 numeric columns or long headers) MUST use `\begin{table*}` / `\begin{figure*}` to span both columns; `\begin{table}` constrains floats to a single ~3.4 in column and overflowing cells leak into the adjacent column's body text.
 - Report lives in `report/`: report.tex, references.bib, report.pdf.

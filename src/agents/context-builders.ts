@@ -59,7 +59,45 @@ const CONTEXT_BUILDERS: Record<string, ContextBuilder> = {
   experiment: buildExperimentContext,
   reviewer: buildPIContext,
   typesetter: buildTypesetterContext,
+  report_writer: buildReportWriterContext,
 };
+
+// ── Report-writer context (2026-07-12, SLM-incident debate) ──
+//
+// The report-synthesis turn is the mirror image of the ledger_writer turn:
+// recorded knowledge becomes public claims, executed (pre-fix) by the brain
+// at its most compaction-degraded moment. Observed failure: a ledger-rejected
+// branch (computed into results.json as a conservative bound) was recalled
+// from compacted memory and headlined. The fix is mechanical injection of the
+// ENDORSEMENT layer at spawn time — full ledger + outline + PI feedback —
+// and deliberate OMISSION of raw results.json: the raw store contains
+// rejected/intermediate leaves, which is exactly the poison. Numbers reach
+// the writer only through the ledger the ledger_writer curated.
+function buildReportWriterContext(projectDir: string): string {
+  const parts: string[] = [];
+  const inject = (label: string, relPath: string, cap = 60_000) => {
+    const raw = readFileSafe(join(projectDir, relPath));
+    if (!raw) return;
+    parts.push(`<${label} path="${relPath}">\n${smartTruncate(raw, cap)}\n</${label}>`);
+  };
+  inject("ledger", "notes/experiments.md");
+  inject("outline", "notes/report_outline.md", 20_000);
+  inject("pi_feedback", "reviews/pi_feedback.md", 20_000);
+  inject("literature_notes", "notes/literature.md", 40_000);
+  // Available figure files + citation keys — so the writer references only
+  // what exists (same discipline brain.md imposes, delivered as facts).
+  try {
+    const figs = readdirSync(join(projectDir, "report", "figures"))
+      .filter((f) => /\.(pdf|png)$/.test(f));
+    if (figs.length > 0) parts.push(`<available_figures>\n${figs.join("\n")}\n</available_figures>`);
+  } catch { /* none yet */ }
+  try {
+    const keys = readdirSync(join(projectDir, "notes", "literature.d"))
+      .filter((f) => f.endsWith(".md")).map((f) => f.replace(/\.md$/, ""));
+    if (keys.length > 0) parts.push(`<citation_keys>\n${keys.join("\n")}\n</citation_keys>`);
+  } catch { /* none */ }
+  return parts.join("\n\n");
+}
 
 export function resolveContextBuilder(name: string | undefined): ContextBuilder | undefined {
   if (!name) return undefined;

@@ -54,7 +54,9 @@ const SUP: Record<string, string> = {
 function normalizeNotation(text: string): string {
   return text
     .replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹⁻]+/g, (s) => "^{" + [...s].map((c) => SUP[c] ?? c).join("") + "}")
-    .replace(/×/g, "\\times");
+    .replace(/×/g, "\\times")
+    // thousands separators: 10,500 → 10500 (comma between digit groups of 3)
+    .replace(/(\d),(?=\d{3}(?:\D|$))/g, "$1");
 }
 
 export function extractNumbers(raw: string): number[] {
@@ -134,7 +136,11 @@ function texClaimText(src: string): { abstract: string; body: string } {
     .replace(/\b\d+(?:\.\d+)?(?:pt|cm|mm|em|ex|in|bp)\b/g, " ")
     .replace(/\\begin\{(?:tabular|tabularx)\}\s*(\{[^}]*\}){1,2}/g, " ");
   const am = s.match(/\\begin\{abstract\}([\s\S]*?)\\end\{abstract\}/);
-  return { abstract: am ? am[1] : "", body: s };
+  // Headline surface = abstract + the conclusion section (both are where
+  // rejected-branch numbers get promoted; SLM incident hit both).
+  const cm = s.match(/\\section\*?\{[^}]*(?:结论|Conclusion|Summary|总结)[^}]*\}([\s\S]*?)(?=\\section|\\bibliography|\\end\{document\})/i);
+  const abstract = (am ? am[1] : "") + "\n" + (cm ? cm[1] : "");
+  return { abstract, body: s };
 }
 
 // ── evidence corpus ─────────────────────────────────────────────
@@ -187,6 +193,81 @@ function collectEvidenceNumbers(projectDir: string, experiments: ExperimentDir[]
   return out;
 }
 
+/**
+ * ENDORSED evidence for headline claims (2026-07-12, debate-adjudicated after
+ * the SLM incident): the abstract/conclusion may only carry numbers from the
+ * ledger's endorsement surface (Headline findings / Verdict / 结论 sections of
+ * notes/experiments.md) or from literature notes. Raw results.json leaves are
+ * NOT headline provenance — E1 of the SLM run computed the incoherent-limit
+ * thresholds (1.05e8 Hz) into computed.* as a conservative bound, the ledger's
+ * verdict rejected that branch (endorsing 200 Hz / 10.5 kHz), and the report
+ * headlined the rejected-but-computed number anyway. "Computed" is not
+ * "endorsed"; the ledger — written by the fresh-context ledger_writer and
+ * audited by reviewer + contradiction_auditor — is the endorsement layer.
+ * Falls back to the full ledger when no endorsement sections parse (legacy
+ * ledger formats must not dead-gate, per the E_N-header-regex lesson).
+ */
+function collectEndorsedNumbers(projectDir: string): number[] {
+  const out: number[] = [];
+  let ledger = "";
+  try { ledger = readFileSync(join(projectDir, "notes", "experiments.md"), "utf-8"); } catch { /* absent */ }
+  const sectRE = /^#{2,4}\s+.*(headline|verdict|结论|核心发现|adjudicat)[^\n]*\n([\s\S]*?)(?=^#{2,4}\s|(?![\s\S]))/gim;
+  let m: RegExpExecArray | null;
+  let found = false;
+  while ((m = sectRE.exec(ledger))) {
+    found = true;
+    out.push(...extractNumbers(m[2]));
+  }
+  if (!found) out.push(...extractNumbers(ledger));
+  try { out.push(...extractNumbers(readFileSync(join(projectDir, "notes", "literature.md"), "utf-8"))); } catch { /* absent */ }
+  return out;
+}
+
+/**
+ * One level of derived arithmetic over an evidence set: v resolves if it is
+ * a·b, a/b, a+b, a−b, or a scaled by a common unit factor, for a,b endorsed.
+ * Kills the "36 = 3×12 rounds" / ratio / percent / kHz-vs-Hz FP classes
+ * without an open-ended search (single multiplication level, capped corpus).
+ */
+const UNIT_FACTORS = [1e3, 1e-3, 100, 0.01, 60];
+
+function resolvesDerived(v: number, evidence: number[]): boolean {
+  const ev = evidence.length > 400 ? evidence.slice(0, 400) : evidence;
+  // TIGHT tolerance only (0.5% relative), and each op is shaped like its one
+  // legitimate use case. Anything looser is porous over a few-hundred-value
+  // corpus — verified live on the SLM incident: sig-1 products laundered
+  // 1.045e8 via 10500×~1e4; wide unit factors via an unrelated 105.2×1e6;
+  // unconstrained ratios via 10468/0.0001.
+  //   product: one operand is a small integer count/multiplier (rounds ×
+  //            per-round, 3×12) — require int in [2,100];
+  //   ratio:   result is a relative factor or percent — require |v| ≤ 1000;
+  //   unit factor: one hop only (kHz↔Hz, %, minutes).
+  const tight = (x: number, e: number) =>
+    x === e || Math.abs(x - e) <= 0.005 * Math.max(Math.abs(x), Math.abs(e));
+  for (const f of UNIT_FACTORS) {
+    if (ev.some((e) => tight(v, e * f))) return true;
+  }
+  const smallInts = [...new Set(ev.filter((e) => Number.isInteger(e) && e >= 2 && e <= 100))];
+  for (const a of ev) {
+    for (const k of smallInts) {
+      if (tight(v, a * k)) return true;
+    }
+  }
+  if (Math.abs(v) <= 1000) {
+    for (let i = 0; i < ev.length; i++) {
+      const a = ev[i];
+      for (let j = i; j < ev.length; j++) {
+        const b = ev[j];
+        if (b !== 0 && tight(v, a / b)) return true;
+        if (a !== 0 && tight(v, b / a)) return true;
+      }
+    }
+  }
+  // sums/differences deliberately excluded: over a few hundred evidence
+  // values they resolve almost anything, silently disarming the gate.
+  return false;
+}
+
 // ── the checks ──────────────────────────────────────────────────
 
 const VERDICT_ENUM = new Set(["confirmed", "refuted", "inconclusive"]);
@@ -201,22 +282,81 @@ export function reportIntegrityIssues(projectDir: string): IntegrityIssue[] {
     try { return readFileSync(join(projectDir, "notes", "experiments.md"), "utf-8"); } catch { return ""; }
   })();
 
-  // 1. Number provenance — abstract blocks, body warns.
+  // 1. Number provenance. Headline surface (abstract + conclusion) blocks
+  //    against the ENDORSED corpus (ledger headline/verdict sections +
+  //    literature) — "computed" is not "endorsed" (SLM incident 2026-07-12:
+  //    a ledger-rejected branch lived in computed.* and got headlined).
+  //    Body warns against the full corpus, unchanged.
   const evidence = collectEvidenceNumbers(projectDir, experiments);
   if (evidence.length > 0) {
     const fmt = (v: number) => (Math.abs(v) >= 1e-3 && Math.abs(v) < 1e6 ? String(v) : v.toExponential(3));
-    const unresolvedAbstract = [...new Set(extractNumbers(abstract))]
-      .filter((v) => !exempt(v) && !resolves(v, evidence));
+    const endorsed = collectEndorsedNumbers(projectDir);
+    const headlineNums = [...new Set(extractNumbers(abstract))].filter((v) => !exempt(v));
+    const unresolvedAbstract = headlineNums
+      .filter((v) => !resolves(v, endorsed) && !resolvesDerived(v, endorsed));
     if (unresolvedAbstract.length > 0) {
+      const computedOnly = unresolvedAbstract.filter((v) => resolves(v, evidence));
+      const nowhere = unresolvedAbstract.filter((v) => !resolves(v, evidence));
+      const parts: string[] = [];
+      if (computedOnly.length > 0) {
+        parts.push(
+          `${computedOnly.slice(0, 6).map(fmt).join(", ")} exist(s) in the raw evidence store but ` +
+          `NOT in the ledger's endorsement surface (Headline findings / Verdict sections of ` +
+          `notes/experiments.md) or literature notes. A computed value is not an endorsed value — ` +
+          `intermediate/rejected branches also live in results.json. If the ledger's verdict ` +
+          `endorses this number, add it to the experiment's Headline findings; if the verdict ` +
+          `rejected the branch it came from, replace it in the report with the endorsed number.`);
+      }
+      if (nowhere.length > 0) {
+        parts.push(
+          `${nowhere.slice(0, 6).map(fmt).join(", ")} appear(s) NOWHERE in the evidence store — ` +
+          `a from-memory or extrapolated figure. Compute it (record in results.json + ledger ` +
+          `headline), quote it (notes/literature.md with source), or remove it.`);
+      }
       issues.push({
         kind: "number-provenance", blocking: true,
-        text: `Abstract contains number(s) with no provenance in the evidence store ` +
-          `(results.json / notes/*.md): ${unresolvedAbstract.slice(0, 8).map(fmt).join(", ")}. ` +
-          `Every abstract number must be a computed leaf or a quoted, noted literature value — ` +
-          `not an extrapolation or a from-memory figure. Either compute it (record in results.json), ` +
-          `quote it (add to notes/literature.md with source), or remove it from the abstract.`,
+        text: `Headline surface (abstract/conclusion) contains number(s) without endorsed provenance:\n  - ` +
+          parts.join("\n  - "),
       });
     }
+    // 1b. claims.json dereference (2026-07-12). When the report_writer's
+    //     provenance manifest exists, each entry's source_quote must appear
+    //     verbatim in the named file and contain the claimed value. A valid
+    //     pointer to a non-existent quote is fabricated provenance. The
+    //     manifest is optional (brain-authored legacy reports have none) —
+    //     absence is not an issue; presence is a contract.
+    try {
+      const claimsRaw = readFileSync(join(projectDir, "report", "claims.json"), "utf-8");
+      const claims = JSON.parse(claimsRaw);
+      const bad: string[] = [];
+      if (Array.isArray(claims)) {
+        for (const c of claims) {
+          const v = typeof c?.value === "number" ? c.value : NaN;
+          const file = String(c?.source_file ?? "");
+          const quote = String(c?.source_quote ?? "");
+          if (!Number.isFinite(v) || !quote || !/^notes\/(experiments|literature)\.md$/.test(file)) {
+            bad.push(`malformed entry: ${JSON.stringify(c).slice(0, 100)}`);
+            continue;
+          }
+          let src = "";
+          try { src = readFileSync(join(projectDir, file), "utf-8"); } catch { /* missing file */ }
+          if (!src.includes(quote)) {
+            bad.push(`${fmt(v)}: quote not found verbatim in ${file}: "${quote.slice(0, 80)}"`);
+          } else if (!resolves(v, extractNumbers(quote))) {
+            bad.push(`${fmt(v)}: quote exists in ${file} but does not contain the value: "${quote.slice(0, 80)}"`);
+          }
+        }
+      }
+      if (bad.length > 0) {
+        issues.push({
+          kind: "number-provenance", blocking: true,
+          text: `report/claims.json has ${bad.length} entr${bad.length === 1 ? "y" : "ies"} that fail dereference:\n  - ` +
+            bad.slice(0, 8).join("\n  - ") +
+            `\nEach claims.json entry must quote, verbatim, the ledger/literature sentence containing its value.`,
+        });
+      }
+    } catch { /* no manifest — legacy report, corpus checks above still apply */ }
+
     const unresolvedBody = [...new Set(extractNumbers(body))]
       .filter((v) => !exempt(v) && !resolves(v, evidence));
     if (unresolvedBody.length > 0) {
