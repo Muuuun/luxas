@@ -33,9 +33,17 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 
 export interface IntegrityIssue {
-  kind: "number-provenance" | "experiment-citation" | "disclosure" | "results-schema" | "harness-vocab" | "outline";
+  kind: "number-provenance" | "experiment-citation" | "disclosure" | "results-schema" | "harness-vocab" | "outline" | "method-blocked";
   blocking: boolean;
   text: string;
+  /**
+   * When true, the reviews/integrity_pushback.md mtime hatch does NOT waive
+   * this issue. The hatch exists for parser false positives ("E_2 is a
+   * physics symbol"); a deliberately-written structured entry
+   * (cannot_comply / method_blocked) cannot be a parser false positive —
+   * its only exits are the *_resolved disposition fields.
+   */
+  pushbackExempt?: boolean;
 }
 
 // ── number extraction ───────────────────────────────────────────
@@ -541,20 +549,45 @@ export function reportIntegrityIssues(projectDir: string): IntegrityIssue[] {
   // an unresolved blocker must reach the brain's finish path, or the channel
   // is one more write-only artifact.
   {
-    const blocked: string[] = [];
-    for (const e of experiments) {
-      if (!e.latestResults) continue;
+    // Entry-evaporation fix (2026-07-13): scan ALL runs, not just the latest —
+    // an experiment_reviewer revise loop legitimately produces run_N+1 whose
+    // results.json may not carry the blocker forward. An entry is live unless
+    // the LATEST run's *_resolved list disposes it (matched on requirement).
+    const collectAllRuns = (e: ExperimentDir, key: string): any[] => {
+      const out: any[] = [];
+      const runsDir = join(e.dir, "runs");
+      try {
+        for (const run of readdirSync(runsDir)) {
+          if (!/^run_\d+$/.test(run)) continue;
+          try {
+            const j = JSON.parse(readFileSync(join(runsDir, run, "results.json"), "utf-8"));
+            const v = j?.computed?.[key];
+            if (Array.isArray(v)) out.push(...v);
+          } catch { /* unparseable run */ }
+        }
+      } catch { /* no runs dir */ }
+      return out;
+    };
+    const latestResolved = (e: ExperimentDir, key: string): any[] => {
+      if (!e.latestResults) return [];
       try {
         const j = JSON.parse(readFileSync(e.latestResults, "utf-8"));
-        const cc = j?.computed?.cannot_comply;
-        if (Array.isArray(cc) && cc.length > 0) {
-          blocked.push(`${e.id}: ${cc.map((c: any) => String(c?.requirement ?? "?").slice(0, 80)).join("; ")}`);
-        }
-      } catch { /* malformed handled by check 4 */ }
+        return Array.isArray(j?.computed?.[key]) ? j.computed[key] : [];
+      } catch { return []; }
+    };
+
+    const blocked: string[] = [];
+    for (const e of experiments) {
+      const cc = collectAllRuns(e, "cannot_comply");
+      const resolved = new Set(latestResolved(e, "cannot_comply_resolved").map((r: any) => String(r?.requirement ?? "")));
+      const live = cc.filter((c: any) => !resolved.has(String(c?.requirement ?? "")));
+      if (live.length > 0) {
+        blocked.push(`${e.id}: ${live.map((c: any) => String(c?.requirement ?? "?").slice(0, 80)).join("; ")}`);
+      }
     }
     if (blocked.length > 0) {
       issues.push({
-        kind: "results-schema", blocking: true,
+        kind: "results-schema", blocking: true, pushbackExempt: true,
         text: `Unresolved cannot-comply blocker(s):\n  ${blocked.join("\n  ")}\n` +
           `A sub-agent reported a requirement satisfiable only by a degenerate artifact. ` +
           `Resolve it: fix the requirement (re-spawn the experiment with a corrected description), ` +
@@ -562,6 +595,79 @@ export function reportIntegrityIssues(projectDir: string): IntegrityIssue[] {
           `computed.cannot_comply_resolved with a "resolution" field explaining the disposition. ` +
           `Do not ship a report over an open counterfeit-pressure point.`,
       });
+    }
+
+    // 5c. Method-blocked escalations (blocking — 2026-07-13 debate verdict on
+    // the choose-easy-over-appropriate class). computed.method_blocked records
+    // a field-standard tool abandoned for engineering friction, with the
+    // failing command and the VERBATIM last error. Two teeth beyond 5b's
+    // pattern: (a) the verbatim text is grounded against the harness's own
+    // per-command transcripts (.agent/jobs/*/output.log — agent-unwritable),
+    // so a paraphrase like "requires manual database download" cannot anchor;
+    // (b) disposition is brain's, via computed.method_blocked_resolved with a
+    // "resolution" field — the deadline-pressured producer does not
+    // self-approve a method-class downgrade.
+    {
+      const norm = (t: string) => t.replace(/\s+/g, " ").trim().toLowerCase();
+      let jobsCorpus: string | null = null; // lazy-loaded concatenation of job log tails
+      const loadJobs = (): string => {
+        if (jobsCorpus !== null) return jobsCorpus;
+        const chunks: string[] = [];
+        try {
+          const jobsDir = join(projectDir, ".agent", "jobs");
+          for (const id of readdirSync(jobsDir)) {
+            try {
+              const p = join(jobsDir, id, "output.log");
+              const sz = statSync(p).size;
+              const raw = readFileSync(p, "utf-8");
+              chunks.push(sz > 262_144 ? raw.slice(-262_144) : raw);
+            } catch { /* job without log */ }
+          }
+        } catch { /* no jobs dir — legacy project */ }
+        jobsCorpus = norm(chunks.join("\n"));
+        return jobsCorpus;
+      };
+
+      const open: string[] = [];
+      const unanchored: string[] = [];
+      for (const e of experiments) {
+        const mb = collectAllRuns(e, "method_blocked");
+        if (mb.length === 0) continue;
+        const resolved = new Set(latestResolved(e, "method_blocked_resolved").map((r: any) => String(r?.intended_tool ?? "")));
+        for (const m of mb) {
+          const tool = String(m?.intended_tool ?? "?");
+          if (resolved.has(tool)) continue;
+          const err = String(m?.verbatim_last_error ?? "");
+          const cmd = String(m?.failing_command ?? "");
+          const label = `${e.id}: ${tool} → fallback "${String(m?.fallback_used ?? "?").slice(0, 60)}"`;
+          // transcript grounding: only when job logs exist (legacy projects
+          // have none — don't dead-gate them on an unverifiable requirement)
+          const corpus = loadJobs();
+          if (corpus && err && !corpus.includes(norm(err))) {
+            unanchored.push(`${label} — verbatim_last_error not found in any .agent/jobs transcript; ` +
+              `it must be copy-paste from the failing command's output, not a paraphrase ` +
+              `(recorded: "${err.slice(0, 100)}")`);
+          } else {
+            open.push(`${label}${cmd ? ` (failing command: ${cmd.slice(0, 80)})` : ""}`);
+          }
+        }
+      }
+      if (open.length > 0 || unanchored.length > 0) {
+        const parts: string[] = [];
+        if (open.length > 0) {
+          parts.push(`Undisposed method-blocked escalation(s):\n  ${open.join("\n  ")}\n` +
+            `A field-standard method was abandoned for engineering friction and a weaker method used. ` +
+            `Brain must disposition each: re-run the failing_command yourself (fresh eyes on the raw ` +
+            `error — check skills/compute-methods/ for a known fix), then either fix-and-respawn, or ` +
+            `accept the fallback by writing computed.method_blocked_resolved: ` +
+            `[{"intended_tool": ..., "resolution": "<what you ran / why the fallback stands>"}] in the ` +
+            `latest results.json AND disclosing the method substitution in the report's limitations.`);
+        }
+        if (unanchored.length > 0) {
+          parts.push(`Unanchored method-blocked entr${unanchored.length === 1 ? "y" : "ies"}:\n  ${unanchored.join("\n  ")}`);
+        }
+        issues.push({ kind: "method-blocked", blocking: true, pushbackExempt: true, text: parts.join("\n\n") });
+      }
     }
   }
 

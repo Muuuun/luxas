@@ -539,7 +539,7 @@ export function createSpawnAgentTool(
       if (taskList.length > 1) {
         const results = await Promise.all(
           taskList.map((task, i) =>
-            spawnAgent({ ...baseOpts, prompt: task, instanceIndex: i })
+            spawnAgent({ ...baseOpts, prompt: task, contextExtra: { task }, instanceIndex: i })
           ),
         );
 
@@ -564,7 +564,7 @@ export function createSpawnAgentTool(
 
       // ── Foreground mode (default) ──
       const initialTask = taskList[0];
-      let result = await spawnAgent({ ...baseOpts, prompt: initialTask });
+      let result = await spawnAgent({ ...baseOpts, prompt: initialTask, contextExtra: { task: initialTask } });
 
       // Auto-review loop: after any foreground experiment completes, spawn
       // the experiment_reviewer to audit its L2 section + results + cited
@@ -643,7 +643,7 @@ export function createSpawnAgentTool(
               `artifacts (scripts, tests, runs/). Do NOT start from scratch; reuse or extend.\n\n` +
               `## Reviewer feedback\n\n${feedback}\n\n` +
               `## Original task (for reference)\n\n${initialTask}`;
-            result = await spawnAgent({ ...baseOpts, prompt: revisionTask });
+            result = await spawnAgent({ ...baseOpts, prompt: revisionTask, contextExtra: { task: revisionTask } });
             if (!result.success) break;
           }
         }

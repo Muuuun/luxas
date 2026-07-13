@@ -200,6 +200,11 @@ You adjudicate within the bounds of RESEARCH.md:
 - **(c) Narrow constraints** — tighten constraint interpretation, re-spawn with clarified task.
 
 If none is within your authority because resolution would require modifying RESEARCH.md itself, use the authority-bound escalation tool.
+
+**Method-blocked disposition** (the finish gate blocks on undisposed `computed.method_blocked` entries, and they are pushback-exempt): an experiment recorded that a field-standard tool was abandoned for engineering friction, with the failing command and its verbatim last error. You dispose it — the deadline-pressured producer does not self-approve a method-class downgrade. Procedure:
+1. **Re-run the recorded `failing_command` yourself** (bash) and read the final error line literally — the raw error routinely names a fix the producer's summary lost ("Check the spelling of the species" ≠ "requires manual database download"). Check the matched `skills/compute-methods/` sheet: a listed friction is a usage bug with a known fix.
+2. Dispose one of three ways: **fix-and-respawn** (you found the usage fix — respawn the experiment naming it); **accept-with-disclosure** (the block is real — write `computed.method_blocked_resolved: [{"intended_tool": ..., "resolution": "<what you ran and why the fallback stands>"}]` into the latest results.json via the experiment agent or an edit, AND ensure the method substitution appears in the report's limitations); or **descope honestly** (the quantity leaves the report).
+3. A resolution that does not name a command you actually ran is not a resolution — "reviewed, acceptable given time constraints" is the rubber stamp this channel exists to prevent.
 </handling_scope_clarification>
 
 <procurement_preference>

@@ -4,6 +4,8 @@
  */
 
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import {
@@ -60,7 +62,91 @@ const CONTEXT_BUILDERS: Record<string, ContextBuilder> = {
   reviewer: buildPIContext,
   typesetter: buildTypesetterContext,
   report_writer: buildReportWriterContext,
+  tool_impl: buildToolImplContext,
 };
+
+// ── Compute-methods registry injection (2026-07-13, debate-adjudicated) ──
+//
+// Experiment/tool_impl agents abandon field-standard tools over first-use
+// friction (canonical: pairinteraction rejected as "requires manual database
+// download" when the fix was the species string 'Yb174_mqdt'). Sheets in
+// skills/compute-methods/ carry environment-verified frictions + smoke
+// tests; this builder is their named consumer edge. Passive injection —
+// zero marginal agent action, survives deadline pressure, fails toward the
+// status quo when no sheet matches.
+//
+// Matching: frontmatter `match:` keywords (comma-separated, substring,
+// case-insensitive) counted against RESEARCH.md + literature head + the
+// spawn task (via contextExtra.task when available); ranked by hit count,
+// filename as tiebreaker. Per adversarial review: NO alphabetical-first-two
+// cap (a QEC-on-neutral-atom project must not shadow the rydberg sheet),
+// per-sheet try/catch (a malformed sheet degrades to an index line, never
+// crashes spawns), UNVERIFIED/STALE banners keyed off `verified:` dates so
+// a rotten registry demotes itself instead of inverting trust.
+const STALE_MS = 90 * 24 * 3600 * 1000;
+
+interface MethodSheet { file: string; body: string; hits: number; banner: string }
+
+function loadMethodSheets(projectDir: string, probe: string): MethodSheet[] {
+  // skills/ lives in the Luxas repo, not the project; resolve relative to
+  // this module (same convention as other skill consumers).
+  const skillsDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "skills", "compute-methods");
+  let files: string[] = [];
+  try { files = readdirSync(skillsDir).filter((f) => f.endsWith(".md") && f !== "SKILL.md"); } catch { return []; }
+  const probeLower = probe.toLowerCase();
+  const out: MethodSheet[] = [];
+  for (const f of files.sort()) {
+    try {
+      const raw = readFileSync(join(skillsDir, f), "utf-8");
+      const fm = raw.match(/^---\n([\s\S]*?)\n---/);
+      if (!fm) continue;
+      const matchLine = fm[1].match(/^match:\s*(.+)$/m);
+      if (!matchLine) continue;
+      const keywords = matchLine[1].split(",").map((k) => k.trim().toLowerCase()).filter(Boolean);
+      const hits = keywords.filter((k) => probeLower.includes(k)).length;
+      if (hits === 0) continue;
+      const verified = fm[1].match(/^verified:\s*(\d{4}-\d{2}-\d{2})/m);
+      let banner = "";
+      if (!verified) {
+        banner = "UNVERIFIED — hypotheses from docs, not tested in this environment. Treat as leads, not ground truth.";
+      } else if (Date.now() - new Date(verified[1]).getTime() > STALE_MS) {
+        banner = `STALE (verified ${verified[1]}) — versions may have moved; treat frictions as hints and re-run the smoke test.`;
+      }
+      out.push({ file: f, body: raw.slice(fm[0].length).trim(), hits, banner });
+    } catch { /* malformed sheet — skip, never crash a spawn */ }
+  }
+  return out.sort((a, b) => b.hits - a.hits || a.file.localeCompare(b.file));
+}
+
+function buildMethodsRegistry(projectDir: string, extra: Record<string, any> | undefined, topN: number): string {
+  const probeParts = [
+    readFileSafe(join(projectDir, "RESEARCH.md")),
+    readFileSafe(join(projectDir, "notes", "literature.md")).slice(0, 4000),
+    String(extra?.task ?? ""),
+  ];
+  const sheets = loadMethodSheets(projectDir, probeParts.join("\n"));
+  if (sheets.length === 0) return "";
+  const shown = sheets.slice(0, topN);
+  const rest = sheets.slice(topN).map((s) => s.file).join(", ");
+  const blocks = shown.map((s) => {
+    const head = s.banner ? `[${s.banner}]\n` : "";
+    return `--- ${s.file} ---\n${head}${s.body}`;
+  });
+  return `<methods_registry>
+Field-standard tools and their environment-verified first-use frictions for
+this project's domain. A friction listed here is a usage bug with a known
+fix, not a tool failure — do not abandon the tool for a listed friction.
+Run the sheet's smoke test before concluding a tool is unusable.
+${blocks.join("\n\n")}${rest ? `\n\n(other sheets, not matched as strongly: ${rest})` : ""}
+</methods_registry>`;
+}
+
+// tool_impl gets ONLY the registry (top-1 sheet): it is the agent that picks
+// the library, it is read-blocked outside its experiment dir (so "read on
+// demand" cannot work), and it runs on the cheapest model tier.
+function buildToolImplContext(projectDir: string, extra?: Record<string, any>): string {
+  return buildMethodsRegistry(projectDir, extra, 1);
+}
 
 // ── Report-writer context (2026-07-12, SLM-incident debate) ──
 //
@@ -110,8 +196,12 @@ export function registerContextBuilder(name: string, builder: ContextBuilder): v
 
 // ── Experiment context (extracted from experiment.ts) ──
 
-function buildExperimentContext(projectDir: string): string {
+function buildExperimentContext(projectDir: string, extra?: Record<string, any>): string {
   const parts: string[] = [];
+
+  // 0. Compute-methods registry (top-2 sheets) — see buildMethodsRegistry.
+  const registry = buildMethodsRegistry(projectDir, extra, 2);
+  if (registry) parts.push(registry);
 
   // 1. Project file tree
   const allFiles = listFilesRecursive(projectDir)

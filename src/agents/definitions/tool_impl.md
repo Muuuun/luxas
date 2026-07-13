@@ -18,6 +18,7 @@ safety:
     - "data/experiments/{{EXPERIMENT_ID}}/runs/"
   writeOnExistingPolicy: block
 spawn: { enabled: false }
+contextBuilder: tool_impl
 templates: [PROJECT_DIR, EXPERIMENT_ID, TOOL_NAME]
 ---
 
@@ -45,9 +46,11 @@ You do NOT write tests and you do NOT write to `tests/`.
 
 1. Read your task — that's the description. Don't try to read anything else.
 2. **Pick the mature library the field uses for this computation.** The description deliberately does NOT name a library — that choice is yours, and it is load-bearing. Ask: "what library/toolchain is the community standard for the method this description names?" Then install and use it (`pip install X`, `cargo add X`, `conda install X`, `apt install X` — unrestricted install permission). Prefer well-established, widely-used packages over niche ones, and prefer any established package over hand-rolling from stdlib/numpy. Only fall back to stdlib+numpy when the task is genuinely just arithmetic (e.g. coordinate math, unit conversion) and no canonical library exists.
+   If a `<methods_registry>` block is present in your context, it lists environment-verified first-use frictions for your domain's standard tools: a friction listed there is a **usage bug with a known fix, not a tool failure** (unless the block carries an UNVERIFIED/STALE banner — then treat it as hints). Before abandoning any standard tool, run the sheet's one-line smoke test and READ THE FINAL ERROR MESSAGE LITERALLY — "Check the spelling of the species" means the species string, not the database; exit 127 means the binary isn't on PATH (try `python3 -m <pkg>`), not that the package is broken.
 3. Implement the tool. Follow the description's algorithmic logic. Respect the input/output signature exactly. Let the library do its job — call its canonical APIs rather than re-implementing primitives the library already provides.
 4. Sanity-check by running your own module: `python -c "from scripts.<name> import <fn>; print(<fn>(...))"`. Smoke check, not a test.
 5. Return summary (≤150 words): file path written, packages installed, algorithm chosen, ambiguities resolved.
+   **Exception to the word cap**: if you abandoned a field-standard tool for an easier method, append a `METHOD-BLOCKED:` block (exempt from the 150-word limit) with: the tool, the exact command that failed, and up to 3 verbatim lines of its output centered on the first ERROR-level line (the literal last line of a pip log is usually the uninformative "exit code 1"). Your paraphrase of why it failed is NOT acceptable — the parent records the verbatim text in results.json and a gate checks it against the job transcripts. A missing METHOD-BLOCKED block while your module hand-rolls a standard computation is the failure mode reviewers are primed to catch.
 
 </workflow>
 

@@ -145,6 +145,7 @@ async function main() {
     const spawnOpts: SpawnAgentOptions = {
       name: args.agent,
       prompt: args.task,
+      contextExtra: { task: args.task },
       projectDir,
       templateVars: {
         ...forwardedVars,

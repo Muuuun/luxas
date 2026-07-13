@@ -818,6 +818,21 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
             const texMtimeMs = statSync(join(projectDir, "report", "report.tex")).mtimeMs;
             pushbackFresh = statSync(pushbackPath).mtimeMs > texMtimeMs;
           } catch { /* no pushback file — not fresh */ }
+          // pushbackExempt issues (cannot_comply / method_blocked) survive the
+          // mtime hatch: deliberately-written structured entries are not parser
+          // false positives — their only exits are the *_resolved disposition
+          // fields (2026-07-13; the hatch was otherwise a one-line
+          // self-approval bypass for exactly the decisions that must not be
+          // self-approved).
+          const exempt = blocking.filter((i) => i.pushbackExempt);
+          if (pushbackFresh && exempt.length > 0) {
+            return { content: [{ type: "text" as const, text:
+              `Cannot finish: ${exempt.length} structured blocker(s) cannot be waived via ` +
+              `integrity_pushback.md (that hatch is for parser false positives only). ` +
+              `Disposition them via their *_resolved fields:\n\n` +
+              formatIntegrityIssues(exempt)
+            }] };
+          }
           if (!pushbackFresh) {
             return { content: [{ type: "text" as const, text:
               `Cannot finish: the report diverges from the evidence store ` +
@@ -826,7 +841,9 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
               `\n\nFix the report or the evidence store so they agree, recompile, ` +
               `then finish. If a flag is genuinely false (explain which and why), ` +
               `write reviews/integrity_pushback.md; once its mtime is newer than ` +
-              `report/report.tex, finish() is allowed through.`
+              `report/report.tex, finish() is allowed through. Structured blockers ` +
+              `(cannot_comply / method_blocked) are pushback-exempt — resolve those ` +
+              `via their *_resolved fields instead.`
             }] };
           }
         }
