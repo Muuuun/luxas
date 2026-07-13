@@ -812,6 +812,15 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
       {
         const blocking = reportIntegrityIssues(projectDir).filter((i) => i.blocking);
         if (blocking.length > 0) {
+          // Gate-fire telemetry (2026-07-14): without this, a dead or noisy
+          // gate is indistinguishable from a clean corpus. Reader: postmortem
+          // sessions scan .agent/gate_fires.jsonl to measure per-check block
+          // rates (the overfull-verdict Phase-2 pattern needs exactly this).
+          try {
+            appendFileSync(join(projectDir, ".agent", "gate_fires.jsonl"),
+              JSON.stringify({ at: new Date().toISOString(), gate: "report-integrity",
+                kinds: blocking.map((i) => i.kind) }) + "\n");
+          } catch { /* telemetry never blocks */ }
           const pushbackPath = join(projectDir, "reviews", "integrity_pushback.md");
           let pushbackFresh = false;
           try {
