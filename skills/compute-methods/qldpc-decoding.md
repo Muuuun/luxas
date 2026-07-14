@@ -16,3 +16,9 @@ Cost planning under job deadlines: OSD-CS order-10 on a ~n=1000 code is ~1–60 
 ## Known false rejections
 - "ldpc on macOS produces OpenMP segfaults limiting reliability" → used to reject the d=6/10/12 sweep AND propagated untested into a second project (Yb-vs-Rb family). Fix was `OMP_NUM_THREADS=1` or Linux.
 - "implementing BP+OSD requires the ldpc package and significant decoder engineering beyond scope" → the package IS the engineering; BpOsdDecoder is ~5 lines (qldpc lattice-surgery run later did exactly this).
+
+## Cross-validation control pairs
+| Headline quantity | method_a | method_b | tolerance_rel |
+|---|---|---|---|
+| BP+OSD logical error rate | ldpc BpOsdDecoder on your DEM | pymatching on the graphlike sub-DEM (upper-bounds p_L) — or exact ML decoding on a ≤20-qubit truncation | 0.5 (bound direction must be stated) |
+| decoder input priors | DEM-extracted error_channel | recompute 3 mechanism probabilities by hand from the noise model (write the arithmetic) | exact on the 3 spot checks |

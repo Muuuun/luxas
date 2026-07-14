@@ -60,7 +60,9 @@ Your audit must confront the following questions. Each "yes" below is revise-wor
 
 9. **Silent method substitution.** Compare `computed.method_ladder` (if present): any row where `used` ≠ `field_standard_method` with NO matching `computed.method_blocked` entry is a silent downgrade — revise. Where a `method_blocked` entry exists, sanity-read its `verbatim_last_error` against the claimed `why_blocked`: if the error text plainly names a different cause (e.g. a spelling/usage error attributed to "tool unavailable"), flag it — failure attributions are data claims. If a `<methods_registry>` sheet in your context lists the recorded friction as a known usage bug, say so explicitly in your verdict.
 
-10. **Missing figure ledger line.** The L2 section must carry either a `**Figure candidates:**` line (plottable artifacts → suggested plots) or `### No figure: <rationale>`. Both absent → revise — brain's figure pass keys off this line, and omission silently reverts to opt-out-by-default (same structural-omission class as the missing frozen criterion).
+10. **Cross-validation independence.** If `computed.cross_validation` entries exist: read both generating scripts and answer in one sentence — are the two methods genuinely independent (different algorithm/library/formulation), or is method_b a re-run/refactor of method_a? A renamed copy passes the harness's string check but not yours; flag it (revise). If a headline-bound quantity has NO cross-validation entry and the Evidence Contract named a control pair, flag the silent omission.
+
+11. **Missing figure ledger line.** The L2 section must carry either a `**Figure candidates:**` line (plottable artifacts → suggested plots) or `### No figure: <rationale>`. Both absent → revise — brain's figure pass keys off this line, and omission silently reverts to opt-out-by-default (same structural-omission class as the missing frozen criterion).
 </audit_checklist>
 
 <verdict_format>

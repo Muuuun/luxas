@@ -646,11 +646,63 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
             .map(m => parseInt(m[1], 10))
         );
         const undisposed = followUps.filter(l => !l.isNone && !ranNums.has(l.num) && !declinedNums.has(l.num));
+        // Decline hardening (2026-07-14, quality-strategy debate, B-class):
+        // a decline is content-unjudged EXCEPT when the FollowUp's source L2
+        // is cited in report.tex — then the dependent claim ships, and the
+        // demotion must be WIRED: some claims.json entry must list the lead
+        // in open_dependencies (which caps its grade at conditional and
+        // forces a hedge, via report-integrity 1c). Structural join only:
+        // E_N id in report body (already the citation-gate vocabulary) ×
+        // lead number × claims.json. Referee evidence: 5/5 audited studies'
+        // top objection was an agent-scoped, undisposed follow-up whose
+        // dependent claim shipped unhedged.
+        const badDeclines: string[] = [];
+        {
+          const declinedLeads = followUps.filter(l => !l.isNone && !ranNums.has(l.num) && declinedNums.has(l.num));
+          if (declinedLeads.length > 0) {
+            let reportBody = "";
+            try { reportBody = readFileSync(join(projectDir, "report", "report.tex"), "utf-8"); } catch { /* no report yet */ }
+            let claimDeps = new Set<string>();
+            try {
+              const cj = JSON.parse(readFileSync(join(projectDir, "report", "claims.json"), "utf-8"));
+              if (Array.isArray(cj)) for (const c of cj) {
+                for (const d of (Array.isArray(c?.open_dependencies) ? c.open_dependencies : [])) {
+                  const m2 = String(d).match(/E_?(\d+)/i);
+                  if (m2) claimDeps.add(m2[1]);
+                }
+              }
+            } catch { /* no manifest */ }
+            for (const l of declinedLeads) {
+              const srcNum = (l.sourceSection.match(/(?:L2\.|E_?)(\d+)/) ?? [])[1];
+              const citedRE = new RegExp(`\\bE_?${srcNum}\\b`);
+              if (srcNum && citedRE.test(reportBody) && !claimDeps.has(String(l.num))) {
+                badDeclines.push(`  - ${l.leadId}: its source section E${srcNum} is cited in report.tex, so a claim ` +
+                  `depends on it — the decline must be wired: add the lead to that claim's open_dependencies in ` +
+                  `report/claims.json (grade caps at conditional, hedge required) or run the lead.`);
+              }
+            }
+          }
+        }
+        if (badDeclines.length > 0) {
+          return { content: [{ type: "text" as const, text:
+            `Cannot finish: ${badDeclines.length} declined lead(s) have report-cited source sections but no wired demotion:\n` +
+            badDeclines.join("\n") }] };
+        }
         if (undisposed.length > 0) {
           // F2 escape hatch: a gate-blocked finish() has no terminating edge; cap
           // consecutive blocks so a non-disposing brain can't spin to the turn cap.
           if (++blockedFinishStreak >= 3) {
             callbacks?.onFinish?.();
+            // Force-exit quarantine: the artifact ships, but the ledger — the
+            // most-read artifact and next-run digest source — records that it
+            // shipped over open blockers, in harness voice (agents cannot
+            // remove it retroactively without the diff showing).
+            try {
+              appendFileSync(expNotesPath,
+                `\n## FORCE-EXITED (harness, ${new Date().toISOString().slice(0, 10)})\n` +
+                `Shipped via runaway-cost backstop with UNDISPOSED leads: ` +
+                `${undisposed.map(l => l.leadId).join(", ")}. Headline claims depending on these are UNVERIFIED.\n`);
+            } catch { /* ledger append is best-effort */ }
             return { content: [{ type: "text" as const, text:
               `Force-exit (runaway-cost backstop): 3 consecutive blocked finish() calls with open frontier leads. ` +
               `Shipping current artifacts. Leads left UNDISPOSED (not declined): ${undisposed.map(l => l.leadId).join(", ")}. ` +

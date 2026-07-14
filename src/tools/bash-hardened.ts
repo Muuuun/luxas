@@ -121,6 +121,25 @@ export function createHardenedBashTool(cwd: string, opts?: BashOptions) {
       const timeoutSec = Math.min(Math.max(1, requested), MAX_TIMEOUT_SEC);
       const runInBackground = params.run_in_background === true;
 
+      // Raw-LaTeX bypass seal (2026-07-14, quality-strategy debate): every
+      // compile of the report must flow through compile_latex — its verdict
+      // parser, engine-identity assertion, and report-integrity visibility
+      // are the audits that a bare `xelatex report.tex` silently skips
+      // (observed: a manual session's raw compiles bypassed every sweep; the
+      // engine-shim incident planted PATH shims). Scoped to report-directory
+      // compiles so building figures/TikZ standalone under data/ stays free.
+      if (/\b(?:pdflatex|xelatex|lualatex|latexmk)\b/.test(params.command)
+          && /report(?:\/|\.tex)/.test(params.command)) {
+        return Promise.resolve({
+          content: [{ type: "text", text:
+            "Blocked: compile report.tex with the compile_latex tool, not raw " +
+            "LaTeX — compile_latex runs the verdict parser, engine checks, and " +
+            "report-integrity visibility that a bare engine invocation skips. " +
+            "(Standalone figure/TikZ compiles outside report/ are not blocked.)" }],
+          details: { exitCode: 126, stdout: "", stderr: "blocked: raw latex on report" } as any,
+        });
+      }
+
       const owner = currentJobOwner();
       const ownerAgentId = owner?.agentId ?? "unknown";
       const ownerAgentType = owner?.agentType ?? "unknown";

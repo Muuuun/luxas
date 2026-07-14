@@ -17,3 +17,10 @@ Feasibility arithmetic: Stim+PyMatching does ~10⁶ shots of a d≤15 memory cir
 
 ## Known false rejections
 - "Stim MC would require ~10^11 circuit simulations — computationally prohibitive" — arithmetic inflated ~50–100× (量子点-vs-中性原子 run); the sweep was 2.25×10⁹ shots, hours of CPU.
+
+## Cross-validation control pairs
+| Headline quantity | method_a | method_b | tolerance_rel |
+|---|---|---|---|
+| logical error rate (circuit-level) | stim + your decoder | same circuit, pymatching baseline decoder (graphlike part) — or the analytic small-p expansion p_L ≈ A·p^⌈d/2⌉ slope on the two smallest p points | 0.5 on p_L (order-of-magnitude class), 0.15 on the fitted exponent |
+| detector/observable counts | stim generated circuit | hand-count from the code's stabilizer structure (n_det = rounds × checks ± boundary terms — write the formula) | exact |
+| threshold estimate | your sweep fit | published threshold for the same code+noise family (cite) | 0.3 |

@@ -17,3 +17,10 @@ Cross-check convention: pairinteraction `C3` = pair hopping element; ARC colline
 ## Known false rejections
 - "pairinteraction requires manual database download" — FALSE (Yb/Rb单光子 run, 2026-07-11). v2 auto-downloads; the actual error was the species string.
 - "rydcalc is not publicly installable" — UNTESTED claim, repeated by PI pushback without verification (same run).
+
+## Cross-validation control pairs
+| Headline quantity | method_a (production) | method_b (independent control, one point suffices) | tolerance_rel |
+|---|---|---|---|
+| C6 / C3 coefficient | pairinteraction perturbative (pi.C6/pi.C3) | full pair diagonalization: pi.SystemPair energy vs distance, fit the R^-6/R^-3 tail at 2-3 distances — OR ARC PairStateInteractions (Rb only) | 0.10 (0.30 near any resonance — and flag) |
+| ground/metastable→Rydberg dipole | ARC getDipoleMatrixElement | pairinteraction get_matrix_element (same states, same q) | 0.10 (both are QDT-class; agreement ≠ truth vs experiment — grade caps at indicative for nu<25 lower states regardless) |
+| blockade radius | derived from C6 (state the formula) | direct condition |V(r_b)| = ħΩ on the diagonalized pair potential | 0.15 |

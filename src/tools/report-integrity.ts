@@ -280,8 +280,76 @@ function resolvesDerived(v: number, evidence: number[]): boolean {
 
 const VERDICT_ENUM = new Set(["confirmed", "refuted", "inconclusive"]);
 
+// ── claim grades (2026-07-14, quality-strategy debate) ──────────
+//
+// Evidence grades for headline claims, machine-computed from structured
+// state. Ordering matters: a claim may always be RENDERED at a lower grade
+// than computed, never higher ("a number cannot be rendered stronger than
+// its recorded evidence grade" — the K-class fix). Semantics:
+//   corroborated — an executed, transcript-anchored cross-validation by an
+//                  independent method agrees within tolerance (5d verifies)
+//   indicative   — single-method computation, no divergence flags
+//   conditional  — depends on an unrun FollowUp (open_dependencies)
+//   divergent    — the ledger sentence backing it carries a divergence /
+//                  placeholder / needs-confirmation marker
+const GRADE_ORDER: Record<string, number> = { corroborated: 3, indicative: 2, conditional: 1, divergent: 0 };
+// Hedge tokens required in the tex_context of below-indicative claims —
+// normalized-substring match, deliberately generous (the goal is that SOME
+// hedge reaches the reader in the same sentence, not prose policing).
+const HEDGE_TOKENS: Record<string, string[]> = {
+  conditional: ["若", "假设", "待", "尚未", "conditional", "pending", "assuming", "provided", "取决"],
+  divergent: ["发散", "需完整", "需确认", "上界", "上限", "bound", "divergent", "unverified", "不可靠", "伪影", "待验证", "perturbative regime", "微扰"],
+};
+const DIVERGENCE_MARKERS = /发散|placeholder|占位|pending|待验证|需完整对角化|需确认|不可靠|divergent|unreliable|extrapolat|外推|inaccurate for/i;
+
+/** Harness verdict on one cross_validation entry: agents report numbers,
+ * the harness pronounces. Returns "corroborated" | "discrepant" | null
+ * (malformed). */
+function xvalVerdict(x: any): "corroborated" | "discrepant" | null {
+  const a = Number(x?.value_a), b = Number(x?.value_b);
+  const tol = Number(x?.tolerance_rel);
+  if (!Number.isFinite(a) || !Number.isFinite(b) || !Number.isFinite(tol) || tol <= 0 || tol > 0.5) return null;
+  return Math.abs(a - b) <= tol * Math.max(Math.abs(a), Math.abs(b)) ? "corroborated" : "discrepant";
+}
+
 export function reportIntegrityIssues(projectDir: string): IntegrityIssue[] {
   const issues: IntegrityIssue[] = [];
+  // Shared harness-transcript corpus: .agent/jobs/*/output.log tails,
+  // whitespace-normalized. Agent-unwritable ground truth — the execution
+  // anchor for verbatim errors (5c) and cross-validation values (5d).
+  const normText = (t: string) => t.replace(/\s+/g, " ").trim().toLowerCase();
+  let _jobsCorpus: string | null = null;
+  const jobsCorpus = (): string => {
+    if (_jobsCorpus !== null) return _jobsCorpus;
+    const chunks: string[] = [];
+    try {
+      const jobsDir = join(projectDir, ".agent", "jobs");
+      for (const id of readdirSync(jobsDir)) {
+        try {
+          const p2 = join(jobsDir, id, "output.log");
+          const sz = statSync(p2).size;
+          const raw = readFileSync(p2, "utf-8");
+          chunks.push(sz > 262_144 ? raw.slice(-262_144) : raw);
+        } catch { /* job without log */ }
+      }
+    } catch { /* no jobs dir — legacy project */ }
+    _jobsCorpus = normText(chunks.join("\n"));
+    return _jobsCorpus;
+  };
+  // Numeric view of the transcripts, for value anchoring (a needle-in-text
+  // substring match breaks on formatting; number extraction + tight relative
+  // tolerance does not).
+  let _jobsNumbers: number[] | null = null;
+  const jobsNumbers = (): number[] => {
+    if (_jobsNumbers !== null) return _jobsNumbers;
+    _jobsNumbers = extractNumbers(jobsCorpus());
+    return _jobsNumbers;
+  };
+  const valueAnchored = (v: number): boolean => {
+    if (jobsCorpus() === "") return true; // legacy project without job logs
+    return jobsNumbers().some((e) => v === e ||
+      Math.abs(v - e) <= 0.001 * Math.max(Math.abs(v), Math.abs(e)));
+  };
   let tex = "";
   try { tex = readFileSync(join(projectDir, "report", "report.tex"), "utf-8"); } catch { return issues; }
   const { abstract, body } = texClaimText(tex);
@@ -364,6 +432,78 @@ export function reportIntegrityIssues(projectDir: string): IntegrityIssue[] {
         });
       }
     } catch { /* no manifest — legacy report, corpus checks above still apply */ }
+
+    // 1c. Claim-grade render legality (2026-07-14, quality-strategy debate).
+    //     claims.json entries may carry {grade, claim_key, open_dependencies}.
+    //     The harness RECOMPUTES the maximum defensible grade from structured
+    //     state; a recorded grade above the recomputed cap blocks ("a number
+    //     cannot be rendered stronger than its recorded evidence grade").
+    //     Below-indicative grades must carry a hedge token in tex_context —
+    //     the hedge reaches the reader in the same sentence, mechanically.
+    //     Entries without a grade field are v1-schema (legacy) — 1b only.
+    try {
+      const claims = JSON.parse(readFileSync(join(projectDir, "report", "claims.json"), "utf-8"));
+      const gradeBad: string[] = [];
+      // collect all cross_validation entries (latest run per experiment)
+      const xvals: any[] = [];
+      for (const e of experiments) {
+        if (!e.latestResults) continue;
+        try {
+          const j = JSON.parse(readFileSync(e.latestResults, "utf-8"));
+          if (Array.isArray(j?.computed?.cross_validation)) xvals.push(...j.computed.cross_validation);
+        } catch { /* malformed elsewhere */ }
+      }
+      if (Array.isArray(claims)) {
+        for (const c of claims) {
+          const grade = c?.grade === undefined ? null : String(c.grade);
+          if (grade === null) continue;
+          const label = `"${String(c?.tex_context ?? c?.value ?? "?").slice(0, 60)}"`;
+          if (!(grade in GRADE_ORDER)) {
+            gradeBad.push(`${label}: unknown grade "${grade}" (allowed: ${Object.keys(GRADE_ORDER).join("/")})`);
+            continue;
+          }
+          // recompute the cap
+          let cap = GRADE_ORDER.indicative;
+          const key = String(c?.claim_key ?? "");
+          if (key) {
+            const x = xvals.find((x2) => String(x2?.claim_key ?? "") === key);
+            if (x && xvalVerdict(x) === "corroborated"
+                && valueAnchored(Number(x.value_a)) && valueAnchored(Number(x.value_b))
+                && normText(String(x?.method_a ?? "")) !== normText(String(x?.method_b ?? ""))) {
+              cap = GRADE_ORDER.corroborated;
+            }
+          }
+          if (Array.isArray(c?.open_dependencies) && c.open_dependencies.length > 0) {
+            cap = Math.min(cap, GRADE_ORDER.conditional);
+          }
+          if (DIVERGENCE_MARKERS.test(String(c?.source_quote ?? ""))) {
+            cap = Math.min(cap, GRADE_ORDER.divergent);
+          }
+          if (GRADE_ORDER[grade] > cap) {
+            const capName = Object.keys(GRADE_ORDER).find((k) => GRADE_ORDER[k] === cap);
+            gradeBad.push(`${label}: recorded grade "${grade}" exceeds the recomputed cap "${capName}" ` +
+              `(corroborated needs an anchored, agreeing cross_validation entry for claim_key; ` +
+              `open_dependencies caps at conditional; a divergence-marked source_quote caps at divergent)`);
+          }
+          const hedges = HEDGE_TOKENS[grade];
+          if (hedges) {
+            const ctx = normText(String(c?.tex_context ?? ""));
+            if (!hedges.some((h) => ctx.includes(normText(h)))) {
+              gradeBad.push(`${label}: grade "${grade}" requires a hedge in the claim's own sentence ` +
+                `(tex_context) — e.g. ${hedges.slice(0, 4).join(" / ")} — none found`);
+            }
+          }
+        }
+      }
+      if (gradeBad.length > 0) {
+        issues.push({
+          kind: "number-provenance", blocking: true, pushbackExempt: true,
+          text: `Claim-grade legality failures in report/claims.json:\n  - ` + gradeBad.slice(0, 8).join("\n  - ") +
+            `\nEither strengthen the evidence (run the cross-validation / the blocking FollowUp) or ` +
+            `demote the claim's grade AND hedge its sentence accordingly.`,
+        });
+      }
+    } catch { /* no manifest — legacy */ }
 
     const unresolvedBody = [...new Set(extractNumbers(body))]
       .filter((v) => !exempt(v) && !resolves(v, evidence));
@@ -608,26 +748,6 @@ export function reportIntegrityIssues(projectDir: string): IntegrityIssue[] {
     // "resolution" field — the deadline-pressured producer does not
     // self-approve a method-class downgrade.
     {
-      const norm = (t: string) => t.replace(/\s+/g, " ").trim().toLowerCase();
-      let jobsCorpus: string | null = null; // lazy-loaded concatenation of job log tails
-      const loadJobs = (): string => {
-        if (jobsCorpus !== null) return jobsCorpus;
-        const chunks: string[] = [];
-        try {
-          const jobsDir = join(projectDir, ".agent", "jobs");
-          for (const id of readdirSync(jobsDir)) {
-            try {
-              const p = join(jobsDir, id, "output.log");
-              const sz = statSync(p).size;
-              const raw = readFileSync(p, "utf-8");
-              chunks.push(sz > 262_144 ? raw.slice(-262_144) : raw);
-            } catch { /* job without log */ }
-          }
-        } catch { /* no jobs dir — legacy project */ }
-        jobsCorpus = norm(chunks.join("\n"));
-        return jobsCorpus;
-      };
-
       const open: string[] = [];
       const unanchored: string[] = [];
       for (const e of experiments) {
@@ -642,8 +762,8 @@ export function reportIntegrityIssues(projectDir: string): IntegrityIssue[] {
           const label = `${e.id}: ${tool} → fallback "${String(m?.fallback_used ?? "?").slice(0, 60)}"`;
           // transcript grounding: only when job logs exist (legacy projects
           // have none — don't dead-gate them on an unverifiable requirement)
-          const corpus = loadJobs();
-          if (corpus && err && !corpus.includes(norm(err))) {
+          const corpus = jobsCorpus();
+          if (corpus && err && !corpus.includes(normText(err))) {
             unanchored.push(`${label} — verbatim_last_error not found in any .agent/jobs transcript; ` +
               `it must be copy-paste from the failing command's output, not a paraphrase ` +
               `(recorded: "${err.slice(0, 100)}")`);
@@ -667,6 +787,69 @@ export function reportIntegrityIssues(projectDir: string): IntegrityIssue[] {
           parts.push(`Unanchored method-blocked entr${unanchored.length === 1 ? "y" : "ies"}:\n  ${unanchored.join("\n  ")}`);
         }
         issues.push({ kind: "method-blocked", blocking: true, pushbackExempt: true, text: parts.join("\n\n") });
+      }
+    }
+
+    // 5d. Cross-validation integrity (2026-07-14, quality-strategy debate —
+    // the C-class fix). computed.cross_validation entries record an executed
+    // independent-method recomputation of a headline quantity. Teeth:
+    //   (a) the VERDICT is harness-computed from {value_a, value_b,
+    //       tolerance_rel} — agents report numbers, code pronounces
+    //       corroborated/discrepant (survey evidence: LLM-reviewer-as-gate
+    //       is a rubber stamp; execution-based checks are the only verified
+    //       mechanism);
+    //   (b) values must be transcript-anchored in .agent/jobs/*/output.log
+    //       (a narrated number that never appeared in any executed command's
+    //       output cannot anchor — same pattern as method_blocked);
+    //   (c) a DISCREPANT entry blocks finish (pushback-exempt) until
+    //       computed.cross_validation_resolved disposes it — a disagreement
+    //       between two methods is a finding, not a formatting issue.
+    {
+      const problems: string[] = [];
+      for (const e of experiments) {
+        if (!e.latestResults) continue;
+        let j: any;
+        try { j = JSON.parse(readFileSync(e.latestResults, "utf-8")); } catch { continue; }
+        const xv = j?.computed?.cross_validation;
+        if (!Array.isArray(xv) || xv.length === 0) continue;
+        const resolved = new Set(
+          (Array.isArray(j?.computed?.cross_validation_resolved) ? j.computed.cross_validation_resolved : [])
+            .map((r: any) => String(r?.claim_key ?? "")));
+        for (const x of xv) {
+          const key = String(x?.claim_key ?? "?");
+          const verdict = xvalVerdict(x);
+          if (verdict === null) {
+            problems.push(`${e.id}/${key}: malformed entry (needs numeric value_a, value_b, tolerance_rel in (0, 0.5])`);
+            continue;
+          }
+          {
+            const missing = [Number(x.value_a), Number(x.value_b)].filter((v) => !valueAnchored(v));
+            if (missing.length > 0) {
+              problems.push(`${e.id}/${key}: value(s) ${missing.map((v) => String(v)).join(", ")} not found in any ` +
+                `.agent/jobs transcript — a cross-validation value must come from an executed command's output, ` +
+                `not narration. Re-run the computation through bash so the harness sees it.`);
+              continue;
+            }
+          }
+          if (normText(String(x?.method_a ?? "")) === normText(String(x?.method_b ?? ""))) {
+            problems.push(`${e.id}/${key}: method_a equals method_b ("${String(x?.method_a ?? "").slice(0, 40)}") — ` +
+              `a self-consistency check is not a cross-validation. Name a genuinely independent method.`);
+            continue;
+          }
+          if (verdict === "discrepant" && !resolved.has(key)) {
+            problems.push(`${e.id}/${key}: DISCREPANT — |${x.value_a} − ${x.value_b}| exceeds ` +
+              `${x.tolerance_rel} relative tolerance (harness-computed; any agent-recorded verdict is ignored). ` +
+              `Two independent methods disagreeing is a finding: resolve it (find the bug, or record ` +
+              `computed.cross_validation_resolved with a "resolution" naming what you ran) before shipping; ` +
+              `the dependent claim cannot be graded corroborated.`);
+          }
+        }
+      }
+      if (problems.length > 0) {
+        issues.push({
+          kind: "method-blocked", blocking: true, pushbackExempt: true,
+          text: `Cross-validation integrity failure(s):\n  - ` + problems.slice(0, 8).join("\n  - "),
+        });
       }
     }
   }

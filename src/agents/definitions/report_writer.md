@@ -65,7 +65,26 @@ number in the abstract and conclusion,
 
   [{ "value": <number>, "tex_context": "<±40 chars around it in report.tex>",
      "source_file": "notes/experiments.md" | "notes/literature.md",
-     "source_quote": "<verbatim sentence from that file containing the value>" }]
+     "source_quote": "<verbatim sentence from that file containing the value>",
+     "grade": "corroborated" | "indicative" | "conditional" | "divergent",
+     "claim_key": "<the results.json computed.* key this claim reads>",   // when applicable
+     "open_dependencies": ["<FollowUp ids this claim depends on>"] }]      // when applicable
+
+Grade semantics (the finish gate RECOMPUTES the cap from structured state
+and blocks a recorded grade above it — you cannot render a number stronger
+than its evidence):
+- `corroborated`: an executed cross-validation entry (computed.cross_validation,
+  independent method, transcript-anchored, harness-verified agreement) exists
+  for this claim_key. Only these may headline without hedge.
+- `indicative`: single-method computation. The default for honest numbers.
+- `conditional`: depends on an unrun FollowUp — list it in open_dependencies,
+  and the claim's own sentence (tex_context) MUST carry a conditional hedge
+  (若/假设/待/pending/assuming...).
+- `divergent`: the ledger sentence backing it carries a divergence/placeholder/
+  needs-confirmation marker — the sentence MUST carry the corresponding hedge
+  (发散/上界/bound/需完整对角化确认/unverified...). A divergence-flagged number
+  with an unhedged abstract sentence is exactly the promotion leak this schema
+  exists to close.
 
 The finish gate dereferences each entry: the quote must exist verbatim in the
 named file. An entry you cannot fill honestly means the number must leave the

@@ -17,3 +17,10 @@ verified-on: vm
 ## Known false rejections
 - "no published SAT-based distance solver exists for tricycle codes at this scale" — contradicted by the sibling project's own ledger and Menon2025 itself (magic-ccz-upperbound run).
 - "GAP not available" is a reimplementation prompt (~60 lines), not a take-the-paper's-numbers-on-trust prompt (magic-fountain-spread took 204/552 on trust).
+
+## Cross-validation control pairs
+| Headline quantity | method_a | method_b | tolerance_rel |
+|---|---|---|---|
+| distance upper bound (found operator) | ISD search | independent witness recheck: verify the exhibited vector's weight, commutation, non-stabilizer membership with a from-scratch GF(2) rank routine (NOT the search's own library) | exact |
+| distance lower bound | ILP (CBC) | SAT (PySAT) on the same weight-w instance — or exhaustive enumeration on a ≤24-column truncation with a provable reduction | exact |
+| merged/deformed-code distance | search on merged H | zero-pad the parent code's known low-weight logicals into the merged code and recheck (the 5.6× lesson: a survivor at weight w proves d ≤ w regardless of what the search found) | exact |

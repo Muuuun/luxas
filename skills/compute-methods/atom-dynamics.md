@@ -11,3 +11,10 @@ verified-on: vm
 |---|---|---|
 | qutip 5.0.4 | (1) **BROKEN ON VM as of 2026-07-13**: `import qutip` raises ImportError (`sph_harm` removed in scipy 1.18). Fix: `pip install -U qutip` (≥5.1) — do this FIRST, do not reroll Lindblad by hand because import failed. (2) v4→v5: `qutip.Options` removed → plain `options={...}` dicts; LLM priors are v4-shaped. (3) ħ=1, angular frequencies — the missing 2π between Hz and rad/s is the canonical bug. | `python3 -c "import qutip; r=qutip.sesolve(qutip.sigmax(),qutip.basis(2,0),[0,1.5707963]); assert abs(abs(r.states[-1].full()[1,0])-1)<1e-6; print('ok')"` |
 | split-step TDSE (numpy/scipy) | For moving-trap heating: symmetrized split-step Fourier ~80 lines (in-repo precedent: SLM run E1 tdse_transport_solver.py, blind-tested). Verify against the coherent-state analytic model for a linear ramp before trusting either. | n/a |
+
+## Cross-validation control pairs
+| Headline quantity | method_a | method_b | tolerance_rel |
+|---|---|---|---|
+| transport heating Δn | split-step TDSE | coherent-state / forced-oscillator analytic model (linear ramp limit) | 0.2 in the analytic regime; disagreement outside it is a finding, not an error |
+| Rabi dynamics / gate fidelity | qutip mesolve | rotating-frame analytic (2-level RWA) at one detuning-free point | 0.05 |
+| trap frequency / potential depth | numeric Hessian of the potential | harmonic formula from waist+power (state it) | 0.1 |
