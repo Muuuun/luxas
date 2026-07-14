@@ -505,6 +505,29 @@ export function reportIntegrityIssues(projectDir: string): IntegrityIssue[] {
       }
     } catch { /* no manifest — legacy */ }
 
+    // 1d. Manifest presence (2026-07-14, found live: the Yb/Rb REVISION run
+    //     hand-edited an existing report.tex, never spawned report_writer, so
+    //     claims.json never existed and the entire claim-grade defence (1c)
+    //     was inert — "presence is a contract" meant the revision path opted
+    //     out by construction). A headline that carries numbers must carry
+    //     the manifest that grades them. Pushback-exempt: an absent artifact
+    //     cannot be a parser false positive.
+    {
+      const headlineNums2 = [...new Set(extractNumbers(abstract))].filter((v) => !exempt(v));
+      const manifestExists = existsSync(join(projectDir, "report", "claims.json"));
+      if (headlineNums2.length > 0 && !manifestExists) {
+        issues.push({
+          kind: "number-provenance", blocking: true, pushbackExempt: true,
+          text: `report/claims.json is missing, but the abstract/conclusion carries ` +
+            `${headlineNums2.length} quantitative claim(s). Every headline number must be graded: ` +
+            `write the manifest (one entry per number: {value, tex_context, source_file, source_quote, ` +
+            `grade, claim_key?, open_dependencies?}), or spawn report_writer to author the prose and ` +
+            `the manifest together. The harness recomputes each grade cap from structured state — ` +
+            `a divergence-flagged or FollowUp-dependent number cannot be rendered unhedged.`,
+        });
+      }
+    }
+
     const unresolvedBody = [...new Set(extractNumbers(body))]
       .filter((v) => !exempt(v) && !resolves(v, evidence));
     if (unresolvedBody.length > 0) {
@@ -849,6 +872,51 @@ export function reportIntegrityIssues(projectDir: string): IntegrityIssue[] {
         issues.push({
           kind: "method-blocked", blocking: true, pushbackExempt: true,
           text: `Cross-validation integrity failure(s):\n  - ` + problems.slice(0, 8).join("\n  - "),
+        });
+      }
+    }
+
+    // 5e. Cross-validation PLAN closure (2026-07-14, found live). The Evidence
+    // Contract freezes a control method per headline quantity at Phase 1
+    // (computed.cross_validation_plan). At finish each planned claim_key must
+    // have EITHER an executed cross_validation entry OR an anchored
+    // method_blocked entry proving the control could not run. Observed failure
+    // this gate closes: an experiment declared the prescribed control
+    // ("full pair diagonalization") infeasible — "memory-limited" — in PROSE,
+    // wrote a phantom `computed.method_blocked[0]` reference into its ledger
+    // while the key was absent from results.json, and the reviewer waved it
+    // through. The control in fact ran on the same machine in ~10 minutes.
+    // "I could not run the control" is a data claim: it needs the verbatim
+    // error, like every other capability claim.
+    {
+      const unclosed: string[] = [];
+      for (const e of experiments) {
+        if (!e.latestResults) continue;
+        let j: any;
+        try { j = JSON.parse(readFileSync(e.latestResults, "utf-8")); } catch { continue; }
+        const plan = j?.computed?.cross_validation_plan;
+        if (!Array.isArray(plan) || plan.length === 0) continue;
+        const xvKeys = new Set((Array.isArray(j?.computed?.cross_validation) ? j.computed.cross_validation : [])
+          .map((x: any) => String(x?.claim_key ?? "")));
+        const mbTools = (Array.isArray(j?.computed?.method_blocked) ? j.computed.method_blocked : []);
+        for (const p of plan) {
+          const key = String(p?.claim_key ?? "?");
+          if (xvKeys.has(key)) continue;
+          const blocked = mbTools.some((m: any) =>
+            String(m?.intended_tool ?? "").length > 0 &&
+            String(m?.verbatim_last_error ?? "").length > 0 &&
+            (String(m?.claim_key ?? "") === key || String(m?.intended_tool ?? "").includes(String(p?.control_method ?? "\u0000"))));
+          if (!blocked) {
+            unclosed.push(`${e.id}/${key}: planned control "${String(p?.control_method ?? "?").slice(0, 60)}" ` +
+              `neither executed (no cross_validation entry) nor anchored-blocked (no method_blocked entry with a ` +
+              `verbatim_last_error). Run the control, or record the attempt's exact command and its verbatim error.`);
+          }
+        }
+      }
+      if (unclosed.length > 0) {
+        issues.push({
+          kind: "method-blocked", blocking: true, pushbackExempt: true,
+          text: `Unclosed cross-validation plan(s):\n  - ` + unclosed.slice(0, 6).join("\n  - "),
         });
       }
     }
