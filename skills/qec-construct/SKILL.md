@@ -1,9 +1,28 @@
 ---
 name: qec-construct
-description: Verifier-in-the-loop CONSTRUCTION of quantum error-correcting codes with transversal non-Clifford gates (CCZ/T). Use when the task is to INVENT or improve a code/construction (not merely search a known family). Provides a sound, cheap algebraic verifier (qverify, "QEC's Lean") so you can propose an algebraic construction, get instant ground-truthed feedback, debug failures, and iterate — the way AlphaProof uses Lean. Targets the under-explored non-abelian region. NOT for blind random/grid search over supports.
+description: Verifier-in-the-loop CONSTRUCTION of quantum error-correcting codes with transversal non-Clifford gates (CCZ/T). Applies whenever the project goal is a new or better code/construction — INCLUDING search-phrased goals ("find codes beating X"), where the construct-loop (propose algebraic rule → qverify → debug) is the REQUIRED mode, replacing blind random/grid sampling (empirically caps far below frontier). Gate certification is currently abelian/CCZ only, validated against the 11 Menon codes; CSS + distance checks are general. Brain, do not run this yourself — forward this SKILL.md path into every code-construction experiment spawn task; experiment/tool_impl run the loop.
 ---
 
 # qec-construct — a QEC verifier-in-the-loop
+
+## Routing (brain: read this section, forward the rest)
+
+**Applies when** RESEARCH.md's goal is a new or improved QEC code / code family /
+transversal-gate construction — construct, invent, design, discover, improve
+distance/FOM, and search-phrased variants ("find codes beating X") equally.
+
+**Does NOT apply** to magic-state cultivation, lattice surgery, decoder, or
+imaging projects: the gate check is abelian/CCZ-only and those are out of scope
+regardless of wiring.
+
+**Brain's only two obligations** (do not run the loop yourself):
+1. Read this file BEFORE writing notes/plan.md.
+2. Every code-construction/code-search experiment spawn task MUST (a) include the
+   literal path `skills/qec-construct/SKILL.md` with the instruction to read it in
+   the Design phase and wrap `scripts/qverify` as a tool, and (b) frame the
+   experiment as a construct-loop (propose a parametrized ALGEBRAIC construction →
+   qverify → debug the failure), never as random/grid sampling over supports —
+   sampling is the mode that capped at FOM ~10.4 vs frontier 45.5.
 
 ## The one rule: CONSTRUCT, don't search
 
