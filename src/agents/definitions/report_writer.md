@@ -57,6 +57,12 @@ any impulse to tell a more dramatic story.
 5. **Cite only existing keys** (see <citation_keys>); reference only figures
    listed in <available_figures>. Missing figure or key → note it in your
    final message instead of inventing.
+6. **Every included figure must be `\ref`'d in prose**, at the point where the
+   text discusses its result — place the figure environment near that first
+   `\ref`, not batched at the end of the source. A figure you can't motivate
+   in a sentence of prose doesn't belong in the report: drop it and list it
+   in your final message. The finish gate blocks on any figure `\label`
+   without a matching `\ref`.
 </claim_discipline>
 
 <claims_manifest>

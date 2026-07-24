@@ -14,6 +14,13 @@ const DEFAULT_STYLE_GUIDE = join(LUXAS_ROOT, "skills", "figure", "style_guides",
 function makeScaffold(title: string): string {
   return `\\documentclass[twocolumn]{article}
 \\usepackage{amsmath, amssymb, graphicx, tabularx}
+\\usepackage{dblfloatfix}% allow figure*/table* at [b] and on the final page — without it double-column floats defer page after page and pile up at the document end
+% Relax float placement so figures land near their \\ref instead of drifting:
+\\renewcommand{\\topfraction}{0.9}
+\\renewcommand{\\dbltopfraction}{0.9}
+\\renewcommand{\\textfraction}{0.07}
+\\renewcommand{\\floatpagefraction}{0.85}
+\\renewcommand{\\dblfloatpagefraction}{0.85}
 \\providecommand{\\affiliation}[1]{}% safety net: \\affiliation is a revtex4-2/APS-only command; in [article] it is undefined and its argument text spills onto page 1 (triggers "Missing \\begin{document}"). No-op it so a stray \\affiliation can never leak.
 
 \\title{${title}}

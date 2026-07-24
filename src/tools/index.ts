@@ -2,7 +2,7 @@
  * Tool index — assembles all research tools for the brain agent.
  */
 
-import { existsSync, readFileSync, readdirSync, statSync, appendFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync, appendFileSync, writeFileSync, mkdirSync, copyFileSync } from "node:fs";
 import { join } from "node:path";
 import { md5OrNull, extractFrontmatterBlock, parseAuditFrontmatter, parseFollowUps, readFileSafe } from "../utils.js";
 import type { Agent } from "@mariozechner/pi-agent-core";
@@ -768,6 +768,17 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
           return { content: [{ type: "text" as const, text: `Cannot finish: report.tex contains zero figures. Every research report needs ≥1 self-generated figure under report/figures/ visualising experiment results. See brain.md <generated_figures>.` }] };
         }
 
+        // Orphan-figure gate: a figure \label the body text never \ref's is a
+        // figure the prose never anchors — LaTeX floats it to the end of the
+        // document (FTQC_codes shipped its only figure unreferenced on p9/13).
+        // The ≥1-figure count above can't see this; key the gate on linkage.
+        const figLabels = [...tex.matchAll(/\\begin\{figure\*?\}[\s\S]*?\\label\{([^}]+)\}[\s\S]*?\\end\{figure\*?\}/g)].map(m => m[1]);
+        const refd = new Set([...tex.matchAll(/\\(?:ref|autoref|cref|Cref)\{([^}]+)\}/g)].flatMap(m => m[1].split(",").map(s => s.trim())));
+        const orphans = figLabels.filter(l => !refd.has(l));
+        if (orphans.length > 0) {
+          return { content: [{ type: "text" as const, text: `Cannot finish: figure label(s) never \\ref'd in the body text: ${orphans.join(", ")}. An unreferenced figure has no text anchor and floats to the end of the PDF. For each: either add a \\ref{...} where the prose discusses that result, or drop the figure if no prose motivates it.` }] };
+        }
+
         // Requester-voice gate: report.tex must never reference the research
         // requester or the act of being asked. RESEARCH.md is internal routing
         // ground-truth, not a quotable source — but the verbatim-request /
@@ -1131,6 +1142,29 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
           }
         }
       }
+
+      // Title-named delivery copies: every project ships report.{tex,pdf}, so
+      // collected artifacts from different projects collide on the same
+      // basename. Keep report/report.* as the internal contract (gates, studio,
+      // registry all key on it) and add <title>.{tex,pdf} copies for humans.
+      // Best-effort — naming must never block a genuine finish.
+      try {
+        const texP = join(projectDir, "report/report.tex");
+        const pdfP = join(projectDir, "report/report.pdf");
+        const m = readFileSync(texP, "utf-8").match(/\\title\{((?:[^{}]|\{[^{}]*\})*)\}/);
+        if (m) {
+          const name = m[1]
+            .replace(/\\\\/g, " ")            // \\ line breaks in long titles
+            .replace(/\\[a-zA-Z]+\s*/g, "")   // strip LaTeX macros
+            .replace(/[{}~$^_%&#]/g, "")
+            .replace(/[\/\\:*?"<>|\n]/g, " ")
+            .replace(/\s+/g, " ").trim().slice(0, 120);
+          if (name && name !== "report") {
+            copyFileSync(texP, join(projectDir, `report/${name}.tex`));
+            if (existsSync(pdfP)) copyFileSync(pdfP, join(projectDir, `report/${name}.pdf`));
+          }
+        }
+      } catch { /* delivery naming is cosmetic */ }
 
       callbacks?.onFinish?.();
       writeFinishStats(projectDir, finishCallCount, false);

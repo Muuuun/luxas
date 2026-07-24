@@ -93,7 +93,11 @@ export function getTexEnv(): Record<string, string> {
 let cachedCJKFont: string | null | undefined;
 function pickCJKFont(): string | null {
   if (cachedCJKFont !== undefined) return cachedCJKFont;
-  for (const f of ["PingFang SC", "Noto Sans CJK SC", "Songti SC", "Source Han Sans SC", "WenQuanYi Zen Hei"]) {
+  // Serif faces first: \setCJKmainfont sets the BODY text face, and a sans
+  // mainfont (PingFang) renders the whole report as slideware next to the
+  // Computer Modern Latin serif. Sans faces remain as fallbacks for machines
+  // with no CJK serif installed.
+  for (const f of ["Songti SC", "Noto Serif CJK SC", "Source Han Serif SC", "PingFang SC", "Noto Sans CJK SC", "Source Han Sans SC", "WenQuanYi Zen Hei"]) {
     try { if (execSync(`fc-list "${f}"`, { stdio: "pipe" }).length) return (cachedCJKFont = f); } catch { /* fc-list absent / no match */ }
   }
   return (cachedCJKFont = null);
