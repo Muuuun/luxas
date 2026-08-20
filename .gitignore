@@ -23,10 +23,12 @@ dist/
 # Python caches (e.g. under skills/search/scripts/)
 __pycache__/
 
-# Local debug scripts (tracked tests use scripts/test_*.mts)
+# Local debug scripts. smoke_*.mts is NOT here: those are gates, and
+# scripts/run-gates.mts MANIFEST is the authority on which exist — an
+# unlisted one is a hard error, so ignoring them breaks `npm test` on a
+# fresh clone. (35 of 43 were already force-added past the old rule.)
 scripts/check_*.mts
 scripts/repro_*.mts
-scripts/smoke_*.mts
 scripts/_probe_*.mts
 scripts/*.mts.disabled
 

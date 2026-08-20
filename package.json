@@ -8,11 +8,14 @@
   },
   "scripts": {
     "build": "tsc",
+    "test": "tsx scripts/run-gates.mts",
+    "gates:list": "tsx scripts/run-gates.mts --list",
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js",
     "tui": "tsx src/tui.tsx",
     "setup:search": "bash skills/search/scripts/setup.sh",
-    "postinstall": "bash patches/pi-coding-agent-read-limits.sh || true; bash patches/pi-agent-core-no-tool-retry-guard.sh || true"
+    "postinstall": "bash patches/pi-coding-agent-read-limits.sh && bash patches/pi-agent-core-no-tool-retry-guard.sh",
+    "test:live": "tsx scripts/run-gates.mts --live"
   },
   "dependencies": {
     "@mariozechner/pi-agent-core": "file:vendor/mariozechner-pi-agent-core-0.58.1.tgz",

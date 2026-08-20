@@ -92,7 +92,10 @@ await test("brain", wrapperFor("brain"), {}, [
   // Writes under brain's allowed roots (via bash) — must pass
   ["cat > notes/memory.md", "ok"],
   ["echo 'x' > report/report.tex", "ok"],
-  ["tee reviews/pi_feedback.md", "ok"],
+  // PI-feedback discipline (3ae011b) added reviews/pi_feedback.md to brain's
+  // blockedBashWriteRoots: the PI owns that file, brain may read but not
+  // overwrite it. allowedWriteRoots still lists reviews/ for the rest of it.
+  ["tee reviews/pi_feedback.md", "blocked"],
   // /dev/null and fd redirects — must pass
   ["ls data/experiments/ 2>/dev/null", "ok"],
   ["python3 script.py 2>&1", "ok"],
