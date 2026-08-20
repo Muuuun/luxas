@@ -18,7 +18,7 @@
  * turn naturally — `finish()` is harmless there but redundant.
  */
 
-import { Type } from "@sinclair/typebox";
+import { Type } from "@earendil-works/pi-ai/compat";
 
 export function createSubAgentFinishTool() {
   return {

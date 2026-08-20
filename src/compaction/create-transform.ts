@@ -8,7 +8,7 @@
  *   tokenTap.install(agent);  // must call after construction
  */
 
-import type { Model } from "@mariozechner/pi-ai";
+import type { Model } from "@earendil-works/pi-ai/compat";
 import { createBlockConversationAdapter } from "./adapter.js";
 import { ContextPacker } from "./engine.js";
 import { createTokenTap } from "./token-tap.js";

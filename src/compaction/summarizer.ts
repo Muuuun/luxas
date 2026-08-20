@@ -1,4 +1,4 @@
-import { completeSimple } from "@mariozechner/pi-ai";
+import { completeSimple } from "@earendil-works/pi-ai/compat";
 import { extractTextContent } from "../utils.js";
 import { peelOldestRounds } from "./rounds.js";
 import type {

@@ -12,8 +12,8 @@
  * #5 session DAG, #6 cross-model transform, #7 custom messages, #8 extensions
  */
 
-import { Agent } from "@mariozechner/pi-agent-core";
-import { streamSimple, type TextContent } from "@mariozechner/pi-ai";
+import { Agent } from "@earendil-works/pi-agent-core";
+import { streamSimple, type TextContent } from "@earendil-works/pi-ai/compat";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { homedir } from "node:os";
@@ -35,7 +35,7 @@ import { Session, buildSessionContext, deriveState } from "./session.js"; // #5:
 import { loadRegistry, removeAgent, tryExtractResult, formatExitHint } from "./active-agents.js";
 import { installUsageTracking, readUsageTotals } from "./usage-log.js";
 
-import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { PIVerdict } from "./pi-agent.js";
 
 // Default Anthropic prompt-cache TTL to 5m. Empirically on Luxas runs the
@@ -135,12 +135,14 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
   // System prompt: brain.md + smelt patches + semi-static per-project context
   // (RESEARCH.md + skills + lessons.md), merged into a single cache-pinned block.
   //
-  // Cache-budget arithmetic: Anthropic allows at most 4 cache_control breakpoints
-  // per request. The conversation trailer (research_snapshot) gets one auto-pin
-  // from pi-ai; we add one in injectSnapshot to cache conversation history; that
-  // leaves one for the system prompt. Splitting L1/L2 into two pins would buy
-  // nothing worth the slot — both change rarely, and history-end caching pays
-  // more in a long session than an L1-only partial hit when L2 invalidates.
+  // Cache breakpoints are placed by pi-ai, not here: TextContent lost its
+  // `cacheControl` field in 0.84, and the Anthropic API layer now marks the
+  // system prompt, the last tool definition, and the last user content block
+  // itself (Claude Code's own 4-breakpoint layout). Under OAuth that yields two
+  // pinned system blocks — the Claude Code identity line plus this prompt — so
+  // L1+L2+L3 still ride in one cached block. Keeping this a single string is
+  // what makes that block stable; smoke_prompt_assembly.mts pins the
+  // determinism the cache depends on.
   //
   // L3-style execution-state content (active_agents, completed_artifacts,
   // plan_status) lives in the trailer snapshot now — see context.ts.
@@ -153,9 +155,7 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
     systemText = systemText + "\n\n" + semiStatic;
   }
 
-  const systemPrompt: TextContent[] = [
-    { type: "text", text: systemText, cacheControl: { type: "ephemeral" } },
-  ];
+  const systemPrompt = systemText;
 
   // Reminder system — event-driven, per-turn quality nudges
   const reminders = new ReminderRegistry();
@@ -550,7 +550,7 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
           content: resumeParts.join("\n"),
           timestamp: Date.now(),
         });
-        agent.replaceMessages(cleaned);
+        agent.state.messages = cleaned;
         lastCheckpointedMsgCount = cleaned.length;
         return cleaned.length;
       }

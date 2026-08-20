@@ -5,7 +5,7 @@
 import { existsSync, readFileSync, readdirSync, statSync, appendFileSync, writeFileSync, mkdirSync, copyFileSync } from "node:fs";
 import { join } from "node:path";
 import { md5OrNull, extractFrontmatterBlock, parseAuditFrontmatter, parseFollowUps, readFileSafe } from "../utils.js";
-import type { Agent } from "@mariozechner/pi-agent-core";
+import type { Agent } from "@earendil-works/pi-agent-core";
 import { createReportTools, parseCompileVerdict, gateBlockingIssues } from "./report.js";
 import { reportIntegrityIssues, formatIntegrityIssues, evidenceSourcesDigest } from "./report-integrity.js";
 import { createInitReportTool } from "./init-report.js";

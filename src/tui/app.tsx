@@ -27,7 +27,7 @@ import { createResearchAgent } from "../agent.js";
 import { jobOwnerAls } from "../jobs/als.js";
 import { reconcileOnStartup, sweepJobs } from "../jobs/registry.js";
 import { createBrainstormAgent } from "./brainstorm.js";
-import type { Agent } from "@mariozechner/pi-agent-core/dist/agent.js";
+import type { Agent } from "@earendil-works/pi-agent-core";
 
 function RateBar({ utilization, width = 10 }: { utilization: number; width?: number }) {
   const filled = Math.round(utilization * width);

@@ -1,24 +1,26 @@
 /**
- * smoke_cache_pin_luxas — Luxas-specific variant of smoke_cache_pin.
+ * smoke_cache_pin_luxas — Luxas-shaped request, checked against Anthropic's
+ * 4-breakpoint hard limit (the 400 we hit on 2026-04-18).
  *
- * Our post-refactor layout has exactly 3 cache_control breakpoints per
- * request (well under Anthropic's 4-pin hard limit):
- *   1. systemPrompt (one merged block: brain.md + smelt + RESEARCH.md +
- *      skills + lessons — see agent.ts)
- *   2. last message before the snapshot trailer (pinned in
- *      injectSnapshot → context.ts) so conversation history survives
- *      turn-over-turn snapshot deltas
- *   3. snapshot trailer (auto-pinned by pi-ai)
+ * Since pi-ai 0.84 every breakpoint is placed by the provider, so the layout
+ * for a Luxas request is:
+ *   1. systemPrompt — one merged block (brain.md + smelt + RESEARCH.md +
+ *      skills + lessons), the big stable prefix
+ *   2. last tool definition
+ *   3. the research_snapshot trailer, as the last user content block
  *
- * Anything that adds a 4th system pin or a second mid-history pin would
- * push us over budget again, causing the 400 we hit on 2026-04-18.
+ * The mid-history breakpoint Luxas used to place before the trailer is gone:
+ * TextContent lost `cacheControl` and the provider always marks the LAST user
+ * block. The budget invariant this file exists for still holds, and it is now
+ * the provider's job to keep it — which is exactly why it stays checked.
  */
 
-import { getModel, streamAnthropic, type Context, type TextContent } from "@mariozechner/pi-ai";
+import { getModel, streamAnthropic, type Context } from "@earendil-works/pi-ai/compat";
 
 let capturedBody: any = null;
-const realFetch = globalThis.fetch;
-globalThis.fetch = (async (_url: any, init: any) => {
+// The provider accepts a `fetch` in its options; use that seam rather than
+// monkey-patching a global the Anthropic SDK may not read.
+const capturingFetch = (async (_url: any, init: any) => {
   capturedBody = init?.body ? JSON.parse(init.body) : null;
   const sse = [
     `event: message_start`,
@@ -34,10 +36,8 @@ globalThis.fetch = (async (_url: any, init: any) => {
   return new Response(sse, { status: 200, headers: { "Content-Type": "text/event-stream" } });
 }) as any;
 
-// Luxas's actual shape post-refactor: 1 merged system block + history + snapshot.
-const systemPrompt: TextContent[] = [
-  { type: "text", text: "MERGED_L1_L2_STUB (brain.md + smelt + RESEARCH.md + skills + lessons)", cacheControl: { type: "ephemeral" } },
-];
+// Luxas's actual shape: one merged system string + history + snapshot trailer.
+const systemPrompt = "MERGED_L1_L2_L3_STUB (brain.md + smelt + RESEARCH.md + skills + lessons)";
 
 const context: Context = {
   systemPrompt,
@@ -53,21 +53,19 @@ const context: Context = {
       content: [{ type: "text", text: "first answer" }],
       timestamp: 2,
     },
-    // Mid-history user pinned by injectSnapshot (the cached history segment).
-    {
-      role: "user",
-      content: [{ type: "text", text: "last conversation message before snapshot", cacheControl: { type: "ephemeral" } }],
-      timestamp: 3,
-    },
-    // The research_snapshot trailer — pi-ai auto-pins this.
+    { role: "user", content: "last conversation message before snapshot", timestamp: 3 },
+    // The research_snapshot trailer injectSnapshot appends; the provider pins it.
     { role: "user", content: "<research_snapshot>...</research_snapshot>", timestamp: 4 },
+  ],
+  tools: [
+    { name: "read", description: "read a file", parameters: { type: "object", properties: {} } as any },
+    { name: "finish", description: "finish the task", parameters: { type: "object", properties: {} } as any },
   ],
 };
 
 const model = getModel("anthropic", "claude-sonnet-4-6");
-const stream = streamAnthropic(model, context, { apiKey: "sk-ant-fake", cacheRetention: "long" });
+const stream = streamAnthropic(model, context, { apiKey: "sk-ant-fake", cacheRetention: "long", fetch: capturingFetch } as any);
 try { await stream.result(); } catch {}
-globalThis.fetch = realFetch;
 
 if (!capturedBody) { console.error("FAIL: no body captured"); process.exit(1); }
 
@@ -75,7 +73,7 @@ function findCacheControls(obj: any, path = "$"): string[] {
   const hits: string[] = [];
   if (obj && typeof obj === "object") {
     if (obj.cache_control) hits.push(path);
-    for (const [k, v] of Object.entries(obj)) hits.push(...findCacheControls(v, `${path}.${k}`));
+    for (const [k, v] of Object.entries(obj)) { if (k === "cache_control") continue; hits.push(...findCacheControls(v, `${path}.${k}`)); }
   }
   return hits;
 }
@@ -92,11 +90,15 @@ for (const p of pins) console.log(`  ${p}`);
 let ok = true;
 const expect = (cond: boolean, msg: string) => { console.log((cond ? "✓ " : "✗ ") + msg); if (!cond) ok = false; };
 
-expect(sysBlockCount === 1, "system is 1 merged block");
-expect(pins.length === 3, "exactly 3 cache_control pins (L1L2 + history + trailer)");
+expect(sysBlockCount === 1, "system is 1 merged block (API-key path; OAuth prepends a second)");
+expect(pins.length === 3, "exactly 3 cache_control pins (system + last tool + trailer)");
 expect(pins.length < 4, "strictly under Anthropic's 4-pin hard limit (no 400 on request)");
 const sysPins = pins.filter(p => p.startsWith("$.system.")).length;
 expect(sysPins === 1, "system has exactly 1 pin");
+const msgPins = pins.filter(p => p.startsWith("$.messages.")).length;
+expect(msgPins === 1, "exactly 1 message pin — the trailer, not a mid-history block");
+const lastIdx = (capturedBody.messages?.length ?? 0) - 1;
+expect(pins.some(p => p.startsWith(`$.messages.${lastIdx}.`)), "the message pin is on the LAST message");
 
 if (!ok) {
   console.log("\n── full body for debugging ──");

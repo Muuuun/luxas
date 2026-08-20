@@ -7,7 +7,7 @@
  * control its background jobs.
  */
 
-import { createCodingTools } from "@mariozechner/pi-coding-agent";
+import { createCodingTools } from "@earendil-works/pi-coding-agent";
 import { createHardenedBashTool } from "./bash-hardened.js";
 import { createJobControlTools } from "./job-control.js";
 

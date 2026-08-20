@@ -2,8 +2,8 @@
  * Tool-set registry — named factories that produce tool arrays for agents.
  */
 
-import { createReadTool } from "@mariozechner/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
+import { createReadTool } from "@earendil-works/pi-coding-agent";
+import { Type } from "@earendil-works/pi-ai/compat";
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import { createCodingToolsForProject } from "../tools/coding.js";

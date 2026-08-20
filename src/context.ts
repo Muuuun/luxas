@@ -16,7 +16,7 @@ import { resolveContextBuilder } from "./agents/context-builders.js";
 import { parseCompileVerdict, gateBlockingIssues } from "./tools/report.js";
 import { createCompactionTransform, getContextWindow } from "./compaction/create-transform.js";
 import type { TokenTap } from "./compaction/token-tap.js";
-import type { Model } from "@mariozechner/pi-ai";
+import type { Model } from "@earendil-works/pi-ai/compat";
 import type { ExtensionBus } from "./extensions.js";
 import type { ReminderRegistry } from "./reminders.js";
 
@@ -243,18 +243,16 @@ function collectActiveDirectives(
 function injectSnapshot(messages: any[], snapshot: string): any[] {
   if (messages.length <= 2) return messages;
 
+  // The manual breakpoint that used to sit here — on the message BEFORE this
+  // volatile trailer, so a long session's history stayed a cached prefix — is
+  // no longer expressible: pi-ai 0.84 removed `cacheControl` from TextContent
+  // and always marks the LAST user content block itself, which is this
+  // snapshot. The system-prompt and tool-definition breakpoints still hit; the
+  // history segment between them and the trailer is re-sent each turn.
+  // Recovering it means making the snapshot part of the stable prefix (persist
+  // it into history instead of regenerating per turn) — a change to what the
+  // model sees, so it is a measured decision, not part of this migration.
   const result = [...messages];
-  const lastMsg = result[result.length - 1];
-  if (Array.isArray(lastMsg.content) && lastMsg.content.length > 0) {
-    const clonedContent = lastMsg.content.map((b: any) => ({ ...b }));
-    clonedContent[clonedContent.length - 1].cacheControl = { type: "ephemeral" };
-    result[result.length - 1] = { ...lastMsg, content: clonedContent };
-  } else if (typeof lastMsg.content === "string") {
-    result[result.length - 1] = {
-      ...lastMsg,
-      content: [{ type: "text", text: lastMsg.content, cacheControl: { type: "ephemeral" } }],
-    };
-  }
 
   result.push({
     role: "user",

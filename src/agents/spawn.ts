@@ -4,8 +4,8 @@
  * tool assembly, safety wrappers, context builders, tracing, and usage tracking.
  */
 
-import { Agent } from "@mariozechner/pi-agent-core";
-import { getModel, streamSimple } from "@mariozechner/pi-ai";
+import { Agent } from "@earendil-works/pi-agent-core";
+import { getModel, streamSimple } from "@earendil-works/pi-ai/compat";
 import { mkdirSync, appendFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join, dirname } from "node:path";
@@ -70,11 +70,13 @@ const MODEL_MAP: Record<string, [string, string] | InlineModel> = {
   o3: ["openai", "o3"],
   "o3-mini": ["openai", "o3-mini"],
   "o4-mini": ["openai", "o4-mini"],
-  // OpenAI Codex (ChatGPT backend — works with Codex OAuth)
-  "gpt-5.2": ["openai-codex", "gpt-5.2"],
-  "gpt-5.2-codex": ["openai-codex", "gpt-5.2-codex"],
-  "gpt-5.1": ["openai-codex", "gpt-5.1"],
-  "gpt-5.1-codex-mini": ["openai-codex", "gpt-5.1-codex-mini"],
+  // OpenAI Codex (ChatGPT backend — works with Codex OAuth). pi-ai 0.84's
+  // catalog dropped the 5.1/5.2 tiers; these are the shipped successors.
+  "gpt-5.6-terra": ["openai-codex", "gpt-5.6-terra"],
+  "gpt-5.6-luna": ["openai-codex", "gpt-5.6-luna"],
+  "gpt-5.5": ["openai-codex", "gpt-5.5"],
+  "gpt-5.4": ["openai-codex", "gpt-5.4"],
+  "gpt-5.4-mini": ["openai-codex", "gpt-5.4-mini"],
   "deepseek-v4-pro": {
     id: "deepseek-v4-pro",
     name: "DeepSeek-V4-Pro",
@@ -632,7 +634,7 @@ function lastAssistantStopReason(agent: InstanceType<typeof Agent>): string | un
  *
  * Uses agent.continue() after the first prompt so no duplicate user-prompt
  * message is appended for the resume — the isMeta marker we insert via
- * replaceMessages() is the new last message, and continue() runs the loop
+ * state.messages assignment is the new last message, and continue() runs the loop
  * starting from there.
  */
 export async function runWithLengthRecovery(
@@ -646,11 +648,11 @@ export async function runWithLengthRecovery(
 
 /**
  * Continue-mode counterpart to runWithLengthRecovery. Caller has already
- * loaded prior messages via agent.replaceMessages(...) and we drive a fresh
+ * loaded prior messages via agent.state.messages = ...) and we drive a fresh
  * turn keyed by `newUserMessage`. The new message is a real user task, NOT
  * isMeta — it carries actual semantic payload (pytest output, fix request).
  * Counting/marker bookkeeping is the caller's job (continue_init in the conv
- * jsonl); this function only drives the loop.
+ * jsonl; this function only drives the loop.
  */
 export async function continueWithLengthRecovery(
   agent: InstanceType<typeof Agent>,
@@ -688,10 +690,10 @@ async function driveAgentWithLengthRecovery(
     }
 
     const messages = agent.state.messages as any[];
-    agent.replaceMessages([
+    agent.state.messages = [
       ...messages,
       { role: "user", content: LENGTH_RECOVERY_CONTINUE_PROMPT, isMeta: true, timestamp: Date.now() } as any,
-    ]);
+    ];
     await agent.continue();
   }
 }
@@ -944,7 +946,7 @@ export async function spawnAgent(opts: SpawnAgentOptions): Promise<SpawnAgentRes
       registered = true;
     } catch { /* observability must not crash the spawn */ }
 
-    // Resume MUST replaceMessages before subscribing — otherwise the first
+    // Resume MUST assign state.messages before subscribing — otherwise the first
     // turn_end re-appends the full prior history and doubles the jsonl.
     if (isResume) {
       const currentModel = (agent.state as any).model;
@@ -952,7 +954,7 @@ export async function spawnAgent(opts: SpawnAgentOptions): Promise<SpawnAgentRes
         provider: currentModel?.provider,
         id: currentModel?.id,
       });
-      agent.replaceMessages(cleaned);
+      agent.state.messages = cleaned;
     }
     let lastSavedMsgCount = (agent.state.messages as any[]).length;
 

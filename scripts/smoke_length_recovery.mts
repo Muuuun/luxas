@@ -22,9 +22,9 @@
  *   - continue() runs the loop from current state if last msg is user
  */
 
-import { Agent } from "@mariozechner/pi-agent-core";
-import { createAssistantMessageEventStream } from "@mariozechner/pi-ai";
-import type { AssistantMessage, Model } from "@mariozechner/pi-ai";
+import { Agent } from "@earendil-works/pi-agent-core";
+import { createAssistantMessageEventStream } from "@earendil-works/pi-ai/compat";
+import type { AssistantMessage, Model } from "@earendil-works/pi-ai/compat";
 
 import {
   createSubAgentExitCollector,

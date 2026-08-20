@@ -183,7 +183,7 @@ async function main() {
           content: `[SESSION RESUMED] Restored from checkpoint. Continue your task: ${args.task}`,
           timestamp: Date.now(),
         });
-        agent.replaceMessages(cleaned);
+        agent.state.messages = cleaned;
         lastSavedMsgCount = cleaned.length;
       }
     }

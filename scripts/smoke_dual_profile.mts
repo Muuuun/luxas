@@ -70,11 +70,11 @@ check("illustrator_write (sonnet) → kimi-vision",
 check("typesetter (sonnet) → kimi-vision",
   isKimiVision(resolveModel("sonnet", "typesetter")));
 
-// ── 4. OpenAI/Codex tiers (gpt-5.2, o3) bypass profile ───────────
+// ── 4. OpenAI/Codex tiers (gpt-5.6-terra, o3) bypass profile ───────────
 console.log("\n4. OpenAI tiers bypass profile");
-const m = resolveModel("gpt-5.2", "math");
-check("math (gpt-5.2) → gpt-5.2 (NOT redirected to deepseek)",
-  modelId(m) === "gpt-5.2", `got ${modelId(m)}`);
+const m = resolveModel("gpt-5.6-terra", "math");
+check("math (gpt-5.6-terra) → gpt-5.6-terra (NOT redirected to deepseek)",
+  modelId(m) === "gpt-5.6-terra", `got ${modelId(m)}`);
 
 // ── 5. Vision-required agents bypass when no vision profile set ─
 console.log("\n5. Vision agents fall back when no vision profile");

@@ -10,7 +10,7 @@
  */
 
 import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
-import { Type, type Static } from "@sinclair/typebox";
+import { Type, type Static } from "@earendil-works/pi-ai/compat";
 import {
   readState, listJobsByOwner, safeKillJob, waitForJob,
   type JobState,

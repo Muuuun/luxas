@@ -1,29 +1,29 @@
 /**
- * Smoke test: verify the cache_control pin flow through pi-mono's Anthropic
- * provider. Mocks global fetch, feeds a hand-built Context with:
- *   - systemPrompt: TextContent[] (2 blocks, each with cacheControl)
- *   - one pinned user message in the middle of history
- *   - a plain trailer user message that should get auto-pinned
+ * Smoke test: prompt-cache breakpoints in the outgoing Anthropic request.
  *
- * Expected API request body:
- *   - params.system: 2 blocks, both cache_control
- *   - one mid-conversation user text block with cache_control (our explicit pin)
- *   - last user message text block with cache_control (auto-added by pi-ai)
- *   - total cache_control <= 4
+ * Placement moved into pi-ai in 0.84: `TextContent.cacheControl` is gone and
+ * `Context.systemPrompt` is a plain string, so Luxas no longer marks anything
+ * itself. The Anthropic layer now marks the system prompt, the last tool
+ * definition, and the last user content block — Claude Code's own layout,
+ * capped at Anthropic's 4 breakpoints.
+ *
+ * What this pins is the part Luxas's cost model depends on: the system block
+ * (L1+L2+L3, the big stable prefix) is cached, and the request never exceeds
+ * four breakpoints. The mid-history breakpoint Luxas used to place by hand is
+ * deliberately absent — see the note in context.ts injectSnapshot.
+ *
+ * The provider takes a `fetch` in its options, so the request is captured
+ * through that seam rather than by monkey-patching a global.
  *
  * Run:  npx tsx scripts/smoke_cache_pin.mts
  */
 
-import { getModel, streamAnthropic, type Context, type TextContent } from "@mariozechner/pi-ai";
+import { getModel, streamAnthropic, type Context } from "@earendil-works/pi-ai/compat";
 
-// Capture the outgoing request body and short-circuit with a minimal SSE
-// stream so the provider doesn't actually hit Anthropic.
 let capturedBody: any = null;
-const realFetch = globalThis.fetch;
-globalThis.fetch = (async (url: any, init: any) => {
-	capturedBody = init?.body ? JSON.parse(init.body) : null;
-	// Emit a minimal SSE stream pi-ai's parser accepts, so it resolves
-	// cleanly instead of crashing before we can inspect the body.
+
+/** Minimal SSE the provider's parser accepts, so it settles instead of throwing. */
+function sseResponse(): Response {
 	const sse = [
 		`event: message_start`,
 		`data: {"type":"message_start","message":{"id":"msg_test","type":"message","role":"assistant","content":[],"model":"claude-sonnet-4-6","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}`,
@@ -35,19 +35,16 @@ globalThis.fetch = (async (url: any, init: any) => {
 		`data: {"type":"message_stop"}`,
 		``,
 	].join("\n");
-	return new Response(sse, {
-		status: 200,
-		headers: { "Content-Type": "text/event-stream" },
-	});
+	return new Response(sse, { status: 200, headers: { "Content-Type": "text/event-stream" } });
+}
+
+const capturingFetch = (async (_url: any, init: any) => {
+	capturedBody = init?.body ? JSON.parse(init.body) : null;
+	return sseResponse();
 }) as any;
 
-const systemPrompt: TextContent[] = [
-	{ type: "text", text: "LAYER_1_BRAIN_MD_STUB", cacheControl: { type: "ephemeral" } },
-	{ type: "text", text: "LAYER_2_RESEARCH_MD_STUB", cacheControl: { type: "ephemeral" } },
-];
-
 const context: Context = {
-	systemPrompt,
+	systemPrompt: "LAYER_1_BRAIN_MD_STUB\n\nLAYER_2_RESEARCH_MD_STUB\n\nLAYER_3_SEMI_STATIC_STUB",
 	messages: [
 		{ role: "user", content: "first question", timestamp: 1 },
 		{
@@ -60,17 +57,12 @@ const context: Context = {
 			content: [{ type: "text", text: "first answer" }],
 			timestamp: 2,
 		},
-		// Mid-history user message with MANUAL pin (simulates injectSnapshot's
-		// "breakpoint before snapshot" strategy).
-		{
-			role: "user",
-			content: [
-				{ type: "text", text: "penultimate message text", cacheControl: { type: "ephemeral" } },
-			],
-			timestamp: 3,
-		},
-		// Trailer — pi-ai will auto-add cache_control here.
+		{ role: "user", content: "penultimate message text", timestamp: 3 },
 		{ role: "user", content: "trailer snapshot stub", timestamp: 4 },
+	],
+	tools: [
+		{ name: "read", description: "read a file", parameters: { type: "object", properties: {} } as any },
+		{ name: "finish", description: "finish the task", parameters: { type: "object", properties: {} } as any },
 	],
 };
 
@@ -78,26 +70,32 @@ const model = getModel("anthropic", "claude-sonnet-4-6");
 const stream = streamAnthropic(model, context, {
 	apiKey: "sk-ant-fake-for-smoketest",
 	cacheRetention: "long",
-});
+	fetch: capturingFetch,
+} as any);
 
 try {
 	await stream.result();
 } catch {
-	// stream may reject on our mocked response; we only care about captured body
+	// The mocked response may reject downstream; only the captured body matters.
 }
-globalThis.fetch = realFetch;
 
 if (!capturedBody) {
 	console.error("FAIL: no body captured");
 	process.exit(1);
 }
 
-// ── Assertions ───────────────────────────────────────
+let ok = true;
+const expect = (cond: boolean, label: string, detail = "") => {
+	console.log(`${cond ? "✓" : "✗ FAIL"} ${label}${!cond && detail ? ` — ${detail}` : ""}`);
+	if (!cond) ok = false;
+};
+
 function findCacheControls(obj: any, path = "$"): string[] {
 	const hits: string[] = [];
 	if (obj && typeof obj === "object") {
 		if (obj.cache_control) hits.push(path);
 		for (const [k, v] of Object.entries(obj)) {
+			if (k === "cache_control") continue;
 			hits.push(...findCacheControls(v, `${path}.${k}`));
 		}
 	}
@@ -105,39 +103,36 @@ function findCacheControls(obj: any, path = "$"): string[] {
 }
 
 const pins = findCacheControls(capturedBody);
-const sysBlockCount = Array.isArray(capturedBody.system) ? capturedBody.system.length : (capturedBody.system ? 1 : 0);
-const sysPins = Array.isArray(capturedBody.system)
-	? capturedBody.system.filter((b: any) => b.cache_control).length
-	: 0;
+const system = capturedBody.system ?? [];
+const sysPins = (Array.isArray(system) ? system : []).filter((b: any) => b?.cache_control).length;
 
-console.log("── captured params summary ──");
-console.log(`system blocks:           ${sysBlockCount}`);
-console.log(`system blocks w/ pin:    ${sysPins}`);
-console.log(`message count:           ${capturedBody.messages?.length}`);
-console.log(`total cache_control:     ${pins.length}`);
-console.log(`pin locations:`);
-for (const p of pins) console.log(`  ${p}`);
+// An API key sends one system block; OAuth prepends the Claude Code identity
+// block and pins both. Either way every system block carries a breakpoint.
+expect(Array.isArray(system) && system.length >= 1, "system prompt is sent as block(s)", JSON.stringify(system).slice(0, 120));
+expect(sysPins === system.length && sysPins >= 1, "every system block is cache_control'd", `${sysPins}/${system.length}`);
+expect(JSON.stringify(system).includes("LAYER_3_SEMI_STATIC_STUB"), "L3 rides inside the cached system block");
 
-let ok = true;
-const expect = (cond: boolean, msg: string) => {
-	console.log((cond ? "✓ " : "✗ ") + msg);
-	if (!cond) ok = false;
-};
+const lastTool = capturedBody.tools?.[capturedBody.tools.length - 1];
+expect(!!lastTool?.cache_control, "last tool definition is pinned");
+expect(!capturedBody.tools?.[0]?.cache_control, "only the LAST tool definition is pinned");
 
-expect(sysBlockCount === 2, "system has 2 blocks");
-expect(sysPins === 2, "both system blocks have cache_control");
-expect(pins.length >= 3, "total pins ≥ 3 (system x2 + at least 1 message)");
-expect(pins.length <= 4, "total pins ≤ 4 (Anthropic hard limit)");
-// Middle user message pin should survive (not the last message).
-const hasMidPin = pins.some(p => p.startsWith("$.messages.") && !p.startsWith(`$.messages.${capturedBody.messages.length - 1}`));
-expect(hasMidPin, "mid-history pin survived (bp2 is live)");
-// Last message should also have one (auto-add).
-const hasLastPin = pins.some(p => p.startsWith(`$.messages.${capturedBody.messages.length - 1}.`));
-expect(hasLastPin, "last message auto-pinned (bp3)");
+const msgs = capturedBody.messages ?? [];
+const lastMsg = msgs[msgs.length - 1];
+const lastBlock = Array.isArray(lastMsg?.content) ? lastMsg.content[lastMsg.content.length - 1] : null;
+expect(!!lastBlock?.cache_control, "last user content block is pinned");
+
+// The hard limit. Exceeding it is an API error, not a degraded cache.
+expect(pins.length <= 4, "total breakpoints ≤ 4 (Anthropic hard limit)", `got ${pins.length}: ${pins.join(", ")}`);
+
+// cacheRetention "long" buys a 1h TTL where the model supports it — worth
+// having on 8h runs, and silently dropping it would be invisible in output.
+const ttls = pins.map((p) => p).length;
+const anyTtl = JSON.stringify(capturedBody).includes('"ttl":"1h"');
+expect(anyTtl, 'cacheRetention "long" produced ttl 1h', `ttls seen: ${ttls}`);
 
 if (!ok) {
-	console.log("\n── full body for debugging ──");
+	console.log("\n── full body ──");
 	console.log(JSON.stringify(capturedBody, null, 2));
 	process.exit(1);
 }
-console.log("\nALL PASS — 3-segment cache pins are wired correctly.");
+console.log(`\nALL PASS — ${pins.length} breakpoints, placed by pi-ai.`);

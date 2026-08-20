@@ -12,7 +12,7 @@
  * (installed by skills/figure/scripts/requirements.txt).
  */
 
-import { Type } from "@sinclair/typebox";
+import { Type } from "@earendil-works/pi-ai/compat";
 import { mkdirSync, existsSync, readdirSync, unlinkSync, statSync, readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { join, dirname, isAbsolute, resolve as resolvePath, basename, relative as relativePath } from "node:path";
 import { tmpdir } from "node:os";

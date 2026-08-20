@@ -28,7 +28,7 @@ const MAX_MATCHES_PER_ANCHOR = 2;
 const MAX_OLDTEXT_FOR_SHINGLE = 2000;
 
 // ── Inlined fuzzy normalizer ──────────────────────────────────────────────
-// Mirrors @mariozechner/pi-coding-agent/dist/core/tools/edit-diff.js so that
+// Mirrors @earendil-works/pi-coding-agent/dist/core/tools/edit-diff.js so that
 // our fuzzy search uses the same equivalence classes as the underlying edit
 // tool's fuzzyFindText. Inlined to avoid fragile deep imports —
 // pi-coding-agent's package.json doesn't export this from the main entry.

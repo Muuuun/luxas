@@ -15,12 +15,11 @@
  * directly, no shared conversation history with the research agent).
  */
 
-import { Agent } from "@mariozechner/pi-agent-core";
-import { getModel } from "@mariozechner/pi-ai";
-import { Type } from "@sinclair/typebox";
+import { getModel, Type } from "@earendil-works/pi-ai/compat";
+import { Agent } from "@earendil-works/pi-agent-core";
 import { appendFileSync, mkdirSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { createReadTool } from "@mariozechner/pi-coding-agent";
+import { createReadTool } from "@earendil-works/pi-coding-agent";
 import { getApiKey } from "./auth.js";
 import { spawnAgent } from "./agents/spawn.js";
 import { createSpawnToolFactory } from "./tools/spawn-agent.js";

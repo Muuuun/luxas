@@ -20,7 +20,7 @@
  */
 
 import { readFileSync, appendFileSync } from "node:fs";
-import { streamSimple } from "@mariozechner/pi-ai";
+import { streamSimple } from "@earendil-works/pi-ai/compat";
 import { resolveModel } from "../src/agents/spawn.js";
 import { getApiKey } from "../src/auth.js";
 

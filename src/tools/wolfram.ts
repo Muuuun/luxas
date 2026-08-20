@@ -8,7 +8,7 @@
  * Fallback: Python/sympy if wolframscript is not installed.
  */
 
-import { Type } from "@sinclair/typebox";
+import { Type } from "@earendil-works/pi-ai/compat";
 import { execSync } from "node:child_process";
 
 let wolframPath: string | false | null = null;

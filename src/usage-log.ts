@@ -13,7 +13,7 @@ import { dirname } from "node:path";
 import {
   getApiProviders,
   registerApiProvider,
-} from "@mariozechner/pi-ai";
+} from "@earendil-works/pi-ai/compat";
 
 // ── Types ───────────────────────────────────────────
 

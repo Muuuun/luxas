@@ -5,9 +5,8 @@
  * ask clarifying questions → propose research angles → generate RESEARCH.md.
  */
 
-import { Agent } from "@mariozechner/pi-agent-core";
-import { getModel } from "@mariozechner/pi-ai";
-import { Type } from "@sinclair/typebox";
+import { Agent } from "@earendil-works/pi-agent-core";
+import { getModel, streamSimple, Type } from "@earendil-works/pi-ai/compat";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getApiKey } from "../auth.js";
@@ -70,10 +69,14 @@ export function createBrainstormAgent(projectDir: string, callbacks: BrainstormC
     parameters: Type.Object({
       content: Type.String({ description: "The full RESEARCH.md content in markdown format" }),
     }),
-    async execute(_toolCallId: string, params: { content: string }) {
+    // AgentTool.execute receives `unknown`: the payload is model-supplied and
+    // validated against `parameters` by the caller, so narrow here rather than
+    // declaring a narrower parameter type the interface cannot guarantee.
+    async execute(_toolCallId: string, params: unknown) {
+      const { content } = params as { content: string };
       const researchPath = join(projectDir, "RESEARCH.md");
-      writeFileSync(researchPath, params.content + "\n");
-      callbacks.onFinalized(params.content);
+      writeFileSync(researchPath, content + "\n");
+      callbacks.onFinalized(content);
       return {
         content: [{ type: "text" as const, text: "RESEARCH.md written successfully." }],
         details: {},
@@ -88,6 +91,8 @@ export function createBrainstormAgent(projectDir: string, callbacks: BrainstormC
       thinkingLevel: "low" as any,
       tools: [finalizeTool],
     },
+    // Required since 0.84: the loop no longer falls back to streamSimple.
+    streamFn: streamSimple,
     getApiKey,
   });
 

@@ -8,8 +8,8 @@
  * Only compacts files that exceed the size threshold.
  */
 
-import { completeSimple } from "@mariozechner/pi-ai";
-import type { Model } from "@mariozechner/pi-ai";
+import { completeSimple } from "@earendil-works/pi-ai/compat";
+import type { Model } from "@earendil-works/pi-ai/compat";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { readFileSafe, extractTextContent } from "./utils.js";

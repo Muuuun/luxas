@@ -5,7 +5,7 @@
  * If not found, attempts automatic installation via Homebrew (macOS) or apt (Linux).
  */
 
-import { Type } from "@sinclair/typebox";
+import { Type } from "@earendil-works/pi-ai/compat";
 import { execSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join, basename, resolve } from "node:path";

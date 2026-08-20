@@ -31,9 +31,9 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { Agent } from "@mariozechner/pi-agent-core";
-import { createAssistantMessageEventStream } from "@mariozechner/pi-ai";
-import type { AssistantMessage, Model } from "@mariozechner/pi-ai";
+import { Agent } from "@earendil-works/pi-agent-core";
+import { createAssistantMessageEventStream } from "@earendil-works/pi-ai/compat";
+import type { AssistantMessage, Model } from "@earendil-works/pi-ai/compat";
 
 // Cosmetic fake model. Not actually called — streamFn is fully mocked below.
 // Providing the minimal shape pi-agent-core inspects.
@@ -317,14 +317,14 @@ const outPath = join(notesDir, "pi-agent-core-length-behavior.md");
 const lines: string[] = [];
 lines.push(`# pi-agent-core length-truncation behavior (PR-2 spike)`);
 lines.push(``);
-lines.push(`Empirical observations of how pi-agent-core (@mariozechner/pi-agent-core) and`);
-lines.push(`pi-ai (@mariozechner/pi-ai) handle \`stopReason = "length"\` on a sub-agent turn.`);
+lines.push(`Empirical observations of how pi-agent-core (@earendil-works/pi-agent-core) and`);
+lines.push(`pi-ai (@earendil-works/pi-ai) handle \`stopReason = "length"\` on a sub-agent turn.`);
 lines.push(`Produced by \`scripts/spike_pi_agent_core_length.mts\` using a mock`);
 lines.push(`AssistantMessageEventStream — no API call.`);
 lines.push(``);
 lines.push(`Spike date: ${new Date().toISOString()}`);
-lines.push(`pi-agent-core: inspected at \`node_modules/@mariozechner/pi-agent-core/dist/\``);
-lines.push(`pi-ai: inspected at \`node_modules/@mariozechner/pi-ai/dist/\``);
+lines.push(`pi-agent-core: inspected at \`node_modules/@earendil-works/pi-agent-core/dist/\``);
+lines.push(`pi-ai: inspected at \`node_modules/@earendil-works/pi-ai/dist/\``);
 lines.push(``);
 
 lines.push(`## Observed answers`);

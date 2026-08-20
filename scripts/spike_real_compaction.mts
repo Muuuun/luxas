@@ -47,7 +47,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { streamSimple } from "@mariozechner/pi-ai";
+import { streamSimple } from "@earendil-works/pi-ai/compat";
 
 import { getConfiguredModel, resolveAnthropicKey } from "../src/auth.js";
 import { createBlockConversationAdapter } from "../src/compaction/adapter.js";

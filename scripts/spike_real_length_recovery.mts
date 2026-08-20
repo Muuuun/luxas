@@ -47,8 +47,8 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { streamSimple, getModel } from "@mariozechner/pi-ai";
-import type { AssistantMessage } from "@mariozechner/pi-ai";
+import { streamSimple, getModel } from "@earendil-works/pi-ai/compat";
+import type { AssistantMessage } from "@earendil-works/pi-ai/compat";
 
 import { LENGTH_RECOVERY_CONTINUE_PROMPT } from "../src/agents/spawn.js";
 

@@ -22,8 +22,8 @@ import { execSync, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
 import { join, resolve } from "node:path";
-import { Agent } from "@mariozechner/pi-agent-core";
-import { Type } from "@sinclair/typebox";
+import { Agent } from "@earendil-works/pi-agent-core";
+import { Type } from "@earendil-works/pi-ai/compat";
 import { createResearchAgent } from "./agent.js";
 import { ensureLiteratureFile } from "./methodology.js";
 import { jobOwnerAls } from "./jobs/als.js";
@@ -174,8 +174,8 @@ if (command === "run") {
 // Family-level model switch. When --model is a deepseek model, every
 // anthropic-tier slot (haiku/sonnet/opus declared in agent frontmatter)
 // redirects to that deepseek model via spawn.ts's applyProfile. OpenAI
-// tiers (gpt-5.2 / o3) are deliberate provider-specific picks and pass
-// through unchanged (math agent stays gpt-5.2).
+// tiers (gpt-5.6-terra / o3) are deliberate provider-specific picks and pass
+// through unchanged (math agent stays gpt-5.6-terra).
 if (model.startsWith("deepseek-")) {
   process.env.LUXAS_MODEL_PROFILE = model;
 }

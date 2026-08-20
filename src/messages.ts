@@ -5,7 +5,7 @@
  * #7: Custom message types (from pi-coding-agent pattern)
  */
 
-import type { Message } from "@mariozechner/pi-ai";
+import type { Message } from "@earendil-works/pi-ai/compat";
 
 // ── Custom message types ─────────────────────────────────
 

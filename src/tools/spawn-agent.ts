@@ -8,8 +8,8 @@
  *   - Parallel (tasks=[]): multiple agents run concurrently, brain blocks until all finish
  */
 
-import { Type } from "@sinclair/typebox";
-import type { Agent as AgentType } from "@mariozechner/pi-agent-core";
+import { Type } from "@earendil-works/pi-ai/compat";
+import type { Agent as AgentType } from "@earendil-works/pi-agent-core";
 import { spawn } from "node:child_process";
 import { spawnAgent, type SpawnAgentOptions } from "../agents/spawn.js";
 import { listAgentDescriptions, getDefinition } from "../agents/registry.js";

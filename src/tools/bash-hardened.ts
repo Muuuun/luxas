@@ -25,10 +25,10 @@ import { spawn } from "node:child_process";
 import { createWriteStream, mkdirSync, writeFileSync, type WriteStream } from "node:fs";
 import { join } from "node:path";
 import { totalmem } from "node:os";
-import { Type, type Static } from "@sinclair/typebox";
+import { Type, type Static } from "@earendil-works/pi-ai/compat";
 import {
   truncateTail, formatSize, DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import {
   newJobId, jobLogPath, writeState, SIGTERM_GRACE_MS,
   type JobState, type JobCause,
