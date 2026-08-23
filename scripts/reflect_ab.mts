@@ -27,11 +27,9 @@
  *   current/<bench-slug>/B.pdf    (the other)
  *   current/.assign.json          {bench-slug: {A: "main"|"pending", B: ...}}
  *
- * NOTE on Sisyphus invocation: the actual subprocess that runs Sisyphus
- * against a benchmark is gated behind runSisyphusOnTask below. Current
- * implementation is a placeholder that errors out — the project's CLI entry
- * point (luxas run / sisyphus run / npm script) needs to be wired in. See
- * the TODO in that function.
+ * Sisyphus invocation: runSisyphusOnTask spawns `tsx <worktree>/src/index.ts
+ * run <taskDir> --max-cost AB_MAX_COST_USD` under a 40-minute timeout. A
+ * bench must be scoped to finish inside both; see benchmarks/README.md.
  */
 
 import { mkdirSync, existsSync, readdirSync, writeFileSync, cpSync, mkdtempSync, statSync, symlinkSync } from "node:fs";
@@ -39,7 +37,7 @@ import { spawnSync } from "node:child_process";
 import { join, basename } from "node:path";
 import { tmpdir } from "node:os";
 import { randomBytes } from "node:crypto";
-import { ensureMetaDirs, AB_REPLICATES } from "../src/meta-agents/state.js";
+import { ensureMetaDirs, AB_REPLICATES, AB_MAX_COST_USD } from "../src/meta-agents/state.js";
 import { git, removeWorktree } from "../src/meta-agents/git-helpers.js";
 
 const [, , sisyphusRoot, pendingBranch] = process.argv;
@@ -142,7 +140,7 @@ function runSisyphusOnTask(
   const entryPoint = join(worktreeRoot, "src/index.ts");
 
   console.error(`[reflect_ab]   run Sisyphus (worktree=${basename(worktreeRoot)}, task=${basename(taskDir)}, replicate=${replicateIdx})`);
-  const r = spawnSync(tsxBin, [entryPoint, "run", taskDir], {
+  const r = spawnSync(tsxBin, [entryPoint, "run", taskDir, "--max-cost", String(AB_MAX_COST_USD)], {
     stdio: "inherit",
     env: process.env,
     // Per-Sisyphus-run cap. Each run has its own cost/turn budget inside; this

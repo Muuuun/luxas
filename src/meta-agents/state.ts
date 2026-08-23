@@ -23,8 +23,19 @@ export const DEEP_REVIEW_EVERY_N_SESSIONS = 5;
 /** User votes (accept + reject + tie) that trigger reflect_evolve. */
 export const EVOLUTION_TRIGGER_VOTES = 10;
 
-/** A/B replicates per benchmark task (each side). */
+/** A/B replicates per benchmark task (each side). Only the first replicate
+ * that yields a PDF is kept; the rest are retries. */
 export const AB_REPLICATES = 3;
+
+/**
+ * Per-replicate cost ceiling (USD) passed to `luxas run --max-cost` by
+ * reflect_ab. Without this every replicate inherits the $250 production
+ * backstop: at 3 benches × 3 replicates × 2 sides that is an 18-run bill
+ * before a single vote. Benchmarks are deliberately scoped to finish inside
+ * the runner's 40-minute timeout, so a run that needs more than this is
+ * already off-task; the cap turns it into a skipped replicate instead of a
+ * $250 one. */
+export const AB_MAX_COST_USD = 15;
 
 /** Branches managed by the harness. Single source of truth — do not inline. */
 export const PENDING_BRANCH = "meta/pending";
