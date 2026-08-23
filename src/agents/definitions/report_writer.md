@@ -97,6 +97,13 @@ named file. An entry you cannot fill honestly means the number must leave the
 headline — that is the manifest doing its job, not an obstacle.
 </claims_manifest>
 
+<contribution_wording>
+A sentence that claims a contribution — "we show", "for the first time", "novel", 首次, 我们证明 — is audited by `prior_art_auditor` before finish, and the gate demotes any such sentence the audit finds already in the literature. Write contribution sentences so they survive that audit:
+- State the result relative to the closest prior you already cite: "Extending X's result for S states to the stretched P3/2 pair, we find…" positions; "We show for the first time that…" invites the referee to find the prior.
+- Reserve "first"/"novel"/首次 for a claim you have a specific reason to believe has no prior — and expect the auditor to check. If you are not sure, do not write it; the auditor can upgrade wording far more cheaply than the gate can demote it.
+- `reconciliation` contributions (resolving a disagreement between papers) name both sides in the sentence.
+</contribution_wording>
+
 <workflow>
 1. Read the injected outline; if absent, read `notes/report_outline.md` — if
    that is also absent, stop and report it (the outline gate precedes you).

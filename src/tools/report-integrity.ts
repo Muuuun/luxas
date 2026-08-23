@@ -31,6 +31,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
+import { extractFrontmatterBlock, parseAuditFrontmatter } from "../utils.js";
 
 export interface IntegrityIssue {
   kind: "number-provenance" | "experiment-citation" | "disclosure" | "results-schema" | "harness-vocab" | "outline" | "method-blocked";
@@ -1037,6 +1038,121 @@ export function reportIntegrityIssues(projectDir: string): IntegrityIssue[] {
     }
   }
 
+  // 5g. Prior-art positioning of contribution claims (2026-08-23, novelty
+  // debate). A number gets provenance (1a) and a grade (1c); a CONTRIBUTION
+  // claim — "we show", "first", "novel", 首次, 我们证明 — got nothing: brain
+  // decided the question was open at framing time, against its own notes,
+  // and no later step asked the referee's first question ("hasn't this been
+  // done?"). That is the self-circular shape this system separates everywhere
+  // else. prior_art_auditor is the independent author: fresh context, tasked
+  // to refute, emits closest-prior results WITH LOCATORS and a delta class —
+  // never a novelty score, because LLM novelty scores do not track expert
+  // judgment (arXiv:2608.05179) while a locator is checkable.
+  //
+  // Teeth, deliberately asymmetric (the corpus is 67% finish-gate livelock):
+  //   BLOCKS on missing structure only — a contribution sentence in the
+  //     headline surface with no audit, a stale audit, an audit whose cited
+  //     prior is not in references.bib (an uncitable prior is not prior art).
+  //   The VERDICT never blocks by itself. A `known` delta DEMOTES the sentence
+  //     — first/novel must go and the closest prior must be cited inline. The
+  //     only verdict-adjacent block is the same one numbers have: a sentence
+  //     still wearing "first"/"novel" after the audit marked it `known` is an
+  //     unhedged claim at a demoted grade (cf. gradeBad for `divergent`), and
+  //     its fix is one named edit, not more research. Honest wording is the
+  //     outcome; a wall is not.
+  {
+    const CONTRIB_RE = /\b(we (?:show|establish|demonstrate|prove|find that|present the first|report the first|introduce)|for the first time|first (?:demonstration|derivation|computation|report|measurement)|novel|\bnew (?:result|method|regime|bound|protocol|scheme)\b|this work (?:demonstrates|establishes|shows))\b|首次|我们(?:证明|提出|发现|首次)|本文(?:提出|证明|首次|给出)/i;
+    const sentences = abstract
+      .replace(/%[^\n]*/g, " ")
+      .split(/(?<=[.!?。！？])\s+/)
+      .map((x) => x.replace(/\s+/g, " ").trim())
+      .filter((x) => x.length > 20 && CONTRIB_RE.test(x));
+    if (sentences.length > 0) {
+      const auditPath = join(projectDir, "reviews", "prior_art.md");
+      const auditSrc = existsSync(auditPath) ? readFileSync(auditPath, "utf-8") : null;
+      const blockers: string[] = [];
+      const demotions: string[] = [];
+      if (auditSrc === null) {
+        blockers.push(`${sentences.length} contribution sentence(s) in the abstract/conclusion and no reviews/prior_art.md. ` +
+          `Spawn the auditor:\n    spawn_agent(agent="prior_art_auditor", task="Position every contribution claim in ` +
+          `report/report.tex against the closest prior results (locators required). Write reviews/prior_art.md.", background=false)\n` +
+          `  First sentence: "${sentences[0].slice(0, 110)}"`);
+      } else {
+        const fm = extractFrontmatterBlock(auditSrc);
+        const afm = fm ? parseAuditFrontmatter(fm) : ({} as Record<string, string | undefined>);
+        if (!fm || !afm.status || !afm.sources_md5) {
+          blockers.push(`reviews/prior_art.md is missing YAML frontmatter keys (status, sources_md5). Re-spawn prior_art_auditor.`);
+        } else if (afm.status !== "positioned") {
+          blockers.push(`reviews/prior_art.md status is "${afm.status}" — the audit did not complete. Re-spawn prior_art_auditor.`);
+        } else {
+          const now = priorArtSourcesDigest(projectDir);
+          if (now !== afm.sources_md5) {
+            blockers.push(`reviews/prior_art.md audited different sources (recorded ${afm.sources_md5.slice(0, 12)}…, current ` +
+              `${now.slice(0, 12)}…) — report.tex or references.bib changed since. Re-spawn prior_art_auditor.`);
+          } else {
+            // Every cited prior must resolve to a bib key: an uncitable prior
+            // is not prior art, and a `known` verdict the report cannot cite
+            // cannot be applied.
+            let bib = "";
+            try { bib = readFileSync(join(projectDir, "report", "references.bib"), "utf-8"); } catch { /* absent */ }
+            const bibKeys = new Set([...bib.matchAll(/@\w+\s*\{\s*([^,\s]+)\s*,/g)].map((m) => m[1]));
+            const claimBlocks = auditSrc.split(/\n###\s+C\d+:/).slice(1);
+            for (const cb of claimBlocks) {
+              const title = cb.split("\n")[0].trim().slice(0, 90);
+              const cls = cb.match(/\*\*Delta class:\*\*\s*([a-z_]+)/)?.[1];
+              const priors = [...cb.matchAll(/^\s*\d+\.\s+([^\s—-]+)/gm)].map((m) => m[1]);
+              if (!cls) { blockers.push(`prior_art.md claim "${title}" has no Delta class.`); continue; }
+              if (cls === "known") {
+                const citable = priors.filter((k) => bibKeys.has(k));
+                if (priors.length > 0 && citable.length === 0) {
+                  blockers.push(`prior_art.md marks "${title}" as known, but none of its priors (${priors.slice(0, 3).join(", ")}) ` +
+                    `is a key in references.bib — add the entry so the prior can be cited, or the verdict cannot be applied.`);
+                } else {
+                  const wording = cb.match(/\*\*Wording required:\*\*\s*([\s\S]*?)(?=\n- \*\*|\n###|\n## |$)/)?.[1]?.trim();
+                  demotions.push(`"${title}" — delta class KNOWN (closest prior: ${citable[0] ?? priors[0] ?? "?"}). ` +
+                    `Drop first/novel and cite the prior inline.${wording ? ` Auditor's wording: ${wording.slice(0, 160)}` : ""}`);
+                }
+              }
+            }
+            // A headline contribution sentence the auditor never covered is an
+            // unaudited claim — structure, so it blocks.
+            const covered = claimBlocks.map((cb) => normText(cb.split("\n")[0]));
+            for (const sent of sentences) {
+              const key = normText(sent).slice(0, 40);
+              if (!covered.some((c) => c.includes(key.slice(0, 25)))) {
+                blockers.push(`contribution sentence not covered by prior_art.md: "${sent.slice(0, 100)}". Re-spawn prior_art_auditor ` +
+                  `or add the claim to the audit.`);
+              }
+            }
+          }
+        }
+      }
+      if (blockers.length > 0) {
+        issues.push({
+          kind: "disclosure", blocking: true, pushbackExempt: true,
+          text: `Prior-art positioning incomplete:\n  - ` + blockers.slice(0, 6).join("\n  - "),
+        });
+      }
+      if (demotions.length > 0) {
+        // Demotion is a wording requirement, surfaced the same way a
+        // below-indicative grade is: the sentence must say what the evidence
+        // supports. It blocks only because an unhedged "first" with a cited
+        // contradiction in the audit is a provenance failure on the sentence
+        // itself — the fix is one edit, named above, not more research.
+        issues.push({
+          kind: "number-provenance", blocking: true, pushbackExempt: true,
+          text: `Contribution claim(s) the prior-art audit found already in the literature — reword, do not re-research:\n  - ` +
+            demotions.slice(0, 6).join("\n  - "),
+        });
+      }
+      issues.push({
+        kind: "disclosure", blocking: false,
+        text: `Prior-art coverage: ${sentences.length} contribution sentence(s) in the headline surface` +
+          (auditSrc ? `; audit present (${demotions.length} demoted to cited-prior wording)` : `; NO audit`) + `.`,
+      });
+    }
+  }
+
   // 6. Tests present but no captured pytest run (warning only — the passive
   // capture in bash-hardened.ts only exists for runs after 2026-07-06, so
   // legacy projects legitimately have no artifacts). Promote to blocking
@@ -1085,6 +1201,20 @@ export function reportIntegrityIssues(projectDir: string): IntegrityIssue[] {
  * the audit (gate-cost debate F3). The auditor audits VALUES in these source
  * files; keying on them means prose-preserving recompiles don't invalidate it.
  */
+/**
+ * md5 over prior_art_auditor's read set: report.tex + references.bib, matching
+ * the shell pipeline in prior_art_auditor.md workflow step 1 byte-for-byte.
+ * Keyed on the contribution SENTENCES and the citation set, not the ledger —
+ * a results.json edit does not change what the report claims to contribute.
+ */
+export function priorArtSourcesDigest(projectDir: string): string {
+  const hash = createHash("md5");
+  for (const rel of ["report/report.tex", "report/references.bib"]) {
+    try { hash.update(readFileSync(join(projectDir, rel))); } catch { /* missing — contributes nothing, like cat */ }
+  }
+  return hash.digest("hex");
+}
+
 export function evidenceSourcesDigest(projectDir: string): string {
   const hash = createHash("md5");
   const feed = (p: string) => { try { hash.update(readFileSync(p)); } catch { /* missing — contributes nothing, like cat */ } };

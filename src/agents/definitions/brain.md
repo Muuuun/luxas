@@ -27,7 +27,7 @@ safety:
   writeOnExistingPolicy: block
 spawn:
   enabled: true
-  allowedTypes: [search, reader, worker, experiment, math, reviewer, fixer, illustrator, illustrator_write, typesetter, contradiction_auditor, report_writer]
+  allowedTypes: [search, reader, worker, experiment, math, reviewer, fixer, illustrator, illustrator_write, typesetter, contradiction_auditor, prior_art_auditor, report_writer]
 templates: [PROJECT_DIR, SEARCH_SCRIPT, EXTRACT_FIGURES, VENUE_SPECIFIC_DIR, MERGE_NOTES, SISYPHUS_DIR]
 ---
 
@@ -661,7 +661,8 @@ You are done when:
    - The report never references an experiment `E_N` whose ledger section is not `Status: Complete`.
    - Every `[unverified …]` / `[unanchored …]` tag and every tool_review-degradation note in `notes/` has a corresponding disclosure in the report (Limitations).
    - `reviews/contradiction_sweep.md` exists with `status: clean` for the current sources (keyed on report.tex + ledger + results.json — layout-only recompiles do NOT invalidate it). If it finds contradictions, reconcile each one (one value with a cited source, or state the differing conditions at both sites), recompile, re-sweep.
-8. **Finalization audit ORDER (cost, not correctness — the gates enforce correctness either way):** content auditors first, typesetter LAST. Run `contradiction_auditor` + reviewer + every content fix + the final recompile BEFORE the first typesetter spawn — any edit to report.tex invalidates a typesetter pass, and typesetter is by far the most expensive auditor (vision, ~minutes per changed page). The surgery run burned two full typesetter passes to the reverse order. Exception: on a RE-audit round where the sweep has already come back clean at least once, you may spawn typesetter and contradiction_auditor in parallel (`background=true` both) — their inputs and outputs are disjoint.
+8. **Finalization audit ORDER (cost, not correctness — the gates enforce correctness either way):** content auditors first, typesetter LAST. Run `contradiction_auditor` + `prior_art_auditor` + reviewer + every content fix + the final recompile BEFORE the first typesetter spawn — any edit to report.tex invalidates a typesetter pass, and typesetter is by far the most expensive auditor (vision, ~minutes per changed page). The surgery run burned two full typesetter passes to the reverse order. Exception: on a RE-audit round where the sweep has already come back clean at least once, you may spawn typesetter and contradiction_auditor in parallel (`background=true` both) — their inputs and outputs are disjoint.
+9. **Prior-art positioning (2026-08-23).** Every contribution sentence in the abstract/conclusion ("we show", "first", "novel", 首次, 我们证明…) must be positioned against the closest prior results before finish — the finish gate blocks a headline contribution with no `reviews/prior_art.md`, or a stale one. Spawn `prior_art_auditor` once `report.tex` and `references.bib` are content-final; it is blind to your framing on purpose (it reads the report, not plan.md) and is tasked to REFUTE novelty, so do not paste your reasoning about why the question is open into its task. Its verdict is a delta CLASS, never a score. If it marks a claim `known`, the fix is wording — drop first/novel, cite the prior inline with the auditor's suggested sentence — not more research. If it marks `new_regime`/`new_method`, cite the closest prior anyway: a contribution stated relative to the nearest prior result is what a referee reads as positioning; one stated in a vacuum is what a referee reads as not having looked.
 
 When done, call `finish()` with a one-line summary. Don't keep re-reading files once criteria are met.
 </completion_criteria>

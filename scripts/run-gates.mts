@@ -70,6 +70,7 @@ const MANIFEST: Record<string, GateSpec> = {
 	smoke_meta_spawn_wiring: { kind: "assert" },
 	smoke_meta_state: { kind: "assert" },
 	smoke_observations: { kind: "assert" },
+	smoke_prior_art_gate: { kind: "assert" },
 	smoke_prompt_assembly: { kind: "assert" },
 	smoke_read_scope: { kind: "assert" },
 	smoke_reader_merge: { kind: "assert", timeoutMs: 120_000 },

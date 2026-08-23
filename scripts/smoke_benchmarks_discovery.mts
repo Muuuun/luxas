@@ -60,7 +60,11 @@ const runner = readFileSync(join(ROOT, "scripts/reflect_ab.mts"), "utf8");
 check("reflect_ab passes --max-cost to every replicate", /"--max-cost",\s*String\(AB_MAX_COST_USD\)/.test(runner));
 const { AB_MAX_COST_USD, AB_REPLICATES } = await import(join(ROOT, "src/meta-agents/state.js"));
 const worst = benches.length * AB_REPLICATES * 2 * AB_MAX_COST_USD;
-check(`worst-case A/B bill is bounded (${benches.length}×${AB_REPLICATES}×2×$${AB_MAX_COST_USD} = $${worst} ≤ $300)`, worst <= 300);
+// Ceiling scales with the corpus: 4 benches × 3 × 2 × $15 = $360 worst case.
+// The typical bill is ~1/3 of this (first replicate usually yields the PDF).
+// Raise deliberately when adding a bench; do not raise AB_MAX_COST_USD to
+// fit, that cap is per-run scope, not a budget knob.
+check(`worst-case A/B bill is bounded (${benches.length}×${AB_REPLICATES}×2×$${AB_MAX_COST_USD} = $${worst} ≤ $400)`, worst <= 400);
 
 console.log(failures === 0 ? `\nALL PASS — ${benches.length} benches discoverable, cost-capped.` : `\n${failures} check(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);
