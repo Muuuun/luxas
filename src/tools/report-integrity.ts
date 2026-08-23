@@ -1102,15 +1102,40 @@ export function reportIntegrityIssues(projectDir: string): IntegrityIssue[] {
             // cannot be applied.
             let bib = "";
             try { bib = readFileSync(join(projectDir, "report", "references.bib"), "utf-8"); } catch { /* absent */ }
-            const bibKeys = new Set([...bib.matchAll(/@\w+\s*\{\s*([^,\s]+)\s*,/g)].map((m) => m[1]));
+            // The auditor writes priors as prose — "Walker & Saffman, PRA 77,
+            // 032723 (2008) — Table I" — never as bib keys (found live
+            // 2026-08-23: the first-token parse read "Scholl" and failed the
+            // join against Scholl2022). Resolve a prior line to a bib entry by
+            // first-author surname + year, which both forms carry.
+            const bibIndex: { key: string; surname: string; year: string }[] = [];
+            for (const m of bib.matchAll(/@\w+\s*\{\s*([^,\s]+)\s*,([\s\S]*?)(?=\n@|$)/g)) {
+              const key = m[1]; const body = m[2];
+              const au = body.match(/author\s*=\s*[{"]([^}"]*)/i)?.[1] ?? "";
+              const first = au.split(/\s+and\s+/i)[0] ?? "";
+              const surname = (first.includes(",") ? first.split(",")[0] : first.split(/\s+/).pop() ?? "")
+                .replace(/[{}\\'"`^~.]/g, "").toLowerCase();
+              const year = body.match(/year\s*=\s*[{"]?\s*(\d{4})/i)?.[1] ?? key.match(/(\d{4})/)?.[1] ?? "";
+              bibIndex.push({ key, surname, year });
+            }
+            const resolvePrior = (line: string): string | null => {
+              const l = line.toLowerCase();
+              // bare key form first
+              for (const b of bibIndex) if (new RegExp(`\\b${b.key.toLowerCase()}\\b`).test(l)) return b.key;
+              const yr = line.match(/\b(19|20)\d{2}\b/)?.[0];
+              for (const b of bibIndex) {
+                if (b.surname.length >= 3 && l.includes(b.surname) && (!yr || !b.year || yr === b.year)) return b.key;
+              }
+              return null;
+            };
             const claimBlocks = auditSrc.split(/\n###\s+C\d+:/).slice(1);
             for (const cb of claimBlocks) {
               const title = cb.split("\n")[0].trim().slice(0, 90);
               const cls = cb.match(/\*\*Delta class:\*\*\s*([a-z_]+)/)?.[1];
-              const priors = [...cb.matchAll(/^\s*\d+\.\s+([^\s—-]+)/gm)].map((m) => m[1]);
+              const priorLines = [...cb.matchAll(/^\s*\d+\.\s+(.+)$/gm)].map((m) => m[1]);
+              const priors = priorLines.map((l) => l.split(/\s[—-]\s/)[0].trim().slice(0, 50));
               if (!cls) { blockers.push(`prior_art.md claim "${title}" has no Delta class.`); continue; }
               if (cls === "known") {
-                const citable = priors.filter((k) => bibKeys.has(k));
+                const citable = priorLines.map(resolvePrior).filter((k): k is string => !!k);
                 if (priors.length > 0 && citable.length === 0) {
                   blockers.push(`prior_art.md marks "${title}" as known, but none of its priors (${priors.slice(0, 3).join(", ")}) ` +
                     `is a key in references.bib — add the entry so the prior can be cited, or the verdict cannot be applied.`);
@@ -1123,10 +1148,20 @@ export function reportIntegrityIssues(projectDir: string): IntegrityIssue[] {
             }
             // A headline contribution sentence the auditor never covered is an
             // unaudited claim — structure, so it blocks.
-            const covered = claimBlocks.map((cb) => normText(cb.split("\n")[0]));
+            // Match on a mid-sentence window, not the opening words: the
+            // auditor quotes the sentence verbatim but may trim a leading
+            // "Crucially," / "Here" / LaTeX that the abstract splitter kept.
+            // Tokenize BOTH sides identically (drop short tokens on both, not
+            // just the needle — a filter applied to one side only makes
+            // "the stretched pair" miss "the stretched p3 2 pair").
+            const tokens = (t: string) => normText(t).replace(/[^a-z0-9\u4e00-\u9fff ]/g, " ")
+              .split(/\s+/).filter((w) => w.length > 2).join(" ");
+            const covered = claimBlocks.map((cb) => tokens(cb.split("\n")[0]));
             for (const sent of sentences) {
-              const key = normText(sent).slice(0, 40);
-              if (!covered.some((c) => c.includes(key.slice(0, 25)))) {
+              const words = tokens(sent).split(" ");
+              const start = Math.min(3, Math.max(0, words.length - 6));
+              const win = words.slice(start, start + 6).join(" ");
+              if (win.length >= 12 && !covered.some((c) => c.includes(win))) {
                 blockers.push(`contribution sentence not covered by prior_art.md: "${sent.slice(0, 100)}". Re-spawn prior_art_auditor ` +
                   `or add the claim to the audit.`);
               }

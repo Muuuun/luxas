@@ -30,7 +30,7 @@ function check(label: string, cond: boolean, detail = "") {
 const CONTRIB = "We show for the first time that the stretched P3/2 pair has a finite on-axis C6 of 9.63 GHz um6.";
 const PLAIN = "The on-axis C6 of the stretched P3/2 pair is computed by full diagonalisation.";
 
-function project(abstract: string, bib = "@article{walker2008,\n  title={x},\n}\n"): string {
+function project(abstract: string, bib = "@article{walker2008,\n  author={Walker, Thad G. and Saffman, Mark},\n  title={x},\n  year={2008},\n}\n"): string {
 	const dir = mkdtempSync(join(tmpdir(), "luxas-pa-"));
 	mkdirSync(join(dir, "report"), { recursive: true });
 	mkdirSync(join(dir, "reviews"), { recursive: true });
@@ -123,6 +123,26 @@ try {
 		const d = project("Here we compute the residual on-axis C6 of the stretched P3/2 pair beyond the Forster-zero picture of Walker2008."); dirs.push(d);
 		const iss = reportIntegrityIssues(d);
 		check("positioned 'here we compute' still detected and BLOCKS without audit", blockersOf(iss).length === 1, texts(iss).slice(0, 200));
+	}
+	{ // Priors written as PROSE (the auditor's real format) resolve by surname+year
+		const d = project(CONTRIB); dirs.push(d);
+		audit(d, "known", "Walker & Saffman, PRA 77, 032723 (2008)");
+		const iss = reportIntegrityIssues(d);
+		check("prose prior 'Walker & Saffman … (2008)' resolves to walker2008 → demotion, not bib block",
+			blockersOf(iss).length === 0 && demotionsOf(iss).length === 1, texts(iss).slice(0, 300));
+	}
+	{ // Prose prior with the wrong year must NOT resolve
+		const d = project(CONTRIB); dirs.push(d);
+		audit(d, "known", "Walker et al. (2019)");
+		const iss = reportIntegrityIssues(d);
+		const b = blockersOf(iss);
+		check("prose prior with mismatched year does not resolve → bib block", b.length === 1 && b[0].text.includes("is a key in references.bib"), texts(b).slice(0, 200));
+	}
+	{ // Coverage survives the auditor trimming a leading word from the sentence
+		const d = project("Crucially, " + CONTRIB); dirs.push(d);
+		audit(d, "new_regime", "walker2008"); // header quotes CONTRIB without "Crucially,"
+		const iss = reportIntegrityIssues(d);
+		check("coverage matches when the audit header drops a leading 'Crucially,'", blockersOf(iss).length === 0, texts(blockersOf(iss)).slice(0, 300));
 	}
 	{ // Chinese contribution language is detected
 		const d = project("我们首次证明拉伸 P3/2 对在轴向具有有限的 C6 值 9.63 GHz um6。"); dirs.push(d);
