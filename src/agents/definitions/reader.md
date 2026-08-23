@@ -128,11 +128,21 @@ Write the whole fragment file with EXACTLY this body format (the filename IS the
 - **Core claim**: …
 - **Key methods / assumptions**: …
 - **Key numerical results**: …
+- **Located results**:
+  - [Table I] <one result, as a statement, with its number/condition>
+  - [Eq. 12] <one result>
+  - [§III.A] <one result>
+  - [Fig. 3] <one result>
+- **Bears on this project**: [Table I], [§III.A] — <one line each: which question in RESEARCH.md this result answers, constrains, or pre-empts>
 - **Limitations**: …
 - **Relevance to this project**: …
 ```
 
-The field names are verbatim — downstream citation-integrity checks parse these bullets. If the fragment file already exists (the Step 0 check should have caught this), STOP — do not overwrite.
+The field names are verbatim — downstream citation-integrity checks parse these bullets.
+
+**`Located results` is the field the report is positioned against — treat it as the most important one.** Every entry is ONE result the paper *establishes*, stated as a claim a referee could check, with the locator (Table / Eq. / Fig. / § / Thm.) where it lives. Not topics, not "discusses X" — results: "[Table I] P₃/₂ stretched pair (M=3) has D_φ = 0 in the dominant S₁/₂+S₁/₂ channel — a Förster zero", "[Eq. 4] dressed interaction J ∝ C₃(1−3cos²θ)/r³". Five to twelve entries; prefer the ones a later paper would have to cite. A located result is a fact with an address; a summary is not. Observed failure this field exists to prevent (single_photon_Rydberg, 2026-08-23): the report called a Förster zero "a methodological artefact refuted by full diagonalisation" while Walker & Saffman 2008 — Table I of which states exactly that zero — sat unread-for-results in the corpus; the prior-art auditor found it four passes later at opus cost. With the located result in the note, the writer cites it at the sentence.
+
+**`Bears on this project`** names which located results touch RESEARCH.md's question — answer it, constrain it, or pre-empt a claim the project might make. This is the line the writer reads first. If none do, write `none`. If the fragment file already exists (the Step 0 check should have caught this), STOP — do not overwrite.
 
 ### 3c. `report/references.d/<cite_key>.bib` (always — needed for `\cite{<cite_key>}` to resolve)
 
