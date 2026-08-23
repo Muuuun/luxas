@@ -1061,7 +1061,14 @@ export function reportIntegrityIssues(projectDir: string): IntegrityIssue[] {
   //     its fix is one named edit, not more research. Honest wording is the
   //     outcome; a wall is not.
   {
-    const CONTRIB_RE = /\b(we (?:show|establish|demonstrate|prove|find that|present the first|report the first|introduce)|for the first time|first (?:demonstration|derivation|computation|report|measurement)|novel|\bnew (?:result|method|regime|bound|protocol|scheme)\b|this work (?:demonstrates|establishes|shows))\b|首次|我们(?:证明|提出|发现|首次)|本文(?:提出|证明|首次|给出)/i;
+    // Matches the vocabulary prior_art_auditor.md <scope> names, PLUS the
+    // positioned forms a reworded claim takes ("we compute", "we quantify",
+    // "here we present"). Found live 2026-08-23: after the auditor's
+    // rewording removed "we find that"/"artefact refuted" from
+    // single_photon_Rydberg, the abstract's five contribution claims fell
+    // out of the old pattern and the gate went silent on a stale audit.
+    // A positioned claim is still a claim; the gate must keep seeing it.
+    const CONTRIB_RE = /\b(?:(?:here )?we (?:show|establish|demonstrate|prove|find|compute|quantify|derive|obtain|present|report|introduce|resolve|identify)\b|for the first time|first (?:demonstration|derivation|computation|report|measurement)|novel|new (?:result|method|regime|bound|protocol|scheme)\b|this (?:work|report|paper) (?:demonstrates|establishes|shows|presents|computes|finds))|首次|我们(?:证明|提出|发现|首次|计算|给出)|本文(?:提出|证明|首次|给出|计算)/i;
     const sentences = abstract
       .replace(/%[^\n]*/g, " ")
       .split(/(?<=[.!?。！？])\s+/)

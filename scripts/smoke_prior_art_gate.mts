@@ -117,6 +117,13 @@ try {
 		const iss = reportIntegrityIssues(d);
 		check("plain abstract: gate is silent", !/Prior-art/.test(texts(iss)), texts(iss).slice(0, 200));
 	}
+	{ // POSITIONED wording is still a contribution claim (found live 2026-08-23:
+	  // after the auditor's rewording removed "we find that", the gate went
+	  // silent on single_photon_Rydberg's stale audit)
+		const d = project("Here we compute the residual on-axis C6 of the stretched P3/2 pair beyond the Forster-zero picture of Walker2008."); dirs.push(d);
+		const iss = reportIntegrityIssues(d);
+		check("positioned 'here we compute' still detected and BLOCKS without audit", blockersOf(iss).length === 1, texts(iss).slice(0, 200));
+	}
 	{ // Chinese contribution language is detected
 		const d = project("我们首次证明拉伸 P3/2 对在轴向具有有限的 C6 值 9.63 GHz um6。"); dirs.push(d);
 		const iss = reportIntegrityIssues(d);
