@@ -27,10 +27,14 @@ if ! grep -q "DEFAULT_MAX_LINES = 2000" "$TRUNCATE"; then
   exit 1
 fi
 
-sed -i '' \
+# Portable in-place edit: `sed -i ''` is BSD/macOS-only and GNU sed reads the
+# '' as a script, which failed the first Linux install (droplet, 2026-08-23).
+# Write to a temp file and move it over instead of relying on either dialect.
+TMP="$(mktemp "${TRUNCATE}.XXXXXX")"
+sed \
   -e 's/DEFAULT_MAX_LINES = 2000/DEFAULT_MAX_LINES = 10000/' \
   -e 's/DEFAULT_MAX_BYTES = 50 \* 1024/DEFAULT_MAX_BYTES = 200 * 1024/' \
-  "$TRUNCATE"
+  "$TRUNCATE" > "$TMP" && mv "$TMP" "$TRUNCATE"
 
 grep -q "DEFAULT_MAX_LINES = 10000" "$TRUNCATE" || { echo "[patch] FAIL: read-limit rewrite did not take" >&2; exit 1; }
 grep -q "DEFAULT_MAX_BYTES = 200 \* 1024" "$TRUNCATE" || { echo "[patch] FAIL: byte-limit rewrite did not take" >&2; exit 1; }
