@@ -1117,6 +1117,31 @@ export function reportIntegrityIssues(projectDir: string): IntegrityIssue[] {
               const year = body.match(/year\s*=\s*[{"]?\s*(\d{4})/i)?.[1] ?? key.match(/(\d{4})/)?.[1] ?? "";
               bibIndex.push({ key, surname, year });
             }
+            // The report's sentence for a claim block, located by the same
+            // token window coverage uses; true when it \cite{}s any resolved
+            // prior key. A `known` claim that already cites its prior is done.
+            const priorAlreadyCited = (cb: string, keys: string[]): boolean => {
+              if (keys.length === 0) return false;
+              const head = cb.split("\n")[0].replace(/^[\s"“”]+|[\s"“”]+$/g, "");
+              const w = head.replace(/\\[a-zA-Z]+\{[^}]*\}/g, " ").replace(/[^A-Za-z0-9 ]/g, " ").split(/\s+/).filter((x) => x.length > 3);
+              if (w.length < 2) return false;
+              // Locate the sentence in the tex by its first two long words in
+              // order (a filtered needle cannot be matched against an
+              // unfiltered haystack — the same tokenization trap as coverage).
+              const flat = tex.replace(/\s+/g, " ");
+              const lower = flat.toLowerCase();
+              let from = -1;
+              for (let i = 0; i < w.length - 1 && from < 0; i++) {
+                const a = lower.indexOf(w[i].toLowerCase());
+                if (a >= 0 && lower.indexOf(w[i + 1].toLowerCase(), a) - a < 80) from = a;
+              }
+              if (from < 0) return false;
+              const seg = flat.slice(from, from + 900);
+              const stop = seg.search(/[.。!?]\s+[A-Z\\]/);
+              const sentence = stop > 0 ? seg.slice(0, stop + 1) : seg;
+              const cites = [...sentence.matchAll(/\\cite[a-z]*\{([^}]*)\}/g)].flatMap((m) => m[1].split(",").map((k) => k.trim()));
+              return cites.some((k) => keys.includes(k));
+            };
             const resolvePrior = (line: string): string | null => {
               const l = line.toLowerCase();
               // bare key form first
@@ -1139,6 +1164,11 @@ export function reportIntegrityIssues(projectDir: string): IntegrityIssue[] {
                 if (priors.length > 0 && citable.length === 0) {
                   blockers.push(`prior_art.md marks "${title}" as known, but none of its priors (${priors.slice(0, 3).join(", ")}) ` +
                     `is a key in references.bib — add the entry so the prior can be cited, or the verdict cannot be applied.`);
+                } else if (priorAlreadyCited(cb, citable)) {
+                  // `known` with the prior already cited in the report's own
+                  // sentence is the RESOLVED state of a demotion, not a pending
+                  // one (found live 2026-08-23: the gate demoted a C4 whose
+                  // audit entry read "✓ Carries citations"). Nothing to do.
                 } else {
                   const wording = cb.match(/\*\*Wording required:\*\*\s*([\s\S]*?)(?=\n- \*\*|\n###|\n## |$)/)?.[1]?.trim();
                   demotions.push(`"${title}" — delta class KNOWN (closest prior: ${citable[0] ?? priors[0] ?? "?"}). ` +

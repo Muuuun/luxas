@@ -144,6 +144,19 @@ try {
 		const iss = reportIntegrityIssues(d);
 		check("coverage matches when the audit header drops a leading 'Crucially,'", blockersOf(iss).length === 0, texts(blockersOf(iss)).slice(0, 300));
 	}
+	{ // known + the prior ALREADY CITED in the report's sentence = resolved, no demotion
+		const cited = "We show for the first time that the stretched P3/2 pair has a finite on-axis C6 of 9.63 GHz um6~\\cite{walker2008}.";
+		const d = project(cited); dirs.push(d);
+		audit(d, "known", "Walker & Saffman, PRA 77, 032723 (2008)");
+		const iss = reportIntegrityIssues(d);
+		check("known + prior already \\cite'd in the sentence → NO demotion (resolved)", demotionsOf(iss).length === 0 && blockersOf(iss).length === 0, texts(iss).slice(0, 300));
+	}
+	{ // known + prior in bib but NOT cited in the sentence = still a demotion
+		const d = project(CONTRIB); dirs.push(d);
+		audit(d, "known", "Walker & Saffman, PRA 77, 032723 (2008)");
+		const iss = reportIntegrityIssues(d);
+		check("known + prior in bib but uncited in the sentence → demotion stands", demotionsOf(iss).length === 1, texts(iss).slice(0, 300));
+	}
 	{ // Chinese contribution language is detected
 		const d = project("我们首次证明拉伸 P3/2 对在轴向具有有限的 C6 值 9.63 GHz um6。"); dirs.push(d);
 		const iss = reportIntegrityIssues(d);
