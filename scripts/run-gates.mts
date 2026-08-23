@@ -81,6 +81,7 @@ const MANIFEST: Record<string, GateSpec> = {
 	smoke_validate_pending_merge: { kind: "assert" },
 	smoke_validate_session_path: { kind: "assert" },
 	smoke_write_scope: { kind: "assert" },
+	smoke_xval_coverage: { kind: "assert" },
 
 	// ── live-model gates: --live only ───────────────────────────────────────
 	smoke_typesetter: { kind: "live", timeoutMs: 600_000, note: "drives the typesetter agent end to end" },

@@ -303,12 +303,31 @@ const HEDGE_TOKENS: Record<string, string[]> = {
 const DIVERGENCE_MARKERS = /发散|placeholder|占位|pending|待验证|需完整对角化|需确认|不可靠|divergent|unreliable|extrapolat|外推|inaccurate for/i;
 
 /** Harness verdict on one cross_validation entry: agents report numbers,
- * the harness pronounces. Returns "corroborated" | "discrepant" | null
- * (malformed). */
-function xvalVerdict(x: any): "corroborated" | "discrepant" | null {
+ * the harness pronounces. Returns "corroborated" | "discrepant" |
+ * "identical" | null (malformed).
+ *
+ * "identical": value_a and value_b agree to the last bit. Two genuinely
+ * independent methods — a different formalism, an analytic limit, a second
+ * library — do not reproduce a float to full precision; a bit-identical pair
+ * is the same computation run twice, or one number copied into both slots.
+ * Production audit (2026-08-23, 77 entries since July): 23 of the 40
+ * "agreeing" entries were bit-identical, e.g. -74.96294599504007 on both
+ * sides at tolerance 1e-10. That is the self-circular failure the
+ * tool_impl/tool_review split exists to prevent, one layer up — and the
+ * string check on method_a != method_b cannot see it ("vqe" vs "vqe_rerun"
+ * passes). The only exception is an exact integer count that two methods
+ * legitimately both land on (a gate count, a code distance); those are
+ * admitted when both values are integers with magnitude below
+ * XVAL_EXACT_INT_LIMIT. */
+const XVAL_EXACT_INT_LIMIT = 1e6;
+function xvalVerdict(x: any): "corroborated" | "discrepant" | "identical" | null {
   const a = Number(x?.value_a), b = Number(x?.value_b);
   const tol = Number(x?.tolerance_rel);
   if (!Number.isFinite(a) || !Number.isFinite(b) || !Number.isFinite(tol) || tol <= 0 || tol > 0.5) return null;
+  if (a === b) {
+    const smallInt = Number.isInteger(a) && Math.abs(a) < XVAL_EXACT_INT_LIMIT;
+    if (!smallInt) return "identical";
+  }
   return Math.abs(a - b) <= tol * Math.max(Math.abs(a), Math.abs(b)) ? "corroborated" : "discrepant";
 }
 
@@ -845,6 +864,13 @@ export function reportIntegrityIssues(projectDir: string): IntegrityIssue[] {
             problems.push(`${e.id}/${key}: malformed entry (needs numeric value_a, value_b, tolerance_rel in (0, 0.5])`);
             continue;
           }
+          if (verdict === "identical") {
+            problems.push(`${e.id}/${key}: value_a and value_b are bit-identical (${x.value_a}) — two independent ` +
+              `methods do not reproduce a float to full precision. This is the same computation recorded twice, ` +
+              `not a cross-validation. Run a genuinely different method (analytic limit, second formalism, ` +
+              `second library, literature value) and record ITS number; the dependent claim stays indicative until then.`);
+            continue;
+          }
           {
             const missing = [Number(x.value_a), Number(x.value_b)].filter((v) => !valueAnchored(v));
             if (missing.length > 0) {
@@ -918,6 +944,95 @@ export function reportIntegrityIssues(projectDir: string): IntegrityIssue[] {
           kind: "method-blocked", blocking: true, pushbackExempt: true,
           text: `Unclosed cross-validation plan(s):\n  - ` + unclosed.slice(0, 6).join("\n  - "),
         });
+      }
+    }
+
+    // 5f. Headline cross-validation coverage (2026-08-23, production audit).
+    // Cross-validation coverage is defined by what the REPORT claims, not by
+    // what the experiment found convenient to check. The audit of 77 executed
+    // entries since July found the grade pipeline leaking at the join: claims
+    // cite one key namespace (computed.gap_matrix_summary.*), the experiment
+    // validated another (computed.gidney_vs_claes_d3_ratio), and the exact-
+    // string lookup in 1c dropped the credit — 0 of 18 claims matched in
+    // magic-state-cultivation, 0 of 11 in 量子计算在组合优化, with 19 and 12
+    // executed entries respectively. Net: 40 agreeing controls became 1
+    // corroborated claim.
+    //
+    // Two teeth, deliberately different:
+    //   (a) BLOCKS on provable misattribution: a headline claim whose VALUE
+    //       appears as value_a/value_b of an agreeing cross_validation entry
+    //       recorded under a DIFFERENT claim_key. The work was done; only the
+    //       key is wrong. Fixing the key is a one-line edit and the claim
+    //       then grades corroborated — refusing to ship until that happens
+    //       costs nothing and recovers the evidence.
+    //   (b) REPORTS (non-blocking) headline claims with no control at all.
+    //       Those are already correctly capped at indicative by 1c; blocking
+    //       on "you did not validate this" would recreate the finish-gate
+    //       livelock the observation corpus is full of. The coverage line
+    //       makes the ratio visible at finish time instead of in a post-hoc
+    //       audit, which is the whole point.
+    {
+      let claims: any[] = [];
+      try {
+        const cj = JSON.parse(readFileSync(join(projectDir, "report", "claims.json"), "utf-8"));
+        claims = Array.isArray(cj) ? cj : [];
+      } catch { claims = []; }
+      if (claims.length > 0) {
+        const headlineNums = [...new Set(extractNumbers(abstract))].filter((v) => !exempt(v));
+        // Every agreeing entry, with its experiment id for the message.
+        const agreeing: { key: string; exp: string; a: number; b: number }[] = [];
+        for (const e of experiments) {
+          if (!e.latestResults) continue;
+          let j: any;
+          try { j = JSON.parse(readFileSync(e.latestResults, "utf-8")); } catch { continue; }
+          for (const x of (Array.isArray(j?.computed?.cross_validation) ? j.computed.cross_validation : [])) {
+            if (xvalVerdict(x) !== "corroborated") continue;
+            if (normText(String(x?.method_a ?? "")) === normText(String(x?.method_b ?? ""))) continue;
+            agreeing.push({ key: String(x?.claim_key ?? ""), exp: e.id, a: Number(x.value_a), b: Number(x.value_b) });
+          }
+        }
+        const agreeingKeys = new Set(agreeing.map((x) => x.key));
+        const headline = claims.filter((c) => {
+          const v = Number(c?.value);
+          return Number.isFinite(v) && !exempt(v) && resolves(v, headlineNums);
+        });
+        const misattributed: string[] = [];
+        let covered = 0;
+        for (const c of headline) {
+          const key = String(c?.claim_key ?? "");
+          if (key && agreeingKeys.has(key)) { covered++; continue; }
+          const v = Number(c.value);
+          // Strict match only — NOT resolves(), whose one-significant-figure
+          // branch is right for provenance but wrong for identity: it paired
+          // an energy-mismatch ratio of 42.5 with a Gamow factor of 40.16
+          // (both "4e1") on a production report. Two quantities that merely
+          // share a leading digit are not the same number.
+          const close = (x: number) => v === x || Math.abs(v - x) <= 0.005 * Math.max(Math.abs(v), Math.abs(x));
+          const hit = agreeing.find((x) => close(x.a) || close(x.b));
+          if (hit) {
+            misattributed.push(`"${String(c?.tex_context ?? c.value).slice(0, 50)}" (value ${c.value}, claim_key ` +
+              `"${key || "(none)"}") matches ${hit.exp}'s agreeing cross_validation recorded under claim_key ` +
+              `"${hit.key}" — same number, different key, credit lost. Set this claim's claim_key to "${hit.key}" ` +
+              `(or the cross_validation entry's to "${key}") so 1c can grade it corroborated.`);
+          }
+        }
+        if (misattributed.length > 0) {
+          issues.push({
+            kind: "number-provenance", blocking: true, pushbackExempt: true,
+            text: `Headline claim(s) with an executed, agreeing cross-validation filed under the wrong claim_key:\n  - ` +
+              misattributed.slice(0, 6).join("\n  - "),
+          });
+        }
+        if (headline.length > 0) {
+          const uncovered = headline.length - covered - misattributed.length;
+          issues.push({
+            kind: "number-provenance", blocking: false,
+            text: `Headline cross-validation coverage: ${covered}/${headline.length} abstract/conclusion claims ` +
+              `have an agreeing independent control (${uncovered} ship at indicative or below). ` +
+              `Each uncovered headline number is a referee's first question; a control for it is worth more ` +
+              `than another experiment.`,
+          });
+        }
       }
     }
   }
