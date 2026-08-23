@@ -1123,6 +1123,12 @@ export function reportIntegrityIssues(projectDir: string): IntegrityIssue[] {
             const priorAlreadyCited = (cb: string, keys: string[]): boolean => {
               if (keys.length === 0) return false;
               const head = cb.split("\n")[0].replace(/^[\s"“”]+|[\s"“”]+$/g, "");
+              // The auditor quotes the sentence verbatim from the tex, so a
+              // \cite{} of a resolved key IN THE QUOTE settles it without a
+              // tex search (run 5, 2026-08-23: the header carried
+              // \cite{Beterov2009} and the locator below still missed it).
+              const quoted = [...head.matchAll(/\\cite[a-z]*\{([^}]*)\}/g)].flatMap((m) => m[1].split(",").map((k) => k.trim()));
+              if (quoted.some((k) => keys.includes(k))) return true;
               const w = head.replace(/\\[a-zA-Z]+\{[^}]*\}/g, " ").replace(/[^A-Za-z0-9 ]/g, " ").split(/\s+/).filter((x) => x.length > 3);
               if (w.length < 2) return false;
               // Locate the sentence in the tex by its first two long words in

@@ -157,6 +157,14 @@ try {
 		const iss = reportIntegrityIssues(d);
 		check("known + prior in bib but uncited in the sentence → demotion stands", demotionsOf(iss).length === 1, texts(iss).slice(0, 300));
 	}
+	{ // The cite sits in the audit's OWN quoted sentence, after mid-sentence "Ref.~" and "$S$-"
+	  // (run 5, 2026-08-23: tex sentence-boundary search truncated before the \cite)
+		const bb = "We show that blackbody radiation equalises $S$- and $P$-state lifetimes~\\cite{walker2008} (both 160 us, using measurements from Ref.~\\cite{walker2008}), removing a potential advantage.";
+		const d = project(bb); dirs.push(d);
+		audit(d, "known", "Walker & Saffman, PRA 77, 032723 (2008)");
+		const iss = reportIntegrityIssues(d);
+		check("known + \\cite inside the quoted sentence (with Ref.~ / $S$- noise) → resolved", demotionsOf(iss).length === 0, texts(demotionsOf(iss)).slice(0, 300));
+	}
 	{ // Chinese contribution language is detected
 		const d = project("我们首次证明拉伸 P3/2 对在轴向具有有限的 C6 值 9.63 GHz um6。"); dirs.push(d);
 		const iss = reportIntegrityIssues(d);
