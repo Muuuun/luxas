@@ -40,6 +40,23 @@ plt.style.use('report/figstyle.mplstyle')
 fig.savefig('report/figures/fig_name.pdf')
 ```
 
+## Archetype-first workflow (mandatory)
+
+Do NOT write a figure from scratch. `references/` holds polished archetypes —
+each embodies the design language (`references/DESIGN.md`) and passes figlint:
+
+| archetype | use it for |
+|---|---|
+| `archetype_comparison.py` | cross-study/scheme rankings; any "who is best and why" (log dot plot + two-quantity plane with iso-product lines) |
+| `archetype_scan.py` | any y(x) parameter scan: shaded regimes, direct-labelled lines, annotated crossing |
+| `archetype_matrix.py` | sparse categorical counts: dot matrix, zeros white, sorted by totals |
+
+Copy the nearest one, keep every design rule (the comments say which line is
+a rule), replace the data. This is the same exemplar discipline as the survey
+outline (`skills/review/references/exemplar_survey_outline.md`): imitate the
+skeleton, do not re-derive the shape — re-derivation is how the shipped
+660×-on-linear and dark-heatmap failures happened.
+
 ## figlint — run every plot script through it (mandatory)
 
 Never run a plot script bare. Run it through the mechanical linter that ships with this skill:

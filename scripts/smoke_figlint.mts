@@ -71,5 +71,18 @@ ax.set_title("FOM comparison")
 fig.savefig("o.png", bbox_inches="tight")`);
 	check("log-scale version is clean", r.code === 0 && /clean \(0 warning/.test(r.out), r.out.slice(-200)); }
 
+// The archetype gallery is the elegance floor: every reference script must
+// stay figlint-clean, or the exemplars teach the defects they exist to end.
+{
+	const refDir = join(ROOT, "skills/matplotlib-figures/references");
+	const { readdirSync } = await import("node:fs");
+	for (const f of readdirSync(refDir).filter((x: string) => x.endsWith(".py"))) {
+		const d = mkdtempSync(join(tmpdir(), "figarch-"));
+		const r = spawnSync("python3", [FIGLINT, join(refDir, f)], { encoding: "utf8", cwd: d, timeout: 120_000 });
+		rmSync(d, { recursive: true, force: true });
+		check(`archetype ${f} is figlint-clean`, r.status === 0, ((r.stdout ?? "") + (r.stderr ?? "")).slice(-200));
+	}
+}
+
 console.log(failures === 0 ? "\nALL PASS — figlint catches the shipped defect classes without false positives." : `\n${failures} check(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);
