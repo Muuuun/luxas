@@ -4,6 +4,7 @@
  */
 
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { buildClaimRegistry, renderClaimRegistry } from "../claims-registry.js";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
@@ -167,6 +168,15 @@ function buildReportWriterContext(projectDir: string): string {
     parts.push(`<${label} path="${relPath}">\n${smartTruncate(raw, cap)}\n</${label}>`);
   };
   inject("ledger", "notes/experiments.md");
+  // The claim registry: the ONLY legal claim_key spellings, computed fresh
+  // from results.json (never persisted, so never stale). The writer PICKS
+  // keys from here; key invention is what produced 0/18 claims matching
+  // their executed cross-validations. Write-time validation enforces it;
+  // this injection is what makes compliance possible rather than punitive.
+  {
+    const reg = renderClaimRegistry(buildClaimRegistry(projectDir));
+    if (reg) parts.push(reg);
+  }
   inject("outline", "notes/report_outline.md", 20_000);
   inject("pi_feedback", "reviews/pi_feedback.md", 20_000);
   // Literature: an INDEX of every entry, never a silent truncation. Real

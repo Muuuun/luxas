@@ -25,11 +25,13 @@
  */
 
 import { stat, readFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { findOldTextLine, freshExcerptError } from "./edit-recovery.js";
 import { SAFETY_PRESETS } from "./safety-presets.js";
 import { expandTemplate, extractTextContent } from "../utils.js";
 import { reportIntegrityIssues } from "../tools/report-integrity.js";
+import { buildClaimRegistry, nearestKeys } from "../claims-registry.js";
 import type { SafetyConfig } from "./registry.js";
 import type { FileTouchRecord } from "../active-agents.js";
 import {
@@ -349,10 +351,48 @@ function writeTimeValidation(projectDir: string, relPath: string, result: any): 
     isClaims ? (/claims\.json/.test(i.text) || /wrong claim_key/.test(i.text))
              : /[Cc]ross-validation/.test(i.text)
   ));
-  if (relevant.length === 0) return result;
+  // Registry membership — the prevention half of the claim-registry design.
+  // The finish gates only see the CONSEQUENCE of an invented key (no xval
+  // ever matches, grade caps at indicative, 5f hunts by value); this names
+  // the invention itself, at the write, with the nearest legal spellings.
+  const keyProblems: string[] = [];
+  try {
+    const registry = buildClaimRegistry(projectDir);
+    const known = new Set(registry.map((r) => r.key));
+    if (isClaims && known.size > 0) {
+      const cj = JSON.parse(readFileSync(resolve(projectDir, relPath), "utf-8"));
+      for (const c of (Array.isArray(cj) ? cj : [])) {
+        const k = c?.claim_key ? String(c.claim_key) : "";
+        if (k && !known.has(k)) {
+          const near = nearestKeys(k, registry);
+          keyProblems.push(`claim_key "${k}" is not in the claim registry — keys are PICKED from ` +
+            `<claim_registry>, never invented.${near.length ? ` Nearest: ${near.join(", ")}` : ""} ` +
+            `If this number is not an experiment result, drop claim_key and source it from the literature.`);
+        }
+      }
+    }
+    if (isResults) {
+      const j = JSON.parse(readFileSync(resolve(projectDir, relPath), "utf-8"));
+      const computed = j?.computed ?? {};
+      const own = new Set(registry.map((r) => r.key));
+      for (const field of ["cross_validation", "cross_validation_plan"]) {
+        for (const x of (Array.isArray(computed[field]) ? computed[field] : [])) {
+          const k = x && typeof x === "object" && x.claim_key ? String(x.claim_key) : "";
+          if (!k) { keyProblems.push(`${field} entry with missing/empty claim_key — every entry names the computed.* leaf it validates.`); continue; }
+          if (!own.has(k)) {
+            const near = nearestKeys(k, registry);
+            keyProblems.push(`${field} claim_key "${k}" names no computed.* leaf in any results.json — ` +
+              `a control filed under a phantom key is credit lost at the join.${near.length ? ` Nearest: ${near.join(", ")}` : ""}`);
+          }
+        }
+      }
+    }
+  } catch { /* unparsable file — the schema gates already speak to that */ }
+  if (relevant.length === 0 && keyProblems.length === 0) return result;
   const feedback = `\n\n[write-time validation of ${relPath} — fix NOW, while you have the context; ` +
     `these same checks block finish() later]\n` +
-    relevant.map((i) => `- ${i.text.split("\n").slice(0, 6).join("\n  ")}`).join("\n");
+    [...keyProblems.map((t) => `- ${t}`),
+     ...relevant.map((i) => `- ${i.text.split("\n").slice(0, 6).join("\n  ")}`)].join("\n");
   const content = Array.isArray(result?.content) ? result.content : [];
   return { ...result, content: [...content, { type: "text", text: feedback }] };
 }

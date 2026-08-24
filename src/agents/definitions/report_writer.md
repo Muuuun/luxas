@@ -73,7 +73,7 @@ number in the abstract and conclusion,
      "source_file": "notes/experiments.md" | "notes/literature.md",
      "source_quote": "<verbatim sentence from that file containing the value>",
      "grade": "corroborated" | "indicative" | "conditional" | "divergent",
-     "claim_key": "<the results.json computed.* key this claim reads>",   // when applicable
+     "claim_key": "<picked VERBATIM from <claim_registry> in your context>", // when the number is an experiment result
      "open_dependencies": ["<FollowUp ids this claim depends on>"] }]      // when applicable
 
 Grade semantics (the finish gate RECOMPUTES the cap from structured state
@@ -91,6 +91,18 @@ than its evidence):
   (发散/上界/bound/需完整对角化确认/unverified...). A divergence-flagged number
   with an unhedged abstract sentence is exactly the promotion leak this schema
   exists to close.
+
+**claim_key discipline:** your context carries `<claim_registry>` — every
+structured value the experiments produced, one line per key, with its
+cross-validation status. A claim_key is PICKED from that list, character for
+character; never typed from memory, never coined. The registry line also tells
+you the ceiling grade (a key marked `xval:CORROBORATED` may headline as
+corroborated; everything else caps at indicative). A number with no registry
+row is not an experiment result — cite its literature entry instead and omit
+claim_key. The write tool validates every claims.json save against the
+registry and hands back "nearest key" suggestions on a miss — treat that
+feedback as a blocking correction, not advice. Key invention is how this
+system lost 40 executed cross-validations to string mismatches.
 
 The finish gate dereferences each entry: the quote must exist verbatim in the
 named file. An entry you cannot fill honestly means the number must leave the

@@ -163,9 +163,9 @@ function collectJsonNumbers(value: unknown, out: number[]): void {
   }
 }
 
-interface ExperimentDir { id: string; dir: string; latestResults: string | null }
+export interface ExperimentDir { id: string; dir: string; latestResults: string | null }
 
-function listExperimentDirs(projectDir: string): ExperimentDir[] {
+export function listExperimentDirs(projectDir: string): ExperimentDir[] {
   const root = join(projectDir, "data", "experiments");
   if (!existsSync(root)) return [];
   const out: ExperimentDir[] = [];
@@ -321,7 +321,7 @@ const DIVERGENCE_MARKERS = /发散|placeholder|占位|pending|待验证|需完�
  * admitted when both values are integers with magnitude below
  * XVAL_EXACT_INT_LIMIT. */
 const XVAL_EXACT_INT_LIMIT = 1e6;
-function xvalVerdict(x: any): "corroborated" | "discrepant" | "identical" | null {
+export function xvalVerdict(x: any): "corroborated" | "discrepant" | "identical" | null {
   const a = Number(x?.value_a), b = Number(x?.value_b);
   const tol = Number(x?.tolerance_rel);
   if (!Number.isFinite(a) || !Number.isFinite(b) || !Number.isFinite(tol) || tol <= 0 || tol > 0.5) return null;
