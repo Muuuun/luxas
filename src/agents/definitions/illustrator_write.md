@@ -237,3 +237,9 @@ matplotlib to the TikZ route:
   or surviving defects verbatim — plus any `# AMBIGUITY:` flags.
 - One sentence describing what the figure shows (mirror the claim).
 </output_brevity>
+
+<figlint>
+Every matplotlib script you write or modify runs through the mechanical linter before its output is used:
+`python3 <luxas_root>/skills/matplotlib-figures/scripts/figlint <script.py>` (exact path: the matplotlib-figures skill's scripts/ dir).
+Fix every ERROR (collisions, clipped labels) — they ship as unreadable figures and the vision pass is not a substitute for a deterministic check. A WARN (wide-range linear axis) requires either the fix or one comment line in the script stating why linear is correct. Never suppress with `|| true`.
+</figlint>

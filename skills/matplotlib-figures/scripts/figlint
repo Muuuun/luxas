@@ -1,0 +1,149 @@
+#!/usr/bin/env python3
+"""figlint — mechanical layout + form lint for matplotlib figure scripts.
+
+Runs a plot script with Figure.savefig patched so every figure is linted at
+the moment it is saved. Deterministic checks only — judgment stays with the
+vision reviewer; this catches the defect classes that shipped in production
+figures and need no judgment at all (audit 2026-08-24, five figures from
+four reports):
+
+  ERROR  text collision   two visible labels overlap (fig1_excitation_pathways
+                          shipped four: "n3S1" over "n~60", "5P3/2" over
+                          "tau≈26ns", ...)
+  ERROR  clipped artist   a label extends past the canvas edge (the clipped
+                          "ΔL" in the same figure; the overflowing
+                          "Classical Hard Wall" box text)
+  WARN   wide linear axis positive data spanning >50x on a linear axis
+                          (E1_fom_comparison: bars 1.27..840 ns on linear —
+                          four of five bars invisible, the paper's central
+                          comparison unreadable, while panel (b) proves the
+                          author knew log scales exist)
+
+Usage:
+  figlint <plot_script.py> [script args...]
+Exit: 0 clean or warnings only; 2 on any ERROR; 3 if the script itself died.
+"""
+import sys, os, runpy, traceback
+
+os.environ.setdefault("MPLBACKEND", "Agg")
+import matplotlib
+matplotlib.use("Agg", force=True)
+from matplotlib.figure import Figure
+from matplotlib.text import Text
+
+ERRORS, WARNINGS = [], []
+_seen = set()
+
+def _shrunk(bbox, f):
+    from matplotlib.transforms import Bbox
+    w, h = bbox.width * f, bbox.height * f
+    cx, cy = (bbox.x0 + bbox.x1) / 2, (bbox.y0 + bbox.y1) / 2
+    return Bbox.from_extents(cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2)
+
+def _lint(fig, fname, tight):
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    fig_bbox = fig.bbox
+
+    ticklabels = set()
+    for ax in fig.get_axes():
+        for t in ax.get_xticklabels() + ax.get_yticklabels():
+            ticklabels.add(id(t))
+
+    texts = []
+    for t in fig.findobj(Text):
+        if not t.get_visible() or not t.get_text().strip():
+            continue
+        try:
+            ext = t.get_window_extent(renderer)
+        except Exception:
+            continue
+        if ext.width <= 0 or ext.height <= 0:
+            continue
+        texts.append((t, ext))
+
+    # 1. pairwise collisions. Rotated tick labels have rectangular bboxes far
+    #    larger than their ink, so tick-tick pairs shrink harder; and a tick
+    #    label colliding with another tick label of the SAME axis side is
+    #    almost always a bbox artefact, not real overlap — skip those.
+    for i in range(len(texts)):
+        for j in range(i + 1, len(texts)):
+            a, ea = texts[i]
+            b, eb = texts[j]
+            both_tick = id(a) in ticklabels and id(b) in ticklabels
+            if both_tick:
+                continue
+            f = 0.75 if (id(a) in ticklabels or id(b) in ticklabels) else 0.85
+            if _shrunk(ea, f).overlaps(_shrunk(eb, f)):
+                key = (fname, a.get_text()[:30], b.get_text()[:30])
+                if key in _seen: continue
+                _seen.add(key)
+                ERRORS.append(f'{fname}: collision "{a.get_text()[:40]}" ⊗ "{b.get_text()[:40]}"')
+
+    # 2. clipping: ink outside the canvas. Skipped entirely for
+    #    bbox_inches="tight" saves (the canvas expands to fit every artist,
+    #    so nothing can clip), and tick labels are exempt (edge tick labels
+    #    ride the figure boundary by design — flagging them is the false-
+    #    positive class that gets linters ignored).
+    if not tight:
+        for t, ext in texts:
+            if id(t) in ticklabels:
+                continue
+            pad = 2.0
+            if (ext.x0 < fig_bbox.x0 - pad or ext.x1 > fig_bbox.x1 + pad
+                    or ext.y0 < fig_bbox.y0 - pad or ext.y1 > fig_bbox.y1 + pad):
+                ERRORS.append(f'{fname}: clipped "{t.get_text()[:40]}" extends past the canvas edge')
+
+    # 3. wide-range linear axis: positive plotted magnitudes spanning >50x.
+    import numpy as np
+    for ax in fig.get_axes():
+        for which in ("x", "y"):
+            if getattr(ax, f"get_{which}scale")() != "linear":
+                continue
+            vals = []
+            for ln in ax.get_lines():
+                data = ln.get_xdata() if which == "x" else ln.get_ydata()
+                vals.extend([abs(v) for v in np.ravel(np.asarray(data, dtype=float)) if np.isfinite(v) and v != 0])
+            for p in ax.patches:  # bar/barh rectangles: the bar LENGTH is the datum
+                try:
+                    v = p.get_width() if which == "x" else p.get_height()
+                    v = abs(float(v))
+                    if np.isfinite(v) and v > 0: vals.append(v)
+                except Exception:
+                    pass
+            if len(vals) >= 3:
+                ratio = max(vals) / min(vals)
+                if ratio > 50:
+                    WARNINGS.append(
+                        f"{fname}: {which}-axis is LINEAR but positive data spans {ratio:.0f}x "
+                        f"(min {min(vals):.3g}, max {max(vals):.3g}) — small values will be invisible; "
+                        f"use a log scale or broken axis")
+
+_orig = Figure.savefig
+def _patched(self, fname, *a, **k):
+    try:
+        _lint(self, os.path.basename(str(fname)), k.get("bbox_inches") == "tight")
+    except Exception:
+        WARNINGS.append(f"{fname}: figlint internal error\n{traceback.format_exc(limit=2)}")
+    return _orig(self, fname, *a, **k)
+Figure.savefig = _patched
+
+if len(sys.argv) < 2:
+    print(__doc__); sys.exit(1)
+script = sys.argv[1]
+sys.argv = sys.argv[1:]
+try:
+    runpy.run_path(script, run_name="__main__")
+except SystemExit:
+    pass
+except Exception:
+    print(f"[figlint] script failed before linting completed:\n{traceback.format_exc()}")
+    sys.exit(3)
+
+for w in WARNINGS: print(f"[figlint] WARN  {w}")
+for e in ERRORS:   print(f"[figlint] ERROR {e}")
+if ERRORS:
+    print(f"[figlint] {len(ERRORS)} error(s) — fix label positions/canvas size, then re-run. "
+          f"A colliding or clipped label ships as an unreadable figure.")
+    sys.exit(2)
+print(f"[figlint] clean ({len(WARNINGS)} warning(s))")

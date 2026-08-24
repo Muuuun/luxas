@@ -60,6 +60,7 @@ const MANIFEST: Record<string, GateSpec> = {
 	smoke_dual_profile: { kind: "assert" },
 	smoke_edit_noop_guard: { kind: "assert" },
 	smoke_experiment_paths: { kind: "assert" },
+	smoke_figlint: { kind: "assert", timeoutMs: 180_000 },
 	smoke_figstyle_scaffold: { kind: "assert" },
 	smoke_file_context_cache: { kind: "assert" },
 	smoke_finish_gate: { kind: "assert" },

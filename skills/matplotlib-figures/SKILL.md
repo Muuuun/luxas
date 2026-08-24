@@ -40,6 +40,29 @@ plt.style.use('report/figstyle.mplstyle')
 fig.savefig('report/figures/fig_name.pdf')
 ```
 
+## figlint — run every plot script through it (mandatory)
+
+Never run a plot script bare. Run it through the mechanical linter that ships with this skill:
+
+```bash
+python3 <luxas_root>/skills/matplotlib-figures/scripts/figlint <your_plot_script.py>
+```
+
+It executes the script with `savefig` patched and reports, per saved figure:
+- **ERROR: text collision** — two labels overlap. Fix positions; a colliding label ships unreadable. (Production audit 2026-08-24: one schematic shipped with FOUR collisions.)
+- **ERROR: clipped** — a label extends past the canvas. Enlarge the canvas or move the label; `bbox_inches="tight"` also resolves it.
+- **WARN: wide linear axis** — positive data spanning >50× on a linear axis. Small values render invisible; a shipped FOM chart put 1.27 ns next to 840 ns on linear and four of five bars vanished — the report's central comparison. Switch to log, or write one comment line in the script saying why linear is right.
+
+Every ERROR must be fixed before the figure is used. Exit 2 = errors; do not `|| true` it.
+
+## Chart-form rules (from shipped failures, not taste)
+
+- **One axis, one unit.** Never put quantities with different units on a shared axis labelled "Value" — a bar in ns next to a bar in ×10⁻³ compares nothing.
+- **Range ratio > 50× ⇒ log scale or broken axis.** See the WARN above.
+- **Sparse count matrices are not heatmaps.** A mostly-zero integer matrix rendered as a dark heatmap is 90% ink for 0. Use a dot matrix or a table; give zeros a light neutral, not the colormap floor; and never let a colorbar tick at 0.5 for integer counts.
+- **Do not double-encode.** If every cell prints its number, the colormap adds nothing but darkness — pick one encoding, or use color only to group.
+- **Annotations must not touch.** If two annotations fight for a spot, move one with a leader line — figlint enforces this mechanically.
+
 ## Rules
 
 - **Never** use the default matplotlib style — always load `figstyle.mplstyle`.

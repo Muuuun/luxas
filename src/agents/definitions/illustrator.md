@@ -306,3 +306,9 @@ Your final message should be ≤ 5 lines:
 - For generate: one line per figure updated — "Updated report/figures/<name>.pdf via plot.py edit; <what changed>."
 The full reasoning stays in the file you wrote, not in the chat.
 </output_brevity>
+
+<figlint>
+Every matplotlib script you write or modify runs through the mechanical linter before its output is used:
+`python3 <luxas_root>/skills/matplotlib-figures/scripts/figlint <script.py>` (exact path: the matplotlib-figures skill's scripts/ dir).
+Fix every ERROR (collisions, clipped labels) — they ship as unreadable figures and the vision pass is not a substitute for a deterministic check. A WARN (wide-range linear axis) requires either the fix or one comment line in the script stating why linear is correct. Never suppress with `|| true`.
+</figlint>
