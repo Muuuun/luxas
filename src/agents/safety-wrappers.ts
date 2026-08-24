@@ -29,6 +29,7 @@ import { resolve } from "node:path";
 import { findOldTextLine, freshExcerptError } from "./edit-recovery.js";
 import { SAFETY_PRESETS } from "./safety-presets.js";
 import { expandTemplate, extractTextContent } from "../utils.js";
+import { reportIntegrityIssues } from "../tools/report-integrity.js";
 import type { SafetyConfig } from "./registry.js";
 import type { FileTouchRecord } from "../active-agents.js";
 import {
@@ -320,6 +321,42 @@ function stripTruncationBanner(text: string): string {
   return text.replace(/\n\n\[(?:Showing lines|Line \d+ is |\d+ more lines in file).*?\]\s*$/s, "");
 }
 
+/**
+ * Write-time validation: run the finish gate's own validators the moment a
+ * provenance artifact is written, and hand the findings back in the SAME tool
+ * result — while the writing agent still has the context to fix them.
+ *
+ * Why here and not only at finish(): the enforcement chokepoint was the
+ * architecture bug. 29 "Cannot finish" checks + 16 blocking integrity issues
+ * all fired hours after the mistake, at compaction-degraded context — the
+ * observation corpus is 67% finish-gate livelock. The finish gate stays as
+ * the backstop; this makes it almost never the first to fire.
+ *
+ * Scope: report/claims.json (claim-grade legality, headline coverage) and
+ * data/experiments/<id>/runs/<n>/results.json (cross-validation integrity, plan
+ * closure). Feedback is appended, never blocking — the write has happened;
+ * the point is immediacy, not another wall.
+ */
+function writeTimeValidation(projectDir: string, relPath: string, result: any): any {
+  const isClaims = /(^|\/)report\/claims\.json$/.test(relPath);
+  const isResults = /(^|\/)data\/experiments\/[^/]+\/runs\/[^/]+\/results\.json$/.test(relPath);
+  if (!isClaims && !isResults) return result;
+  let issues: { blocking: boolean; text: string }[] = [];
+  try {
+    issues = reportIntegrityIssues(projectDir);
+  } catch { return result; }
+  const relevant = issues.filter((i) => i.blocking && (
+    isClaims ? (/claims\.json/.test(i.text) || /wrong claim_key/.test(i.text))
+             : /[Cc]ross-validation/.test(i.text)
+  ));
+  if (relevant.length === 0) return result;
+  const feedback = `\n\n[write-time validation of ${relPath} — fix NOW, while you have the context; ` +
+    `these same checks block finish() later]\n` +
+    relevant.map((i) => `- ${i.text.split("\n").slice(0, 6).join("\n  ")}`).join("\n");
+  const content = Array.isArray(result?.content) ? result.content : [];
+  return { ...result, content: [...content, { type: "text", text: feedback }] };
+}
+
 function wrapEdit(
   tool: any,
   cache: FileContextCache,
@@ -479,6 +516,7 @@ function wrapEdit(
         notifyFileContextEntry(hooks, abs, updated);
       }
       notifyFileTouched(hooks, abs, "edit");
+      if (result?.isError !== true) return writeTimeValidation(projectDir, p, result);
       return result;
     },
   };
@@ -581,6 +619,7 @@ function wrapWrite(
         }
         notifyFileTouched(hooks, abs, "write");
       }
+      if (result?.isError !== true) return writeTimeValidation(projectDir, p, result);
       return result;
     },
   };

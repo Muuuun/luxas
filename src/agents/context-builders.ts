@@ -169,7 +169,56 @@ function buildReportWriterContext(projectDir: string): string {
   inject("ledger", "notes/experiments.md");
   inject("outline", "notes/report_outline.md", 20_000);
   inject("pi_feedback", "reviews/pi_feedback.md", 20_000);
-  inject("literature_notes", "notes/literature.md", 40_000);
+  // Literature: an INDEX of every entry, never a silent truncation. Real
+  // literature.md files run 81-196KB against the old 40KB cap, and
+  // smartTruncate kept the alphabetical tail — on single_photon_Rydberg the
+  // writer saw at most half the corpus while <citation_keys> still listed
+  // every key, so it could cite entries it never read. Cite-without-read is
+  // how a prior's result gets claimed without positioning. The index carries
+  // each entry's Core claim / Located results / Bears on this project lines
+  // (the compact, load-bearing fields); the writer reads any full fragment
+  // on demand with the read tool.
+  {
+    const litDir = join(projectDir, "notes", "literature.d");
+    let entries: string[] = [];
+    try {
+      entries = readdirSync(litDir).filter((f) => f.endsWith(".md")).sort();
+    } catch { /* no fragments */ }
+    if (entries.length > 0) {
+      const index: string[] = [];
+      for (const f of entries) {
+        const body = readFileSafe(join(litDir, f));
+        const key = f.replace(/\.md$/, "");
+        const pick = (field: string): string => {
+          const m = body.match(new RegExp(`- \\*\\*${field}\\*\\*:([\\s\\S]*?)(?=\\n- \\*\\*|$)`));
+          return m ? m[1].trim() : "";
+        };
+        const core = pick("Core claim");
+        const located = pick("Located results");
+        const bears = pick("Bears on this project");
+        index.push(`### ${key}\n- Core claim: ${core || "(none recorded)"}` +
+          (located ? `\n- Located results:\n${located}` : "") +
+          (bears ? `\n- Bears on this project: ${bears}` : ""));
+      }
+      parts.push(`<literature_index total_entries="${entries.length}">\n` +
+        `Every literature entry, indexed. Before drafting any contribution sentence, read the FULL fragment ` +
+        `(notes/literature.d/<key>.md) of every entry whose Located results or Bears-on line touches the claim — ` +
+        `the index is for finding them, not a substitute for reading them.\n\n` +
+        index.join("\n\n") + `\n</literature_index>`);
+    } else {
+      // Legacy projects without fragments: fall back to the merged file, but
+      // say exactly what was dropped instead of losing it silently.
+      const raw = readFileSafe(join(projectDir, "notes", "literature.md"));
+      if (raw) {
+        const cap = 40_000;
+        const note = raw.length > cap
+          ? `\n[TRUNCATED: showing ${cap} of ${raw.length} chars — entries may be missing from view. ` +
+            `Read notes/literature.md (or per-entry files) before citing anything not visible here.]`
+          : "";
+        parts.push(`<literature_notes path="notes/literature.md">${note}\n${smartTruncate(raw, cap)}\n</literature_notes>`);
+      }
+    }
+  }
   // Available figure files + citation keys — so the writer references only
   // what exists (same discipline brain.md imposes, delivered as facts).
   try {
