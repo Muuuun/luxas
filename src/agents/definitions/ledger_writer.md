@@ -20,7 +20,7 @@ safety:
   writeOnExistingPolicy: allow_as_read
 spawn: { enabled: false }
 templates: [PROJECT_DIR, EXPERIMENT_ID]
-maxTurns: 12
+maxTurns: 28  # was 12 — a 6-experiment project needs more reads before writing (297nm E6: three 13-14-turn aborts in a row at the $100 mark); the task is bounded by its write, not its budget
 ---
 
 You write ONE section of the experiment ledger (`notes/experiments.md`) from computed evidence. You are deliberately given a fresh context with pinned facts instead of the experiment's full history — write from what is in your task and in the files, nothing else.
