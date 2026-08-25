@@ -137,9 +137,10 @@ try {
 	const nums = extractNumbers('"v_4um_ghz": -0.151863, c6_over_r6_ghz = -0.85011962890625');
 	check("negative JSON/assignment values extract signed",
 		nums.includes(-0.151863) && nums.includes(-0.85011962890625), JSON.stringify(nums));
-	const dash = extractNumbers("n=40-80 scan, R-6 tail");
-	check("range dashes and R-6 do not become negative numbers",
-		dash.includes(40) && dash.includes(80) && !dash.includes(-80) && !dash.includes(-6), JSON.stringify(dash));
+	const dash = extractNumbers("n=40-80 scan, R-6 tail, realization---700 mW, 316--319 nm");
+	check("range/LaTeX dashes do not become negative numbers",
+		dash.includes(40) && dash.includes(80) && dash.includes(700) &&
+		![-80, -6, -700, -319].some((v) => dash.includes(v)), JSON.stringify(dash));
 
 	// percent↔fraction: claim says 99.963 (%), ledger quote says 0.999627.
 	const dir = mkdtempSync(join(tmpdir(), "xval-pf-"));

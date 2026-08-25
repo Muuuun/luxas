@@ -75,9 +75,10 @@ export function extractNumbers(raw: string): number[] {
   // A leading "-" is a sign only when not glued to a preceding word/number
   // (2026-08-25, live false-block: E5's transcript-anchored -0.151863 GHz
   // failed xval anchoring because every extraction came out positive).
-  // "40-80" and "R-6" keep "-" as a dash; "= -0.151863" / "(-0.85" do not.
+  // "40-80", "R-6", and LaTeX dash runs ("---700 mW", "316--319 nm") keep
+  // "-" as a dash; "= -0.151863" / "(-0.85" do not.
   const signAt = (src: string, matchStart: number, sign: string): number =>
-    sign === "-" && !/[0-9A-Za-z.]/.test(src[matchStart - 1] ?? "") ? -1 : 1;
+    sign === "-" && !/[-0-9A-Za-z.]/.test(src[matchStart - 1] ?? "") ? -1 : 1;
 
   // a \times 10^{b} — with or without braces; also bare 10^{b}
   const sciRE = /(-?)(?:(\d+(?:\.\d+)?)\s*\\times\s*)?10\s*\^\s*\{?\s*(-?\d+)\s*\}?/g;
