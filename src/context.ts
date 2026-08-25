@@ -228,7 +228,14 @@ function truncateContent(m: any, keep: number): any {
 
 export function overflowBackstop(messages: any[], model?: Model<any>): any[] {
   const windowTokens = (model ? getContextWindow(model) : undefined) ?? 200_000;
-  const budgetChars = Math.floor(windowTokens * BACKSTOP_WINDOW_FRACTION * CHARS_PER_TOKEN);
+  // The provider reserves the model's max completion tokens INSIDE the window
+  // (live 400: "requested 1,092,147 tokens (698,931 in the messages, 393,216
+  // in the completion)" — messages + completion must fit together). Budget
+  // only what remains after that reservation.
+  const completionReserve = (model as any)?.maxTokens ?? Math.floor(windowTokens * 0.25);
+  const budgetChars = Math.floor(
+    Math.max(32_000, windowTokens - completionReserve) * BACKSTOP_WINDOW_FRACTION * CHARS_PER_TOKEN,
+  );
   let total = messages.reduce((s, m) => s + msgChars(m), 0);
   if (total <= budgetChars) return messages;
 

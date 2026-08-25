@@ -23,7 +23,7 @@ function check(label: string, cond: boolean, detail = "") {
 }
 
 const big = (n: number) => "x".repeat(n);
-const model: any = { contextWindow: 1_048_576 }; // deepseek-sized
+const model: any = { contextWindow: 1_048_576, maxTokens: 393_216 }; // deepseek-sized, real completion reserve
 
 // getContextWindow reads model.contextWindow? Build messages ~4M chars ≈ >1M tokens.
 const msgs = [
@@ -39,8 +39,11 @@ const before = JSON.stringify(msgs).length;
 const out = overflowBackstop(msgs, model);
 const after = JSON.stringify(out).length;
 
-check("shrinks a 4M+ char history under the window budget",
-	after < 1_048_576 * 0.75 * 2.6 && after < before / 2, `before=${before} after=${after}`);
+// Real limit from the live 400: messages+completion must fit the window, so
+// message budget = (1,048,576 − 393,216) * 0.75 * 2.6 chars ≈ 1.278M chars.
+const budget = Math.floor((1_048_576 - 393_216) * 0.75 * 2.6);
+check("shrinks a 4M+ char history under the reserve-aware budget",
+	after <= budget && after < before / 2, `before=${before} after=${after} budget=${budget}`);
 check("assistant messages untouched",
 	JSON.stringify(out[1]).length === JSON.stringify(msgs[1]).length && out[3].content === "short reasoning");
 check("truncation marker with re-read pointer present",
