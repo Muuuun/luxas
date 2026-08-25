@@ -56,6 +56,7 @@ const MANIFEST: Record<string, GateSpec> = {
 	smoke_cache_pin: { kind: "assert" },
 	smoke_cache_pin_luxas: { kind: "assert" },
 	smoke_carry_forward_attachments: { kind: "assert" },
+	smoke_career: { kind: "assert" },
 	smoke_claim_registry: { kind: "assert" },
 	smoke_dual_profile: { kind: "assert" },
 	smoke_edit_noop_guard: { kind: "assert" },
