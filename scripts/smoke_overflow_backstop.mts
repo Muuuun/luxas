@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
-const { overflowBackstop } = await import(join(ROOT, "src/context.js"));
+const { overflowBackstop } = await import(join(ROOT, "src/compaction/overflow-backstop.js"));
 
 let failures = 0;
 function check(label: string, cond: boolean, detail = "") {
@@ -44,13 +44,34 @@ const after = JSON.stringify(out).length;
 const budget = Math.floor((1_048_576 - 393_216) * 0.75 * 2.6);
 check("shrinks a 4M+ char history under the reserve-aware budget",
 	after <= budget && after < before / 2, `before=${before} after=${after} budget=${budget}`);
-check("assistant messages untouched",
-	JSON.stringify(out[1]).length === JSON.stringify(msgs[1]).length && out[3].content === "short reasoning");
+check("small assistant messages untouched", out[3].content === "short reasoning");
 check("truncation marker with re-read pointer present",
 	/overflow backstop/.test(JSON.stringify(out[2])) && /re-read the file/.test(JSON.stringify(out[2])));
 check("small messages pass through identical", out[0].content === "start" && out[6].content === "latest question");
 check("under-budget history returned as-is",
 	overflowBackstop([{ role: "user", content: "tiny" }], model)[0].content === "tiny");
+
+// The REAL 297nm shape: mass in assistant thinking blocks (70-82K chars each),
+// which passes 1-2 spare. Pass 3 must strip historical thinking, keep last 2.
+const thinkMsg = (n: number) => ({ role: "assistant", content: [
+	{ type: "thinking", thinking: big(n), thinkingSignature: "sig" },
+	{ type: "text", text: "step summary" },
+] });
+const thinkHistory = [
+	{ role: "user", content: "goal" },
+	...Array.from({ length: 40 }, () => [thinkMsg(80_000), { role: "toolResult", content: [{ type: "text", text: "ok " + big(2_000) }] }]).flat(),
+];
+const tOut = overflowBackstop(thinkHistory, model);
+const tAfter = JSON.stringify(tOut).length;
+const asst = tOut.filter((m: any) => m.role === "assistant");
+const stripped = asst.filter((m: any) => !JSON.stringify(m).includes('"thinking":"xxx')).length;
+check("thinking-dominated history fits the budget", tAfter <= budget, `after=${tAfter} budget=${budget}`);
+const hasThinking = (m: any) => JSON.stringify(m).includes('"thinking":"xxx');
+check("oldest thinking stripped first, only as much as needed, newest kept",
+	stripped > 0 && stripped < asst.length && !hasThinking(asst[0]) && hasThinking(asst[asst.length - 1]),
+	`stripped=${stripped}/${asst.length}`);
+check("text/toolCall blocks survive the strip",
+	asst.every((m: any) => JSON.stringify(m).includes("step summary")));
 
 console.log(failures === 0 ? "\nALL PASS — overflow is now arithmetically impossible." : `\n${failures} check(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

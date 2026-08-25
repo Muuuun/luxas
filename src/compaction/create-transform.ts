@@ -12,6 +12,7 @@ import type { Model } from "@earendil-works/pi-ai/compat";
 import { createBlockConversationAdapter } from "./adapter.js";
 import { ContextPacker } from "./engine.js";
 import { createTokenTap } from "./token-tap.js";
+import { overflowBackstop } from "./overflow-backstop.js";
 import type { TokenTap } from "./token-tap.js";
 import type {
   CarryforwardLedger,
@@ -97,17 +98,24 @@ export function createCompactionTransform(
   const transformContext = async (messages: any[]): Promise<any[]> => {
     await ensureSummarizer();
 
+    // Overflow backstop on BOTH sides of packing (see overflow-backstop.ts):
+    // pre-pack bounds the summarizer's own LLM call — the 297nm run died 3×
+    // because condensing an over-window history sent that raw history to the
+    // summarizer; post-pack bounds the final request (the condense tail has
+    // no per-message size cap).
+    const bounded = overflowBackstop(messages, opts.model);
+
     try {
       const result = await packer.runCycle({
-        messages,
+        messages: bounded,
         usageTokens: tokenTap.lastContextTokens,
       });
-      return result.messages;
+      return overflowBackstop(result.messages, opts.model);
     } catch {
       // Compaction failure (e.g. refill-loop, repeated summarizer errors)
-      // must never crash the agent. Return messages unmodified and let the
-      // agent continue — it may still function within the remaining context.
-      return messages;
+      // must never crash the agent. Return the BOUNDED messages (never the
+      // raw over-window history) and let the agent continue.
+      return bounded;
     }
   };
 
