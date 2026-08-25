@@ -165,6 +165,18 @@ if (command === "run") {
       console.error(`⚠ Profile override: original launch used --profile ${saved.profile ?? "(none)"}, this resume uses --profile ${profile ?? "(none)"}. Cost characteristics will differ.`);
     }
   } catch { /* first run — nothing to inherit */ }
+  // Default profile is DUAL (2026-08-25, user policy: "always use dual, never
+  // only claude"). Claude-only runs put every producer on opus/sonnet tiers —
+  // ~4x the cost — and die entirely when the Anthropic balance runs out (the
+  // 297nm run, 2026-08-24: $6 in, 400 credit-balance-too-low, checkpoint
+  // stranded). Dual keeps producers on deepseek + vision on kimi; the PI
+  // reviewers keep their declared Anthropic tier by design (interpretation-
+  // fidelity study). Opt out explicitly with --profile claude. A bare
+  // `--model deepseek-*` launch keeps its legacy no-vision-split semantics.
+  if (!profile && !model.startsWith("deepseek-")) {
+    profile = "dual";
+    console.error(`◈ No profile specified — defaulting to --profile dual (deepseek text + kimi vision). Pass --profile claude to force Anthropic-only.`);
+  }
   try {
     mkdirSync(join(projectDir, ".agent"), { recursive: true });
     writeFileSync(runCfgPath, JSON.stringify({ model, profile: profile ?? null, savedAt: new Date().toISOString() }, null, 2) + "\n");
@@ -231,7 +243,7 @@ if (command === "figures") {
 console.error(`Unknown command: ${command}`);
 console.error("Usage: luxas <run|status|init|list|figures> [project-dir] [options]");
 console.error("  --model <id>      explicit model (legacy; e.g. deepseek-v4-pro)");
-console.error("  --profile <name>  preset: claude | dual (deepseek text + kimi vision)");
+console.error("  --profile <name>  preset: dual (DEFAULT — deepseek text + kimi vision) | claude");
 process.exit(1);
 
 // ─── Commands ────────────────────────────────────────────
