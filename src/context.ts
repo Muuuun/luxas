@@ -8,6 +8,7 @@
 
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { readFileSafe, smartTruncate, parseFollowUps } from "./utils.js";
+import { listExperimentDirs } from "./tools/report-integrity.js";
 import { buildPastResearchDigest, GLOBAL_MEMORY_PATH } from "./memory.js";
 import { findUnprocessedPapers, methodologyPath } from "./methodology.js";
 import { join, dirname } from "node:path";
@@ -271,6 +272,57 @@ function injectSnapshot(messages: any[], snapshot: string): any[] {
  * `FollowUp: NONE` or an already-run lead produces no row, so a genuinely
  * drained frontier emits nothing and the brain proceeds to the report.
  */
+/**
+ * Surface experiment-recorded PREMISE CORRECTIONS as a forced decision in the
+ * brain's per-turn state — the surprise half of expectation/surprise dynamics
+ * (2026-08-25 trace analysis). Observed failure this exists for: E1 computed
+ * that 297 nm addresses n≈75, not the plan's n≈55–65 — a correction with
+ * consequences for every downstream experiment (C6 ~ n^11) — and it landed in
+ * a Limitations paragraph where nothing forced brain to propagate it. Prose
+ * parks surprises; state interrupts them. Same pattern as research_frontier:
+ * structured event from the experiment, untruncated block in the snapshot,
+ * explicit disposition required.
+ *
+ * An experiment records in results.json:
+ *   computed.premise_corrections: [{ premise, corrected, consequence,
+ *                                    affects: ["E_3", "report"] }]
+ * Brain clears a correction by EITHER editing plan.md for the affected
+ * experiments OR recording  PREMISE-ACK: <EID>#<idx> — <why nothing changes>
+ * in notes/memory.md. Unacknowledged corrections re-surface every turn.
+ */
+export function buildPremiseCorrections(projectDir: string): string {
+  try {
+    const memory = readFileSafe(join(projectDir, "notes", "memory.md")) ?? "";
+    const rows: string[] = [];
+    for (const e of listExperimentDirs(projectDir)) {
+      if (!e.latestResults) continue;
+      let j: any;
+      try { j = JSON.parse(readFileSafe(e.latestResults) ?? ""); } catch { continue; }
+      const pcs = j?.computed?.premise_corrections;
+      if (!Array.isArray(pcs)) continue;
+      pcs.forEach((c: any, i: number) => {
+        if (!c || typeof c !== "object") return;
+        if (memory.includes(`PREMISE-ACK: ${e.id}#${i}`)) return;
+        const affects = Array.isArray(c.affects) ? c.affects.join(", ") : String(c.affects ?? "unstated");
+        rows.push(`- [${e.id}#${i}] premise: ${String(c.premise ?? "?").slice(0, 160)}\n` +
+          `    corrected: ${String(c.corrected ?? "?").slice(0, 160)}\n` +
+          `    consequence: ${String(c.consequence ?? "?").slice(0, 200)}\n` +
+          `    affects: ${affects}`);
+      });
+    }
+    if (rows.length === 0) return "";
+    return `<premise_corrections priority="high">\n` +
+      `An experiment PROVED a premise of your plan wrong. This is a surprise signal, not a footnote —\n` +
+      `every affected downstream experiment is currently specified against the WRONG premise.\n` +
+      `For each entry, before dispatching anything it affects: EITHER edit plan.md so the affected\n` +
+      `### E_N sections carry the corrected value, OR record in notes/memory.md a line\n` +
+      `  PREMISE-ACK: <EID>#<idx> — <why the correction changes nothing downstream>\n` +
+      `An entry stays in this block every turn until one of those happens.\n\n${rows.join("\n")}\n</premise_corrections>`;
+  } catch {
+    return "";
+  }
+}
+
 function buildResearchFrontier(projectDir: string): string {
   try {
     const exp = readFileSafe(join(projectDir, "notes", "experiments.md"));
@@ -344,6 +396,11 @@ function buildResearchSnapshot(opts: ContextTransformerOptions): string {
   // continue-vs-report decision they encode. See buildResearchFrontier.
   const frontier = buildResearchFrontier(projectDir);
   if (frontier) parts.push(frontier);
+
+  // Premise corrections outrank the frontier: an open lead extends the plan,
+  // a corrected premise INVALIDATES part of it. Same untruncated tier.
+  const premises = buildPremiseCorrections(projectDir);
+  if (premises) parts.push(premises);
 
   // Execution-state snapshot (active sub-agents, completed artifacts, plan
   // status). Formerly a dedicated cache-pinned system layer (L3); moved here

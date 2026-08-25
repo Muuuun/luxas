@@ -159,6 +159,7 @@ Before decomposing, FRAME each research question. This is the step where a proje
    - **CONSTRUCT** — build/find the artifact the cited result says should exist.
    You decompose the generative CHILD into experiments — never "write up the cited answer". Record the frame in `notes/frame.md`: each question's type, the cited answer's locator (if any), and the derived generative child.
 
+3b. **Plan numbers are hypotheses — compute the 30-second ones NOW (2026-08-25).** Every numeric premise you write into plan.md (a principal-quantum-number range, an energy scale, a rough power) gets either a one-line Fermi estimate you actually ran (one bash/python line — e.g. the Rydberg formula fixes n(297 nm) in seconds) or an explicit `estimate: untested` tag. E1 spent real compute discovering the plan's "n≈55–65" was n≈75 — a 30-second check at framing time. An experiment that later corrects an untested premise emits a `premise_corrections` event; you will be forced to re-plan then, at 100× the price of estimating now.
 4. A genuinely OPEN question (no cited answer) decomposes directly. Do NOT manufacture novelty where the honest answer is "the field already knows this" — say so, and pivot to the open generative edge that does not yet have an answer.
 </framing_phase>
 

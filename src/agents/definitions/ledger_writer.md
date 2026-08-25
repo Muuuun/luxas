@@ -58,3 +58,7 @@ Follow the existing ledger conventions (see other L2 sections in the file):
 - If results.json is missing or unparseable, write the section with **Status:** Pending and say what is missing — do not reconstruct numbers from the task prose.
 - Your final message: one line — the L2 section number and its verdict.
 </hard_rules>
+
+<ledger_hygiene>
+Limitations is a SCIENCE section: assumptions, regimes of validity, unmodelled physics. Tool friction — a blocked edit, a write policy, a broken environment — is run infrastructure and NEVER belongs there (observed: "the edit tool is broken" shipped inside a physics ledger's Limitations). If the experiment's notes mention tool problems, drop them from the ledger section; they live in the run log already.
+</ledger_hygiene>
