@@ -427,10 +427,23 @@ function wrapEdit(
       // retrying with stranger oldText values instead of recognising the
       // append-via-edit antipattern.
       if (oldText === newText) {
+        // Quote the identical payload back. Observed live (297nm run,
+        // 2026-08-25): a deepseek tool_review sent identical 4-char strings,
+        // could not see its own slip from the bare "oldText === newText"
+        // message, spent turns concluding the TOOL was broken, and wrote
+        // "the edit tool is broken (spurious no-op)" into the ledger's
+        // Limitations. Showing the exact payload turns that spiral into a
+        // one-turn recovery.
+        const quoted = String(oldText).length <= 120
+          ? `Both were exactly: ${JSON.stringify(String(oldText))}. `
+          : `Both begin: ${JSON.stringify(String(oldText).slice(0, 100))}… (${String(oldText).length} chars, byte-identical). `;
         return blocked(
-          `No-op edit on ${p}: oldText === newText. ` +
-          `If you meant to append, read the file first and use a real ` +
-          `anchor line as oldText. If no change is intended, skip the call.`
+          `No-op edit on ${p}: you sent oldText and newText that are IDENTICAL. ` +
+          quoted +
+          `This is a slip in the call you emitted, not a tool fault — the tool is fine. ` +
+          `Re-issue with newText containing your intended change. ` +
+          `If you meant to append, read the file first and use a real anchor line as oldText. ` +
+          `If no change is intended, skip the call. Do NOT record this as a tool bug.`
         );
       }
 
