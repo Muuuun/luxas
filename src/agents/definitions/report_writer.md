@@ -92,6 +92,18 @@ than its evidence):
   with an unhedged abstract sentence is exactly the promotion leak this schema
   exists to close.
 
+**Pick the VALIDATED key when several express one quantity (2026-08-25).** The
+297nm run executed 8 genuine cross-validations and shipped 10/11 claims at
+`indicative` anyway, because the abstract's sentences cited result keys while
+the agreeing controls lived on sibling keys in the same experiment. When the
+registry lists several keys carrying the same physical content, cite the one
+whose line reads `xval:CORROBORATED` — that is what lets the claim headline at
+corroborated. A QUALITATIVE headline (a functional form, a scaling, a "pure
+sin⁴θ") should cite the quantitative key that ENCODES it: the run's
+`computed.analysis.stretched.n50.sin4_fraction = 1.0` carried an agreeing
+control and was exactly the "pure sin⁴θ" claim — citing it (value 1.0) would
+have made the report's central claim corroborated instead of indicative.
+
 **claim_key discipline:** your context carries `<claim_registry>` — every
 structured value the experiments produced, one line per key, with its
 cross-validation status. A claim_key is PICKED from that list, character for

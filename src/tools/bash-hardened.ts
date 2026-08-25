@@ -22,6 +22,8 @@
  */
 
 import { spawn } from "node:child_process";
+import { dirname, join as joinPath } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createWriteStream, mkdirSync, writeFileSync, type WriteStream } from "node:fs";
 import { join } from "node:path";
 import { totalmem } from "node:os";
@@ -44,6 +46,8 @@ export const FOREGROUND_BUDGET_MS = 90_000;
 // MemoryError instead of the kernel OOM-killer (which takes down the whole run —
 // brain + every sibling experiment — as it did 2026-07-02). 75% leaves headroom
 // for the brain, sibling experiments, and the inbox/studio services.
+const FIGLINT_HOOK_DIR = joinPath(dirname(fileURLToPath(import.meta.url)), "..", "..", "skills", "matplotlib-figures", "lint_hook");
+
 const EXPERIMENT_MEM_CAP_KB = Math.floor((totalmem() / 1024) * 0.75);
 
 const bashSchema = Type.Object({
@@ -157,6 +161,15 @@ export function createHardenedBashTool(cwd: string, opts?: BashOptions) {
           cwd,
           detached: true,
           stdio: ["ignore", "pipe", "pipe"],
+          // Auto-figlint (rung-4, 2026-08-25): every python the agents run
+          // sees the lint hook's sitecustomize on PYTHONPATH, which patches
+          // matplotlib's savefig to lint at save time INSIDE the script's own
+          // process — findings land in this tool result's stderr, no
+          // re-execution. The prompt-mandated figlint CLI was never invoked
+          // on the 297nm run (figures flow through brain/experiment paths
+          // that never read the illustrator prompts); the tool layer does
+          // not rely on being read.
+          env: { ...process.env, PYTHONPATH: FIGLINT_HOOK_DIR + (process.env.PYTHONPATH ? `:${process.env.PYTHONPATH}` : "") },
         });
 
         const pid = child.pid;

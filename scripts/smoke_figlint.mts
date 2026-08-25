@@ -71,6 +71,51 @@ ax.set_title("FOM comparison")
 fig.savefig("o.png", bbox_inches="tight")`);
 	check("log-scale version is clean", r.code === 0 && /clean \(0 warning/.test(r.out), r.out.slice(-200)); }
 
+// The savefig auto-hook (rung 4): hardened bash injects lint_hook onto
+// PYTHONPATH, so any python plot script lints itself at save time with no
+// re-execution and no opt-in. The prompt-mandated CLI was never invoked on
+// the 297nm run; this path does not rely on being read.
+{
+	const HOOK = join(ROOT, "skills/matplotlib-figures/lint_hook");
+	const runHooked = (script: string) => {
+		const d = mkdtempSync(join(tmpdir(), "fighook-"));
+		const f = join(d, "plot.py");
+		writeFileSync(f, script);
+		const r = spawnSync("python3", [f], { encoding: "utf8", cwd: d, timeout: 120_000,
+			env: { ...process.env, PYTHONPATH: HOOK } });
+		rmSync(d, { recursive: true, force: true });
+		return { code: r.status, err: r.stderr ?? "", out: r.stdout ?? "" };
+	};
+	{
+		const r = runHooked(`import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+fig, ax = plt.subplots()
+ax.text(0.5, 0.5, "label A here", transform=ax.transAxes)
+ax.text(0.52, 0.5, "label B overlapping", transform=ax.transAxes)
+fig.savefig("o.png")
+print("SCIENCE-OK")
+`);
+		check("hook: collision reported on stderr at save time", /\[figlint\] ERROR .*collision/.test(r.err), r.err.slice(-200));
+		check("hook: script exit code untouched, stdout intact", r.code === 0 && /SCIENCE-OK/.test(r.out));
+	}
+	{
+		const r = runHooked(`print("no plotting here")
+`);
+		check("hook: non-matplotlib script completely silent", r.code === 0 && !/figlint/.test(r.err), r.err.slice(-150));
+	}
+	{
+		const r = runHooked(`import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+fig, ax = plt.subplots()
+ax.text(0.1, 0.8, "clean", transform=ax.transAxes)
+fig.savefig("o.png", bbox_inches="tight")
+`);
+		check("hook: clean tight save produces no figlint output", r.code === 0 && !/figlint/.test(r.err), r.err.slice(-150));
+	}
+}
+
 // The archetype gallery is the elegance floor: every reference script must
 // stay figlint-clean, or the exemplars teach the defects they exist to end.
 {

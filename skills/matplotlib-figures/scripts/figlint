@@ -32,92 +32,14 @@ from matplotlib.figure import Figure
 from matplotlib.text import Text
 
 ERRORS, WARNINGS = [], []
-_seen = set()
-
-def _shrunk(bbox, f):
-    from matplotlib.transforms import Bbox
-    w, h = bbox.width * f, bbox.height * f
-    cx, cy = (bbox.x0 + bbox.x1) / 2, (bbox.y0 + bbox.y1) / 2
-    return Bbox.from_extents(cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2)
+import os as _os
+sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", "lint_hook"))
+from figlint_core import lint_figure
 
 def _lint(fig, fname, tight):
-    fig.canvas.draw()
-    renderer = fig.canvas.get_renderer()
-    fig_bbox = fig.bbox
-
-    ticklabels = set()
-    for ax in fig.get_axes():
-        for t in ax.get_xticklabels() + ax.get_yticklabels():
-            ticklabels.add(id(t))
-
-    texts = []
-    for t in fig.findobj(Text):
-        if not t.get_visible() or not t.get_text().strip():
-            continue
-        try:
-            ext = t.get_window_extent(renderer)
-        except Exception:
-            continue
-        if ext.width <= 0 or ext.height <= 0:
-            continue
-        texts.append((t, ext))
-
-    # 1. pairwise collisions. Rotated tick labels have rectangular bboxes far
-    #    larger than their ink, so tick-tick pairs shrink harder; and a tick
-    #    label colliding with another tick label of the SAME axis side is
-    #    almost always a bbox artefact, not real overlap — skip those.
-    for i in range(len(texts)):
-        for j in range(i + 1, len(texts)):
-            a, ea = texts[i]
-            b, eb = texts[j]
-            both_tick = id(a) in ticklabels and id(b) in ticklabels
-            if both_tick:
-                continue
-            f = 0.75 if (id(a) in ticklabels or id(b) in ticklabels) else 0.85
-            if _shrunk(ea, f).overlaps(_shrunk(eb, f)):
-                key = (fname, a.get_text()[:30], b.get_text()[:30])
-                if key in _seen: continue
-                _seen.add(key)
-                ERRORS.append(f'{fname}: collision "{a.get_text()[:40]}" ⊗ "{b.get_text()[:40]}"')
-
-    # 2. clipping: ink outside the canvas. Skipped entirely for
-    #    bbox_inches="tight" saves (the canvas expands to fit every artist,
-    #    so nothing can clip), and tick labels are exempt (edge tick labels
-    #    ride the figure boundary by design — flagging them is the false-
-    #    positive class that gets linters ignored).
-    if not tight:
-        for t, ext in texts:
-            if id(t) in ticklabels:
-                continue
-            pad = 2.0
-            if (ext.x0 < fig_bbox.x0 - pad or ext.x1 > fig_bbox.x1 + pad
-                    or ext.y0 < fig_bbox.y0 - pad or ext.y1 > fig_bbox.y1 + pad):
-                ERRORS.append(f'{fname}: clipped "{t.get_text()[:40]}" extends past the canvas edge')
-
-    # 3. wide-range linear axis: positive plotted magnitudes spanning >50x.
-    import numpy as np
-    for ax in fig.get_axes():
-        for which in ("x", "y"):
-            if getattr(ax, f"get_{which}scale")() != "linear":
-                continue
-            vals = []
-            for ln in ax.get_lines():
-                data = ln.get_xdata() if which == "x" else ln.get_ydata()
-                vals.extend([abs(v) for v in np.ravel(np.asarray(data, dtype=float)) if np.isfinite(v) and v != 0])
-            for p in ax.patches:  # bar/barh rectangles: the bar LENGTH is the datum
-                try:
-                    v = p.get_width() if which == "x" else p.get_height()
-                    v = abs(float(v))
-                    if np.isfinite(v) and v > 0: vals.append(v)
-                except Exception:
-                    pass
-            if len(vals) >= 3:
-                ratio = max(vals) / min(vals)
-                if ratio > 50:
-                    WARNINGS.append(
-                        f"{fname}: {which}-axis is LINEAR but positive data spans {ratio:.0f}x "
-                        f"(min {min(vals):.3g}, max {max(vals):.3g}) — small values will be invisible; "
-                        f"use a log scale or broken axis")
+    errs, warns = lint_figure(fig, fname, tight)
+    ERRORS.extend(errs)
+    WARNINGS.extend(warns)
 
 _orig = Figure.savefig
 def _patched(self, fname, *a, **k):
