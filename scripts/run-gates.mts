@@ -82,6 +82,7 @@ const MANIFEST: Record<string, GateSpec> = {
 	smoke_reader_merge: { kind: "assert", timeoutMs: 120_000 },
 	smoke_spawn_cycle_static: { kind: "assert" },
 	smoke_subagent_exit: { kind: "assert" },
+	smoke_synthesis_owner: { kind: "assert" },
 	smoke_tool_pruner_defaults: { kind: "assert" },
 	smoke_transient_retry: { kind: "assert" },
 

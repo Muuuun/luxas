@@ -23,6 +23,11 @@ Read the report draft thoroughly. Then react based on your expertise — what's 
 </review_method>
 
 <general_checks>
+**Sufficiency before soundness (2026-08-25).** You approved a run whose every number was correct and whose answer was not the answer: the question asked for fidelity-vs-power and anisotropy-vs-fidelity; the report delivered point values at one Ω and one θ, and its own Pagano reproduction at Ω=40 MHz (99.976%) refuted its "recoil-limited ceiling" verdict unnoticed. Before any soundness comment, check three things:
+1. **Deliverable shape** — does the report deliver the OBJECT the question implies (a frontier, a coupled scan), or scalar samples of it? Point values from a curve-shaped question are incomplete work, however well-validated.
+2. **Coupling** — for a composite question, is there a result that JOINS the sub-answers (F(θ), F(P))? Name the missing joint computation explicitly if not; "both halves answered separately" is a STEER.
+3. **Mitigation transfer** — for the dominant limitation claimed, does the corpus (including the run's own cross-validations) contain a system that beats it? If the report's own numbers contain the escape, the verdict is wrong and this is a STEER, not a nitpick.
+
 For all task types, also check:
 - **Goal alignment** — Is the work addressing RESEARCH.md, or drifting?
 - **Progress vs. resources** — Is the agent spinning its wheels?

@@ -66,6 +66,43 @@ export function parsePlanSections(text: string): Array<{ id: string; index: numb
   return sections;
 }
 
+/**
+ * Synthesis-owner check (2026-08-25, 297nm postmortem). Decomposition has an
+ * owner (brain), verification has owners (gates/auditors/PI) — synthesis had
+ * none, and the acceptance run shipped exactly that hole: E2 computed C6(θ),
+ * E3 computed fidelity at ONE θ, and no experiment owned F(θ) — the joint
+ * object the user's composite question asked for. E3's own Pagano
+ * reproduction (Ω=40 MHz → 99.976%) contained the recoil escape and the
+ * report never drew F(Ω); PI approved, because every checker verified
+ * soundness and nobody owned sufficiency.
+ *
+ * Rule: a plan with ≥2 experiments must contain a SYNTHESIS section — heading
+ * matching /synth/i — whose job is the joint deliverable over ≥2 upstream
+ * results. Escape (mirrors FRONTIER-DECLINE): a `SYNTH-DECLINE: <reason>`
+ * line in notes/memory.md for genuinely non-composite questions.
+ * Returns the blocking message, or null when satisfied.
+ */
+export function synthesisOwnerIssue(planSrc: string, memorySrc: string): string | null {
+  const sections = parsePlanSections(planSrc);
+  if (sections.length < 2) return null;
+  const hasSynth = /^###\s+E_?\d*[^\n]*synth/im.test(planSrc);
+  if (hasSynth) return null;
+  if (/^\s*SYNTH-DECLINE:/m.test(memorySrc)) return null;
+  return (
+    `Cannot finish: the plan has ${sections.length} experiments and NO synthesis owner. ` +
+    `Decomposed sub-answers are not the answer to a composite question — the 297nm run computed ` +
+    `C6(θ) in one experiment and fidelity at a single θ in another, and nobody computed F(θ) or ` +
+    `the F(P) frontier the question asked for. Add a final \`### E_N (synthesis)\` section to ` +
+    `notes/plan.md whose Question quotes RESEARCH.md verbatim, whose Approach consumes at least two ` +
+    `upstream results.json to produce the question's DELIVERABLE OBJECT (a tradeoff curve, a design ` +
+    `surface, a coupled table — the shape the question implies, not a scalar), and which answers the ` +
+    `mitigation-transfer question: for the dominant limitation found, what does the best comparable ` +
+    `system in your corpus (including your own reproductions) do about it — transfer it or refute the ` +
+    `transfer. Then dispatch it like any experiment. If the question is genuinely NOT composite, record ` +
+    `\`SYNTH-DECLINE: <one-line reason>\` in notes/memory.md and retry finish.`
+  );
+}
+
 export function parseExperimentSections(text: string): ExperimentSection[] {
   const lines = text.split("\n");
   // Treat h2 headers starting with L2.N or E_N as experiment sections; other
@@ -537,6 +574,15 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
       // must also be Complete (catches stray Pending sections not in plan).
       const planPath = join(projectDir, "notes", "plan.md");
       const expNotesPath = join(projectDir, "notes", "experiments.md");
+
+      // Synthesis owner: composite questions need a joint-deliverable
+      // experiment, not a stack of silo results (see synthesisOwnerIssue).
+      {
+        const planSrcS = existsSync(planPath) ? readFileSync(planPath, "utf-8") : "";
+        const memSrcS = (() => { try { return readFileSync(join(projectDir, "notes", "memory.md"), "utf-8"); } catch { return ""; } })();
+        const synthIssue = synthesisOwnerIssue(planSrcS, memSrcS);
+        if (synthIssue) return { content: [{ type: "text" as const, text: synthIssue }] };
+      }
 
       const planExperiments = existsSync(planPath)
         ? parsePlanSections(readFileSync(planPath, "utf-8"))
