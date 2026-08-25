@@ -15,6 +15,7 @@ import {
 } from "../utils.js";
 import { loadRegistry, type ActiveAgent } from "../active-agents.js";
 import { parseCompileVerdict } from "../tools/report.js";
+import { buildUndispositionedAnomalies, buildIterationLineage } from "../dynamics.js";
 
 export type ContextBuilder = (projectDir: string, extra?: Record<string, any>) => string;
 
@@ -278,6 +279,12 @@ function buildExperimentContext(projectDir: string, extra?: Record<string, any>)
   const expNotes = readFileSafe(join(projectDir, "notes", "experiments.md"));
   if (expNotes && expNotes.trim().length > 20) {
     parts.push(`<experiment_notes readonly="true">\n${smartTruncate(expNotes, 3000)}\n</experiment_notes>`);
+  }
+
+  // 3b. Research dynamics (src/dynamics.ts): open anomalies you must
+  //     disposition in results.json, and what each re-run inherited.
+  for (const block of [buildUndispositionedAnomalies(projectDir, "experiment"), buildIterationLineage(projectDir)]) {
+    if (block) parts.push(block);
   }
 
   // 4. Literature notes

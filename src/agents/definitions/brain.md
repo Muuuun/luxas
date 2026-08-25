@@ -265,7 +265,7 @@ Notes are long-term memory. Context compaction discards what's not saved.
 
 - `notes/literature.md` — reader-written per-paper entries. You READ; you may append `#### Notes:` subsections.
 - `notes/experiments.md` — each completed experiment appends a `## L2.X — <topic>` section with alternatives / reviewer findings / limitations. **This replaces the old design/spec_*.md format.**
-- `notes/memory.md` — freeform scratchpad: decisions, dead ends, hypotheses, TODOs.
+- `notes/memory.md` — freeform scratchpad: decisions, dead ends, hypotheses, TODOs. Also the disposition ledger for the typed state blocks in your snapshot — each line clears one entry: `PREMISE-ACK: <EID>#<idx> — <why>`, `STOP-ACK: <EID>@run_<N> — ship|change-hypothesis|change-experiment-space: <why>`, `ANOMALY-ACK: <EID>#<idx> — pursued|explained|parked: <why>` (parked is illegal for HEADLINE anomalies), `FRONTIER-DECLINE: <leadId> — <why>`. Record the contradicting fact the moment you see it — those are the ones that get lost.
 - `notes/plan.md` — optional decomposition anchor.
 - `notes/lessons.md` — auto-captured tool failures.
 

@@ -9,6 +9,7 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { readFileSafe, smartTruncate, parseFollowUps } from "./utils.js";
 import { listExperimentDirs } from "./tools/report-integrity.js";
+import { buildStoppingSignal, buildUndispositionedAnomalies, buildIterationLineage } from "./dynamics.js";
 import { buildPastResearchDigest, GLOBAL_MEMORY_PATH } from "./memory.js";
 import { findUnprocessedPapers, methodologyPath } from "./methodology.js";
 import { join, dirname } from "node:path";
@@ -401,6 +402,14 @@ function buildResearchSnapshot(opts: ContextTransformerOptions): string {
   // a corrected premise INVALIDATES part of it. Same untruncated tier.
   const premises = buildPremiseCorrections(projectDir);
   if (premises) parts.push(premises);
+
+  // Research dynamics as state (src/dynamics.ts, 2026-08-25 human-trace
+  // synthesis): epistemic stopping, anomaly disposition, iteration lineage.
+  // Same untruncated tier as premise corrections — each is a forced fork or a
+  // re-primed attention channel, not a footnote.
+  for (const block of [buildStoppingSignal(projectDir), buildUndispositionedAnomalies(projectDir, "brain"), buildIterationLineage(projectDir)]) {
+    if (block) parts.push(block);
+  }
 
   // Execution-state snapshot (active sub-agents, completed artifacts, plan
   // status). Formerly a dedicated cache-pinned system layer (L3); moved here

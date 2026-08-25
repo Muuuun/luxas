@@ -190,6 +190,29 @@ export function listExperimentDirs(projectDir: string): ExperimentDir[] {
   return out;
 }
 
+export interface ExperimentRun { n: number; path: string; results: any }
+
+/**
+ * Every parsable results.json for an experiment, ascending by run index —
+ * the per-run history the dynamics blocks (src/dynamics.ts) read. Unlike
+ * listExperimentDirs this keeps ALL runs: stopping and lineage are properties
+ * of the sequence, not of the latest artifact.
+ */
+export function listExperimentRuns(dir: string): ExperimentRun[] {
+  const runsDir = join(dir, "runs");
+  if (!existsSync(runsDir)) return [];
+  const out: ExperimentRun[] = [];
+  for (const run of readdirSync(runsDir)) {
+    const rm = run.match(/^run_(\d+)$/);
+    if (!rm) continue;
+    const p = join(runsDir, run, "results.json");
+    if (!existsSync(p)) continue;
+    try { out.push({ n: parseInt(rm[1], 10), path: p, results: JSON.parse(readFileSync(p, "utf-8")) }); }
+    catch { /* unparseable run is not history */ }
+  }
+  return out.sort((a, b) => a.n - b.n);
+}
+
 function collectEvidenceNumbers(projectDir: string, experiments: ExperimentDir[]): number[] {
   const out: number[] = [];
   for (const f of ["experiments.md", "literature.md", "memory.md", "plan.md"]) {
