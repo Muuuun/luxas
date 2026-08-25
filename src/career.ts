@@ -49,15 +49,28 @@ function loadHarvested(): string[] {
   try { return JSON.parse(readFileSync(HARVESTED, "utf-8")); } catch { return []; }
 }
 
-/** Harvest one finished project into the career ledgers. Idempotent. */
-export function harvestCareer(projectDir: string): { findings: number; corrections: number; leads: number } | null {
+/** Remove a project's lines from a ledger (pre-refresh). */
+function dropProject(path: string, name: string): void {
+  try {
+    const kept = readFileSync(path, "utf-8").split("\n")
+      .filter((l) => { if (!l.trim()) return false; try { return JSON.parse(l).project !== name; } catch { return true; } });
+    writeFileSync(path, kept.length ? kept.join("\n") + "\n" : "");
+  } catch { /* absent */ }
+}
+
+/** Harvest one finished project into the career ledgers. Idempotent unless
+ * force — the finish-time call forces, because a project harvested mid-run
+ * (e.g. by backfill while a synthesis phase was still executing) must be
+ * refreshed with its final claims when it actually finishes. */
+export function harvestCareer(projectDir: string, force = false): { findings: number; corrections: number; leads: number } | null {
   ensureDir();
   const done = loadHarvested();
-  if (done.includes(projectDir)) return null;
+  if (done.includes(projectDir) && !force) return null;
 
   const research = readFileSafe(join(projectDir, "RESEARCH.md"));
   const name = (research.match(/^#\s+(.{1,90})/m)?.[1] ?? projectDir.split("/").pop() ?? "?").trim();
   const date = new Date().toISOString().slice(0, 10);
+  if (force) for (const f of [FINDINGS, CORRECTIONS, LEADS]) dropProject(f, name);
   let nf = 0, nc = 0, nl = 0;
 
   try {
@@ -101,7 +114,7 @@ export function harvestCareer(projectDir: string): { findings: number; correctio
     }
   }
 
-  writeFileSync(HARVESTED, JSON.stringify([...done, projectDir], null, 1));
+  writeFileSync(HARVESTED, JSON.stringify([...new Set([...done, projectDir])], null, 1));
   return { findings: nf, corrections: nc, leads: nl };
 }
 

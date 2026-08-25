@@ -510,7 +510,7 @@ async function run(dir: string, modelName: string, userDirective?: string, maxCo
   // instead of from zero. Idempotent; failure must never mar a finish.
   if (finished) {
     try {
-      const h = harvestCareer(dir);
+      const h = harvestCareer(dir, true);
       if (h) console.error(`  ⛬ Career: +${h.findings} findings, +${h.corrections} corrections, +${h.leads} open leads → ~/.sisyphus/career/`);
     } catch { /* best-effort */ }
   }
