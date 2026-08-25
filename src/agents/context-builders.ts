@@ -5,6 +5,7 @@
 
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { buildClaimRegistry, renderClaimRegistry } from "../claims-registry.js";
+import { readCareerStandards } from "../career.js";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
@@ -476,6 +477,16 @@ function buildPIContext(projectDir: string, extra?: Record<string, any>): string
   const isFigureOnly = extra?.isFigureOnly ?? false;
 
   const parts: string[] = [];
+
+  // The user's standing standards — accumulated review dissatisfactions,
+  // recorded as data (~/.sisyphus/career/standards.md). v1 of the 297nm
+  // report passed every mechanical gate and this reviewer, and only the USER
+  // called it insufficient; each such call lands here so the bar persists
+  // across projects without a code change.
+  {
+    const std = readCareerStandards();
+    if (std) parts.push(`<standing_standards binding="true">\n${std.slice(0, 2500)}\n</standing_standards>`);
+  }
 
   // Figure-only mode (luxas figures CLI): inject PI_FIGURE_MODE, skip normal sections.
   if (isFigureOnly) {

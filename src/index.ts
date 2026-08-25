@@ -45,6 +45,7 @@ if (existsSync(join(browserUseDir, "browser-use")) && !process.env.PATH?.include
   process.env.PATH = `${browserUseDir}:${process.env.PATH}`;
 }
 import { registerProject, updateProjectAfterRun, loadProjects, selectPastProjects } from "./memory.js";
+import { harvestCareer } from "./career.js";
 import { readUsageTotals } from "./usage-log.js";
 import { TRANSIENT_RE } from "./agents/spawn.js";
 import { ORIGINAL_REQUEST_HEADER, deriveProjectTitle } from "./utils.js";
@@ -503,6 +504,16 @@ async function run(dir: string, modelName: string, userDirective?: string, maxCo
   // Save project summary to global registry (records the blocked state so the
   // summary doesn't claim completion the run never reached).
   updateProjectAfterRun(dir, totals.cost, totalTokens, { finished });
+  // Career harvest: a finished project's structured artifacts (claims.json
+  // grades, premise corrections, open FollowUp leads) join the user's
+  // career ledgers, so the NEXT project starts from who this user has been
+  // instead of from zero. Idempotent; failure must never mar a finish.
+  if (finished) {
+    try {
+      const h = harvestCareer(dir);
+      if (h) console.error(`  ⛬ Career: +${h.findings} findings, +${h.corrections} corrections, +${h.leads} open leads → ~/.sisyphus/career/`);
+    } catch { /* best-effort */ }
+  }
 
   // Clean up browser-use daemon if it was started during this session
   try { execSync("browser-use close --all", { stdio: "pipe", timeout: 5000 }); } catch { /* not running */ }

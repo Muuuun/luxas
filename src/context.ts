@@ -11,6 +11,7 @@ import { readFileSafe, smartTruncate, parseFollowUps } from "./utils.js";
 import { listExperimentDirs } from "./tools/report-integrity.js";
 import { buildStoppingSignal, buildUndispositionedAnomalies, buildIterationLineage } from "./dynamics.js";
 import { buildPastResearchDigest, GLOBAL_MEMORY_PATH } from "./memory.js";
+import { buildCareerBlock } from "./career.js";
 import { findUnprocessedPapers, methodologyPath } from "./methodology.js";
 import { join, dirname } from "node:path";
 import { compactNotesIfNeeded } from "./notes-compaction.js";
@@ -538,6 +539,14 @@ export function buildSemiStaticSystemLayer(projectDir: string): string {
   }
   const pastResearch = buildPastResearchDigest(projectDir);
   if (pastResearch) parts.push(pastResearch);
+
+  // The career block: findings/corrections/leads from ALL past projects that
+  // touch THIS question, plus the user's standing standards. Semi-static —
+  // stable per session, cache-safe (matched once against RESEARCH.md).
+  try {
+    const career = buildCareerBlock(goal || "");
+    if (career) parts.push(career);
+  } catch { /* career is additive, never blocking */ }
 
   return parts.join("\n\n");
 }
