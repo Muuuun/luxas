@@ -77,6 +77,7 @@ const MANIFEST: Record<string, GateSpec> = {
 	smoke_stopping_signal: { kind: "assert" },
 	smoke_anomaly_disposition: { kind: "assert" },
 	smoke_iteration_lineage: { kind: "assert" },
+	smoke_overflow_backstop: { kind: "assert" },
 	smoke_prior_art_gate: { kind: "assert" },
 	smoke_prompt_assembly: { kind: "assert" },
 	smoke_read_scope: { kind: "assert" },
