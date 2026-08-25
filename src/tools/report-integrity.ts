@@ -72,23 +72,31 @@ export function extractNumbers(raw: string): number[] {
   const text = normalizeNotation(raw);
   const out: number[] = [];
   const push = (v: number) => { if (Number.isFinite(v)) out.push(v); };
+  // A leading "-" is a sign only when not glued to a preceding word/number
+  // (2026-08-25, live false-block: E5's transcript-anchored -0.151863 GHz
+  // failed xval anchoring because every extraction came out positive).
+  // "40-80" and "R-6" keep "-" as a dash; "= -0.151863" / "(-0.85" do not.
+  const signAt = (src: string, matchStart: number, sign: string): number =>
+    sign === "-" && !/[0-9A-Za-z.]/.test(src[matchStart - 1] ?? "") ? -1 : 1;
 
   // a \times 10^{b} — with or without braces; also bare 10^{b}
-  const sciRE = /(?:(\d+(?:\.\d+)?)\s*\\times\s*)?10\s*\^\s*\{?\s*(-?\d+)\s*\}?/g;
+  const sciRE = /(-?)(?:(\d+(?:\.\d+)?)\s*\\times\s*)?10\s*\^\s*\{?\s*(-?\d+)\s*\}?/g;
   let m: RegExpExecArray | null;
   while ((m = sciRE.exec(text))) {
-    push((m[1] ? parseFloat(m[1]) : 1) * Math.pow(10, parseInt(m[2], 10)));
+    push(signAt(text, m.index, m[1]) * (m[2] ? parseFloat(m[2]) : 1) * Math.pow(10, parseInt(m[3], 10)));
   }
   // e-notation
-  const eRE = /\b(\d+(?:\.\d+)?)[eE](-?\d+)\b/g;
-  while ((m = eRE.exec(text))) push(parseFloat(m[1]) * Math.pow(10, parseInt(m[2], 10)));
+  const eRE = /(-?)\b(\d+(?:\.\d+)?)[eE](-?\d+)\b/g;
+  while ((m = eRE.exec(text))) {
+    push(signAt(text, m.index, m[1]) * parseFloat(m[2]) * Math.pow(10, parseInt(m[3], 10)));
+  }
   // plain decimals / integers, skipping ones already consumed by sci forms
   const stripped = text.replace(sciRE, " ").replace(eRE, " ");
-  const plainRE = /(\d+(?:\.\d+)?)\s*(%|\\%)?/g;
+  const plainRE = /(-?)(\d+(?:\.\d+)?)\s*(%|\\%)?/g;
   while ((m = plainRE.exec(stripped))) {
-    const v = parseFloat(m[1]);
+    const v = signAt(stripped, m.index, m[1]) * parseFloat(m[2]);
     push(v);
-    if (m[2]) push(v / 100);
+    if (m[3]) push(v / 100);
   }
   return out;
 }
@@ -114,6 +122,15 @@ function resolves(v: number, evidence: number[]): boolean {
     if (v === e) return true;
     if (Math.abs(v - e) <= 0.005 * Math.max(Math.abs(v), Math.abs(e))) return true;
     if (vSig === sig1(e)) return true;
+    // Percent ↔ fraction (2026-08-25, live false-block on the 297nm report):
+    // "F = 99.963%" in the report vs "F(40 MHz) = 0.999627" in the ledger is
+    // ONE number in two conventions. Accept a ×100 rescale, but only across
+    // the fraction/percent boundary — one side in (0,1], the other in
+    // (1,100] — so unrelated order-of-magnitude coincidences stay blocked.
+    const [lo, hi] = Math.abs(v) < Math.abs(e) ? [v, e] : [e, v];
+    if (Math.abs(lo) > 0 && Math.abs(lo) <= 1 && Math.abs(hi) > 1 && Math.abs(hi) <= 100) {
+      if (Math.abs(hi - 100 * lo) <= 0.005 * Math.abs(hi)) return true;
+    }
   }
   return false;
 }

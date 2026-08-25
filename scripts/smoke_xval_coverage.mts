@@ -130,5 +130,39 @@ try {
 	for (const d of dirs) { try { rmSync(d, { recursive: true, force: true }); } catch {} }
 }
 
+// ── Regression: sign-aware extraction + percent↔fraction dereference ──
+// (2026-08-25, both found live on the 297nm finish.)
+{
+	const { extractNumbers } = await import(join(ROOT, "src/tools/report-integrity.js"));
+	const nums = extractNumbers('"v_4um_ghz": -0.151863, c6_over_r6_ghz = -0.85011962890625');
+	check("negative JSON/assignment values extract signed",
+		nums.includes(-0.151863) && nums.includes(-0.85011962890625), JSON.stringify(nums));
+	const dash = extractNumbers("n=40-80 scan, R-6 tail");
+	check("range dashes and R-6 do not become negative numbers",
+		dash.includes(40) && dash.includes(80) && !dash.includes(-80) && !dash.includes(-6), JSON.stringify(dash));
+
+	// percent↔fraction: claim says 99.963 (%), ledger quote says 0.999627.
+	const dir = mkdtempSync(join(tmpdir(), "xval-pf-"));
+	try {
+		mkdirSync(join(dir, "report"), { recursive: true });
+		mkdirSync(join(dir, "notes"), { recursive: true });
+		mkdirSync(join(dir, "data", "experiments", "E1_x", "runs", "run_0"), { recursive: true });
+		writeFileSync(join(dir, "data", "experiments", "E1_x", "runs", "run_0", "results.json"),
+			JSON.stringify({ verdict: "confirmed", computed: {} }));
+		writeFileSync(join(dir, "notes", "experiments.md"),
+			"## L2.1 — frontier\nHeadline findings: gives F(40 MHz) = 0.999627 > F(10 MHz).\n");
+		writeFileSync(join(dir, "report", "report.tex"),
+			"\\begin{document}\\begin{abstract}F=99.963\\%\\end{abstract}\\end{document}");
+		writeFileSync(join(dir, "report", "claims.json"), JSON.stringify([
+			{ value: 99.963, tex_context: "F=99.963", source_file: "notes/experiments.md",
+			  source_quote: "gives F(40 MHz) = 0.999627 > F(10 MHz)." },
+		]));
+		const issues = reportIntegrityIssues(dir);
+		const deref = issues.filter((i: any) => /fail dereference/.test(i.text));
+		check("percent claim resolves against fraction quote (no false dereference block)",
+			deref.length === 0, deref.map((i: any) => i.text.slice(0, 120)).join(" | "));
+	} finally { rmSync(dir, { recursive: true, force: true }); }
+}
+
 console.log(failures === 0 ? "\nALL PASS — cross-validation fixes A and B behave." : `\n${failures} check(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);
