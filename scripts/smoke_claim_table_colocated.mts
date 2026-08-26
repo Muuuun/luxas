@@ -51,7 +51,7 @@ check("numeric limit_check on the leaf is accepted", decl("c6_anisotropy_ratio_6
 check("quantities[] entry wins over the leaf (uncertainty 0.5 on a plain numeric leaf)", decl("n11_scaling_factor_60p").value === 3.1 && decl("n11_scaling_factor_60p").uncertainty === 0.5);
 check("co-located headline rows are load-bearing", t.headline.includes("c6_anisotropy_ratio_60p") && t.headline.includes("blockade_radius_r0_60p"));
 check("leaf object with no single value → actionable MALFORMED naming numeric candidates", t.malformed.some((m) => /c6_theta_60p_mj32.*no single numeric `value`.*candidates: .*c6_at_theta_pi2_ghz_um6/.test(m)), t.malformed.join(" | "));
-check("string limit_check → actionable MALFORMED (numbers demanded, description kept in limit)", t.malformed.some((m) => /c6_theta_60p_mj32.*limit_check needs .*NUMBER.*textual anchor/.test(m)));
+check("string limit_check → accepted silently (demoted §7.4), not an anchor", !t.malformed.some((m) => /c6_theta_60p_mj32.*limit_check/.test(m)) && decl("c6_theta_60p_mj32").limitCheck === undefined);
 check("missing key → says the key does not exist", t.malformed.some((m) => /missing_key_q.*does not exist/.test(m)));
 check("leaf-with-value rows are not MALFORMED", !t.malformed.some((m) => /c6_anisotropy_ratio_60p|blockade_radius_r0_60p/.test(m)), t.malformed.join(" | "));
 

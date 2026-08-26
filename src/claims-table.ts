@@ -196,9 +196,16 @@ function parseExperiment(id: string, j: any): Parsed {
     const lc: any = pick("limit_check");
     if (lc !== undefined) {
       const exp = num(lc?.expected), obs = num(lc?.observed);
-      if (!lc || typeof lc !== "object" || typeof lc.limit !== "string" || exp === undefined || obs === undefined) {
-        out.malformed.push(`${id}: quantities[${i}] (${q.id}) limit_check needs {limit, expected: NUMBER, observed: NUMBER} — got ${JSON.stringify({ expected: lc?.expected, observed: lc?.observed }).slice(0, 120)}. A textual anchor cannot be σ-compared; put the one number the limit predicts (e.g. the sin^4 coefficient) in expected/observed and keep the description in \`limit\`.`);
-      } else decl.limitCheck = { limit: lc.limit, expected: exp, observed: obs, artifact: typeof lc.artifact === "string" ? lc.artifact : undefined };
+      // Demoted after the 2026-08-26 live probe (design §7.4): producers wrote
+      // limit_check.expected/observed as TEXT 7/7 times (a polynomial anchor, a
+      // self-consistency condition). A descriptive limit_check is accepted
+      // silently and simply does not count as an anchor leg; only the numeric
+      // form does. Structural garbage (non-object, no `limit`) is still flagged.
+      if (!lc || typeof lc !== "object" || typeof lc.limit !== "string") {
+        out.malformed.push(`${id}: quantities[${i}] (${q.id}) limit_check must be an object with a string \`limit\` (plus expected/observed — numbers if the limit is to count as an anchor, text otherwise).`);
+      } else if (exp !== undefined && obs !== undefined) {
+        decl.limitCheck = { limit: lc.limit, expected: exp, observed: obs, artifact: typeof lc.artifact === "string" ? lc.artifact : undefined };
+      }
     }
     const inputs = pick("inputs");
     if (inputs !== undefined) {

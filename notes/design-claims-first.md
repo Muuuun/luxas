@@ -236,3 +236,17 @@ Engineer's estimate: +25–55% per project ($190–235, 36–42 h vs $151/32 h) 
 
 Deviations kept, on purpose: no batch finish diagnostic (~30 early returns; escalation keys on masked gate text instead of issue count); `indicative` inputs do not make a quantity `conditional` (would make nearly everything conditional); no flag→answer round (a blind flag disputes immediately — stricter than designed); countersigner identity is "harness-written file + PI/reviewer", not a full agent-id check; `limit_check.observed` is not transcript-anchored (ANCHOR-OK attestation is the guard).
 
+## 11. Live compliance probe (2026-08-26, bench-02, dual profile)
+
+Reader: `scripts/claims_compliance.mts`; dispatch check: `scripts/claims_dispatch.mts`. One experiment (E1, C₆(θ) for 60P₃/₂), 7 declared quantities, cost $19 (the `--max-cost 5` cap did not fire — the brain's hook never ran while it sat inside the foreground experiment spawn; fixed in `usage-log.ts`, gate `smoke_cost_cap`).
+
+| field | rate | outcome |
+|---|---|---|
+| `quantities[].id`, `key` | 100% | keep |
+| `headline`, `observable`, `uncertainty` (numeric), `uncertainty_source` | 86% (6/7) | keep — **but the producer put them under `computed.<leaf>` (object with `value`/`value_<unit>`), then, after the write-time hint, repointed `key` at the numeric sub-leaf leaving the metadata on its parent.** The table now accepts all three locations (`resolveQuantity`); the entry wins. |
+| `limit_check` with numeric `expected`/`observed` | 0/7 | **demoted**: text form accepted silently, never an anchor leg |
+| `inputs` non-empty | 1/7 | **optional** (it already was in effect; empty = no comparability information) |
+| `verdicts[].reads` / `replaces` | 100% | keep |
+| brain `frame.md ## Headline quantities` | present, 3 ids | keep — but the ids did not match the producer's (`C6_60P_mj32_theta` vs `c6_theta_60p_mj32`): the write-time validator now suggests the frame id on a ≥2-token near-miss |
+| producer `headline: true` | on 6/7 quantities | over-declared vs the ≤3 frame set; the obligation scope is the union, so reviewers get 9 ids. Open question §9.2 stands. |
+| reviewer / PI lines | not yet measured at the time of writing (review round pending) | — |
