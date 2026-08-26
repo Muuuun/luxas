@@ -18,8 +18,8 @@ import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, realpathS
 import { join, dirname, sep as pathSep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { pidAlive } from "../utils.js";
-import { buildClaimTable } from "../claims-table.js";
-import { blindEstimateTask, extractBlindEstimate, extractReviewerLines, headlineDeclsFor, persistReview, reviewCompleteness, reviewerObligationBlock } from "../claims-review.js";
+import { buildClaimTable, parseFrameHeadline } from "../claims-table.js";
+import { blindEstimateTask, extractBlindEstimate, extractReviewerLines, headlineDeclsFor, persistReview, reviewCompleteness, reviewerObligationBlock, selectBlindEstimateDecls } from "../claims-review.js";
 
 // Primary defense against path-escape via LLM-supplied id; the realpath check
 // in handleContinue is defense-in-depth in case this regex is ever widened.
@@ -586,6 +586,8 @@ export function createSpawnAgentTool(
           // the auto-review loop entirely.
           const envCap = parseInt(process.env.LUXAS_MAX_REVIEW_ITERATIONS ?? "", 10);
           const MAX_REVIEW_ITERATIONS = Number.isFinite(envCap) && envCap >= 0 ? envCap : 3;
+          const blindCapEnv = Number(process.env.LUXAS_BLIND_ESTIMATE_CAP);
+          const BLIND_ESTIMATE_CAP = Number.isFinite(blindCapEnv) && blindCapEnv >= 0 ? blindCapEnv : 3;
 
           // Claims-first §3.5: the blind estimate is produced by the HARNESS
           // before the reviewer runs — "preregistered" cannot be enforced
@@ -602,7 +604,9 @@ export function createSpawnAgentTool(
           let headlineIds = [...new Set(headlineDecls.map((d) => d.id))];
           const blindLines: string[] = [];
           if (MAX_REVIEW_ITERATIONS > 0 && process.env.LUXAS_BLIND_ESTIMATE !== "0") {
-            for (const decl of headlineDecls) {
+            const { chosen, skipped } = selectBlindEstimateDecls(headlineDecls, parseFrameHeadline(projectDir), BLIND_ESTIMATE_CAP);
+            if (skipped.length) claimNotes.push(`[blind estimates capped at ${BLIND_ESTIMATE_CAP}/round (frame ids first); not estimated this round: ${skipped.join(", ")}]`);
+            for (const decl of chosen) {
               try {
                 const est = await spawnAgent({
                   name: "replicator",

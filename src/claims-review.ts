@@ -70,6 +70,22 @@ export function headlineDeclsFor(table: ClaimTable, experimentId: string): Quant
   return table.decls.filter((d) => d.experiment === e && (d.headline || headline.has(d.id)) && d.value !== undefined && !seen.has(d.id) && seen.add(d.id));
 }
 
+/**
+ * Which headline declarations get a blind replicator estimate this round.
+ * Producers over-declare `headline: true` (live probe 2026-08-26: 6 of 7
+ * quantities) and each estimate is a model spawn, so: frame.md ids first,
+ * then the rest in declaration order, at most `cap` per round (design §9.2:
+ * N = 3 for a short ask). The skipped ids are returned so the harness can
+ * say so in the review file instead of silently narrowing.
+ */
+export function selectBlindEstimateDecls<T extends { id: string }>(decls: T[], frameIds: string[], cap = 3): { chosen: T[]; skipped: string[] } {
+  const seen = new Set<string>();
+  const ordered: T[] = [];
+  for (const fid of frameIds) for (const d of decls) if (d.id === fid && !seen.has(d.id)) { seen.add(d.id); ordered.push(d); }
+  for (const d of decls) if (!seen.has(d.id)) { seen.add(d.id); ordered.push(d); }
+  return { chosen: ordered.slice(0, cap), skipped: ordered.slice(cap).map((d) => d.id) };
+}
+
 /** The task handed to a blind `replicator` in estimate mode — observable and input VALUES only (design §3.5). */
 export function blindEstimateTask(decl: QuantityDecl): string {
   const inputs = Object.entries(decl.inputs).map(([k, v]) => `${k}=${v}`).join(", ");
