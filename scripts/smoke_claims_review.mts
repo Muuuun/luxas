@@ -171,5 +171,14 @@ check("replicator templates carry QUANTITY_ID and MODE", (rep?.templates ?? []).
 	} finally { rmSync(dir, { recursive: true, force: true }); }
 }
 
+// ── blind-estimate cap (live probe 2026-08-26: producers headline 6/7 quantities) ──
+{
+	const decls = ["a", "b", "c", "d", "e", "f"].map((id) => ({ id }));
+	const r = R.selectBlindEstimateDecls(decls, ["e", "zzz_not_declared", "b"], 3);
+	check("cap: frame ids first (in frame order), then declaration order, ≤3", r.chosen.map((d: any) => d.id).join(",") === "e,b,a" && r.skipped.join(",") === "c,d,f", JSON.stringify(r));
+	check("cap: duplicates across frame/decls collapse", R.selectBlindEstimateDecls([{ id: "a" }, { id: "a" }, { id: "b" }], ["a"], 3).chosen.length === 2);
+	check("cap 0 disables blind estimates", R.selectBlindEstimateDecls(decls, [], 0).chosen.length === 0 && R.selectBlindEstimateDecls(decls, [], 0).skipped.length === 6);
+}
+
 console.log(failures === 0 ? "\nALL PASS — reviewers estimate, reviews persist, disputes escalate to people, replicators are blind." : `\n${failures} check(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);
