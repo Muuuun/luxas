@@ -1,0 +1,306 @@
+{
+ "experiment_id": "E3_gate_fidelity_budget",
+ "question": "What is the achievable gate fidelity for a Rb Rydberg-blockade entangling gate driven by single-photon 297 nm excitation, and how does it decompose into Doppler dephasing, photon recoil, Rydberg spontaneous emission (incl. blackbody), blockade leakage, and laser phase noise — as a function of laser power, atom temperature, and interatomic geometry?",
+ "invariants": {
+  "boltzmann_kB_J_per_K": {
+   "value": 1.380649e-23,
+   "source": "CODATA2018",
+   "anchored_to": "CODATA fundamental constant",
+   "quote": "k = 1.380649e-23 J/K (exact)"
+  },
+  "hbar_Js": {
+   "value": 1.054571817e-34,
+   "source": "CODATA2018",
+   "anchored_to": "CODATA fundamental constant",
+   "quote": "h/2pi = 1.054571817e-34 J s"
+  },
+  "mass_Rb87_kg": {
+   "value": 1.44316e-25,
+   "source": "Rb-87 atomic mass (86.909 u x 1.66053906660e-27 kg)",
+   "anchored_to": "atomic mass unit definition",
+   "quote": "m(Rb-87) = 86.909180527 u"
+  },
+  "wavelength_nm": {
+   "value": 297.0,
+   "source": "experiment definition (single-photon 297 nm path)",
+   "anchored_to": "user request 'single photon transitions via 297nm'",
+   "quote": "297nm single-photon transition (5S1/2 -> nP)"
+  },
+  "protocol_tau_gate_over_rabi": {
+   "value": 7.69,
+   "source": "Pagano2022 (arXiv:2202.13849), Gaussian symmetric-blockade protocol",
+   "anchored_to": "Pagano2022 published Bell fidelity 99.899% at 10 MHz (reproduced by machinery, see computed.reproduce_pagano)",
+   "quote": "the optimal gate duration is tau Omega_0 = 7.69 with overline{T}_r Omega_0 = 3.86"
+  },
+  "protocol_tbar_r_over_rabi": {
+   "value": 3.86,
+   "source": "Pagano2022 (arXiv:2202.13849), mean Rydberg residence time",
+   "anchored_to": "Pagano2022 published Bell fidelity 99.899% at 10 MHz",
+   "quote": "reducing the time spent in the Rydberg states overline{T}_r Omega_0 = 3.86"
+  },
+  "trap_freq_axial_kHz": {
+   "value": 50.0,
+   "source": "Pagano2022 (arXiv:2202.13849) optical-tweezer trap",
+   "anchored_to": "Pagano2022 published fidelity",
+   "quote": "omega_z/2pi = 50 kHz (axial trap)"
+  },
+  "pagano_published_fidelity_10MHz": {
+   "value": 0.99899,
+   "source": "Pagano2022 (arXiv:2202.13849)",
+   "anchored_to": "Pagano2022 Eq./abstract Bell-state fidelity at 10 MHz",
+   "quote": "corresponds to a Bell state fidelity F = 99.899%"
+  },
+  "pagano_published_fidelity_40MHz": {
+   "value": 0.99973,
+   "source": "Pagano2022 (arXiv:2202.13849)",
+   "anchored_to": "Pagano2022 Eq. line for 40 MHz",
+   "quote": "a Bell state fidelity F = 99.973% at Omega_0/2pi = 40 MHz"
+  },
+  "low2012_rb43s_lifetime_300K_us": {
+   "value": 42.3,
+   "source": "Low2012 (Rb 43S Rydberg-blockade, 297nm-motivated two-photon scheme)",
+   "anchored_to": "Low2012 published Rb 43S lifetime at 300 K (ARC reproduces 41.92 us, 0.9% error — see computed.arc_lifetime_43s_300K_us)",
+   "quote": "Lifetime of 43S at 300K (with blackbody radiation): tau = 42.3 us ... (80.8 us spontaneous decay + BBR absorption at 300K)"
+  },
+  "rabi_per_sqrt_power_MHz_per_sqrt_mW": {
+   "value": 0.9024,
+   "source": "E_1 results.json (computed.rabi_per_sqrt_power_at_297nm_MHz_per_sqrt_mW)",
+   "anchored_to": "E_1 (transition strength + power budget), F=2 stretched at 10 um waist",
+   "quote": "rabi_per_sqrt_power_at_297nm_MHz_per_sqrt_mW = 0.902 (10 um 1/e^2 waist)"
+  },
+  "c6_n60_theta90_ghz_um6": {
+   "value": 299.109,
+   "source": "E_2 results.json (computed.c6_stretched.c6_theta90_ghz_um6.n60)",
+   "anchored_to": "E_2 (pp vdW angle dependence), stretched nP3/2 |mJ|=3/2 state",
+   "quote": "c6_theta90_ghz_um6 = {n40:19.687, ..., n60:299.109}"
+  },
+  "baseline_evered2023": {
+   "value": 0.995,
+   "source": "Evered2023 (two-photon 420+1013 nm, Rb 70S, measured)",
+   "anchored_to": "Evered2023 measured CZ gate fidelity",
+   "quote": "two-photon baseline Evered2023: 99.5%"
+  },
+  "baseline_pagano2022": {
+   "value": 0.999,
+   "source": "Pagano2022 (Sr 323 nm single-photon, 99.9%)",
+   "anchored_to": "Pagano2022 published fidelity",
+   "quote": "Sr 323 nm single-photon budget (Pagano2022 99.9% at 10 MHz)"
+  }
+ },
+ "computed": {
+  "n_at_target": 75.32578615827543,
+  "n_adopted": 75,
+  "n_adopted_rationale": "E_1 established exact 297.0 nm addresses n~75.3 (P3/2=75.33, P1/2=75.34). Adopt integer n=75; the 0.33 fractional offset is immaterial for lifetimes and interactions.",
+  "rydberg_state": "nP3/2 stretched |mJ|=3/2 (best blockade per E_2; C6 propto sin^4(theta))",
+  "c6_75_ghz_um6": 3482.087049633264,
+  "c6_75_extrapolation": "C6(n=75) = 299.109 * (75/60)^11 (n^11 scaling from E_2 n=60; E_2 flagged near-Forster resonance (defect -0.185 GHz at n=75), so this perturbative value is a LOWER-bound estimate — the actual interaction at blockade distances is strong-coupling and leakage is even smaller)",
+  "lifetime_75p3_2_us": {
+   "T0": 930.2,
+   "T77": 520.4,
+   "T300": 221.63565543450602
+  },
+  "arc_lifetime_43s_300K_us": 41.92,
+  "arc_lifetime_43s_0K_us": 79.22,
+  "reproduce_pagano": {
+   "omega10": {
+    "fidelity_pagano": 0.99899,
+    "fidelity_machinery": 0.9990025658514027,
+    "infidelity_ratio": 0.9875585629676876
+   },
+   "omega40": {
+    "fidelity_pagano": 0.99973,
+    "fidelity_machinery": 0.9997648777806185,
+    "infidelity_ratio": 0.8708230347462816
+   }
+  },
+  "ceiling": {
+   "params": {
+    "n": 75,
+    "wavelength_nm": 297.0,
+    "rydberg_lifetime_us": 221.63565543450602,
+    "trap_freq_axial_kHz": 50.0,
+    "temperature_uK": 5.0,
+    "rabi_MHz": 10.0,
+    "theta_deg": 90.0,
+    "c6_ghz_um6": 3482.087049633264,
+    "interatomic_distance_um": 4.0,
+    "laser_linewidth_kHz": 1.0,
+    "power_mW": 122.8
+   },
+   "terms": {
+    "blockade": 6.918479403136215e-05,
+    "decay": 0.00020788783255462745,
+    "doppler": 0.00020195415883528245,
+    "phase": 0.00019299999999999995,
+    "recoil": 0.00038598231231380713
+   },
+   "total_infidelity": 0.0010580090977350793,
+   "fidelity": 0.9989419909022649
+  },
+  "dominant_term": {
+   "low_power_rabi1MHz_T10uK": "recoil",
+   "high_power_rabi10MHz_T5uK": "recoil",
+   "note": "photon recoil is the dominant error across the operating regime; at high power with a 10 kHz (or broader) laser, phase noise overtakes recoil (e.g. rabi=10MHz, T=10uK, Delta_nu=10kHz -> dominant term is 'phase')"
+  },
+  "comparison": {
+   "rb297nm_ceiling": {
+    "fidelity": 0.9989419909022649,
+    "infidelity": 0.0010580090977350793
+   },
+   "evered2023": {
+    "fidelity": 0.995,
+    "infidelity": 0.005
+   },
+   "leseleuc2018": {
+    "fidelity": 0.99,
+    "infidelity": 0.01
+   },
+   "pagano2022": {
+    "fidelity": 0.999,
+    "infidelity": 0.001
+   }
+  },
+  "raw_data": {
+   "scan_csv": "data/scan.csv",
+   "ceiling_csv": "data/ceiling.csv",
+   "comparison_csv": "data/comparison.csv"
+  },
+  "method_ladder": [
+   {
+    "quantity": "Rydberg lifetime (incl. 300 K blackbody)",
+    "field_standard_method": "ARC getStateLifetime QDT calculator (Sibalic2016)",
+    "planned_method": "ARC getStateLifetime",
+    "used": "ARC getStateLifetime"
+   },
+   {
+    "quantity": "Doppler dephasing",
+    "field_standard_method": "Saffman2016 Eq.7 Doppler-limited Bell fidelity",
+    "planned_method": "Saffman2016 Eq.7 closed form",
+    "used": "Saffman2016 Eq.7 closed form"
+   },
+   {
+    "quantity": "photon recoil",
+    "field_standard_method": "Pagano2022 Eq.16 coherent-state overlap (cross-checked vs QuTiP)",
+    "planned_method": "Pagano2022 Eq.16 closed form",
+    "used": "Pagano2022 Eq.16 closed form"
+   },
+   {
+    "quantity": "Rydberg decay",
+    "field_standard_method": "Pagano2022 Eq.12 (3/4) Tbar_r gamma",
+    "planned_method": "same",
+    "used": "Pagano2022 Eq.12"
+   },
+   {
+    "quantity": "blockade leakage",
+    "field_standard_method": "Shi2022/Saffman2016 eps = hbar^2 Omega^2/(2V^2)",
+    "planned_method": "same",
+    "used": "Shi2022/Saffman2016 closed form"
+   },
+   {
+    "quantity": "laser phase noise",
+    "field_standard_method": "LeSeleuc2018 measured phase-noise spectral density S_phi dephasing",
+    "planned_method": "Lorentzian-linewidth model pi Delta_nu Tbar_r",
+    "used": "Lorentzian-linewidth model pi Delta_nu Tbar_r"
+   }
+  ],
+  "cross_validation_plan": [
+   {
+    "claim_key": "computed.arc_lifetime_43s_300K_us",
+    "control_method": "Low2012 published Rb 43S lifetime 42.3 us at 300 K (ARC must reproduce within 5%)"
+   },
+   {
+    "claim_key": "computed.reproduce_pagano.omega10.fidelity_machinery",
+    "control_method": "Pagano2022 published Bell fidelity 99.899% (10 MHz) reproduced within 2x on infidelity"
+   },
+   {
+    "claim_key": "computed.reproduce_pagano.omega40.fidelity_machinery",
+    "control_method": "Pagano2022 published Bell fidelity 99.973% (40 MHz) reproduced within 2x on infidelity"
+   }
+  ],
+  "cross_validation": [
+   {
+    "claim_key": "computed.arc_lifetime_43s_300K_us",
+    "method_a": "ARC getStateLifetime (includeLevelsUpTo=n+30)",
+    "method_b": "Low2012 published Rb 43S 300 K lifetime",
+    "value_a": 41.92,
+    "value_b": 42.3,
+    "tolerance_rel": 0.05,
+    "artifact": "scripts/rydberg_lifetime.py"
+   },
+   {
+    "claim_key": "computed.reproduce_pagano.omega10.fidelity_machinery",
+    "method_a": "closed-form decay+recoil machinery on Pagano2022 inputs",
+    "method_b": "Pagano2022 published Bell fidelity (10 MHz)",
+    "value_a": 0.9990025658514027,
+    "value_b": 0.99899,
+    "tolerance_rel": 0.002,
+    "artifact": "scripts/fidelity_scan.py"
+   },
+   {
+    "claim_key": "computed.reproduce_pagano.omega40.fidelity_machinery",
+    "method_a": "closed-form decay+recoil machinery on Pagano2022 inputs",
+    "method_b": "Pagano2022 published Bell fidelity (40 MHz)",
+    "value_a": 0.9997648777806185,
+    "value_b": 0.99973,
+    "tolerance_rel": 0.001,
+    "artifact": "scripts/fidelity_scan.py"
+   }
+  ],
+  "acceptance_passed": true,
+  "acceptance_criterion": "CONFIRMED iff (a) reproduce_pagano() run on Pagano2022's own inputs (Sr-88, lambda=323 nm, 60^3S_1, tau=50 us, omega_z/2pi=50 kHz, T=0, V/hbar Omega_0=21.1) reproduces their published intrinsic Bell fidelity within 2x on the infidelity 1-F at BOTH Omega_0/2pi=10 MHz (F_Pagano=0.99899) and Omega_0/2pi=40 MHz (F_Pagano=0.99973); AND (b) single-fault response: the Rb-297nm total infidelity is strictly increasing in T over 5->100 uK (Omega/2pi=1 MHz, theta=90 deg, r=4 um) and strictly decreasing in Omega over 1->10 MHz (T=10 uK, theta=90 deg, r=4 um). REFUTED if either (a) or (b) fails. Verdict reads computed.acceptance_passed.",
+  "verdict": "confirmed",
+  "premise_corrections": [
+   {
+    "premise": "nP lifetime ~1 us at 300 K (the plan's reading of Saffman2016 Fig.4 for the decay term)",
+    "corrected": "Rb nP at 300 K is ~90-220 us across n=50-75 (n=75 P3/2: 221.6 us; n=50 P3/2: ~88 us), computed via ARC and anchored to Low2012 Rb 43S = 42.3 us (ARC reproduces 41.92 us, 0.9% error)",
+    "consequence": "the Rydberg-decay term is ~100x smaller than the plan premise implies (0.021% at 10 MHz, not >1%); the fidelity ceiling is photon-recoil-limited, not decay-limited",
+    "affects": [
+     "E_3",
+     "report"
+    ]
+   },
+   {
+    "premise": "photon-recoil infidelity propto K^2 via Robicheaux2021 sudden-approximation (pi-2pi-pi protocol)",
+    "corrected": "implemented as Pagano2022 Eq.16 (symmetric-gate coherent-state recoil), which reduces to the Robicheaux K^2 k_B T/(2M) thermal scaling in the high-T limit (coth -> 2 k_B T / hbar omega_z); the two formulations agree in the thermal regime",
+    "consequence": "recoil is captured in both the T=0 (vacuum recoil) and thermal regimes with a single citable closed form; no numeric change to the headline",
+    "affects": [
+     "E_3"
+    ]
+   }
+  ],
+  "quantities": [
+   {
+    "id": "rydberg_lifetime_75P_us",
+    "key": "computed.lifetime_75p3_2_us.T300",
+    "observable": "75P3/2 lifetime at 300 K incl. blackbody (us)",
+    "uncertainty": 11
+   },
+   {
+    "id": "c6_75_ghz_um6",
+    "key": "computed.c6_75_ghz_um6",
+    "observable": "perturbative C6 for 75P3/2 stretched pair at theta=90 (GHz um^6), n^11 extrapolation",
+    "uncertainty": 700
+   },
+   {
+    "id": "blockade_leakage_10MHz",
+    "key": "computed.ceiling.terms.blockade",
+    "observable": "finite-blockade gate error eps = hbar^2 Omega^2 / (2 V^2) at Omega/2pi=10 MHz, V=C6/r^6, r=4um",
+    "uncertainty": 2e-05,
+    "inputs": {
+     "c6_75_ghz_um6": 3482.087049633264
+    }
+   },
+   {
+    "id": "fidelity_10MHz",
+    "key": "computed.ceiling.fidelity",
+    "headline": true,
+    "observable": "Bell-state fidelity from the five-channel closed-form sum at Omega/2pi=10 MHz, T=5uK, theta=90, r=4um",
+    "uncertainty": 0.0002,
+    "inputs": {
+     "rydberg_lifetime_75P_us": 221.63565543450602,
+     "c6_75_ghz_um6": 3482.087049633264
+    }
+   }
+  ]
+ }
+}

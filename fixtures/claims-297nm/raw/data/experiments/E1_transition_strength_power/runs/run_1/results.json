@@ -1,0 +1,149 @@
+{
+  "experiment_id": "E1_transition_strength_power",
+  "question": "Single-photon 297 nm transition strength (dipole matrix element) of Rb 5S1/2 -> nP1/2,3/2 and the laser power required to drive it at MHz Rabi frequencies.",
+  "invariants": {
+    "ionization_energy_Rb87": {
+      "value_cm1": 33690.805429948254,
+      "value_eV": 4.177127322752153,
+      "source": "ARC alkali_atom_data (Rb-87), ref Sanguinetti2009; NIST ASD",
+      "quote": "we obtain an improved ionisation energy of E_i = 1 010 024 700(7) MHz  (Sanguinetti2009, data/papers/0905.0571/paper.tex, for 85Rb; Rb-87 differs only by the isotope shift <0.01 cm-1, negligible here)",
+      "anchored_to": "reproduces 85Rb n=36..63 P3/2 Rydberg level energies (Sanguinetti2009)"
+    },
+    "rydberg_cm1": {
+      "value": 109736.62781691273,
+      "source": "reduced-mass Rydberg constant Ry = m_e/(m+m_e) Ry_infinity (ARC scaledRydbergConstant)",
+      "quote": "Ry = m_e/(m+m_e) Ry_infinity (ARC.tex line 253)",
+      "anchored_to": "fundamental constant (reduced mass correction)"
+    },
+    "qdefect_P12": {
+      "value": [
+        2.6548849,
+        0.29
+      ],
+      "source": "ARC alkali_atom_data, ref Li2003 (c4)",
+      "quote": "[2.6548849, 0.2900, 0.0, 0.0, 0.0, 0.0]  (arc/alkali_atom_data.py, Rb-87 quantumDefect j=0.5)",
+      "anchored_to": "reproduces Rb nP1/2 Rydberg level energies (Li2003)"
+    },
+    "qdefect_P32": {
+      "value": [
+        2.6416737,
+        0.295
+      ],
+      "source": "ARC alkali_atom_data, ref Li2003 (c4)",
+      "quote": "[2.6416737, 0.2950, 0.0, 0.0, 0.0, 0.0]  (arc/alkali_atom_data.py, Rb-87 quantumDefect j=1.5)",
+      "anchored_to": "reproduces Rb nP3/2 Rydberg level energies (Li2003, Sanguinetti2009)"
+    },
+    "d2_reduced_reference_a0": {
+      "value": 5.956,
+      "source": "Safronova et al., Phys. Rev. A 60, 4476 (1999), table V (coupled-cluster)",
+      "quote": "5;0;0.5;5;1;1.5;5.956;\"table V\";1;0.001;\"Physical Review A, 60 4476 (1999)\"  (ARC data/rubidium_literature_dme.csv)",
+      "anchored_to": "reproduces Rb D2 5S1/2->5P3/2 reduced matrix element (and D2 linewidth 2pi*6.065 MHz)"
+    },
+    "manthey_anchor": {
+      "n": 38,
+      "transition": "5S1/2 -> 38P3/2",
+      "power_mW": 7,
+      "waist_um": 700,
+      "measured_omega_khz": 90.0,
+      "source": "Manthey et al. 2014 (arXiv:1403.1761)",
+      "quote": "with a Rabi frequency of Omega=2pi x 90 kHz (SEM_UV.tex Eq.4); UV laser (I=7 mW, w=700 um, Delta=2pi x 10 MHz) (SEM_UV.tex Fig caption)",
+      "anchored_to": "measured on-resonance Rabi frequency of 5S1/2->38P3/2 excitation in a Rb BEC"
+    },
+    "qdefect_reconciliation_note": "E2 uses the pairinteraction QDT database (Li2003/Sansonetti2006) with δ(P₁/₂)=2.65486, δ(P₃/₂)=2.64150; the ARC set used here (2.6548849 / 2.6416737) differs by ≤1.7×10⁻⁴, a benign ≈2.6 MHz level shift at n=75 that does not affect the n≈75.3 mapping."
+  },
+  "computed": {
+    "n_at_target": {
+      "P12": 75.33899641183561,
+      "P32": 75.32578615827543
+    },
+    "n_lambda_table": "data/n_lambda.csv",
+    "dipole_matrix_elements_table": "data/dipole_matrix_elements.csv",
+    "rabi_budget_table": "data/rabi_power_budget.csv",
+    "d2_reduced_a0": 5.9783,
+    "d1_reduced_a0": 4.2321,
+    "d2_stretched_a0": 2.98915,
+    "angular_identity_check": {
+      "stretched_over_radial": 0.5773502691896257,
+      "reduced_over_radial": 1.1547005383792515
+    },
+    "radial_scaling_exponent_P32": -1.5096264826311838,
+    "radial_scaling_exponent_expected": -1.5,
+    "mu_stretched_Cm_at_297nm": 8.63332356022999e-33,
+    "rabi_per_sqrt_power_at_297nm_MHz_per_sqrt_mW": 0.9023859638724778,
+    "power_budget_at_297nm_mW": {
+      "1.0": 1.228,
+      "2.0": 4.912
+    },
+    "gate_time_at_297nm_us": {
+      "1.0": 0.5,
+      "2.0": 0.25
+    },
+    "rabi_38P_khz": 101.2532120059598,
+    "rabi_38P_ratio_vs_90khz": 1.1250356889551087,
+    "d2_ratio_vs_safronova": 1.0037441235728677,
+    "acceptance_passed": true,
+    "acceptance_criterion": "CONFIRMED iff (a) computed.d2_reduced_a0 reproduces the published D2 reduced matrix element (Safronova 5.956 a0) within 1% (0.99 <= d2_ratio_vs_safronova <= 1.01) AND (b) computed.rabi_38P_khz reproduces Manthey2014's measured 2pi x 90 kHz within a factor 1.5 (0.5 <= rabi_38P_ratio_vs_90khz <= 1.5); REFUTED otherwise. Verdict reads computed.acceptance_passed.",
+    "verdict": "confirmed",
+    "method_ladder": [
+      {
+        "quantity": "radial dipole matrix element <5S|r|nP>",
+        "field_standard_method": "model-potential (Marinescu) Numerov radial integration",
+        "planned_method": "ARC model-potential Numerov",
+        "used": "ARC getRadialMatrixElement (Numerov)"
+      },
+      {
+        "quantity": "n<->wavelength mapping",
+        "field_standard_method": "Rydberg-Ritz quantum-defect formula",
+        "planned_method": "quantum-defect Rydberg formula",
+        "used": "quantum-defect Rydberg formula (ARC constants)"
+      },
+      {
+        "quantity": "Rabi frequency per sqrt(power)",
+        "field_standard_method": "dipole x Gaussian peak field / hbar (Piotrowicz2011 Eq.2)",
+        "planned_method": "same",
+        "used": "same (rabi_power_budget.py)"
+      },
+      {
+        "quantity": "laser power budget",
+        "field_standard_method": "P = (Omega_target/Omega_per_sqrtP)^2",
+        "planned_method": "same",
+        "used": "same"
+      }
+    ],
+    "cross_validation_plan": [
+      {
+        "claim_key": "computed.rabi_38P_khz",
+        "control_method": "Manthey2014 measured Rabi 90 kHz at n=38, 7 mW, 700 um"
+      },
+      {
+        "claim_key": "computed.d2_reduced_a0",
+        "control_method": "Safronova1999 coupled-cluster D2 reduced matrix element 5.956 a0"
+      }
+    ],
+    "cross_validation": [
+      {
+        "claim_key": "computed.rabi_38P_khz",
+        "method_a": "ARC Numerov dipole + Gaussian-beam Rabi formula",
+        "method_b": "Manthey2014 measured (n=38, 7mW, 700um)",
+        "value_a": 101.2532120059598,
+        "value_b": 90.0,
+        "tolerance_rel": 0.5,
+        "artifact": "scripts/dipole_matrix_elements.py + scripts/rabi_power_budget.py"
+      },
+      {
+        "claim_key": "computed.d2_reduced_a0",
+        "method_a": "ARC (Steck literature D2 value)",
+        "method_b": "Safronova1999 coupled-cluster",
+        "value_a": 5.9783,
+        "value_b": 5.956,
+        "tolerance_rel": 0.01,
+        "artifact": "scripts/dipole_matrix_elements.py"
+      }
+    ],
+    "raw_data": {
+      "n_lambda": "data/n_lambda.csv",
+      "dipole_matrix_elements": "data/dipole_matrix_elements.csv",
+      "rabi_power_budget": "data/rabi_power_budget.csv"
+    }
+  }
+}

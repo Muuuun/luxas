@@ -3,6 +3,7 @@ node_modules/
 
 # Research data (generated, not source code)
 data/
+!fixtures/**/data/
 research-state.json
 
 # Build output

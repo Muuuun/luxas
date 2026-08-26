@@ -1,0 +1,158 @@
+{
+  "experiment_id": "E4_synthesis_fidelity_frontier",
+  "title": "Synthesis: angle- and power-dependent fidelity frontier for the 297 nm single-photon Rb gate",
+  "status": "complete",
+  "consumes": ["E1_transition_strength_power", "E2_pp_vdw_angle_dependence", "E3_gate_fidelity_budget"],
+  "invariants": {
+    "rabi_per_sqrt_power_MHz_per_sqrt_mW": {
+      "value": 0.9023859638724778,
+      "source": "E1 results.json computed.rabi_per_sqrt_power_at_297nm_MHz_per_sqrt_mW",
+      "anchored_to": "Manthey2014 measured on-resonance Rabi Omega/2pi = 90 kHz at I=7 mW, w=700 um for 5S1/2->38P3/2",
+      "quote": "with a Rabi frequency of Omega=2pi x 90 kHz (SEM_UV.tex Eq.4); UV laser (I=7 mW, w=700 um) (Manthey2014, arXiv:1403.1761)"
+    },
+    "c6_n60_theta90_ghz_um6": {
+      "value": 299.109,
+      "source": "E2 results.json computed.c6_stretched.c6_theta90_ghz_um6.n60 (pairinteraction QDT)",
+      "anchored_to": "Vermersch2014 C6(theta) benchmark for Rb 25P3/2 mJ=3/2 (dominant sin^4 term reproduced to ~2%)",
+      "quote": "C_{6}(theta) = (6.33 sin^4 theta - 0.267 sin^2 theta + 0.269) h MHz um^6 ... the dominant ~sin^4 theta term arises from dipole-dipole transitions to nS_{1/2} states (Vermersch2014, arXiv:1408.0662)"
+    },
+    "c6_75_ghz_um6": {
+      "value": 3482.087049633264,
+      "source": "derived: C6(75) = c6_n60 * (75/60)^11, asserted == E3 computed.c6_75_ghz_um6 (executed)",
+      "anchored_to": "E2 pairinteraction n60 stretched C6 (299.109 GHz*um^6), n^11 scaling per Walker&Saffman2008",
+      "quote": "C6(75) = 299.109 * (75/60)^11 = 3482.087 GHz um^6 (n^11 extrapolation; near-Forster-resonant lower bound per E2 computed.forster_defect_ghz.n75 = -0.185 GHz)"
+    },
+    "lifetime_75p_300K_us": {
+      "value": 221.63565543450602,
+      "source": "E3 results.json computed.lifetime_75p3_2_us.T300 (ARC)",
+      "anchored_to": "Low2012 published Rb 43S lifetime 42.3 us at 300 K (ARC reproduces to 0.9%)",
+      "quote": "Lifetime of 43S at 300K (with blackbody radiation): tau = 42.3 us (Low2012, arXiv:1202.2871)"
+    },
+    "mass_kg_rb87": {
+      "value": 1.44316e-25,
+      "source": "E3 results.json invariants.mass_Rb87_kg",
+      "anchored_to": "atomic mass unit definition",
+      "quote": "m(Rb-87) = 86.909180527 u (CODATA 1 u = 1.66053906660e-27 kg)"
+    },
+    "wavelength_nm": {
+      "value": 297.0,
+      "source": "experiment definition",
+      "anchored_to": "user request 'single photon transitions via 297nm'",
+      "quote": "297nm single-photon transition (5S1/2 -> nP)"
+    },
+    "protocol_tbar_r_over_rabi": {
+      "value": 3.86,
+      "source": "E3 results.json invariants.protocol_tbar_r_over_rabi",
+      "anchored_to": "Pagano2022 published Bell fidelity 99.899% at 10 MHz",
+      "quote": "reducing the time spent in the Rydberg states overline{T}_r Omega_0 = 3.86 (Pagano2022, arXiv:2202.13849)"
+    },
+    "protocol_tau_gate_over_rabi": {
+      "value": 7.69,
+      "source": "E3 results.json invariants.protocol_tau_gate_over_rabi",
+      "anchored_to": "Pagano2022 Gaussian symmetric-blockade protocol",
+      "quote": "the optimal gate duration is tau Omega_0 = 7.69 with overline{T}_r Omega_0 = 3.86 (Pagano2022, arXiv:2202.13849)"
+    },
+    "trap_freq_axial_kHz": {
+      "value": 50.0,
+      "source": "E3 results.json invariants.trap_freq_axial_kHz",
+      "anchored_to": "Pagano2022 optical-tweezer trap",
+      "quote": "omega_z/2pi = 50 kHz (axial trap) (Pagano2022)"
+    }
+  },
+  "computed": {
+    "acceptance_criterion": "Predict: (a) the synthesis reproduces E3's ceiling fidelity 0.99894 at (Omega/2pi=10 MHz, T=5 uK, theta=90 deg, r=4 um, Delta_nu=1 kHz) to rel 1e-6 (wiring single-fault check); (b) recoil scales as Omega^-2 and crosses the decay floor within the swept power range, so at Omega/2pi=40 MHz recoil < decay — the recoil-limited ceiling does NOT survive fast driving. Verdict reads computed.mitigation_verdict.recoil_below_decay_at_40MHz, computed.f_power.recoil_decay_crossover.power_mW, and computed.consistency.ceiling_fidelity_reproduced. CONFIRMED iff ceiling_fidelity_reproduced is true AND recoil_below_decay_at_40MHz is true AND recoil_decay_crossover.power_mW in [100, 2000]. REFUTED iff recoil_below_decay_at_40MHz is false OR ceiling_fidelity_reproduced is false.",
+    "verdict": "confirmed",
+    "f_theta": {
+      "params": {"rabi_MHz": 10.0, "temperature_uK": 5.0, "r_um": 4.0, "linewidth_kHz": 1.0, "power_mW": 122.8},
+      "crossover_angle_deg": 53.76905479294061,
+      "on_axis_fidelity": 0.0,
+      "fidelity_at_theta90": 0.9989419909022649,
+      "note": "C6(theta) = C6(90deg)*sin^4(theta) drives blockade leakage epsilon = hbar^2 Omega^2/(2 V^2) with V = C6(theta)/r^6. Leakage diverges as theta->0 (gate fails on-axis; fidelity reported as 0). Below the crossover angle leakage dominates and the perturbative 'fidelity = 1 - total' goes negative (total infidelity > 1); the physical statement is gate failure (fidelity ~ 0). The crossover angle (leakage == recoil) is 53.77 deg, close to the Delta-M=0 magic angle 54.74 deg.",
+      "raw": "data/f_theta.csv"
+    },
+    "f_power": {
+      "params": {"theta_deg": 90.0, "r_um": 4.0, "linewidth_kHz": 1.0, "temperatures_uK": [5, 10, 20], "rabi_range_MHz": [1.0, 40.0]},
+      "recoil_decay_crossover": {"rabi_MHz": 18.56685442195764, "power_mW": 423.34262805195374, "note": "at T=5 uK; where recoil (Omega^-2) equals decay (Omega^-1)"},
+      "optimal": {
+        "5": {"rabi_MHz": 19.0, "power_mW": 443.33, "fidelity": 0.999376},
+        "10": {"rabi_MHz": 22.0, "power_mW": 594.38, "fidelity": 0.999242},
+        "20": {"rabi_MHz": 25.0, "power_mW": 767.53, "fidelity": 0.999035},
+        "note": "peak fidelity over the swept grid; the optimum exists because blockade leakage grows as Omega^2 while recoil/doppler decay as Omega^-2 and decay/phase as Omega^-1"
+      },
+      "term_breakdown_T5uK_40MHz": {"doppler": 1.26e-05, "recoil": 2.41e-05, "decay": 5.20e-05, "blockade": 1.107e-03, "phase": 4.82e-05, "total": 1.244e-03, "fidelity": 0.998756},
+      "note": "At 40 MHz blockade leakage (Omega^2) overtakes every other term: fidelity 0.998756 is WORSE than the 10 MHz value 0.998942 and the ~19 MHz optimum 0.999376.",
+      "raw": "data/f_power.csv"
+    },
+    "mitigation_verdict": {
+      "rabi_MHz": 40.0,
+      "power_mW_at_40MHz": 1964.8767769094736,
+      "recoil_ratio_40over10": 0.0625,
+      "per_temperature": {
+        "5": {"recoil": 2.4123894519612946e-05, "decay": 5.197195813865686e-05, "recoil_below_decay": true},
+        "10": {"recoil": 4.75695225910894e-05, "decay": 5.197195813865686e-05, "recoil_below_decay": true},
+        "20": {"recoil": 9.479869438582612e-05, "decay": 5.197195813865686e-05, "recoil_below_decay": false}
+      },
+      "recoil_below_decay_at_40MHz": true,
+      "conclusion": "The recoil-limited ceiling does NOT survive at Omega/2pi = 40 MHz: recoil (2.41e-5) drops below decay (5.20e-5) at T=5 uK. BUT the mitigation is NOT beneficial — blockade leakage (proportional to Omega^2) grows to 1.107e-3 and becomes the new dominant channel, so fidelity at 40 MHz (0.998756) is below the 10 MHz value (0.998942) and well below the ~19 MHz optimum (0.999376). The fidelity-optimal operating point is ~19 MHz / ~443 mW. Driving at 40 MHz costs 1964.9 mW (~1.96 W) of 297 nm deep-UV, ~16x the 10 MHz power and ~4.4x the optimum — a prohibitive budget given the small single-photon Omega/sqrt(P) = 0.9024 MHz/sqrt(mW)."
+    },
+    "reproduce_pagano_revalidated": {
+      "omega10": {"fidelity_pagano": 0.99899, "fidelity_machinery": 0.9990025658514027},
+      "omega40": {"fidelity_pagano": 0.99973, "fidelity_machinery": 0.9997648777806185},
+      "matches_e3": true,
+      "note": "re-ran E3's decay+recoil machinery on Pagano2022 Sr-88 inputs (mass 1.46053e-25 kg, 323 nm, tau=50 us, T=0, blockade=0, linewidth=0); matches E3's stored values to machine precision, confirming the Omega-scaling machinery is identical."
+    },
+    "consistency": {
+      "ceiling_fidelity_reproduced": true,
+      "ceiling_fidelity_rel_error": 0.0,
+      "note": "E4's F(power) curve at (10 MHz, 5 uK) reproduces E3's computed.ceiling.fidelity 0.9989419909022649 exactly — the wiring of all consumed constants is verified (regression anchor, same error_terms machinery, not an independent method)."
+    },
+    "method_ladder": [
+      {"quantity": "F(theta) fidelity surface", "field_standard_method": "closed-form channel-sum error budget (Pagano2022 Eq.12-16, Saffman2016, Shi2022) over angle with QDT C6(theta)", "planned_method": "E3 error_terms + E2 sin^4 C6(theta)", "used": "E3 error_terms.error_terms() import + E2 sin^4(theta) C6"},
+      {"quantity": "F(power) fidelity frontier", "field_standard_method": "same closed-form budget over Rabi with E1 Omega->power mapping", "planned_method": "same", "used": "same (P = (Omega/0.9024)^2)"},
+      {"quantity": "reproduce_pagano", "field_standard_method": "QuTiP master equation (Pagano2022)", "planned_method": "E3 closed-form reproduce_pagano (decay+recoil, validated <15% infidelity in E3)", "used": "E3 closed-form reproduce_pagano re-run"},
+      {"quantity": "mitigation-transfer verdict", "field_standard_method": "compare recoil (Pagano Eq.16, Omega^-2) vs decay (Pagano Eq.12, Omega^-1) as functions of Omega", "planned_method": "same", "used": "same, plus blockade leakage (Omega^2) tracked"}
+    ],
+    "cross_validation_plan": [
+      {"claim_key": "computed.mitigation_verdict.per_temperature.5.recoil", "control_method": "standalone closed-form recoil formula (Pagano2022 Eq.16 evaluated independently, no import of E3 error_terms), rel tol 1e-6"},
+      {"claim_key": "computed.f_power.recoil_decay_crossover.rabi_MHz", "control_method": "analytic closed form Tbar* = (3/4)/(tau)*(32/15)/(recoil_freq*omega_coth), rel tol 0.05"},
+      {"claim_key": "computed.f_theta.crossover_angle_deg", "control_method": "analytic closed form sin^8(theta*) = Omega^2 r^12/(8 pi^2 C6^2 recoil), rel tol 0.05"}
+    ],
+    "cross_validation": [
+      {"claim_key": "computed.mitigation_verdict.per_temperature.5.recoil", "method_a": "E3 error_terms.error_terms() recoil term at 40 MHz", "method_b": "standalone closed-form recoil = (15/32)(hbar k^2/2m)Tbar^2 omega*coth, Tbar=3.86/Omega", "value_a": 2.4123894519612946e-05, "value_b": 2.4123894519612956e-05, "tolerance_rel": 1e-6, "verdict": "pass", "artifact": "scripts/fidelity_frontier.py"},
+      {"claim_key": "computed.f_power.recoil_decay_crossover.rabi_MHz", "method_a": "E4 numeric root-find (scipy brentq on recoil-decay)", "method_b": "analytic closed form Tbar* = (3/4)/(tau)*(32/15)/(recoil_freq*omega_coth)", "value_a": 18.56685442195764, "value_b": 18.566854421957636, "tolerance_rel": 0.05, "verdict": "pass", "artifact": "scripts/fidelity_frontier.py"},
+      {"claim_key": "computed.f_theta.crossover_angle_deg", "method_a": "E4 numeric root-find (scipy brentq on blockade-recoil)", "method_b": "analytic closed form sin^8(theta*) = Omega^2 r^12/(8 pi^2 C6^2 recoil)", "value_a": 53.76905479294061, "value_b": 53.76905479294014, "tolerance_rel": 0.05, "verdict": "pass", "artifact": "scripts/fidelity_frontier.py"}
+    ],
+    "premise_corrections": [
+      {
+        "premise": "The E3 follow-up and report Sec.4 framing imply that suppressing recoil (driving faster) would lift the fidelity ceiling.",
+        "corrected": "For 297 nm single-photon at n=75 P3/2 (C6 = 3482 GHz*um^6), driving faster than ~19 MHz does NOT improve fidelity: blockade leakage (proportional to Omega^2) overtakes the suppressed recoil. F(40 MHz) = 0.998756 < F(10 MHz) = 0.998942 < F(19 MHz) = 0.999376.",
+        "consequence": "The recoil ceiling is real at the ~10 MHz operating point but is replaced by a blockade ceiling at 40 MHz; the fidelity-optimal Rabi is ~19 MHz (~443 mW), and the Sr/Yb-community 40 MHz point costs a prohibitive ~1.96 W of 297 nm.",
+        "affects": ["report", "E3_followup_recoil_floor"]
+      }
+    ],
+    "anomalies": [
+      {
+        "observable": "fidelity at 40 MHz (0.998756) is WORSE than at 10 MHz (0.998942) despite recoil being suppressed 16x",
+        "predicted": "recoil drops as Omega^-2 (confirmed); a naive 'drive faster to kill recoil' would predict monotonic improvement",
+        "observed": "blockade leakage (Omega^2) grows to 1.107e-3 and dominates, producing a fidelity optimum at ~19 MHz",
+        "affects_headline": true,
+        "disposition": "explained",
+        "reason": "blockade leakage epsilon = hbar^2 Omega^2/(2 V^2) scales as Omega^2; with the small single-photon C6(75)=3482 GHz*um^6 at r=4 um, this overtakes the Omega^-2 recoil/doppler terms beyond ~19 MHz. Verified analytically (d(total)/dOmega = 0 quartic) and numerically."
+      }
+    ],
+    "iteration": {
+      "headline_key": "computed.mitigation_verdict.recoil_below_decay_at_40MHz",
+      "headline_value": true,
+      "resolution": "recoil/decay ratio at 40 MHz = 0.464; a >2.15x change in the ratio would flip the boolean verdict",
+      "inherited_from": null,
+      "kept": ["E3 error_terms.error_terms() five-channel machinery", "E3 reproduce_pagano parameters", "E1 Omega/sqrt(P)", "E2 sin^4 C6(theta)"],
+      "changed": ["first synthesis run: composed F(theta) and F(power) surfaces and the mitigation verdict"]
+    },
+    "raw_data": {
+      "f_theta": "data/f_theta.csv",
+      "f_power": "data/f_power.csv"
+    },
+    "cannot_comply": [],
+    "method_blocked": []
+  }
+}

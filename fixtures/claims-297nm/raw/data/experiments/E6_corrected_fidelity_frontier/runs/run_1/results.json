@@ -1,0 +1,207 @@
+{
+  "experiment_id": "E6_corrected_fidelity_frontier",
+  "title": "Corrected full-budget fidelity frontier: fold E5 master-equation leakage into the five-channel budget",
+  "acceptance_criterion": "Predict: composing E5's full-master-equation leakage (2.555e-4 @ 40 MHz) and ME decay with E4's closed-form recoil/Doppler/phase channels FLIPS the ordering — the corrected F(40 MHz) exceeds the corrected F(10 MHz) — and shifts the corrected fidelity optimum above E4's 19 MHz. Verdict reads computed.corrected_frontier.ordering.f40_gt_f10 and computed.corrected_frontier.optimum['5'].rabi_MHz. CONFIRMED iff f40_gt_f10 == true AND optimum['5'].rabi_MHz > 19. REFUTED iff f40_gt_f10 == false. Single-fault response: total(40) must respond to the leakage swap (E5 2.555e-4 vs E4 1.107e-3), and the wiring anchor must reproduce E4's F(10 MHz, 5uK) = 0.9989419909022648.",
+  "verdict": "confirmed",
+  "invariants": {
+    "rabi_per_sqrt_power_MHz_per_sqrt_mW": {
+      "value": 0.9023859638724778,
+      "source": "E1 results.json computed.rabi_per_sqrt_power_at_297nm_MHz_per_sqrt_mW",
+      "anchored_to": "E1 dipole matrix element (already validated in E1)"
+    },
+    "E4_closed_form_channels": {
+      "source": "E4 results.json computed.f_power.term_breakdown_T5uK_40MHz",
+      "doppler_40MHz": 1.2624525325133362e-05,
+      "recoil_40MHz": 2.4123894519612946e-05,
+      "phase_40MHz": 4.825e-05,
+      "decay_40MHz_closed_form": 5.197195813865686e-05,
+      "blockade_40MHz_closed_form_SUPERSEDED": 0.0011069567045017944,
+      "anchored_to": "E3 closed-form error budget (already validated)"
+    },
+    "E5_master_equation_channels": {
+      "source": "E5 results.json computed.master_equation",
+      "leakage_40MHz": 0.0002555024352332014,
+      "decay_40MHz_ME": 3.259892649021268e-05,
+      "leakage_10MHz": 9.593711042255038e-07,
+      "decay_10MHz_ME": 0.0001285244766928032,
+      "anchored_to": "E5 full pair-Hamiltonian master equation at n=75, theta=90deg, R=4um (already validated)"
+    },
+    "E4_prior_optimum_SUPERSEDED": {
+      "rabi_MHz": 19,
+      "power_mW": 443.0,
+      "fidelity": 0.999376,
+      "source": "E4 results.json computed.f_power.optimal (SUPERSEDED by E6)"
+    }
+  },
+  "computed": {
+    "corrected_frontier": {
+      "ordering": {
+        "f40_gt_f10": true,
+        "f40": 0.9996269002184318,
+        "f10": 0.999089579681054,
+        "f19": 0.9996552910447185,
+        "gap_f40_minus_f10": 0.0005373205373777612
+      },
+      "optimum": {
+        "5": {
+          "rabi_MHz": 28,
+          "power_mW": 962.7896206856423,
+          "fidelity": 0.9997503910258243,
+          "total_infidelity": 0.00024960897417571385
+        },
+        "10": {
+          "rabi_MHz": 30,
+          "power_mW": 1105.243187011579,
+          "fidelity": 0.9996842668930367,
+          "total_infidelity": 0.00031573310696325705
+        },
+        "20": {
+          "rabi_MHz": 34,
+          "power_mW": 1419.6234713170948,
+          "fidelity": 0.9995728784652477,
+          "total_infidelity": 0.0004271215347523695
+        }
+      },
+      "anchor_points": {
+        "10": {
+          "fidelity": 0.999089579681054,
+          "total_infidelity": 0.0009104203189459254,
+          "terms": {
+            "recoil": 0.0003859823123138,
+            "doppler": 0.0002019541588352,
+            "phase": 0.0001929999999999,
+            "decay": 0.0001285244766928,
+            "leakage": 9.593711042255038e-07
+          }
+        },
+        "19": {
+          "fidelity": 0.9996552910447185,
+          "total_infidelity": 0.00034470895528149957,
+          "terms": {
+            "recoil": 0.0001069203081201,
+            "doppler": 5.595115048262489e-05,
+            "phase": 0.0001015789473684,
+            "decay": 6.780644727666374e-05,
+            "leakage": 1.2452102033710943e-05
+          }
+        },
+        "40": {
+          "fidelity": 0.9996269002184318,
+          "total_infidelity": 0.000373099781568159,
+          "terms": {
+            "recoil": 2.4123894519612942e-05,
+            "doppler": 1.2624525325133362e-05,
+            "phase": 4.824999999999999e-05,
+            "decay": 3.259892649021268e-05,
+            "leakage": 0.0002555024352332
+          }
+        }
+      },
+      "decay_choice": {
+        "primary": "E5_ME",
+        "alternative": "E4_closed_form",
+        "ordering_robust": true,
+        "f40_primary": 0.9996269002184318,
+        "f40_alternative": 0.9996075271867834,
+        "f10_primary": 0.999089579681054,
+        "f10_alternative": 0.9990102163251923
+      },
+      "mitigation_verdict": {
+        "recoil_below_decay_at_40MHz": true,
+        "recoil_40MHz": 2.4123894519612942e-05,
+        "decay_40MHz": 3.259892649021268e-05,
+        "leakage_40MHz": 0.0002555024352332,
+        "dominant_channel_40MHz": "leakage",
+        "conclusion": "At 40 MHz the dominant corrected channel is leakage (2.555e-04); recoil (2.412e-05) is below decay (3.260e-05)."
+      },
+      "wiring_anchor": {
+        "reproduce_e4_fidelity_10MHz": 0.9989419909022651,
+        "e4_fidelity_10MHz": 0.9989419909022648,
+        "rel_error": 3.3341966843010987e-16
+      }
+    },
+    "method_ladder": [
+      {
+        "quantity": "corrected F(P) fidelity frontier",
+        "field_standard_method": "channel-sum error budget composing independently-validated channels (E4 closed-form motional/phase + E5 master-equation Rydberg leakage+decay)",
+        "planned_method": "read E4 recoil/doppler/phase + E5 leakage/decay, sum; no re-derivation",
+        "used": "read E4 recoil/doppler/phase + E5 leakage/decay, sum; no re-derivation"
+      },
+      {
+        "quantity": "corrected fidelity optimum",
+        "field_standard_method": "grid argmin of total infidelity over swept Rabi",
+        "planned_method": "argmin over integer Rabi 1..40 on shared grid",
+        "used": "pandas idxmin over integer Rabi 1..40"
+      },
+      {
+        "quantity": "mitigation-transfer verdict",
+        "field_standard_method": "recoil(Omega^-2) vs decay(Omega^-1) vs leakage(Omega^2..Omega^4) channel comparison",
+        "planned_method": "compare five channels at 10/19/40 MHz",
+        "used": "compare five channels at 10/19/40 MHz"
+      }
+    ],
+    "cross_validation_plan": [
+      {
+        "claim_key": "computed.corrected_frontier.ordering.f40_gt_f10",
+        "control_method": "wiring anchor (E6 tool reproduces E4 pipeline fidelity) + E5 infidelity=leakage+decay identity + recoil Omega^-2 scaling identity"
+      },
+      {
+        "claim_key": "computed.corrected_frontier.optimum.5.rabi_MHz",
+        "control_method": "independent stdlib-csv argmin recomputation (tool smoke test)"
+      }
+    ],
+    "cross_validation": [
+      {
+        "claim_key": "computed.corrected_frontier.ordering.f40_gt_f10",
+        "method_a": "E6 tool channel-sum composition (recoil+doppler+phase+E4decay+E4blockade)",
+        "method_b": "E4 pipeline computed fidelity @10MHz",
+        "value_a": 0.9989419909022651,
+        "value_b": 0.9989419909022648,
+        "tolerance_rel": 1e-09,
+        "artifact": "scripts/compose_corrected_frontier.py"
+      },
+      {
+        "claim_key": "computed.corrected_frontier.ordering.f40_gt_f10",
+        "method_a": "E4 CSV recoil ratio recoil_10MHz/recoil_40MHz",
+        "method_b": "analytic Omega^-2 identity (40/10)^2",
+        "value_a": 15.999999999999705,
+        "value_b": 16.0,
+        "tolerance_rel": 1e-09,
+        "artifact": "data/experiments/E4_synthesis_fidelity_frontier/runs/run_1/data/f_power.csv"
+      },
+      {
+        "claim_key": "computed.corrected_frontier.ordering.f40_gt_f10",
+        "method_a": "E5 infidelity column @40MHz",
+        "method_b": "E5 leakage+decay sum @40MHz",
+        "value_a": 0.0002881013617234,
+        "value_b": 0.0002881013617234127,
+        "tolerance_rel": 1e-09,
+        "artifact": "data/experiments/E5_blockade_floor_master_equation/runs/run_1/data/master_fidelity_vs_omega.csv"
+      },
+      {
+        "claim_key": "computed.corrected_frontier.optimum.5.rabi_MHz",
+        "method_a": "pandas idxmin (compose_corrected_frontier tool)",
+        "method_b": "independent stdlib-csv argmin",
+        "value_a": 28,
+        "value_b": 28,
+        "tolerance_rel": 1e-09,
+        "artifact": "scripts/compose_corrected_frontier.py"
+      }
+    ],
+    "premise_corrections": [],
+    "anomalies": [],
+    "iteration": {
+      "headline_key": "computed.corrected_frontier.ordering.f40_gt_f10",
+      "headline_value": true,
+      "resolution": "boolean ordering; smallest fidelity gap that could flip it = gap_f40_minus_f10 = 5.37e-4",
+      "inherited_from": null,
+      "kept": [],
+      "changed": [
+        "substituted E5 master-equation leakage+decay for E4 closed-form blockade+decay in the five-channel sum"
+      ]
+    },
+    "raw_data": {
+      "corrected_frontier": "data/corrected_frontier.csv"
+    }
+  }
+}

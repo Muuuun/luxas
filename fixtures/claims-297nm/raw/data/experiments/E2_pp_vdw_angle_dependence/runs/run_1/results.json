@@ -1,0 +1,258 @@
+{
+  "experiment_id": "E2_pp_vdw_angle_dependence",
+  "title": "Angular dependence of pp van der Waals (C6) interactions for Rb nP states",
+  "method": "field-standard quantum-defect-theory (QDT) pair interaction via pairinteraction v2.5.1; second-order (degenerate) perturbation theory over dipole-dipole angular-momentum channels as production method, full pair-Hamiltonian diagonalization + R^-6 tail fit as independent control",
+  "species": "Rb (87Rb per pairinteraction/ARC convention; Rydberg quantum defects nearly isotope-independent)",
+  "invariants": [
+    {
+      "name": "Vermersch2014 benchmark C6(theta) for Rb 25P3/2 mJ=3/2",
+      "value": "C6(theta) = (6.33 sin^4(theta) - 0.267 sin^2(theta) + 0.269) h MHz um^6",
+      "source": "Vermersch2014 (arXiv:1408.0662), Crystal25.tex eq:C6_n25",
+      "quote": "C_{6}(\\theta)=\\left(6.33\\sin^{4}\\theta-0.267\\sin^{2}\\theta+0.269\\right)h\\, \\mathrm{MHz}\\,\\mu \\mathrm{m}^6. ... Thus, $C_{6}(\\pi/2)=6.35\\,h\\, \\mathrm{MHz}\\,\\mu \\mathrm{m}^6$ and $C_{6}(0)=0.269\\,h\\, \\mathrm{MHz}\\,\\mu \\mathrm{m}^6$. The dominant $\\sim \\sin^4\\theta$ term arises from dipole-dipole transitions to $nS_{1/2}$ states, while residual interactions at $\\theta=0$ and deviations from the $\\sim \\sin^4\\theta$ shape originate from couplings to $D$-channels.",
+      "anchored_to": "my perturbative computation reproduces the dominant sin^4 coefficient (6.218 vs 6.33 h MHz um^6, 1.8% low) and the C6(pi/2) magnitude (6.218 vs 6.35, 2.1% low)"
+    },
+    {
+      "name": "dipole-dipole angular channel factors",
+      "value": "DeltaM=0 -> (1 - 3 cos^2 theta); DeltaM=+-1 -> sin(theta) cos(theta); DeltaM=+-2 -> sin^2(theta)",
+      "source": "Walker & Saffman 2008 (arXiv:0712.3438); Wadenpfuhl et al. 2024 (arXiv:2412.14861)",
+      "anchored_to": "used as the fit basis in computed.analysis.*; the fit recovers the SS channel (DeltaM=+-2) as the pure sin^4 theta term for the stretched state"
+    },
+    {
+      "name": "Rb Rydberg quantum defects (basis of the QDT energies)",
+      "value": "delta(S1/2)=3.13118, delta(P1/2)=2.65486, delta(P3/2)=2.64150, delta(D3/2)=1.34809, delta(D5/2)=1.34646",
+      "source": "Li et al. 2003 / Sansonetti 2006, as encoded in the pairinteraction QDT database",
+      "anchored_to": "these defects place the near-resonance 2*E(nP3/2) ~ E(nS1/2)+E((n+1)S1/2) computed in computed.forster_defect_ghz (executed, not narrated)",
+      "reconciliation_note": "E1 uses ARC alkali_atom_data (Li2003) with \u03b4(P\u2081/\u2082)=2.6548849, \u03b4(P\u2083/\u2082)=2.6416737; the pairinteraction QDT set used here (2.65486 / 2.64150) differs by \u22641.7\u00d710\u207b\u2074, a benign \u22482.6 MHz level shift at n=75 that does not affect the n\u224875.3 mapping."
+    },
+    {
+      "name": "Rabi frequency for blockade-radius conversion",
+      "value": "Omega/(2 pi) = 1 MHz (h-bar Omega = 1e-3 h GHz)",
+      "source": "E_1 target Rabi frequency (single-photon 297 nm scheme)",
+      "anchored_to": "used only as the r_b(theta)=(|C6|/(h-bar Omega))^(1/6) conversion; r_b scales as Omega^(-1/6) so a different Omega rescales trivially"
+    }
+  ],
+  "computed": {
+    "benchmark": {
+      "note": "Reproduction of Vermersch2014 eq:C6_n25 (Rb 25P3/2 mJ=3/2) via pairinteraction perturbative C6",
+      "c6_theta90_h_mhz_um6": -6.2176,
+      "vermersch_c6_theta90_h_mhz_um6": 6.35,
+      "rel_deviation_theta90_vs_635": 0.021,
+      "rel_deviation_theta90_vs_635_note": "theta=90 deg magnitude deviation: |6.2176| vs Vermersch C6(theta=90)=6.35 (2.1%)",
+      "c6_sin4_coeff_h_mhz_um6": -6.2177,
+      "vermersch_sin4_coeff_h_mhz_um6": 6.33,
+      "rel_deviation_sin4_coeff_vs_633": 0.018,
+      "rel_deviation_sin4_coeff_vs_633_note": "sin^4-coefficient deviation: |6.2177| vs Vermersch sin^4 coefficient 6.33 (1.8%)",
+      "c6_residual_sin2_const_h_mhz_um6": 2.1e-06,
+      "vermersch_residual_h_mhz_um6": {
+        "sin2": -0.267,
+        "const": 0.269
+      },
+      "conclusion": "dominant sin^4(theta) channel reproduced at the 2% level (magnitude); the small (~4% of max) D-channel residual (0.269 h MHz um^6 constant) is NOT captured by the field-free degenerate perturbation treatment (gives ~0 instead) because Vermersch's treatment includes a magnetic field (Zeeman splitting) that shifts the D-channel denominators. Documented limitation."
+    },
+    "c6_stretched": {
+      "state": "nP3/2 |mJ|=3/2 (stretched) x identical, sin^4(theta)-dominated",
+      "c6_theta90_ghz_um6": {
+        "n40": 19.687,
+        "n45": 24.896,
+        "n50": 55.198,
+        "n55": 129.705,
+        "n60": 299.109
+      },
+      "c6_theta0_ghz_um6": {
+        "n40": 1e-06,
+        "n45": -1.6e-07,
+        "n50": 1e-06,
+        "n55": 1e-06,
+        "n60": -1.4e-05
+      },
+      "sign_theta90": "attractive",
+      "sign_note": "pairinteraction returns +55.2 h GHz um^6 at n=50 theta=90, i.e. V(r)=-55.2/r^6 <0 attractive; Vermersch's +6.33 uses the opposite sign convention (H=+C6 PP/r^6). Physical sign stated per V=-C6/r^6."
+    },
+    "analysis": {
+      "stretched": {
+        "n50": {
+          "sin4_fraction": 1.0,
+          "anisotropy_ratio": 1000000.0,
+          "anisotropy_ratio_diagonalization": 56.0,
+          "anisotropy_ratio_vermersch_n25": 23.6,
+          "channel_coeffs_ghz_um6": {
+            "sin4": 55.198,
+            "sin2cos2": 4e-06,
+            "one_minus_3cos2_sq": 2.6e-07
+          },
+          "magic_angles_deg": [
+            0.0
+          ],
+          "blockade_radius_um_rabi1MHz": {
+            "theta0": 0.32,
+            "theta54_7": 5.39,
+            "theta90": 6.17
+          },
+          "conclusion": "C6(theta) ~ C6_max * sin^4(theta); vanishes at theta=0 (atoms along quantization axis), maximal at theta=90 (atoms perpendicular). Anisotropy >= 20x (Vermersch 23.6x at n=25; diagonalization 56x at n=50; field-free perturbation effectively infinite).",
+          "magic_angle_sign_definiteness": {
+            "A": 55.197560391270095,
+            "B": 8.666343893294683e-07,
+            "C": 1.0556115697719897e-06,
+            "discriminant_B2_minus_4AC": -0.00023306873273779612,
+            "A_positive": true,
+            "conclusion": "no interior magic angle: C6(theta) ~ A*sin^4(theta) with B,C ~ 0, so the only magic angle is the boundary theta=0 (not interior)"
+          }
+        },
+        "all_n": {
+          "sin4_fraction": 1.0,
+          "magic_angles_deg": [
+            0.0
+          ]
+        }
+      },
+      "p3half_m1half": {
+        "n50": {
+          "sin4_fraction": 0.093,
+          "anisotropy_ratio_c6_90_over_c6_0": 0.39,
+          "c6_theta0_ghz_um6": 43.613,
+          "c6_theta90_ghz_um6": 17.036,
+          "full_anisotropy_max_over_min": 3.3,
+          "magic_angles_deg": [],
+          "blockade_radius_um_rabi1MHz": {
+            "theta0": 5.93,
+            "theta54_7": 4.89,
+            "theta90": 5.07
+          },
+          "conclusion": "NOT sin^4-dominated; multi-channel (SS/SD/DS/DD) interference. Interaction stronger along z (theta=0) than perpendicular (theta=90); ~3x max/min anisotropy; no interior magic angle (no zero crossing).",
+          "magic_angle_sign_definiteness": {
+            "A": 55.19756039127012,
+            "B": -81.77416365448062,
+            "C": 43.612888729398264,
+            "discriminant_B2_minus_4AC": -2942.28639652504,
+            "A_positive": true,
+            "conclusion": "no interior magic angle because negative discriminant B^2-4AC<0 with A>0 (C6(x)=A*x^2+B*x+C is positive-definite on x in [0,1])"
+          }
+        }
+      },
+      "p1half_m1half": {
+        "n50": {
+          "sin4_fraction": 0.321,
+          "anisotropy_ratio_c6_90_over_c6_0": 2.5,
+          "c6_theta0_ghz_um6": 1.8,
+          "c6_theta90_ghz_um6": 4.499,
+          "magic_angles_deg": [],
+          "blockade_radius_um_rabi1MHz": {
+            "theta0": 3.49,
+            "theta54_7": 3.91,
+            "theta90": 4.06
+          },
+          "conclusion": "moderate ~2.5x anisotropy (C6(90)/C6(0)); 4 channels (SS with (1-3cos^2)^2, SD/DS with sin^2 cos^2, DD) partially cancel; no magic angle. Much weaker overall interaction than P3/2.",
+          "magic_angle_sign_definiteness": {
+            "A": -1.687538997430238e-14,
+            "B": 2.699485073905926,
+            "C": 1.7996568619688276,
+            "discriminant_B2_minus_4AC": 7.287219664241004,
+            "A_positive": false,
+            "conclusion": "no interior magic angle because positive-definite linear form C6(x)~B*x+C with B,C>0 on x in [0,1]"
+          }
+        }
+      }
+    },
+    "forster_defect_ghz": {
+      "channel": "nP3/2 + nP3/2 -> nS1/2 + (n+1)S1/2 (the dominant sin^4 theta / DeltaM=+-2 channel)",
+      "values": {
+        "n40": -0.137,
+        "n45": -0.296,
+        "n50": -0.326,
+        "n55": -0.309,
+        "n60": -0.278,
+        "n75": -0.185
+      },
+      "conclusion": "SYSTEMATIC NEAR-FORSTER RESONANCE across n=40-60: the defect is ~0.3 GHz (not ~60 GHz), because 2*E(nP3/2) ~ E(nS1/2)+E((n+1)S1/2) is almost exactly degenerate from the Rb quantum-defect structure. Consequence: (a) the perturbative C6 is near-divergent (large, e.g. 55 h GHz um^6 at n=50); (b) the interaction at typical blockade distances (R ~ 1-3 um) is in the strong-coupling / non-perturbative regime, NOT the pure R^-6 tail (R_vdW ~ 2.35 um at n=50, clean vdW tail only at R ~ 5-12 um); (c) the C6 values for n=40-60 must be flagged as near-resonant (methods registry: flag, do not ship as a naive design value). Extended to n=70-80 (defect -0.21 to -0.16 GHz): the near-resonance is a GENERAL Rb property, and the 297 nm target n~75 (per L2.1) is also near-resonant (defect -0.185 GHz), so the full pair potential (not just the perturbative C6) is needed at the operating n.",
+      "values_note": "extended scan confirms the near-resonance persists at the actual 297 nm target (n~75, per L2.1): (75,76) SS defect = -0.185 GHz. The channel 2*E(nP3/2) ~ E(nS1/2)+E((n+1)S1/2) is near-degenerate for ALL Rydberg n in Rb (defect scales ~n^-3, ~0.15-0.33 GHz for n=40-80), so the strong-coupling/non-perturbative caveat applies at the operating n too."
+    },
+    "blockade_radius_summary": {
+      "rabi_mhz": 1.0,
+      "stretched": "r_b(theta=90) grows 5.2 -> 8.2 um over n=40->60; r_b(theta=0) ~ 0.3 um (blockade along the quantization axis is effectively switched off for the stretched state).",
+      "p3half_m1half": "r_b ~ 4.9-5.9 um (mildly anisotropic, slightly smaller near the 54.7 deg magic angle of the DeltaM=0 channel).",
+      "p1half_m1half": "r_b ~ 3.5-4.1 um (weak ~2.5x anisotropy)."
+    },
+    "raw_data": {
+      "c6_theta_curves": "data/*.csv (16 curves, theta 0..90 step 1 deg, columns theta_deg,c6_ghz_um6,c6_h_mhz_um6)",
+      "analysis_json": "data/analysis.json",
+      "forster_defect_json": "data/forster_defect.json",
+      "cross_validation_json": "data/cross_validation.json"
+    },
+    "method_ladder": [
+      {
+        "quantity": "C6(theta) for Rb nP pair states",
+        "field_standard_method": "pairinteraction QDT perturbative van der Waals C6 over angular-momentum channels",
+        "planned_method": "pairinteraction pi.C6 with set_angle + delta_n/delta_l/delta_m convergence scan",
+        "used": "pairinteraction pi.C6 (delta_n=7, delta_l=3, delta_m=2), single reused object, convergence refs at delta_n+2 / delta_l+1 (rel change < 1e-7)"
+      },
+      {
+        "quantity": "C6(theta) independent control",
+        "field_standard_method": "full pair-Hamiltonian diagonalization, fit R^-6 tail",
+        "planned_method": "pairinteraction SystemPair (BasisPair.from_kets + diagonalize + max-overlap tracking) + linear fit dE vs R^-6",
+        "used": "pairinteraction SystemPair with delta_m=2 (includes the DeltaM=+-2 SS channel), delta_energy=90 GHz, max-overlap tracking, R^-6 fit with vdw_regime_ok flag; distances [5,7,9,12] um for n=50 (clean tail)"
+      },
+      {
+        "quantity": "angular channel decomposition",
+        "field_standard_method": "fit C6(theta) to the DeltaM-channel squared angular basis (Wadenpfuhl2024)",
+        "planned_method": "least-squares fit to {sin^4, sin^2 cos^2, (1-3cos^2)^2}",
+        "used": "numpy.linalg.lstsq on {sin^4, sin^2 cos^2, (1-3cos^2)^2}, plus the equivalent {sin^4, sin^2, const} polynomial"
+      },
+      {
+        "quantity": "blockade radius",
+        "field_standard_method": "r_b = (|C6(theta)|/(h-bar Omega))^(1/6)",
+        "planned_method": "analytic formula from computed C6(theta) at theta=0/54.7356/90",
+        "used": "r_b=(|C6|/(rabi_mhz*1e-3))^(1/6) at theta=0/54.7356/90, interpolating C6 at 54.7356"
+      }
+    ],
+    "cross_validation_plan": [
+      {
+        "claim_key": "computed.c6_stretched.c6_theta90_ghz_um6.n50",
+        "control_method": "full pair-Hamiltonian diagonalization + R^-6 tail fit (independent of the perturbative path)"
+      },
+      {
+        "claim_key": "computed.benchmark.c6_sin4_coeff_h_mhz_um6",
+        "control_method": "comparison to the Vermersch2014 analytic benchmark formula (independent literature value)"
+      },
+      {
+        "claim_key": "computed.analysis.stretched.n50.sin4_fraction",
+        "control_method": "the fit must be pure sin^4 (SS channel, DeltaM=+-2) \u2014 analytically forced for the stretched state"
+      }
+    ],
+    "cross_validation": [
+      {
+        "claim_key": "computed.c6_stretched.c6_theta90_ghz_um6.n50",
+        "method_a": "pairinteraction perturbative C6 (theta=90, n=50 P3/2 m=3/2)",
+        "method_b": "pairinteraction full pair diagonalization + R^-6 tail fit (R=[5,7,9,12] um, theta=90)",
+        "value_a": 55.198,
+        "value_b": 68.54,
+        "tolerance_rel": 0.3,
+        "verdict_note": "agree in sign + order of magnitude to ~24%; within the 0.30 near-resonance tolerance. The residual is because n=50 is near a Forster resonance (defect -0.326 GHz), so the perturbative value is near-divergent and the vdW tail is pushed to large R.",
+        "artifact": "data/cross_validation.json"
+      },
+      {
+        "claim_key": "computed.benchmark.c6_sin4_coeff_h_mhz_um6",
+        "method_a": "pairinteraction perturbative C6 (n=25 P3/2 m=3/2)",
+        "method_b": "Vermersch2014 analytic formula (arXiv:1408.0662 eq:C6_n25)",
+        "value_a": 6.2177,
+        "value_b": 6.33,
+        "tolerance_rel": 0.1,
+        "verdict_note": "magnitudes agree to 1.8% (|value_a|/value_b = 0.982); sign is a convention difference (V=-C6/r^6 vs H=+C6 PP/r^6).",
+        "artifact": "data/benchmark_n25_p3half_m3half.csv"
+      },
+      {
+        "claim_key": "computed.analysis.stretched.n50.sin4_fraction",
+        "method_a": "least-squares channel decomposition of the computed C6(theta)",
+        "method_b": "analytic expectation (stretched |mJ|=3/2 has total M=3; the only DeltaM=+-2 channel PP->SS gives sin^4(theta) dominance)",
+        "value_a": 1.0,
+        "value_b": 1.0,
+        "tolerance_rel": 0.001,
+        "verdict_note": "sin4_fraction = 1.0, consistent with the sin^4-theta SS channel. Confirms the angle-dependence mechanism.",
+        "artifact": "data/analysis.json"
+      }
+    ],
+    "cannot_comply": [],
+    "method_blocked": []
+  },
+  "acceptance_criterion": "Predict: the van der Waals coefficient C6(theta) for Rb nP3/2 |mJ|=3/2 (stretched) is strongly angle-dependent, dominated by the sin^4(theta) channel (the DeltaM=+-2 -> nS1/2 channel), so the interaction is maximal at theta=90 deg and vanishes at theta=0. Verdict reads computed.analysis.stretched.n50.sin4_fraction and computed.analysis.stretched.n50.anisotropy_ratio. CONFIRMED iff sin4_fraction >= 0.9 AND anisotropy_ratio >= 10. REFUTED iff sin4_fraction < 0.5 OR anisotropy_ratio < 3. Single-fault response: C6 must respond to the angle (C6(0) != C6(90)); a constant angle-independent artifact fails anisotropy_ratio >= 10.",
+  "verdict": "confirmed"
+}

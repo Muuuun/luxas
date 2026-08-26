@@ -1,0 +1,309 @@
+{
+ "experiment_id": "E5_blockade_floor_master_equation",
+ "run_id": "run_1",
+ "status": "complete",
+ "invariants": {
+  "target_state": {
+   "label": "75P3/2 |mJ|=3/2 stretched",
+   "n": 75,
+   "l": 1,
+   "j": 1.5,
+   "m": 1.5,
+   "source": "E1/E2 single-photon 297 nm transition (n~75.3 -> n=75 per plan)"
+  },
+  "operating_geometry": {
+   "R_um": 4.0,
+   "theta_deg": 90.0,
+   "note": "2D array, interatomic axis perpendicular to quantization axis"
+  },
+  "forster_channel": {
+   "label": "75S1/2 + 76S1/2",
+   "defect_ghz": 0.185,
+   "convention": "E(Foerster) - E(target) = +0.185 GHz (Foerster channel ABOVE the |75P+75P> target pair)",
+   "note": "E2's 'forster_defect_ghz.n75 = -0.185' used the opposite convention E(target)-E(Foerster). The +0.185 sign is the one that enters the master-equation Hamiltonian (the prior partial run used -0.185, a sign error).",
+   "anchored_to": "this run's pair-spectrum diagnostic: |75S1/2;76S1/2> pair energy = Eref + 0.1852 GHz"
+  },
+  "c6_perturbative_ghz_um6": {
+   "value": 3482.09,
+   "source": "data/experiments/E3_gate_fidelity_budget/runs/run_1/results.json (computed.c6_75_ghz_um6)",
+   "anchored_to": "E2/E3 n^11 extrapolation of the pairinteraction perturbative C6 from n=50..60 to n=75",
+   "note": "E4 used this as a LOWER bound on the interaction; this experiment shows it is actually a 5.6x OVERestimate of the blockade shift at R=4 um (near-Foerster regime)."
+  },
+  "rydberg_lifetime_us": {
+   "value": 221.64,
+   "source": "data/experiments/E3_gate_fidelity_budget/runs/run_1/results.json (computed.lifetime_75p3_2_us.T300)",
+   "anchored_to": "ARC-computed 75P3/2 blackbody-corrected lifetime at 300 K (E3)",
+   "note": "ARC-derived (not a recalled constant); decay rate Gamma = 1/221.64 us = 4.512e-3 us^-1"
+  },
+  "pulse_parameters": {
+   "tau_over_rabi": 7.69,
+   "tbar_over_rabi": 3.86,
+   "source": "E3 (Pagano2022 symmetric-blockade Gaussian-pulse parameters)"
+  },
+  "e4_upstream": {
+   "blockade_leakage_40MHz": 0.001107,
+   "recoil_40MHz_T5uK": 2.41e-05,
+   "optimum_rabi_mhz": 19.0,
+   "optimum_fidelity": 0.999376,
+   "gate_fidelity_10MHz": 0.998942,
+   "gate_fidelity_40MHz": 0.998756,
+   "source": "data/experiments/E4_synthesis_fidelity_frontier/runs/run_1/results.json"
+  }
+ },
+ "computed": {
+  "pair_potential": {
+   "v_4um_ghz": -0.151863,
+   "v_4um_mhz": -151.863,
+   "overlap_4um": 0.469309,
+   "c6_tail_ghz_um6": 2614.746,
+   "c6_perturbative_ghz_um6": 3482.09,
+   "r6_tail_describes_4um": false,
+   "forster_defect_ghz": 0.185,
+   "v_r": {
+    "R_um": [
+     2.0,
+     3.0,
+     4.0,
+     5.0,
+     6.0,
+     8.0,
+     10.0,
+     12.0
+    ],
+    "V_ghz": [
+     -0.962563,
+     1.334038,
+     -0.151863,
+     -0.092125,
+     -0.043831,
+     -0.009956,
+     -0.002632,
+     -0.00103
+    ],
+    "overlap": [
+     0.118663,
+     0.267593,
+     0.469309,
+     0.74021,
+     0.838309,
+     0.950408,
+     0.985172,
+     0.994861
+    ]
+   },
+   "convergence": {
+    "halo_a": 3,
+    "v_4um_a": -0.151863,
+    "halo_b": 4,
+    "v_4um_b": -0.151863,
+    "rel_change": 0.0,
+    "within_5pct": true,
+    "note": "n-window 72..78 -> 71..79 adds 2672 pair states (n=71,79 channels) with zero dipole coupling to the target, so V(4 um) is unchanged; convergence is genuine (far-n channels decouple)."
+   }
+  },
+  "master_equation": {
+   "gate_fidelity_10MHz": 0.999871,
+   "gate_fidelity_40MHz": 0.999712,
+   "f40_lt_f10": true,
+   "optimum_rabi_mhz": 20.0,
+   "optimum_fidelity": 0.99992,
+   "optimum_infidelity": 7.973e-05,
+   "leakage_40MHz": 0.0002555,
+   "leakage_10MHz": 9.594e-07,
+   "decay_40MHz": 3.26e-05,
+   "decay_10MHz": 0.0001285,
+   "wiring_shift_ok": true,
+   "me_dressed_shift_4um_ghz": -0.155347,
+   "intrinsic_vs_omega": {
+    "omega_mhz_range": [
+     1.0,
+     40.0
+    ],
+    "n_points": 40
+   }
+  },
+  "comparison_to_e4": {
+   "e4_blockade_leakage_40MHz": 0.001107,
+   "full_me_blockade_leakage_40MHz": 0.0002555,
+   "leakage_ratio_full_over_e4": 0.2308,
+   "e4_optimum_rabi_mhz": 19.0,
+   "full_me_optimum_rabi_mhz": 20.0,
+   "ordering_preserved": true,
+   "blockade_is_dominant_channel_at_40MHz": true,
+   "blockade_leakage_vs_recoil_40MHz": {
+    "blockade": 0.0002555,
+    "recoil": 2.41e-05,
+    "blockade_over_recoil": 10.6
+   }
+  },
+  "premise_corrections": [
+   {
+    "premise": "E4 assumed the perturbative C6(75)=3482 GHz.um^6 is a LOWER bound on the interaction (actual V stronger), giving V(4 um)=C6/4^6=850 MHz.",
+    "corrected": "Full pair-Hamiltonian diagonalization gives V(4 um)=-152 MHz (5.6x SMALLER, not larger). The near-Foerster channel |75S+76S> at +0.185 GHz puts R=4 um in the strong-mixing regime (|rr> purity 0.469), where the perturbative R^-6 formula fails.",
+    "consequence": "E4's blockade leakage at 40 MHz (1.107e-3) is a 4.3x OVERestimate; the full-dynamics value is 2.555e-4. E4's 'blockade-limited at high Omega' verdict is directionally CORRECT (blockade is still the dominant channel at 40 MHz, 10.6x above recoil) but the leakage magnitude is ~4x smaller. The F(40)<F(10) ordering and the ~19-20 MHz optimum survive.",
+    "affects": [
+     "E_4",
+     "report"
+    ]
+   }
+  ],
+  "method_ladder": [
+   {
+    "quantity": "blockade shift V(4 um)",
+    "field_standard_method": "pairinteraction SystemPair full dipole-dipole pair-Hamiltonian diagonalization",
+    "planned_method": "pairinteraction SystemPair full diagonalization with n-window convergence",
+    "used": "pairinteraction SystemPair full diagonalization (n=72..78, l=0..2, M in {1,3,5}); max-overlap adiabatic tracking; n-window convergence <5%"
+   },
+   {
+    "quantity": "gate fidelity F(Omega)",
+    "field_standard_method": "two-atom open-system master equation (QuTiP)",
+    "planned_method": "QuTiP mesolve with reduced pair Hamiltonian",
+    "used": "QuTiP sesolve (no-decay) + mesolve (decay) over {|gg>,|gr>,|rg>} + 10 reachable doubly-excited pair eigenstates (exact reduction of the 192-state reduced pair basis)"
+   },
+   {
+    "quantity": "C6 tail coefficient",
+    "field_standard_method": "pairinteraction perturbative C6",
+    "planned_method": "R^-6 tail fit from full diagonalization",
+    "used": "R^-6 tail fit over R>=8 um from full diagonalization (2614.7 GHz.um^6, 25% below perturbative 3482)"
+   }
+  ],
+  "cross_validation": [
+   {
+    "claim_key": "computed.pair_potential.c6_tail_ghz_um6",
+    "method_a": "full pair-Hamiltonian diagonalization R^-6 tail fit (R>=8 um)",
+    "method_b": "perturbative C6 (E3 n^11 extrapolation)",
+    "value_a": 2614.746,
+    "value_b": 3482.09,
+    "tolerance_rel": 0.3,
+    "agrees": true,
+    "artifact": "scripts/pair_potential_n75.py",
+    "note": "25% difference, within the 0.30 near-resonance tolerance (the TAIL is consistent; it is the operating point R=4 um that breaks perturbation theory)"
+   },
+   {
+    "claim_key": "computed.pair_potential.v_4um_ghz",
+    "method_a": "full pair-Hamiltonian diagonalization (max-overlap adiabatic tracking)",
+    "method_b": "perturbative C6/R^6 = 3482/4^6",
+    "value_a": -0.151863,
+    "value_b": -0.85011962890625,
+    "tolerance_rel": 0.3,
+    "agrees": false,
+    "artifact": "scripts/pair_potential_n75.py",
+    "note": "5.6x discrepancy -> FINDING: the near-Foerster resonance invalidates perturbation theory at R=4 um (premise correction)"
+   },
+   {
+    "claim_key": "computed.master_equation.leakage_40MHz",
+    "method_a": "full reduced-pair-Hamiltonian master equation (no-decay doubly-excited population)",
+    "method_b": "E4 closed-form blockade leakage eps=hbar^2 Omega^2/(2V^2) with V=C6/R^6=850 MHz",
+    "value_a": 0.0002555,
+    "value_b": 0.001107,
+    "tolerance_rel": 0.3,
+    "agrees": false,
+    "artifact": "scripts/blockade_gate_master.py",
+    "note": "4.3x discrepancy -> the full dynamics gives 4.3x SMALLER leakage than the closed form (strong-mixing suppression)"
+   }
+  ],
+  "cross_validation_resolved": [
+   {
+    "claim_key": "computed.pair_potential.v_4um_ghz",
+    "disagreement": "full diagonalization (-0.152 GHz) vs perturbative C6/R^6 (-0.850 GHz), 5.6x",
+    "resolution": "NOT a bug. The perturbative R^-6 formula diverges near the Foerster resonance; the full pair-Hamiltonian diagonalization (-0.152 GHz) is authoritative. Recorded as premise_corrections[0] and anomalies[0].",
+    "what_was_run": "scripts/pair_potential_n75.py compute() full dipole-dipole diagonalization at n=75, theta=90 deg"
+   },
+   {
+    "claim_key": "computed.master_equation.leakage_40MHz",
+    "disagreement": "full master equation (2.555e-4) vs E4 closed form (1.107e-3), 4.3x",
+    "resolution": "NOT a bug. The closed form eps=hbar^2 Omega^2/(2V^2) with the perturbative V=C6/R^6=850 MHz fails at R=4 um because the near-Foerster resonance (|75S+76S> at +0.185 GHz) makes the doubly-excited state strongly mixed (|rr> purity 0.47). The full reduced-pair-Hamiltonian master equation (2.555e-4) is authoritative. Recorded as premise_corrections[0] and anomalies[1].",
+    "what_was_run": "scripts/blockade_gate_master.py compute() no-decay (sesolve) sweep 1-40 MHz at R=4 um, theta=90 deg"
+   }
+  ],
+  "cross_validation_plan": [
+   {
+    "claim_key": "computed.pair_potential.v_4um_ghz",
+    "control_method": "perturbative C6/R^6 (executed, see cross_validation[1])"
+   },
+   {
+    "claim_key": "computed.master_equation.leakage_40MHz",
+    "control_method": "E4 closed-form blockade leakage (executed, see cross_validation[2])"
+   },
+   {
+    "claim_key": "computed.pair_potential.c6_tail_ghz_um6",
+    "control_method": "perturbative C6 (executed, see cross_validation[0])"
+   }
+  ],
+  "iteration": {
+   "headline_key": "computed.master_equation.f40_lt_f10",
+   "headline_value": true,
+   "resolution": 0.0001586,
+   "resolution_note": "the F(10)-F(40) gap (0.999871 - 0.999712); a change in leakage at 40 MHz larger than this would flip the ordering",
+   "inherited_from": null,
+   "kept": [
+    "pair_potential_n75.py (full pair-Hamiltonian diagonalization, verified correct)",
+    "pairinteraction + QuTiP toolchain"
+   ],
+   "changed": [
+    "rewrote blockade_gate_master.py: replaced the two-level Foerster model with the full reduced-pair-Hamiltonian master equation; fixed the Foerster-defect sign (-0.185 -> +0.185 GHz)"
+   ]
+  },
+  "anomalies": [
+   {
+    "observable": "blockade shift V(4 um)",
+    "predicted": "-850 MHz (perturbative C6=3482/4^6, E4 premise)",
+    "observed": "-152 MHz (full diagonalization)",
+    "affects_headline": true,
+    "disposition": "explained",
+    "reason": "near-Foerster channel |75S+76S> at +0.185 GHz puts R=4 um in the strong-mixing regime (|rr> purity 0.469); the perturbative R^-6 formula diverges near resonance and fails"
+   },
+   {
+    "observable": "blockade leakage at 40 MHz",
+    "predicted": "1.107e-3 (E4 closed form)",
+    "observed": "2.555e-4 (full master equation)",
+    "affects_headline": true,
+    "disposition": "explained",
+    "reason": "strong Foerster mixing suppresses the drive's coupling to the doubly-excited sector (only 47% |rr> content), so the leakage is 4.3x below the naive eps=Omega^2/(2V^2) estimate"
+   }
+  ],
+  "raw_data": {
+   "pair_potential_V_R": "data/pair_potential_V_R.csv",
+   "master_fidelity_vs_omega": "data/master_fidelity_vs_omega.csv",
+   "pair_potential_full": "data/pair_potential_full.json",
+   "master_equation_full": "data/master_equation_full.json"
+  },
+  "quantities": [
+   {
+    "id": "blockade_shift_4um_GHz",
+    "key": "computed.pair_potential.v_4um_ghz",
+    "observable": "energy shift of the |rr>-connected pair eigenstate at R=4um, theta=90 from full pair-Hamiltonian diagonalization (GHz)",
+    "uncertainty": 0.015,
+    "uncertainty_source": "pair-basis truncation (n 72-78, l<=2) ~10%",
+    "inputs": {
+     "forster_defect_GHz": 0.185
+    }
+   },
+   {
+    "id": "c6_75_ghz_um6",
+    "key": "computed.pair_potential.c6_tail_ghz_um6",
+    "observable": "R^-6 tail coefficient fitted to the full diagonalization for R>=8um (GHz um^6)",
+    "uncertainty": 300
+   },
+   {
+    "id": "blockade_leakage_40MHz",
+    "key": "computed.master_equation.leakage_40MHz",
+    "observable": "population outside |gg> after the pulse, evolving |gg> under sesolve over the reduced pair basis; no |gr> branch, no conditional phase",
+    "uncertainty": 5e-05,
+    "uncertainty_source": "V(4um) +-10% propagated as 2 dV/V",
+    "limit_check": {
+     "limit": "V -> 10 GHz",
+     "expected": 0,
+     "observed": 3e-09,
+     "artifact": "scripts/blockade_gate_master.py"
+    },
+    "inputs": {
+     "blockade_shift_4um_GHz": -0.151863,
+     "rydberg_lifetime_75P_us": 221.64
+    }
+   }
+  ]
+ },
+ "acceptance_criterion": "Confirmatory. Predict: (i) the full pair-Hamiltonian diagonalization at n=75, theta=90 deg finds R=4 um is NOT in the R^-6 tail regime (near-Foerster resonance |75S+76S> at +0.185 GHz strongly mixes the doubly-excited state) and |V(4 um)| is substantially smaller than the perturbative C6(3482 GHz.um^6)/R^6 = 850 MHz; (ii) the full master-equation gate simulation preserves the E4 ordering F(40 MHz) < F(10 MHz). Verdict reads computed.pair_potential.r6_tail_describes_4um AND computed.master_equation.f40_lt_f10. CONFIRMED iff r6_tail_describes_4um == false AND f40_lt_f10 == true. REFUTED if r6_tail_describes_4um == true OR f40_lt_f10 == false. Single-fault check: V must respond to R (V(4 um) != V(8 um)) and fidelity must respond to Omega (F(40 MHz) != F(10 MHz)).",
+ "verdict": "confirmed"
+}
