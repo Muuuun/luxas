@@ -22,8 +22,11 @@ function project(spawnsAfter: string[]): string {
   writeFileSync(join(run, "results.json"), JSON.stringify(results));
   const T0 = new Date("2026-08-26T10:00:00Z");
   utimesSync(join(run, "results.json"), T0, T0);
+  // started marker at `mins`; completion entry 90 min later (a long child) — the
+  // reader must place the spawn at the marker's time, not the completion's.
   const ev = (mins: number, agent: string, tv?: Record<string, string>) =>
-    JSON.stringify({ type: "tool_call", tool: "spawn_agent", args: { agent, task: `do ${agent}`, templateVars: tv }, success: true, timestamp: new Date(T0.getTime() + mins * 60_000).toISOString() });
+    JSON.stringify({ type: "tool_call", tool: "spawn_agent", phase: "started", args: { agent, agent_id: `brain.${agent}-${mins}`, parent_agent_id: "brain" }, success: true, timestamp: new Date(T0.getTime() + mins * 60_000).toISOString() }) + "\n" +
+    JSON.stringify({ type: "tool_call", tool: "spawn_agent", args: { agent, task: `do ${agent}`, templateVars: tv }, success: true, timestamp: new Date(T0.getTime() + (mins + 90) * 60_000).toISOString() });
   const lines = [
     ev(-30, "search"),
     ev(-20, "experiment", { EXPERIMENT_ID: "E2_leakage" }),
@@ -37,7 +40,8 @@ function project(spawnsAfter: string[]): string {
 const changed = measureDispatch(project(["search", "replicator", "experiment", "illustrator"]));
 check("discrepant xval is the first signal", changed.firstSignal?.kind === "xval_discrepant");
 check("spawns before the signal are excluded from `after`", changed.after.settling + changed.after.cosmetic + changed.after.other === 4, JSON.stringify(changed.after));
-check("action=continue is not a spawn", changed.spawns.length === 6, String(changed.spawns.length));
+check("action=continue is not a spawn; started+completed pair to one spawn", changed.spawns.length === 6, String(changed.spawns.length));
+check("spawn time comes from the started marker (completion is +90 min)", changed.spawns.every((s) => s.t <= "2026-08-26T10:20:00.000Z"), changed.spawns.map((s) => s.t).join(","));
 check("first non-other spawn = replicator → CHANGED", changed.verdict === "changed" && changed.after.settling === 2 && changed.after.cosmetic === 1);
 check("EXPERIMENT_ID / ROLE surfaced", changed.spawns.some((s) => s.experimentId === "E3_third_route" && s.role === "discriminator"));
 

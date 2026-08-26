@@ -41,19 +41,37 @@ function classify(agent: string): Spawn["cls"] { return SETTLING.has(agent) ? "s
 function readSpawns(projectDir: string): Spawn[] {
   const p = join(projectDir, ".agent", "log.jsonl");
   if (!existsSync(p)) return [];
-  const out: Spawn[] = [];
+  // Two entries per spawn: a `phase:"started"` marker (accurate start time,
+  // agent_id, no templateVars) written by spawn.ts / background spawns, and the
+  // hooks.ts completion entry (full args, but timestamped when the child
+  // FINISHED — an hour later for an experiment). Time comes from the marker,
+  // templateVars/task from the completion, paired in order per agent name.
+  const started: { t: string; agent: string }[] = [];
+  const completed: { t: string; agent: string; tv: Record<string, string>; task: string; n: number }[] = [];
   for (const line of readFileSync(p, "utf-8").split("\n")) {
     if (!line.trim()) continue;
     let e: any; try { e = JSON.parse(line); } catch { continue; }
-    if (e.type !== "tool_call" || e.tool !== "spawn_agent" || e.success === false) continue;
+    if (e.type !== "tool_call" || e.tool !== "spawn_agent") continue;
     const a = e.args ?? {};
+    if (e.phase === "started") { started.push({ t: e.timestamp, agent: String(a.agent ?? "?") }); continue; }
+    if (e.success === false) continue;
     if (a.action && a.action !== "spawn") continue;
-    const agent = String(a.agent ?? "?");
-    const tv = a.templateVars ?? {};
-    const task = String(a.task ?? (Array.isArray(a.tasks) ? `[${a.tasks.length} tasks] ${a.tasks[0] ?? ""}` : "")).slice(0, 120);
-    out.push({ t: e.timestamp, agent, experimentId: tv.EXPERIMENT_ID, role: tv.ROLE, task, cls: classify(agent) });
+    const tasks = Array.isArray(a.tasks) ? a.tasks : null;
+    const task = String(a.task ?? (tasks ? `[${tasks.length} tasks] ${tasks[0] ?? ""}` : "")).slice(0, 120);
+    completed.push({ t: e.timestamp, agent: String(a.agent ?? "?"), tv: a.templateVars ?? {}, task, n: tasks ? tasks.length : 1 });
   }
-  return out;
+  const out: Spawn[] = [];
+  if (started.length === 0) {
+    for (const c of completed) out.push({ t: c.t, agent: c.agent, experimentId: c.tv.EXPERIMENT_ID, role: c.tv.ROLE, task: c.task, cls: classify(c.agent) });
+    return out;
+  }
+  const queue = new Map<string, typeof completed>();
+  for (const c of completed) { const q = queue.get(c.agent) ?? []; for (let i = 0; i < c.n; i++) q.push(c); queue.set(c.agent, q); }
+  for (const s of started) {
+    const c = queue.get(s.agent)?.shift();
+    out.push({ t: s.t, agent: s.agent, experimentId: c?.tv.EXPERIMENT_ID, role: c?.tv.ROLE, task: c?.task ?? "(still running)", cls: classify(s.agent) });
+  }
+  return out.sort((a, b) => a.t.localeCompare(b.t));
 }
 
 function readSignals(projectDir: string): Signal[] {
