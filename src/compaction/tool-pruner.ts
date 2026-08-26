@@ -82,6 +82,23 @@ export function pruneHistoricToolOutputs<TMessage>(
     }
   }
 
+  // Ratchet (cache-debate verdict 2026-08-26): with a plain sliding window,
+  // the newest-N boundary moves one outcome per turn, flipping one
+  // mid-history message from full text to placeholder on every call — a
+  // guaranteed prefix-cache invalidation. With policy.ratchet set, the
+  // boundary is a high-water mark that advances only when it lags the
+  // sliding target by at least `batch` outcomes, so between advances the
+  // pruned view is byte-identical across calls.
+  const totalToolOutputs = messages.reduce(
+    (n, m) => n + (adapter.isToolOutcome(m) ? 1 : 0), 0);
+  let pruneBeyond = keepRecentToolOutputs; // count kept from the tail
+  if (policy.ratchet) {
+    const target = Math.max(0, totalToolOutputs - keepRecentToolOutputs);
+    const batch = policy.ratchet.batch ?? 8;
+    if (target >= policy.ratchet.floor + batch) policy.ratchet.floor = target;
+    pruneBeyond = totalToolOutputs - policy.ratchet.floor; // kept from tail
+  }
+
   let seenToolOutputs = 0;
   let freedUnits = 0;
   let changed = false;
@@ -95,7 +112,7 @@ export function pruneHistoricToolOutputs<TMessage>(
     }
 
     seenToolOutputs++;
-    if (seenToolOutputs <= keepRecentToolOutputs) {
+    if (seenToolOutputs <= pruneBeyond) {
       nextMessages[index] = message;
       continue;
     }

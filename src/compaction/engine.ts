@@ -29,6 +29,7 @@ export class ContextPacker<TMessage> {
       refillStreak: 0,
       failureStreak: 0,
       warningRaised: false,
+      pruneRatchet: { floor: 0, batch: 8 },
     };
   }
 
@@ -67,7 +68,9 @@ export class ContextPacker<TMessage> {
       const trimOutcome = pruneHistoricToolOutputs(
         workingMessages,
         this.options.adapter,
-        this.options.toolPrune,
+        // Engine owns the ratchet state so the prune boundary is byte-stable
+        // across turns (see ToolPrunePolicy.ratchet). Reset on condense.
+        { ...this.options.toolPrune, ratchet: this.state.pruneRatchet },
       );
       if (trimOutcome.modified) {
         workingMessages = trimOutcome.messages;
@@ -206,6 +209,8 @@ export class ContextPacker<TMessage> {
     this.state.carryforwardNote = carryforwardNote;
     this.state.lastCondenseStep = this.state.stepIndex;
     this.state.warningRaised = false;
+    // The rebuilt array invalidates outcome ordinals — restart the ratchet.
+    this.state.pruneRatchet.floor = 0;
 
     // ── Phase 6: Rebuild message array ──
     const carryforward = this.options.adapter.createCarryforwardMessage({

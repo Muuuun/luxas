@@ -12,7 +12,7 @@ import type { Model } from "@earendil-works/pi-ai/compat";
 import { createBlockConversationAdapter } from "./adapter.js";
 import { ContextPacker } from "./engine.js";
 import { createTokenTap } from "./token-tap.js";
-import { overflowBackstop } from "./overflow-backstop.js";
+import { applyOverflowBackstop, createBackstopLedger, overflowBackstop } from "./overflow-backstop.js";
 import type { TokenTap } from "./token-tap.js";
 import type {
   CarryforwardLedger,
@@ -95,6 +95,8 @@ export function createCompactionTransform(
     };
   }
 
+  const backstopLedger = createBackstopLedger();
+
   const transformContext = async (messages: any[]): Promise<any[]> => {
     await ensureSummarizer();
 
@@ -102,8 +104,11 @@ export function createCompactionTransform(
     // pre-pack bounds the summarizer's own LLM call — the 297nm run died 3×
     // because condensing an over-window history sent that raw history to the
     // summarizer; post-pack bounds the final request (the condense tail has
-    // no per-message size cap).
-    const bounded = overflowBackstop(messages, opts.model);
+    // no per-message size cap). The pre-pack bound uses a persistent ledger
+    // so truncation decisions are PINNED byte-stable across turns (cache
+    // verdict 2026-08-26: the stateless version re-derived its cut-set every
+    // call and paid ~144K miss tokens per turn).
+    const bounded = applyOverflowBackstop(messages, opts.model, backstopLedger).messages;
 
     try {
       const result = await packer.runCycle({

@@ -33,6 +33,8 @@ export interface PackingMutableState {
   failureStreak: number;
   warningRaised: boolean;
   carryforwardNote?: string;
+  /** Tool-prune ratchet high-water mark (see ToolPrunePolicy.ratchet). */
+  pruneRatchet: { floor: number; batch?: number };
 }
 
 export interface PackingPressure {
@@ -70,6 +72,15 @@ export interface PackingCallbacks<TMessage> {
 
 export interface ToolPrunePolicy {
   keepRecentToolOutputs?: number;
+  /**
+   * Ratchet state (engine-owned, MUTATED by the pruner). Converts the
+   * sliding keep-window into a high-water mark: the prune boundary advances
+   * only in batches of `batch` outcomes, so between advances the pruned view
+   * is byte-identical across turns and the provider prefix cache holds
+   * (cache-debate verdict 2026-08-26). Without it the boundary slides one
+   * outcome per turn — one mid-history byte change per call.
+   */
+  ratchet?: { floor: number; batch?: number };
   placeholderText?: string;
   /**
    * Whitelist of tools whose old outputs may be replaced with a placeholder.
