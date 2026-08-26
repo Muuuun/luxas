@@ -69,7 +69,7 @@ function readSpawns(projectDir: string): Spawn[] {
   for (const c of completed) { const q = queue.get(c.agent) ?? []; for (let i = 0; i < c.n; i++) q.push(c); queue.set(c.agent, q); }
   for (const s of started) {
     const c = queue.get(s.agent)?.shift();
-    out.push({ t: s.t, agent: s.agent, experimentId: c?.tv.EXPERIMENT_ID, role: c?.tv.ROLE, task: c?.task ?? "(still running)", cls: classify(s.agent) });
+    out.push({ t: s.t, agent: s.agent, experimentId: c?.tv.EXPERIMENT_ID, role: c?.tv.ROLE, task: c?.task ?? "(no completion entry: background or still running)", cls: classify(s.agent) });
   }
   return out.sort((a, b) => a.t.localeCompare(b.t));
 }
