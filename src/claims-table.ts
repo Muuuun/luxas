@@ -148,38 +148,63 @@ function parseExperiment(id: string, j: any): Parsed {
       out.malformed.push(`${id}: quantities[${i}] lacks string id/key`);
       continue;
     }
+    // Co-located form (live probe, 2026-08-26): the producer keeps the number
+    // AND its metadata under the computed leaf — `computed.c6_theta: {value,
+    // headline, observable, uncertainty, limit_check, inputs}` — and leaves
+    // quantities[] as bare {id, key}. Accept it: fields on the quantities[]
+    // entry win, the leaf object fills what the entry omits, and the value is
+    // the object's single `value` / `value_<unit>` number. Gates keep their
+    // numeric demands; only the LOCATION is tolerated.
+    const leaf = leafAt(j, q.key);
+    const leafObj = leaf && typeof leaf === "object" && !Array.isArray(leaf) ? (leaf as Record<string, unknown>) : undefined;
+    const pick = (field: string): unknown => (q[field] !== undefined ? q[field] : leafObj?.[field]);
     const decl: QuantityDecl = {
-      id: q.id, key: q.key, experiment: id, headline: q.headline === true,
-      observable: typeof q.observable === "string" ? q.observable : undefined,
+      id: q.id, key: q.key, experiment: id, headline: pick("headline") === true,
+      observable: typeof pick("observable") === "string" ? (pick("observable") as string) : undefined,
       inputs: {},
     };
-    if (q.uncertainty !== undefined) {
-      const u = posNum(q.uncertainty);
-      if (u === undefined) out.malformed.push(`${id}: quantities[${i}] (${q.id}) uncertainty must be a positive number, got ${JSON.stringify(q.uncertainty)}`);
+    const uncertainty = pick("uncertainty");
+    if (uncertainty !== undefined) {
+      const u = posNum(uncertainty);
+      if (u === undefined) out.malformed.push(`${id}: quantities[${i}] (${q.id}) uncertainty must be a positive number, got ${JSON.stringify(uncertainty)}`);
       else decl.uncertainty = u;
     }
-    if (typeof q.uncertainty_source === "string") decl.uncertaintySource = q.uncertainty_source;
-    if (q.limit_check !== undefined) {
-      const lc = q.limit_check;
+    const uSrc = pick("uncertainty_source");
+    if (typeof uSrc === "string") decl.uncertaintySource = uSrc;
+    const lc: any = pick("limit_check");
+    if (lc !== undefined) {
       const exp = num(lc?.expected), obs = num(lc?.observed);
       if (!lc || typeof lc !== "object" || typeof lc.limit !== "string" || exp === undefined || obs === undefined) {
-        out.malformed.push(`${id}: quantities[${i}] (${q.id}) limit_check needs {limit, expected:number, observed:number}`);
+        out.malformed.push(`${id}: quantities[${i}] (${q.id}) limit_check needs {limit, expected: NUMBER, observed: NUMBER} — got ${JSON.stringify({ expected: lc?.expected, observed: lc?.observed }).slice(0, 120)}. A textual anchor cannot be σ-compared; put the one number the limit predicts (e.g. the sin^4 coefficient) in expected/observed and keep the description in \`limit\`.`);
       } else decl.limitCheck = { limit: lc.limit, expected: exp, observed: obs, artifact: typeof lc.artifact === "string" ? lc.artifact : undefined };
     }
-    if (q.inputs !== undefined) {
-      if (!q.inputs || typeof q.inputs !== "object" || Array.isArray(q.inputs)) {
+    const inputs = pick("inputs");
+    if (inputs !== undefined) {
+      if (!inputs || typeof inputs !== "object" || Array.isArray(inputs)) {
         out.malformed.push(`${id}: quantities[${i}] (${q.id}) inputs must be an object {id: value}`);
       } else {
-        for (const [k, v] of Object.entries(q.inputs)) {
+        for (const [k, v] of Object.entries(inputs as Record<string, unknown>)) {
           const n = num(v);
           if (n === undefined) out.malformed.push(`${id}: quantities[${i}] (${q.id}) inputs.${k} must be a number (values, not ids)`);
           else decl.inputs[k] = n;
         }
       }
     }
-    const v = num(leafAt(j, q.key));
-    if (v === undefined) out.malformed.push(`${id}: quantities[${i}] (${q.id}) key ${q.key} is not a finite number in results.json`);
-    else decl.value = v;
+    let v = num(leaf);
+    if (v === undefined && leafObj) {
+      const direct = num(leafObj.value);
+      const valueFields = Object.entries(leafObj).filter(([k, x]) => /^value(_|$)/.test(k) && num(x) !== undefined);
+      if (direct !== undefined) v = direct;
+      else if (valueFields.length === 1) v = valueFields[0][1] as number;
+      else {
+        const META = new Set(["uncertainty", "headline"]);
+        const numeric = Object.entries(leafObj).filter(([k, x]) => !META.has(k) && num(x) !== undefined).map(([k]) => `${q.key}.${k}`);
+        out.malformed.push(`${id}: quantities[${i}] (${q.id}) key ${q.key} is an object with no single numeric \`value\` — ${valueFields.length ? `${valueFields.length} value_* fields` : "no value field"}. Either add \`"value": <the one number this quantity IS>\` to that object, or point \`key\` at the numeric leaf${numeric.length ? ` (candidates: ${numeric.slice(0, 4).join(", ")})` : ""}.`);
+      }
+    } else if (v === undefined) {
+      out.malformed.push(`${id}: quantities[${i}] (${q.id}) key ${q.key} is not a finite number in results.json (got ${leaf === undefined ? "nothing — the key does not exist" : JSON.stringify(leaf).slice(0, 60)}). Point \`key\` at the numeric leaf that holds this quantity's value.`);
+    }
+    if (v !== undefined) decl.value = v;
     out.quantities.push(decl);
     if (v !== undefined) {
       out.estimates.push({ quantity: q.id, value: v, sigma: decl.uncertainty, kind: "own", source: `${id}:${q.key}`, experiment: id, script: `${id}:own`, inputs: decl.inputs });

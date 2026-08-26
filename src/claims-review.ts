@@ -27,7 +27,7 @@
 
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { buildClaimTable, ESTIMATE_LINE_RE, type ClaimTable, type QuantityDecl } from "./claims-table.js";
+import { parseFrameHeadline, buildClaimTable, ESTIMATE_LINE_RE, type ClaimTable, type QuantityDecl } from "./claims-table.js";
 
 export const REVIEW_LINE_RE = /^\s*(DISCRIMINATOR|ESTIMATE(?:\(blind\))?|SCALING|INDEPENDENT|ANCHOR-OK|DISCLOSE-OK):\s*(\S+)/;
 
@@ -224,6 +224,19 @@ export function quantityDeclarationProblems(projectDir: string, experimentId: st
     if (others.has(d.id)) continue; // reuse — the intended case
     const near = nearestIds(d.id, others);
     if (near.length > 0) problems.push(`${e}: quantity id "${d.id}" is new but lexically near existing ${near.join(", ")} — reuse the existing id if it is the same observable (the estimate histories must join), or pick a clearly distinct id and say in \`observable\` why it is a different quantity.`);
+  }
+  // Frame ids the brain named that no experiment declares, when this
+  // experiment coined a near-miss (live probe: frame `C6_60P_mj32_theta`,
+  // producer `c6_theta_60p_mj32` — the ship gate never linked them).
+  const declaredAnywhere = new Set(table.decls.map((d) => d.id));
+  const mine = table.decls.filter((d) => d.experiment === e).map((d) => d.id);
+  for (const fid of parseFrameHeadline(projectDir)) {
+    if (declaredAnywhere.has(fid)) continue;
+    // Stricter than nearestIds: ≥2 shared tokens always (short frame ids like
+    // p2_at_r0_theta reduce to one token and would match anything with "theta").
+    const ft = new Set(fid.toLowerCase().split(/[_\W]+/).filter((t) => t.length > 2));
+    const near = mine.filter((m) => [...m.toLowerCase().split(/[_\W]+/)].filter((t) => ft.has(t)).length >= 2);
+    if (near.length > 0) problems.push(`${e}: notes/frame.md names headline quantity "${fid}" but no experiment declares it; your "${near[0]}" looks like the same observable — declare it under the frame id "${fid}" (the ship gate and the reviewer obligation are scoped to frame ids; a near-miss id leaves the headline unreviewed).`);
   }
   for (const d of table.decls.filter((d) => d.experiment === e && (d.headline || table.headlineDeclared.includes(d.id)))) {
     if (d.uncertainty === undefined) problems.push(`${e}: headline quantity "${d.id}" has no \`uncertainty\` — without σ it can never be corroborated (caps at indicative).`);
