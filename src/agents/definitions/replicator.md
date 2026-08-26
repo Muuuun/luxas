@@ -29,6 +29,11 @@ safety:
     - "data/experiments/{{EXPERIMENT_ID}}/tests/"
     - "data/experiments/{{EXPERIMENT_ID}}/runs/"
   writeOnExistingPolicy: block
+  blockedBashPathMentions:
+    - "data/experiments/{{EXPERIMENT_ID}}/scripts"
+    - "data/experiments/{{EXPERIMENT_ID}}/runs"
+    - "data/experiments/{{EXPERIMENT_ID}}/tests"
+    - "notes/experiments.md"
 spawn: { enabled: false }
 templates: [PROJECT_DIR, EXPERIMENT_ID, QUANTITY_ID, MODE]
 ---
@@ -43,7 +48,7 @@ You estimate ONE quantity blind. The task message gives you its id, its observab
 </environment>
 
 <estimate_mode>
-Budget: minutes, not hours. Pick the route a referee would use on a napkin — a closed form, a limiting case with a known answer, a scaling from a published benchmark in a nearby regime (`notes/literature.d/` is readable), a ten-line script. Run at least one bash/python line so your number is transcript-anchored. State σ honestly: an order-of-magnitude route has σ of order the value. If the observable sentence is ambiguous, say which definition you assumed in the route text — a definitional mismatch surfacing here is the point of the exercise.
+Budget: minutes, not hours. Pick the route a referee would use on a napkin — a closed form, a limiting case with a known answer, a scaling from a published benchmark in a nearby regime (`notes/literature.d/` is readable), a ten-line script. Run at least one bash/python line so your number is transcript-anchored. State σ as your honest uncertainty on the route you used — not a blanket "of order the value": the comparison caps σ at half the value and disputes any > 3× gap regardless of σ, so padding σ buys nothing and a real disagreement will be flagged either way. If the observable sentence is ambiguous, say which definition you assumed in the route text — a definitional mismatch surfacing here is the point of the exercise.
 
 Your LAST line is exactly one line of the form
 ESTIMATE(blind): {{QUANTITY_ID}} — <value> ± <sigma> via <route in ≤12 words> — inputs: [<id=value>, ...]

@@ -29,6 +29,10 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { findOldTextLine, freshExcerptError } from "./edit-recovery.js";
 import { SAFETY_PRESETS } from "./safety-presets.js";
+
+/** Files the harness writes and the claim table trusts — see src/claims-table.ts HARNESS_REVIEW_FILE_RE. */
+const HARNESS_REVIEW_PREFIX = "reviews/experiment_review_";
+const HARNESS_REVIEW_WRITE_PATTERN = { pattern: /(^|\/)reviews\/experiment_review_[^/]+_r\d+\.md$/, reason: "Harness-owned review record: only the experiment_reviewer loop writes these, and the claim table trusts them." };
 import { expandTemplate, extractTextContent } from "../utils.js";
 import { reportIntegrityIssues } from "../tools/report-integrity.js";
 import { buildClaimRegistry, nearestKeys } from "../claims-registry.js";
@@ -106,6 +110,8 @@ interface SafetyOptions {
    * the "lazy bypass" path LLMs reach for first. Supports `{{VAR}}`.
    */
   blockedBashWriteRoots?: string[];
+  /** Project-relative prefixes a bash command may not even mention (read-side scoping for blind agents). */
+  blockedBashPathMentions?: string[];
   /**
    * If set, write/edit to paths matching any of these regex patterns returns
    * BLOCKED. Intent: force role separation — e.g. the experiment agent must
@@ -831,6 +837,7 @@ function wrapBash(
   projectDir: string,
   allowedWriteAbs: string[] | null,
   blockedRootsAbs: string[] | null,
+  blockedMentions: string[] = [],
 ): any {
   // `.agent/` is ALWAYS in the effective blocklist — studio-reserved,
   // not driven by frontmatter. Means we always wrap (no early return),
@@ -849,6 +856,16 @@ function wrapBash(
     ...tool,
     execute: async (id: string, params: any, signal?: any) => {
       const cmd: string = typeof params?.command === "string" ? params.command : "";
+      // Mention block (claims-first): a blind agent has no legitimate reason to
+      // name the producer's scripts/runs/tests; any agent may not name the
+      // harness-owned review files. Pure substring scan — over-matching is the
+      // safe direction here.
+      for (const m of blockedMentions) {
+        if (m && cmd.includes(m)) {
+          return blocked(`bash command mentions "${m}", which this agent may not read or touch (blind-by-construction scope). ` +
+            `Work from the task message and your own files only.`);
+        }
+      }
 
       // PATH-directory mutation: no agent may create/modify executables in
       // directories that appear on PATH. 2026-07-05 root cause: a fixer agent
@@ -965,14 +982,21 @@ function createSafetyWrapper(opts: SafetyOptions): SafetyWrapper {
     const allowedReadAbs = resolveScopeRoots(opts.allowedReadRoots, projectDir, templateVars);
     const allowedWriteAbs = resolveScopeRoots(opts.allowedWriteRoots, projectDir, templateVars);
     const blockedBashAbs = resolveScopeRoots(opts.blockedBashWriteRoots, projectDir, templateVars);
+    const mentions = [
+      HARNESS_REVIEW_PREFIX,
+      ...(opts.blockedBashPathMentions ?? []).map((m) => expandTemplate(m, templateVars)),
+    ];
 
-    const forbiddenWritePatterns = opts.forbiddenWritePatterns ?? [];
+    // Harness-owned review files (reviews/experiment_review_*_r*.md) carry the
+    // attestations the claim table trusts; no agent's write/edit tool may
+    // touch them (claims-first, audit C2).
+    const forbiddenWritePatterns = [HARNESS_REVIEW_WRITE_PATTERN, ...(opts.forbiddenWritePatterns ?? [])];
 
     return tools.map((tool: any) => {
       if (tool.name === "read")  return wrapRead(tool, cache, projectDir, allowedReadAbs, hooks);
       if (tool.name === "edit")  return wrapEdit(tool, cache, projectDir, protectedAbs, allowedWriteAbs, forbiddenWritePatterns, hooks);
       if (tool.name === "write") return wrapWrite(tool, cache, projectDir, protectedAbs, allowedWriteAbs, opts, forbiddenWritePatterns, hooks);
-      if (tool.name === "bash")  return wrapBash(tool, projectDir, allowedWriteAbs, blockedBashAbs);
+      if (tool.name === "bash")  return wrapBash(tool, projectDir, allowedWriteAbs, blockedBashAbs, mentions);
       return tool;
     });
   };
@@ -1025,6 +1049,7 @@ export function buildSafetyWrapper(
     allowedReadRoots: config.allowedReadRoots,
     allowedWriteRoots: config.allowedWriteRoots,
     blockedBashWriteRoots: config.blockedBashWriteRoots,
+    blockedBashPathMentions: config.blockedBashPathMentions,
     // Default "block" is fail-secure: forgetting the field in frontmatter
     // shouldn't silently relax write-overwrite on protected files.
     writeOnExistingPolicy: config.writeOnExistingPolicy ?? "block",

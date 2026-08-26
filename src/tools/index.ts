@@ -16,6 +16,7 @@ import { createSpawnAgentTool, getActiveBackgroundAgents } from "./spawn-agent.j
 import { buildSafetyWrapper } from "../agents/safety-wrappers.js";
 import { getDefinition } from "../agents/registry.js";
 import { FinishEscalation, writeNeedsOperator } from "../claims-review.js";
+import { buildClaimTable } from "../claims-table.js";
 import { loadRegistry, removeAgent, isAlive, markFailed, formatExitHint } from "../active-agents.js";
 
 /**
@@ -407,9 +408,12 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
   try {
     const dir = join(projectDir, ".agent");
     mkdirSync(dir, { recursive: true });
+    let disclosed: number | null = null;
+    try { disclosed = buildClaimTable(projectDir).disclosedHeadlineCount; } catch { disclosed = null; }
     writeFileSync(join(dir, "finish_stats.json"), JSON.stringify({
       finish_calls: finishCalls,
       force_exited: forceExited,
+      disclosed_headline_count: disclosed,
       at: new Date().toISOString(),
     }, null, 2) + "\n");
   } catch { /* telemetry must never block finish */ }
@@ -1232,8 +1236,8 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
 
   {
     const finishExecute = finishTool.execute;
-    (finishTool as any).execute = async (args: any) => {
-      const r = await finishExecute(args);
+    (finishTool as any).execute = async (...callArgs: any[]) => {
+      const r = await (finishExecute as any)(...callArgs);
       const text = Array.isArray(r?.content) && r.content[0]?.type === "text" ? String(r.content[0].text ?? "") : "";
       if (r?.details?.success) { escalation.reset(); return r; }
       if (/^Cannot finish/.test(text) && escalation.record(text)) {
@@ -1244,7 +1248,7 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
           `Escalated to the operator: the same finish gate blocked ${escalation.count} consecutive finish() calls, ` +
           `so iterating is not reducing the issue. Wrote ${path.replace(projectDir + "/", "")} with the gate text; ` +
           `the run exits cleanly with its artifacts as they stand. A person decides the next move.` }],
-          details: { success: true } };
+          details: { success: true, escalated: true } };
       }
       return r;
     };

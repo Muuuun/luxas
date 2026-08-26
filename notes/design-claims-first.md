@@ -211,3 +211,28 @@ Engineer's estimate: +25–55% per project ($190–235, 36–42 h vs $151/32 h) 
 | one headline set: frame ∪ headline:true; outside-set abstract number blocks | alternatives | 3.4 |
 | `<claim_status>` only if the DISCREPANT prior check changes dispatch | alternatives | 3.7 |
 | steps 5–7 re-scoped after the compliance probe | engineer | 7 |
+
+**Implementation audit (2026-08-26, three independent reviewers: design-conformance, principles, adversarial code — all on commit 4bd4dfd):**
+
+| Finding | Severity | Fix landed |
+|---|---|---|
+| producer-declared σ dissolved disputes; replicator prompt asked for σ ≈ value | CRITICAL | `agreement()`: ratio veto (> 3× disagrees regardless of σ), σ capped at 0.5·\|value\|; σ_b / replication σ must be > 0; prompt reworded |
+| any `reviews/*.md` trusted → brain could forge INDEPENDENT/ANCHOR-OK/DISCLOSE-OK/ESTIMATE(blind) | CRITICAL | only harness-written files parsed (`experiment_review_*_r*.md`, `pi_feedback.md`); those files are write-blocked for every agent's write/edit tool and bash may not mention them; PI countersigns via `submit_verdict.disclose_ok` |
+| a disputed number re-declared under a new id escaped the gate | CRITICAL | value-level match in `claimTableIssues`; "one number, two ids" is MALFORMED; near-id rule covers single-token ids |
+| `replicator` not in brain's spawn whitelist (replicate mode unreachable) | HIGH | added |
+| replicator blindness read-tool-only | HIGH | `blockedBashPathMentions` (new safety field): bash may not name the producer's scripts/runs/tests or the ledger |
+| incomplete review persisted attestations; real feedback discarded | HIGH | incomplete review persists blind lines + marker only; verdict/feedback always processed; SCALING now required alongside DISCRIMINATOR |
+| `needs-operator.md` under notes/directives/ re-entered as the USER's directive | HIGH | moved to `notes/escalations/` |
+| headline closure over inputs inflated obligations (16 blind spawns, PI stop unreachable) | HIGH | two tiers: `headline` (load-bearing closure — gates) vs `headlineDeclared` (frame ∪ headline:true — blind estimator, reviewer, PI scope) |
+| silent `catch {}` in harness glue (spawn-agent, context-builders, pi-agent) | HIGH | every catch emits a visible note / MALFORMED block / verdict issue |
+| `verdicts[].replaces` cleared by any string | MEDIUM | must name a quantity the verdict reads |
+| `[—-]+` separator ate a leading minus | MEDIUM | separator must be whitespace-delimited; one strict grammar shared by extractor and parser |
+| readdir order leaked into L3 | MEDIUM | `listExperimentDirs` sorted; estimates sorted |
+| 1c value match one-sided, no exempt filter | MEDIUM | both legs, `exempt()`, ×100 windows only without a claim_key |
+| integers wired by equality | MEDIUM | integers never wire by equality |
+| escalation keyed on exact text (counts differ each call) | MEDIUM | digits masked; `details.escalated: true`; `disclosed_headline_count` in finish_stats; > 1 disclosed headline blocks |
+| orphans: `quantity_id`, `definition_concerns`, `uncertainty_source` | LOW | `quantity_id` now the preferred claims→row join; `definition_concerns` read by the finish gate (non-blocking); `uncertainty_source` rendered in reasons |
+| `method_a === method_b` text test not deleted (§6) | LOW | deleted |
+
+Deviations kept, on purpose: no batch finish diagnostic (~30 early returns; escalation keys on masked gate text instead of issue count); `indicative` inputs do not make a quantity `conditional` (would make nearly everything conditional); no flag→answer round (a blind flag disputes immediately — stricter than designed); countersigner identity is "harness-written file + PI/reviewer", not a full agent-id check; `limit_check.observed` is not transcript-anchored (ANCHOR-OK attestation is the guard).
+

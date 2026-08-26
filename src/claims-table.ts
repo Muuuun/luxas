@@ -2,38 +2,55 @@
  * Claim table — quantity-level research state, computed from disk.
  *
  * Design: notes/design-claims-first.md (Draft 2.1, debate-adjudicated
- * 2026-08-26). The unit of state is the QUANTITY: a named observable with
- * project-wide identity (`computed.quantities[].id`), a history of estimates
- * (own value, harvested cross_validation value_b, other experiments' same-id
- * values, reviewer blind estimates, replication results), and a status
- * computed from those estimates — never from a self-reported verdict.
+ * 2026-08-26; hardened after a three-reviewer code audit the same day — see
+ * §10 of the design). The unit of state is the QUANTITY: a named observable
+ * with project-wide identity (`computed.quantities[].id`), a history of
+ * estimates (own value, harvested cross_validation value_b, other
+ * experiments' same-id values, reviewer blind estimates, replication
+ * results), and a status computed from those estimates — never from a
+ * self-reported verdict.
  *
  * Holes this closes (architecture-review-2026-08-26.md, §1):
  *   H1 identity across experiments   → `id` shared across results.json files
  *   H2 producer self-resolves        → no disposition field is read from the
  *                                       producer; disputes are facts
- *   H3 wiring counts as corroboration→ wiring computed (1e-6 / same script /
- *                                       same experiment), never declared
+ *   H3 wiring counts as corroboration→ wiring computed (1e-6 / same script),
+ *                                       never declared
  *   H4 no observable definition      → `observable` carried; the mechanical
  *                                       checks are `inputs` by VALUE and the
  *                                       verdict reads-diff
  *   H5 reviewers do not estimate     → ESTIMATE(blind)/SCALING/INDEPENDENT/
- *                                       ANCHOR-OK lines parsed from reviews/
+ *                                       ANCHOR-OK/DISCLOSE-OK lines parsed —
+ *                                       ONLY from harness-written files
+ *                                       (reviews/experiment_review_*_r*.md,
+ *                                       reviews/pi_feedback.md); any agent
+ *                                       may create other files under reviews/
+ *
+ * Audit-driven rules (2026-08-26):
+ *   - σ cannot dissolve a dispute: agreement uses min(σ, 0.5·|value|) and a
+ *     ratio veto (> 3× disagrees regardless of σ). Producer-declared σ was
+ *     the new `resolution` otherwise.
+ *   - Integers never wire by equality (two methods legitimately land on the
+ *     same count); floats within 1e-6 do.
+ *   - Inputs keys that are not declared quantity ids never grow the
+ *     headline set or receive a propagated dispute; they are noted.
+ *   - The same number under two different ids is MALFORMED ("one number,
+ *     two names" is how a disputed value escapes its id).
+ *   - `verdicts[].replaces` must name a declared id that the verdict reads.
  *
  * Consumers (named per the producer-consumer rule): report-integrity.ts
  * (claim-status gate, grandfathered: only when quantities[] exist),
- * scripts/smoke_claim_table*.mts (fixtures/claims-297nm), and — only after
- * the <open_discrepancies> prior check shows dispatch changes — the brain's
- * L3 <claim_status> block.
+ * context.ts (<claim_status> for the brain), context-builders.ts
+ * (experiment / report_writer / PI contexts), claims-review.ts (reviewer
+ * scope, write-time validation), scripts/smoke_claim_table*.mts.
  *
- * Every malformed producer row becomes a MALFORMED line in the table. This
- * module never returns "" on a parse failure: the try/catch-return-"" shape
- * of dynamics.ts is the anti-pattern (a crash and "nothing to report" must
- * not be the same string).
+ * Every malformed producer row becomes a MALFORMED line. This module never
+ * returns "" on a parse failure.
  *
- * Not yet in v1 (documented gaps, see design §7): literature estimates with
- * locators, replication agent results, flag-answer round, countersigner
- * agent-id check, the L3 table itself.
+ * Not in v1 (documented): literature estimates with locators beyond the
+ * `anchor` string on a cross_validation entry; the flag→answer round (a
+ * blind flag disputes immediately); the countersigner agent-id check beyond
+ * "harness-written file"; transcript anchoring of limit_check.observed.
  */
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
@@ -61,7 +78,7 @@ export interface Estimate {
   quantity: string;
   value: number;
   sigma?: number;
-  /** "own" | "xval" | "blind" | "posthoc" | "replication" | "literature" */
+  /** "own" | "xval" | "blind" | "posthoc" | "replication" */
   kind: string;
   /** Provenance label, e.g. "E5:computed.master_equation.leakage_40MHz" */
   source: string;
@@ -79,33 +96,36 @@ export interface ClaimRow {
   status: ClaimStatus;
   headline: boolean;
   estimates: Estimate[];
-  /** Human-readable reasons behind the status, deterministic order. */
   reasons: string[];
   observable?: string;
-  /** Ids this quantity depends on (union of declared inputs). */
   inputs: string[];
 }
 
 export interface ClaimTable {
   rows: ClaimRow[];
   verdicts: { id: string; status: ClaimStatus; reads: string[]; experiments: string[] }[];
+  /** Load-bearing set: declared headline ∪ verdict reads ∪ transitive declared inputs ∪ propagation targets. Gates use this. */
   headline: string[];
+  /** Declared set only: frame.md ∪ headline:true. Obligations (blind estimator, reviewer, PI) use this. */
+  headlineDeclared: string[];
   malformed: string[];
-  /** Verdict reads dropped between experiments without a stated replacement. */
+  /** Non-blocking notes (undeclared input keys, etc.). */
+  notes: string[];
   readsDrops: string[];
-  /** True when at least one experiment declared quantities (else legacy). */
   declared: boolean;
-  /** Every quantity declaration, for consumers that need producer scope (claims-review.ts). */
   decls: QuantityDecl[];
+  /** DISCRIMINATOR lines from harness-written reviews, by quantity id. */
+  discriminators: { id: string; text: string }[];
+  disclosedHeadlineCount: number;
 }
 
 // ── parsing ────────────────────────────────────────────────────────────────
 
 const num = (v: unknown): number | undefined =>
   typeof v === "number" && Number.isFinite(v) ? v : undefined;
+const posNum = (v: unknown): number | undefined => { const n = num(v); return n !== undefined && n > 0 ? n : undefined; };
 
 function leafAt(obj: any, dotted: string): unknown {
-  // "computed.a.b[2].c" — arrays index as [i]
   const parts = dotted.replace(/\[(\d+)\]/g, ".$1").split(".");
   let cur = obj;
   for (const p of parts) {
@@ -134,8 +154,8 @@ function parseExperiment(id: string, j: any): Parsed {
       inputs: {},
     };
     if (q.uncertainty !== undefined) {
-      const u = num(q.uncertainty);
-      if (u === undefined || u <= 0) out.malformed.push(`${id}: quantities[${i}] (${q.id}) uncertainty must be a positive number, got ${JSON.stringify(q.uncertainty)}`);
+      const u = posNum(q.uncertainty);
+      if (u === undefined) out.malformed.push(`${id}: quantities[${i}] (${q.id}) uncertainty must be a positive number, got ${JSON.stringify(q.uncertainty)}`);
       else decl.uncertainty = u;
     }
     if (typeof q.uncertainty_source === "string") decl.uncertaintySource = q.uncertainty_source;
@@ -173,7 +193,12 @@ function parseExperiment(id: string, j: any): Parsed {
       continue;
     }
     const replaces: Record<string, string> = {};
-    if (v.replaces && typeof v.replaces === "object") for (const [a, b] of Object.entries(v.replaces)) if (typeof b === "string") replaces[a] = b;
+    if (v.replaces && typeof v.replaces === "object") {
+      for (const [a, b] of Object.entries(v.replaces)) {
+        if (typeof b !== "string" || !v.reads.includes(b)) out.malformed.push(`${id}: verdicts[${i}] (${v.id}) replaces.${a} must name a quantity id that this verdict reads (got ${JSON.stringify(b)})`);
+        else replaces[a] = b;
+      }
+    }
     out.verdicts.push({ id: v.id, experiment: id, reads: v.reads, replaces });
   }
   // Harvested cross_validation value_b: an estimate of whatever quantity the
@@ -186,7 +211,7 @@ function parseExperiment(id: string, j: any): Parsed {
     const b = num(x?.value_b);
     if (b === undefined) continue;
     out.estimates.push({
-      quantity: qid, value: b, sigma: num(x?.sigma_b), kind: "xval",
+      quantity: qid, value: b, sigma: posNum(x?.sigma_b), kind: "xval",
       source: `${id}:xval:${String(x?.method_b ?? "?").slice(0, 40)}`, experiment: id,
       script: typeof x?.artifact_b === "string" ? x.artifact_b : undefined,
       inputs: (x?.inputs_b && typeof x.inputs_b === "object") ? x.inputs_b : undefined,
@@ -196,6 +221,14 @@ function parseExperiment(id: string, j: any): Parsed {
   return out;
 }
 
+// Reviewer-line grammar. The separator must be whitespace-delimited so a
+// leading minus sign on the value is never eaten (505d006's lesson).
+const NUM = String.raw`[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?`;
+export const ESTIMATE_LINE_RE = new RegExp(String.raw`^\s*ESTIMATE(\(blind\))?:\s*(\S+)\s+[—–-]+\s+(${NUM})(?:\s*(?:±|\+/-)\s*(${NUM}))?\s*(?:via\s+(.*?))?(?:\s+[—–-]+\s*inputs:\s*(.*))?\s*$`);
+const SCALING_LINE_RE = new RegExp(String.raw`^\s*SCALING:\s*(\S+)\s+[—–-]+\s+expected\s+(${NUM})\s+in\s+\S+;\s*observed\s+(${NUM}|not swept)`);
+/** Only files the HARNESS writes carry attestations; any agent may create other files under reviews/. */
+export const HARNESS_REVIEW_FILE_RE = /^(experiment_review_[^/]+_r\d+\.md|pi_feedback\.md)$/;
+
 export interface ReviewerLines {
   blind: Estimate[];
   posthoc: Estimate[];
@@ -203,40 +236,40 @@ export interface ReviewerLines {
   independent: Set<string>;
   anchorOk: Set<string>;
   discloseOk: Set<string>;
+  discriminators: { id: string; text: string }[];
+  malformed: string[];
 }
 
-const NUM = String.raw`[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?`;
-
-/** Parse reviewer/PI lines from every reviews/*.md (design §3.5). */
+/** Parse reviewer/PI lines from harness-written review files (design §3.5). */
 export function parseReviewerLines(projectDir: string): ReviewerLines {
-  const out: ReviewerLines = { blind: [], posthoc: [], scaling: [], independent: new Set(), anchorOk: new Set(), discloseOk: new Set() };
+  const out: ReviewerLines = { blind: [], posthoc: [], scaling: [], independent: new Set(), anchorOk: new Set(), discloseOk: new Set(), discriminators: [], malformed: [] };
   const dir = join(projectDir, "reviews");
   if (!existsSync(dir)) return out;
-  const est = new RegExp(String.raw`^\s*ESTIMATE(\(blind\))?:\s*(\S+)\s+[—-]+\s*(${NUM})(?:\s*(?:±|\+/-)\s*(${NUM}))?\s*(?:via\s+(.*?))?(?:\s+[—-]+\s*inputs:\s*(.*))?\s*$`);
-  const sc = new RegExp(String.raw`^\s*SCALING:\s*(\S+)\s+[—-]+\s*expected\s+(${NUM})\s+in\s+\S+;\s*observed\s+(${NUM}|not swept)`);
-  for (const f of readdirSync(dir).filter((f) => f.endsWith(".md")).sort()) {
+  for (const f of readdirSync(dir).filter((f) => HARNESS_REVIEW_FILE_RE.test(f)).sort()) {
     let text = "";
-    try { text = readFileSync(join(dir, f), "utf-8"); } catch { continue; }
+    try { text = readFileSync(join(dir, f), "utf-8"); } catch (err) { out.malformed.push(`reviews/${f}: unreadable (${(err as Error).message.slice(0, 60)})`); continue; }
     for (const raw of text.split("\n")) {
       const line = raw.trim();
-      let m = line.match(est);
-      if (m) {
+      if (/^ESTIMATE(\(blind\))?:/.test(line)) {
+        const m = line.match(ESTIMATE_LINE_RE);
+        if (!m) { out.malformed.push(`reviews/${f}: unparseable estimate line "${line.slice(0, 80)}"`); continue; }
         const inputs: Record<string, number> = {};
         let producerSupplied = false;
         if (m[6]) {
           for (const tok of m[6].split(/[,\s\[\]]+/).filter(Boolean)) {
             const kv = tok.split("=");
-            if (kv.length === 2 && num(Number(kv[1])) !== undefined) inputs[kv[0]] = Number(kv[1]);
+            if (kv.length === 2 && Number.isFinite(Number(kv[1]))) inputs[kv[0]] = Number(kv[1]);
             if (/^producer$/i.test(tok)) producerSupplied = true;
           }
         }
-        const e: Estimate = { quantity: m[2], value: Number(m[3]), sigma: m[4] ? Number(m[4]) : undefined, kind: m[1] ? "blind" : "posthoc", source: `review:${f}`, script: `review:${f}:${m[5] ?? ""}`, inputs, anchor: undefined };
-        if (producerSupplied) e.kind = "posthoc"; // entirely producer-supplied inputs never flag (design §3.5)
+        const e: Estimate = { quantity: m[2], value: Number(m[3]), sigma: m[4] ? posNum(Number(m[4])) : undefined, kind: m[1] && !producerSupplied ? "blind" : "posthoc", source: `review:${f}`, script: `review:${f}:${m[5] ?? ""}`, inputs };
         (e.kind === "blind" ? out.blind : out.posthoc).push(e);
         continue;
       }
-      m = line.match(sc);
+      let m = line.match(SCALING_LINE_RE);
       if (m) { out.scaling.push({ id: m[1], expected: Number(m[2]), observed: m[3] === "not swept" ? undefined : Number(m[3]) }); continue; }
+      if (/^SCALING:/.test(line)) { out.malformed.push(`reviews/${f}: unparseable scaling line "${line.slice(0, 80)}"`); continue; }
+      m = line.match(/^DISCRIMINATOR:\s*(\S+)/); if (m) { out.discriminators.push({ id: m[1], text: line }); continue; }
       m = line.match(/^INDEPENDENT:\s*(\S+)/); if (m) { out.independent.add(m[1]); continue; }
       m = line.match(/^ANCHOR-OK:\s*(\S+)/); if (m) { out.anchorOk.add(m[1]); continue; }
       m = line.match(/^DISCLOSE-OK:\s*(\S+)/); if (m) { out.discloseOk.add(m[1]); continue; }
@@ -250,7 +283,7 @@ export function parseFrameHeadline(projectDir: string): string[] {
   let text = "";
   try { text = readFileSync(join(projectDir, "notes", "frame.md"), "utf-8"); } catch { return []; }
   // No `m` flag: with it, `$` matches every line end and the lazy body stops at
-  // the first blank line (observed: the fixture's four ids parsed as none).
+  // the first blank line.
   const m = text.match(/(?:^|\n)##+[ \t]*Headline quantities[^\n]*\n([\s\S]*?)(?=\n##|$)/i);
   if (!m) return [];
   const ids: string[] = [];
@@ -270,11 +303,12 @@ function parseDisclosures(projectDir: string): Set<string> {
   return out;
 }
 
-// ── comparison rules (design §3.3, §3.4) ───────────────────────────────────
+// ── comparison rules (design §3.3, §3.4; audit-hardened) ───────────────────
 
 const WIRING_REL = 1e-6;
 const SIGMA_K = 2;
-const NO_SIGMA_DISPUTE_RATIO = 3;
+const RATIO_VETO = 3;
+const SIGMA_CAP_FRAC = 0.5;
 const SCALING_TOL = 0.5;
 
 function relDiff(a: number, b: number): number {
@@ -285,7 +319,8 @@ function relDiff(a: number, b: number): number {
 export type PairRelation = "wiring" | "incomparable" | "comparable";
 
 export function relation(a: Estimate, b: Estimate): { rel: PairRelation; differing: string[] } {
-  if (relDiff(a.value, b.value) < WIRING_REL) return { rel: "wiring", differing: [] };
+  const bothInt = Number.isInteger(a.value) && Number.isInteger(b.value);
+  if (!bothInt && relDiff(a.value, b.value) < WIRING_REL) return { rel: "wiring", differing: [] };
   if (a.script && b.script && a.script === b.script) return { rel: "wiring", differing: [] };
   const differing: string[] = [];
   if (a.inputs && b.inputs) {
@@ -297,15 +332,22 @@ export function relation(a: Estimate, b: Estimate): { rel: PairRelation; differi
   return { rel: "comparable", differing: [] };
 }
 
-/** "agree" | "disagree" | "undecidable" (missing sigma and within 3x). */
+/**
+ * "agree" | "disagree" | "undecidable". A ratio > 3× (or a sign flip)
+ * disagrees regardless of σ; σ is capped at half the value so a producer
+ * cannot declare its way out of a dispute; missing σ on either side is
+ * undecidable inside the ratio.
+ */
 export function agreement(a: Estimate, b: Estimate): "agree" | "disagree" | "undecidable" {
+  const hi = Math.max(Math.abs(a.value), Math.abs(b.value)), lo = Math.min(Math.abs(a.value), Math.abs(b.value));
+  if (lo === 0 ? hi > 0 : hi / lo > RATIO_VETO) return "disagree";
+  if (Math.sign(a.value) !== Math.sign(b.value) && a.value !== 0 && b.value !== 0) return "disagree";
   if (a.sigma !== undefined && b.sigma !== undefined) {
-    const s = Math.sqrt(a.sigma * a.sigma + b.sigma * b.sigma);
+    const sa = Math.min(a.sigma, SIGMA_CAP_FRAC * Math.abs(a.value) || a.sigma);
+    const sb = Math.min(b.sigma, SIGMA_CAP_FRAC * Math.abs(b.value) || b.sigma);
+    const s = Math.sqrt(sa * sa + sb * sb);
     return Math.abs(a.value - b.value) <= SIGMA_K * s ? "agree" : "disagree";
   }
-  const hi = Math.max(Math.abs(a.value), Math.abs(b.value)), lo = Math.min(Math.abs(a.value), Math.abs(b.value));
-  if (lo === 0 ? hi > 0 : hi / lo > NO_SIGMA_DISPUTE_RATIO) return "disagree";
-  if (Math.sign(a.value) !== Math.sign(b.value) && a.value !== 0 && b.value !== 0) return "disagree";
   return "undecidable";
 }
 
@@ -316,7 +358,9 @@ export function buildClaimTable(projectDir: string): ClaimTable {
   const verdicts: VerdictDecl[] = [];
   const estimates: Estimate[] = [];
   const malformed: string[] = [];
-  for (const e of listExperimentDirs(projectDir)) {
+  const notes: string[] = [];
+  const dirs = [...listExperimentDirs(projectDir)].sort((x, y) => x.id.localeCompare(y.id, undefined, { numeric: true }));
+  for (const e of dirs) {
     if (!e.latestResults) continue;
     let j: any;
     try { j = JSON.parse(readFileSync(e.latestResults, "utf-8")); }
@@ -325,7 +369,7 @@ export function buildClaimTable(projectDir: string): ClaimTable {
     decls.push(...p.quantities); verdicts.push(...p.verdicts); estimates.push(...p.estimates); malformed.push(...p.malformed);
   }
   // Replicator results (design §3.6.2): data/experiments/<dir>/replication/results.json.
-  for (const e of listExperimentDirs(projectDir)) {
+  for (const e of dirs) {
     const p = join(e.dir, "replication", "results.json");
     if (!existsSync(p)) continue;
     try {
@@ -334,30 +378,44 @@ export function buildClaimTable(projectDir: string): ClaimTable {
       if (typeof r?.quantity !== "string" || v === undefined) { malformed.push(`${e.id}: replication/results.json needs {quantity: string, value: number}`); continue; }
       const inputs: Record<string, number> = {};
       if (r?.inputs && typeof r.inputs === "object") for (const [k, x] of Object.entries(r.inputs)) { const n = num(x); if (n !== undefined) inputs[k] = n; }
-      estimates.push({ quantity: r.quantity, value: v, sigma: num(r?.sigma), kind: "replication", source: `${e.id}:replication`, experiment: e.id, script: `replication:${e.id}:${String(r?.script ?? "")}`, inputs });
+      estimates.push({ quantity: r.quantity, value: v, sigma: posNum(r?.sigma), kind: "replication", source: `${e.id}:replication`, experiment: e.id, script: `replication:${e.id}:${String(r?.script ?? "")}`, inputs });
     } catch (err) { malformed.push(`${e.id}: replication/results.json unparseable (${(err as Error).message.slice(0, 60)})`); }
   }
   const declared = decls.length > 0 || verdicts.length > 0;
   const rev = parseReviewerLines(projectDir);
+  malformed.push(...rev.malformed);
   estimates.push(...rev.blind, ...rev.posthoc);
+  estimates.sort((a, b) => a.quantity.localeCompare(b.quantity) || a.source.localeCompare(b.source));
   const disclosures = parseDisclosures(projectDir);
 
   const ids = [...new Set([...decls.map((d) => d.id), ...estimates.map((e) => e.quantity)])].sort();
+  const known = new Set(ids);
   const declsById = new Map<string, QuantityDecl[]>();
   for (const d of decls) declsById.set(d.id, [...(declsById.get(d.id) ?? []), d]);
 
-  // Headline set: frame.md ∪ headline:true ∪ reads of in-set verdicts ∪ propagation targets (added below).
-  const headline = new Set<string>([...parseFrameHeadline(projectDir), ...decls.filter((d) => d.headline).map((d) => d.id)]);
+  // Undeclared input keys are noted, never grown into ids.
+  for (const d of decls) for (const k of Object.keys(d.inputs)) if (!known.has(k)) notes.push(`${d.experiment}: ${d.id} reads input "${k}" which is not a declared quantity id — it takes part in no comparison or propagation`);
+  // One number, two names: own estimates of DIFFERENT ids within wiring tolerance.
+  {
+    const owns = estimates.filter((e) => e.kind === "own" && !Number.isInteger(e.value) && e.value !== 0);
+    for (let i = 0; i < owns.length; i++) for (let k = i + 1; k < owns.length; k++) {
+      if (owns[i].quantity !== owns[k].quantity && relDiff(owns[i].value, owns[k].value) < WIRING_REL) {
+        malformed.push(`${owns[i].source} and ${owns[k].source} carry the same number under two ids (${owns[i].quantity}, ${owns[k].quantity}) — one quantity, one id`);
+      }
+    }
+  }
+
+  // Headline sets.
+  const headlineDeclared = new Set<string>([...parseFrameHeadline(projectDir), ...decls.filter((d) => d.headline).map((d) => d.id)]);
+  const headline = new Set<string>(headlineDeclared);
   const verdictById = new Map<string, VerdictDecl[]>();
   for (const v of verdicts) verdictById.set(v.id, [...(verdictById.get(v.id) ?? []), v]);
-  for (const [vid, vs] of verdictById) if (headline.has(vid)) for (const v of vs) for (const r of v.reads) headline.add(r);
-  // Load-bearing closure: every declared input of a headline quantity is
-  // itself headline (transitively) — the number the abstract rests on is the
-  // one that must be reviewed, whatever key it sits under (E5's leakage was
-  // never in the abstract; E6's fidelity built on it was).
+  for (const [vid, vs] of verdictById) if (headline.has(vid)) for (const v of vs) for (const r of v.reads) if (known.has(r)) headline.add(r);
+  // Load-bearing closure over DECLARED inputs — the number the abstract rests
+  // on must be reviewed whatever key it sits under. Gates use `headline`;
+  // obligations use `headlineDeclared` (design §3.4, audit 2026-08-26).
   {
     const inputsOfId = (id: string) => (declsById.get(id) ?? []).flatMap((d) => Object.keys(d.inputs));
-    const known = new Set(ids);
     let grew = true;
     while (grew) {
       grew = false;
@@ -365,7 +423,6 @@ export function buildClaimTable(projectDir: string): ClaimTable {
     }
   }
 
-  // Pass 1: per-quantity intrinsic status from estimate pairs.
   type Intr = { status: ClaimStatus; reasons: string[]; propagate: string[] };
   const intrinsic = new Map<string, Intr>();
   for (const id of ids) {
@@ -378,10 +435,10 @@ export function buildClaimTable(projectDir: string): ClaimTable {
       const a = producers[i], b = producers[k];
       const { rel, differing } = relation(a, b);
       const ag = agreement(a, b);
-      if (rel === "wiring") { if (ag === "agree" || ag === "undecidable") reasons.push(`wiring: ${a.source} ≈ ${b.source}`); continue; }
+      if (rel === "wiring") { if (ag !== "disagree") reasons.push(`wiring: ${a.source} ≈ ${b.source}`); continue; }
       if (rel === "incomparable") {
         reasons.push(`incomparable: ${a.source} vs ${b.source} differ in inputs ${differing.join(",")}`);
-        if (ag === "disagree") { propagate.push(...differing); reasons.push(`dispute propagated to ${differing.join(",")}`); }
+        if (ag === "disagree") { const ups = differing.filter((u) => known.has(u)); propagate.push(...ups); if (ups.length) reasons.push(`dispute propagated to ${ups.join(",")}`); }
         continue;
       }
       if (ag === "disagree") { disputed = true; reasons.push(`disagree: ${a.source}=${a.value} vs ${b.source}=${b.value}`); }
@@ -394,17 +451,15 @@ export function buildClaimTable(projectDir: string): ClaimTable {
         } else reasons.push(`agree but unattested (no INDEPENDENT line): ${a.source} ~ ${b.source}`);
       } else reasons.push(`undecidable (missing σ): ${a.source} vs ${b.source}`);
     }
-    // Reviewer blind estimates: flag → disputed (v1: no answer round yet).
     const own = producers.find((e) => e.kind === "own");
     for (const bl of rev.blind.filter((e) => e.quantity === id)) {
       if (own && agreement(own, bl) === "disagree") { disputed = true; reasons.push(`blind reviewer estimate ${bl.value} disagrees with ${own.source}=${own.value} (unanswered)`); }
     }
-    // Scaling exponent mismatch.
     for (const s of rev.scaling.filter((s) => s.id === id)) {
       if (s.observed !== undefined && Math.abs(s.observed - s.expected) > SCALING_TOL) { disputed = true; reasons.push(`scaling: observed exponent ${s.observed} vs expected ${s.expected}`); }
     }
-    // Limit check counts as anchor only when reviewer attested ANCHOR-OK.
     for (const d of declsById.get(id) ?? []) {
+      if (d.uncertaintySource && d.uncertainty !== undefined) reasons.push(`σ ${d.uncertainty} (${d.uncertaintySource.slice(0, 60)})`);
       if (d.limitCheck) {
         const passes = d.limitCheck.expected === 0 ? Math.abs(d.limitCheck.observed) <= (d.uncertainty ?? 1e-9) : relDiff(d.limitCheck.expected, d.limitCheck.observed) <= 0.1;
         if (rev.anchorOk.has(id) && passes) { anchoredAgree = anchoredAgree || agreeingPair; reasons.push(`limit anchored (ANCHOR-OK): ${d.limitCheck.limit}`); }
@@ -420,16 +475,17 @@ export function buildClaimTable(projectDir: string): ClaimTable {
     if (!anyOwnSigma && agreeingPair) reasons.push("no σ on own estimate: capped at indicative");
     intrinsic.set(id, { status, reasons, propagate });
   }
-  // Propagation: an incomparable disagreement disputes the differing upstream id (and pulls it into headline).
   for (const [id, intr] of intrinsic) for (const up of intr.propagate) {
     headline.add(up);
     const t = intrinsic.get(up) ?? { status: "indicative", reasons: [], propagate: [] };
     if (t.status !== "disputed" && t.status !== "disclosed") { t.status = "disputed"; t.reasons.push(`disputed by propagation from ${id}`); }
     intrinsic.set(up, t);
   }
-  // Pass 2: conditional via inputs (disputed upstream) — fixed point.
+  // Conditional via disputed/disclosed/conditional inputs — fixed point.
+  // (Design §3.4 also lists `indicative` inputs; not applied — it would make
+  // nearly every quantity conditional. Recorded deviation.)
   const RANK: Record<ClaimStatus, number> = { corroborated: 5, converging: 4, indicative: 3, conditional: 2, disclosed: 1, disputed: 0 };
-  const inputsOf = (id: string) => [...new Set((declsById.get(id) ?? []).flatMap((d) => Object.keys(d.inputs)))];
+  const inputsOf = (id: string) => [...new Set((declsById.get(id) ?? []).flatMap((d) => Object.keys(d.inputs)).filter((k) => known.has(k)))];
   let changed = true;
   while (changed) {
     changed = false;
@@ -445,15 +501,13 @@ export function buildClaimTable(projectDir: string): ClaimTable {
     estimates: estimates.filter((e) => e.quantity === id),
     reasons: intrinsic.get(id)!.reasons, observable: (declsById.get(id) ?? []).find((d) => d.observable)?.observable, inputs: inputsOf(id),
   }));
-  // Verdicts inherit the minimum status of what they read.
-  const vRows = [...verdictById.entries()].sort().map(([vid, vs]) => {
+  const vRows = [...verdictById.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([vid, vs]) => {
     const reads = [...new Set(vs.flatMap((v) => v.reads))];
     let status: ClaimStatus = "corroborated";
     for (const r of reads) { const s = intrinsic.get(r)?.status ?? "indicative"; if (RANK[s] < RANK[status]) status = s; }
     if (status === "disputed" || status === "disclosed") status = "conditional";
     return { id: vid, status, reads, experiments: vs.map((v) => v.experiment) };
   });
-  // Reads-diff: a verdict declared by several experiments must not silently drop a read.
   const readsDrops: string[] = [];
   for (const [vid, vs] of verdictById) {
     const sorted = [...vs].sort((a, b) => a.experiment.localeCompare(b.experiment, undefined, { numeric: true }));
@@ -462,37 +516,53 @@ export function buildClaimTable(projectDir: string): ClaimTable {
       for (const r of prev) if (!cur.reads.includes(r) && !(r in cur.replaces)) readsDrops.push(`${vid}: ${cur.experiment} dropped read ${r} (present in ${sorted[i - 1].experiment}) with no replaces entry`);
     }
   }
-  return { rows, verdicts: vRows, headline: [...headline].sort(), malformed, readsDrops, declared, decls };
+  const disclosedHeadlineCount = rows.filter((r) => r.headline && r.status === "disclosed").length;
+  return {
+    rows, verdicts: vRows, headline: [...headline].sort(), headlineDeclared: [...headlineDeclared].sort(),
+    malformed, notes, readsDrops, declared, decls, discriminators: rev.discriminators, disclosedHeadlineCount,
+  };
 }
 
 // ── gate + render ──────────────────────────────────────────────────────────
 
 export interface ClaimIssue { blocking: boolean; text: string }
 
-/** Finish-gate issues (design §3.4, §3.8, §3.9). Empty for legacy projects (no declarations). */
+const LEGAL_MOVES = `Legal moves: run the discriminating computation (a comparable independent estimate under the same quantity id), a blind replication (spawn_agent(agent="replicator", MODE: "replicate")), or a countersigned disclosure (CLAIM-DISCLOSE in notes/memory.md + DISCLOSE-OK from a reviewer or the PI).`;
+
+/** Finish-gate issues (design §3.4, §3.6, §3.9). Empty for legacy projects (no declarations). */
 export function claimTableIssues(projectDir: string, table: ClaimTable = buildClaimTable(projectDir)): ClaimIssue[] {
   if (!table.declared) return [];
   const issues: ClaimIssue[] = [];
   if (table.malformed.length > 0) issues.push({ blocking: true, text: `Malformed quantity declarations:\n  - ${table.malformed.join("\n  - ")}` });
-  for (const d of table.readsDrops) issues.push({ blocking: true, text: `Verdict reads-diff: ${d}. Name the replacement in verdicts[].replaces or restore the read.` });
-  // Abstract legality: claims.json entries whose claim_key maps to a declared quantity.
+  for (const d of table.readsDrops) issues.push({ blocking: true, text: `Verdict reads-diff: ${d}. Name the replacement in verdicts[].replaces (it must be a quantity this verdict reads) or restore the read.` });
+  if (table.disclosedHeadlineCount > 1) issues.push({ blocking: true, text: `${table.disclosedHeadlineCount} headline quantities are DISCLOSED disputes. A report resting on more than one disclosed dispute is a review request, not a report — escalate to the operator (notes/escalations/needs-operator.md) instead of shipping.` });
   let claims: any[] = [];
   try { claims = JSON.parse(readFileSync(join(projectDir, "report", "claims.json"), "utf-8")); } catch { claims = []; }
   if (Array.isArray(claims)) {
+    const rowById = new Map(table.rows.map((r) => [r.id, r]));
     const keyToRow = new Map<string, ClaimRow>();
     for (const row of table.rows) for (const est of row.estimates) if (est.kind === "own") keyToRow.set(est.source.split(":").slice(1).join(":"), row);
+    const bad = new Set<ClaimStatus>(["disputed", "conditional"]);
     for (const c of claims) {
       const key = String(c?.claim_key ?? "");
-      const row = key ? keyToRow.get(key) : undefined;
-      if (!row) continue;
+      const qid = typeof c?.quantity_id === "string" ? c.quantity_id : "";
+      let row = (qid && rowById.get(qid)) || (key ? keyToRow.get(key) : undefined);
       const ctx = String(c?.tex_context ?? "").slice(0, 60);
-      if (!row.headline) issues.push({ blocking: true, text: `"${ctx}" cites ${row.id}, which is outside the headline set (${table.headline.join(", ") || "empty"}). Add it to notes/frame.md "Headline quantities" or mark headline:true — the set never widens silently.` });
-      if (row.status === "disputed" || row.status === "conditional") {
-        issues.push({ blocking: true, text: `"${ctx}" cites ${row.id} whose status is ${row.status} (${row.reasons.slice(-2).join("; ")}). Legal moves: run the discriminating computation (a comparable independent estimate), a blind replication, or a countersigned disclosure (CLAIM-DISCLOSE in notes/memory.md + DISCLOSE-OK by a non-producer reviewer).` });
+      // Value-level match: a disputed/conditional number re-keyed or re-named
+      // is still that number (audit C3).
+      if (!row) {
+        const cv = Number(c?.value);
+        if (Number.isFinite(cv) && cv !== 0) {
+          for (const r of table.rows) if (bad.has(r.status) && r.estimates.some((e) => [cv, cv / 100, cv * 100].some((v) => relDiff(v, e.value) <= 5e-3))) { row = r; break; }
+        }
+        if (!row) continue;
+        issues.push({ blocking: true, text: `"${ctx}" carries a value equal to an estimate of ${row.id} (status ${row.status}) under a different key — the same number under another name inherits the status. ${LEGAL_MOVES}` });
+        continue;
       }
+      if (!row.headline) issues.push({ blocking: true, text: `"${ctx}" cites ${row.id}, which is outside the headline set (${table.headline.join(", ") || "empty"}). Add it to notes/frame.md "Headline quantities" or mark headline:true — the set never widens silently.` });
+      if (bad.has(row.status)) issues.push({ blocking: true, text: `"${ctx}" cites ${row.id} whose status is ${row.status} (${row.reasons.slice(-2).join("; ")}). ${LEGAL_MOVES}` });
     }
-    const abstractNumbers = claims.length;
-    if (abstractNumbers > 0 && table.headline.length === 0) issues.push({ blocking: true, text: `claims.json carries ${abstractNumbers} entries but the headline set is empty — declare headline quantity ids in notes/frame.md.` });
+    if (claims.length > 0 && table.headline.length === 0) issues.push({ blocking: true, text: `claims.json carries ${claims.length} entries but the headline set is empty — declare headline quantity ids in notes/frame.md.` });
   }
   return issues;
 }
@@ -509,7 +579,11 @@ export function renderClaimTable(table: ClaimTable, maxRows = 12): string {
   for (const v of table.verdicts) lines.push(`- verdict ${v.id} ${v.status.toUpperCase()} reads: ${v.reads.join(", ")}`);
   for (const d of table.readsDrops) lines.push(`- READS-DROP ${d}`);
   for (const m of table.malformed) lines.push(`- MALFORMED ${m}`);
+  for (const n of table.notes.slice(0, 4)) lines.push(`- NOTE ${n}`);
   const hidden = table.rows.length - rows.length;
   const bad = table.rows.filter((r) => r.headline && (r.status === "disputed" || r.status === "conditional"));
-  return `<claim_status>\n${lines.join("\n")}${hidden > 0 ? `\n(+ ${hidden} non-headline rows not shown)` : ""}\nship: ${bad.length === 0 ? "no headline quantity disputed/conditional" : `${bad.length} headline quantit${bad.length === 1 ? "y" : "ies"} disputed/conditional → abstract blocked (${bad.map((r) => r.id).join(", ")})`}\n</claim_status>`;
+  const frontier = table.discriminators.filter((d) => bad.some((r) => r.id === d.id)).slice(0, 3).map((d, i) => `frontier[${i + 1}]: ${d.text.slice(0, 200)}`);
+  return `<claim_status>\n${lines.join("\n")}${hidden > 0 ? `\n(+ ${hidden} non-headline rows not shown)` : ""}` +
+    (frontier.length ? `\n${frontier.join("\n")}` : "") +
+    `\nship: ${bad.length === 0 ? "no headline quantity disputed/conditional" : `${bad.length} headline quantit${bad.length === 1 ? "y" : "ies"} disputed/conditional → abstract blocked (${bad.map((r) => r.id).join(", ")})`}; discloses used: ${table.disclosedHeadlineCount}/1\n</claim_status>`;
 }

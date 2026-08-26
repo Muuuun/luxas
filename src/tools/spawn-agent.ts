@@ -593,8 +593,13 @@ export function createSpawnAgentTool(
           // observable sentence and input values only; its ESTIMATE(blind)
           // line is handed to the reviewer and persisted with the review so
           // claims-table.ts can read it. LUXAS_BLIND_ESTIMATE=0 disables.
-          const headlineDecls = (() => { try { return headlineDeclsFor(buildClaimTable(projectDir), experimentId); } catch { return []; } })();
-          const headlineIds = [...new Set(headlineDecls.map((d) => d.id))];
+          const claimNotes: string[] = [];
+          const scopeFor = () => {
+            try { return headlineDeclsFor(buildClaimTable(projectDir), experimentId); }
+            catch (err) { claimNotes.push(`[claim-table MALFORMED: ${(err as Error).message.slice(0, 120)} — no blind estimate or reviewer obligation could be computed]`); return []; }
+          };
+          let headlineDecls = scopeFor();
+          let headlineIds = [...new Set(headlineDecls.map((d) => d.id))];
           const blindLines: string[] = [];
           if (MAX_REVIEW_ITERATIONS > 0 && process.env.LUXAS_BLIND_ESTIMATE !== "0") {
             for (const decl of headlineDecls) {
@@ -611,10 +616,11 @@ export function createSpawnAgentTool(
                 });
                 const line = extractBlindEstimate(est.output ?? "", decl.id);
                 if (line) blindLines.push(line);
-              } catch { /* an estimator failure is recorded as its absence, never as silence about the review */ }
+                else claimNotes.push(`[blind estimator for ${decl.id} returned no ESTIMATE(blind) line]`);
+              } catch (err) { claimNotes.push(`[blind estimator for ${decl.id} failed: ${(err as Error).message.slice(0, 100)}]`); }
             }
           }
-          const obligation = reviewerObligationBlock(headlineIds, blindLines);
+          let obligation = reviewerObligationBlock(headlineIds, blindLines);
           // MAX=0 short-circuits the loop body and falls through to return.
           for (let round = 1; round <= MAX_REVIEW_ITERATIONS; round++) {
             const reviewResult = await spawnAgent({
@@ -635,21 +641,16 @@ export function createSpawnAgentTool(
             });
 
             const verdictText = reviewResult.output ?? "";
-            // Persist the reviewer's obligation lines (it has no write tool);
-            // an incomplete review is recorded as NO REVIEW for the missing
-            // quantities and the reviewer is re-run, not the experiment.
+            // Persist the reviewer's obligation lines (it has no write tool).
+            // An incomplete review keeps its VERDICT/FEEDBACK (a substantive
+            // critique is never discarded for a missing ritual line) but its
+            // attestations are withheld and the quantities are NO REVIEW.
             const reviewLines = extractReviewerLines(verdictText);
             const missing = reviewCompleteness(reviewLines, headlineIds);
             const verdictLineMatch = verdictText.match(/^\s*#{0,6}\s*VERDICT:\s*\w+.*$/im);
             try { persistReview(projectDir, experimentId, round, blindLines, reviewLines, verdictLineMatch ? verdictLineMatch[0].trim() : "VERDICT: (none)", missing); }
-            catch { /* persistence failure must not abort the loop; the table will show no review */ }
-            if (missing.length > 0) {
-              if (round === MAX_REVIEW_ITERATIONS) {
-                result = { ...result, output: result.output + `\n\n---\n[experiment_reviewer round ${round}: NO REVIEW — no DISCRIMINATOR for ${missing.join(", ")}; the quantities stay unreviewed]` };
-                break;
-              }
-              continue; // re-run the reviewer with the same obligation, not the experiment
-            }
+            catch (err) { claimNotes.push(`[review persistence failed round ${round}: ${(err as Error).message.slice(0, 100)}]`); }
+            if (missing.length > 0) claimNotes.push(`[experiment_reviewer round ${round}: NO REVIEW for ${missing.join(", ")} — DISCRIMINATOR/SCALING lines missing; attestations withheld]`);
             // Anchor to a standalone verdict line — reviewer.md emits
             // "VERDICT: satisfied" as the LAST line. The old substring match
             // false-passed on prose like "I cannot return VERDICT: satisfied"
@@ -660,7 +661,7 @@ export function createSpawnAgentTool(
                 ...result,
                 output:
                   result.output +
-                  `\n\n---\n[experiment_reviewer round ${round}: SATISFIED]`,
+                  `\n\n---\n[experiment_reviewer round ${round}: SATISFIED]` + (claimNotes.length ? `\n${claimNotes.join("\n")}` : ""),
               };
               break;
             }
@@ -674,7 +675,7 @@ export function createSpawnAgentTool(
                 ...result,
                 output:
                   result.output +
-                  `\n\n---\n[experiment_reviewer round ${round}: REVISE but iteration cap reached — accepting current state with open issues]\n\nOutstanding reviewer feedback:\n${feedback}`,
+                  `\n\n---\n[experiment_reviewer round ${round}: REVISE but iteration cap reached — accepting current state with open issues]\n\nOutstanding reviewer feedback:\n${feedback}` + (claimNotes.length ? `\n${claimNotes.join("\n")}` : ""),
               };
               break;
             }
@@ -691,6 +692,11 @@ export function createSpawnAgentTool(
               `## Original task (for reference)\n\n${initialTask}`;
             result = await spawnAgent({ ...baseOpts, prompt: revisionTask, contextExtra: { task: revisionTask } });
             if (!result.success) break;
+            // The revision may have re-declared quantities: recompute the
+            // obligation scope for the next round (blind lines are reused).
+            headlineDecls = scopeFor();
+            headlineIds = [...new Set(headlineDecls.map((d) => d.id))];
+            obligation = reviewerObligationBlock(headlineIds, blindLines);
           }
         }
       }

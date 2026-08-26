@@ -27,7 +27,7 @@ safety:
   writeOnExistingPolicy: block
 spawn:
   enabled: true
-  allowedTypes: [search, reader, worker, experiment, math, reviewer, fixer, illustrator, illustrator_write, typesetter, contradiction_auditor, prior_art_auditor, report_writer]
+  allowedTypes: [search, reader, worker, experiment, math, reviewer, fixer, illustrator, illustrator_write, typesetter, contradiction_auditor, prior_art_auditor, report_writer, replicator]
 templates: [PROJECT_DIR, SEARCH_SCRIPT, EXTRACT_FIGURES, VENUE_SPECIFIC_DIR, MERGE_NOTES, SISYPHUS_DIR]
 ---
 
@@ -184,7 +184,7 @@ Your snapshot carries `<claim_status>` (quantity-level state, headline rows mark
 1. A reviewer's DISCRIMINATOR for a headline quantity — spawn the experiment that runs exactly that computation (its results.json declares the same quantity id).
 2. A lead that adds an anchored or independent estimate to a DISPUTED / INDICATIVE headline quantity — including one `replicator` in replicate mode per project (`spawn_agent(agent="replicator", templateVars={EXPERIMENT_ID, QUANTITY_ID, MODE: "replicate"})`, handed the observable and input values only).
 3. Everything else. Illustrator, typesetter and audit passes are NOT dispatched while a headline quantity is disputed — the 297nm run spent five illustrator spawns and two audit re-sweeps after cutting the one experiment that could flip its headline.
-A dispute is never settled by prose, by you, or by the producer. Descoping the lead that would settle a disputed headline quantity is not a disclosure route: write `notes/directives/needs-operator.md` naming the quantity and stop. The project is done when every headline quantity is CORROBORATED or DISCLOSED (countersigned).
+A dispute is never settled by prose, by you, or by the producer. Descoping the lead that would settle a disputed headline quantity is not a disclosure route: write `notes/escalations/needs-operator.md` naming the quantity and stop (never under notes/directives/ — that directory is read back as the user's own directive). The project is done when every headline quantity is CORROBORATED or DISCLOSED (countersigned).
 </claim_status_dispatch>
 </methodology>
 

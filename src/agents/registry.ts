@@ -40,6 +40,8 @@ export interface SafetyConfig {
    * bypassing allowedWriteRoots via bash. Supports `{{VAR}}`.
    */
   blockedBashWriteRoots?: string[];
+  /** Bash commands that MENTION these project-relative path prefixes are refused (read-side blindness, claims-first §3.6). */
+  blockedBashPathMentions?: string[];
   /** "block" = reject write on existing (force edit); "allow_as_read" = permit. */
   writeOnExistingPolicy?: "block" | "allow_as_read";
 }
@@ -188,6 +190,7 @@ function buildSafetyConfig(fields: Record<string, any>, filename: string): Safet
     allowedReadRoots: maybeList(block.allowedReadRoots),
     allowedWriteRoots: maybeList(block.allowedWriteRoots),
     blockedBashWriteRoots: maybeList(block.blockedBashWriteRoots),
+    blockedBashPathMentions: maybeList(block.blockedBashPathMentions),
     writeOnExistingPolicy: policy === "block" || policy === "allow_as_read" ? policy : undefined,
   };
 }

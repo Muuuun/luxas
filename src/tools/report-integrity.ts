@@ -206,7 +206,9 @@ export function listExperimentDirs(projectDir: string): ExperimentDir[] {
     }
     out.push({ id: `E${parseInt(m[1], 10)}`, dir, latestResults: latest });
   }
-  return out;
+  // Sorted by experiment number: consumers render into L3 blocks that must be
+  // a pure function of disk state, not of readdir order.
+  return out.sort((a, b) => parseInt(a.id.slice(1), 10) - parseInt(b.id.slice(1), 10) || a.dir.localeCompare(b.dir));
 }
 
 export interface ExperimentRun { n: number; path: string; results: any }
@@ -553,10 +555,11 @@ export function reportIntegrityIssues(projectDir: string): IntegrityIssue[] {
           // under E6's key) — caps the grade at `disputed`.
           {
             const cv = Number(c?.value);
-            const near = (x: number) => Number.isFinite(cv) && Number.isFinite(x) && x !== 0 &&
-              [cv, cv / 100, cv * 100].some((v) => Math.abs(v - x) <= 5e-3 * Math.abs(x));
+            const windows = key ? [cv] : [cv, cv / 100, cv * 100];
+            const near = (x: number) => Number.isFinite(cv) && Number.isFinite(x) && x !== 0 && !exempt(cv) &&
+              windows.some((v) => Math.abs(v - x) <= 5e-3 * Math.abs(x));
             const hit = xvals.find((x2) => xvalVerdict(x2) === "discrepant" &&
-              ((key && String(x2?.claim_key ?? "") === key) || near(Number(x2?.value_a))));
+              ((key && String(x2?.claim_key ?? "") === key) || near(Number(x2?.value_a)) || near(Number(x2?.value_b))));
             if (hit) cap = Math.min(cap, GRADE_ORDER.disputed);
           }
           if (DIVERGENCE_MARKERS.test(String(c?.source_quote ?? ""))) {
@@ -942,11 +945,6 @@ export function reportIntegrityIssues(projectDir: string): IntegrityIssue[] {
                 `not narration. Re-run the computation through bash so the harness sees it.`);
               continue;
             }
-          }
-          if (normText(String(x?.method_a ?? "")) === normText(String(x?.method_b ?? ""))) {
-            problems.push(`${e.id}/${key}: method_a equals method_b ("${String(x?.method_a ?? "").slice(0, 40)}") — ` +
-              `a self-consistency check is not a cross-validation. Name a genuinely independent method.`);
-            continue;
           }
           if (verdict === "discrepant") {
             disputes.push(`${e.id}/${key}: ${x.value_a} (${String(x?.method_a ?? "?").slice(0, 40)}) vs ` +
@@ -1340,6 +1338,17 @@ export function reportIntegrityIssues(projectDir: string): IntegrityIssue[] {
       }
     }
   }
+
+  // Definition concerns from the contradiction auditor (claims-first §3.9):
+  // revise-level advice, never a veto — surfaced so it has a reader.
+  try {
+    const sweep = readFileSync(join(projectDir, "reviews", "contradiction_sweep.md"), "utf-8");
+    const m = sweep.match(/^definition_concerns:\s*(\d+)/m);
+    if (m && parseInt(m[1], 10) > 0) {
+      issues.push({ kind: "claim-status", blocking: false,
+        text: `The contradiction auditor recorded ${m[1]} definition concern(s) (same quantity id with observables that describe different measurements, or a substitution across definitions). Read reviews/contradiction_sweep.md "## Definition concerns" and have the reviewer's DISCRIMINATOR settle which definition the claim needs.` });
+    }
+  } catch { /* no sweep yet — its own gate speaks to that */ }
 
   // Claim-status gate (claims-first design §3.4/§3.9, 2026-08-26): quantity-
   // level statuses computed in src/claims-table.ts. Grandfathered — a project

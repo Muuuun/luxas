@@ -40,6 +40,8 @@ export interface PIVerdict {
   estimates?: PIEstimate[];
   /** DISCRIMINATOR: lines the PI pre-registers (persisted verbatim). */
   discriminators?: string[];
+  /** Quantity ids whose disclosure the PI countersigns (persisted as DISCLOSE-OK lines). */
+  discloseOk?: string[];
   assessment: string;
   issues: string[];
   instructions: string;
@@ -270,6 +272,9 @@ async function evaluateProgress(
       discriminators: Type.Optional(Type.Array(Type.String(), {
         description: 'Lines of the form "DISCRIMINATOR: <id> — if right: …; if wrong: …; computation: …" — the computation that would settle a disputed headline quantity, pre-registered before its result exists.',
       })),
+      disclose_ok: Type.Optional(Type.Array(Type.String(), {
+        description: "Quantity ids whose CLAIM-DISCLOSE (in notes/memory.md) you COUNTERSIGN as an honest, adequately hedged disclosure of an unresolved dispute. You are not the producer; the brain cannot countersign its own proposal.",
+      })),
     }),
     async execute(
       _toolCallId: string,
@@ -280,6 +285,7 @@ async function evaluateProgress(
         instructions: string;
         estimates?: PIEstimate[];
         discriminators?: string[];
+        disclose_ok?: string[];
       },
     ) {
       // Normalize case/whitespace; an unrecognized verdict string must NOT
@@ -295,6 +301,7 @@ async function evaluateProgress(
         instructions: params.instructions ?? "",
         estimates: Array.isArray(params.estimates) ? params.estimates : undefined,
         discriminators: Array.isArray(params.discriminators) ? params.discriminators : undefined,
+        discloseOk: Array.isArray(params.disclose_ok) ? params.disclose_ok.filter((s) => typeof s === "string") : undefined,
       };
       return {
         content: [{ type: "text" as const, text: "Verdict recorded." }],
@@ -344,10 +351,14 @@ async function evaluateProgress(
     try {
       const table = buildClaimTable(opts.projectDir);
       if (table.declared) {
-        const rule = piEstimateRule(final.verdict, final.estimates, table.headline);
+        const rule = piEstimateRule(final.verdict, final.estimates, table.headlineDeclared);
         if (rule.issue) final = { ...final, verdict: rule.verdict, issues: [...final.issues, rule.issue] };
       }
-    } catch { /* a table failure never changes a verdict */ }
+    } catch (err) {
+      // Never silent: a verdict that could not be checked against the claim
+      // table says so in its own issues list.
+      final = { ...final, issues: [...final.issues, `claim table could not be built for this review: ${(err as Error).message.slice(0, 100)}`] };
+    }
     return final;
   }
   if (isPlanReview) {
@@ -604,6 +615,7 @@ function formatFeedback(verdict: PIVerdict, toolCallCount: number): string {
   // Claims-first §3.5: ESTIMATE / DISCRIMINATOR lines, parsed by claims-table.ts
   // from this file (reviews/pi_feedback.md is in its read set).
   const claimLines = formatPIEstimateLines(verdict.estimates, verdict.discriminators);
+  for (const id of verdict.discloseOk ?? []) if (/^[A-Za-z0-9_]+$/.test(id)) claimLines.push(`DISCLOSE-OK: ${id}`);
   if (claimLines.length > 0) lines.push("", "## Claim estimates", ...claimLines);
 
   return lines.join("\n") + "\n";

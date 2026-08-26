@@ -17,7 +17,7 @@
  *    the reviewer runs, from the observable sentence and input values only —
  *    "preregistered" cannot be enforced inside one agent turn (critics' fix).
  *  - Finish escalation: identical blocking message on three consecutive
- *    finish() calls → hand to the operator (notes/directives/needs-operator.md)
+ *    finish() calls → hand to the operator (notes/escalations/needs-operator.md)
  *    instead of iterating. Layered UNDER the 12-call global backstop, which is
  *    untouched (deleting it restored the 441-call bug).
  *  - PI: a `stop` verdict without an estimate for every headline quantity in
@@ -27,7 +27,7 @@
 
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { buildClaimTable, type ClaimTable, type QuantityDecl } from "./claims-table.js";
+import { buildClaimTable, ESTIMATE_LINE_RE, type ClaimTable, type QuantityDecl } from "./claims-table.js";
 
 export const REVIEW_LINE_RE = /^\s*(DISCRIMINATOR|ESTIMATE(?:\(blind\))?|SCALING|INDEPENDENT|ANCHOR-OK|DISCLOSE-OK):\s*(\S+)/;
 
@@ -38,15 +38,21 @@ export function extractReviewerLines(text: string): ReviewLine[] {
   const out: ReviewLine[] = [];
   for (const raw of (text ?? "").split("\n")) {
     const m = raw.match(REVIEW_LINE_RE);
-    if (m) out.push({ kind: m[1].replace("(blind)", ""), quantity: m[2], text: raw.trim() });
+    if (!m) continue;
+    const kind = m[1].replace("(blind)", "");
+    // ESTIMATE lines must parse under the strict grammar the table uses;
+    // otherwise they are recorded as MALFORMED rather than silently dropped.
+    if (kind === "ESTIMATE" && !ESTIMATE_LINE_RE.test(raw)) { out.push({ kind: "MALFORMED", quantity: m[2], text: `MALFORMED-ESTIMATE: ${raw.trim()}` }); continue; }
+    out.push({ kind, quantity: m[2], text: raw.trim() });
   }
   return out;
 }
 
-/** Headline quantity ids missing a DISCRIMINATOR line. Empty = complete. */
+/** Headline quantity ids missing a DISCRIMINATOR or a SCALING line. Empty = complete. */
 export function reviewCompleteness(lines: ReviewLine[], headlineIds: string[]): string[] {
-  const have = new Set(lines.filter((l) => l.kind === "DISCRIMINATOR").map((l) => l.quantity));
-  return headlineIds.filter((id) => !have.has(id));
+  const disc = new Set(lines.filter((l) => l.kind === "DISCRIMINATOR").map((l) => l.quantity));
+  const scal = new Set(lines.filter((l) => l.kind === "SCALING").map((l) => l.quantity));
+  return headlineIds.filter((id) => !disc.has(id) || !scal.has(id));
 }
 
 /** Experiment number ("E5") from an EXPERIMENT_ID like "E5_blockade_floor". */
@@ -55,12 +61,13 @@ export function experimentNumberOf(experimentId: string): string | null {
   return m ? `E${parseInt(m[1], 10)}` : null;
 }
 
-/** This experiment's declarations that are in the headline set (design §3.4). */
+/** This experiment's declarations in the DECLARED headline set (frame.md ∪ headline:true) — the obligation scope (audit 2026-08-26: the load-bearing closure is for gates, not for spawn counts). */
 export function headlineDeclsFor(table: ClaimTable, experimentId: string): QuantityDecl[] {
   const e = experimentNumberOf(experimentId);
   if (!e) return [];
-  const headline = new Set(table.headline);
-  return table.decls.filter((d) => d.experiment === e && (d.headline || headline.has(d.id)) && d.value !== undefined);
+  const headline = new Set(table.headlineDeclared);
+  const seen = new Set<string>();
+  return table.decls.filter((d) => d.experiment === e && (d.headline || headline.has(d.id)) && d.value !== undefined && !seen.has(d.id) && seen.add(d.id));
 }
 
 /** The task handed to a blind `replicator` in estimate mode — observable and input VALUES only (design §3.5). */
@@ -91,16 +98,20 @@ export function persistReview(projectDir: string, experimentId: string, round: n
   const dir = join(projectDir, "reviews");
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   const path = join(dir, `experiment_review_${experimentId}_r${round}.md`);
+  // An incomplete review persists ONLY the blind lines and the marker — its
+  // attestations (INDEPENDENT / ANCHOR-OK / DISCLOSE-OK) must not unlock
+  // anything (audit H5).
+  const persisted = missing.length ? reviewerLines.filter((l) => l.kind === "MALFORMED") : reviewerLines;
   const body = [
     `# experiment_reviewer — ${experimentId} round ${round}`,
     ``,
     `Blind estimates (harness-spawned replicator, recorded BEFORE the reviewer ran):`,
-    ...(blindLines.length ? blindLines : ["(none — no headline quantity declared by this experiment, or estimator disabled)"]),
+    ...(blindLines.length ? blindLines : ["(none — no declared headline quantity for this experiment, or estimator disabled/failed)"]),
     ``,
     `Reviewer obligation lines (design §3.5):`,
-    ...(reviewerLines.length ? reviewerLines.map((l) => l.text) : ["(none)"]),
+    ...(persisted.length ? persisted.map((l) => l.text) : ["(none)"]),
     ``,
-    missing.length ? `REVIEW-INCOMPLETE: no DISCRIMINATOR for ${missing.join(", ")} — treated as no review for those quantities` : `REVIEW-COMPLETE`,
+    missing.length ? `REVIEW-INCOMPLETE: no DISCRIMINATOR+SCALING for ${missing.join(", ")} — NO REVIEW for those quantities; attestation lines withheld` : `REVIEW-COMPLETE`,
     verdictLine,
     ``,
   ].join("\n");
@@ -119,7 +130,7 @@ export function reviewerObligationBlock(headlineIds: string[], blindLines: strin
     `  DISCRIMINATOR: <id> — if right: <prediction>; if wrong: <prediction>; computation: <what would tell them apart>`,
     `  SCALING: <id> — expected <exponent> in <parameter>; observed <exponent> from <artifact>   (or "observed not swept")`,
     `Optionally: INDEPENDENT: <id> <a> vs <b> — <why the routes differ>;  ANCHOR-OK: <id> — <why competing observables differ at this limit>;  ESTIMATE: <id> — <value> ± <sigma> via <route>  (post-hoc; the blind one below is the one that can flag).`,
-    `A response missing a DISCRIMINATOR for a headline quantity is recorded as NO REVIEW for it.`,
+    `A response missing a DISCRIMINATOR or a SCALING line for a headline quantity is recorded as NO REVIEW for it, and none of its attestation lines count.`,
     blindLines.length ? `Blind estimates already recorded by the harness (do not re-derive; compare):\n${blindLines.join("\n")}` : `No blind estimate was available for these quantities.`,
     `</claim_obligation>`,
   ].join("\n");
@@ -160,7 +171,8 @@ export class FinishEscalation {
   constructor(private readonly threshold = 3) {}
   /** Record a blocking finish() message; true when the operator must take over. */
   record(blockText: string): boolean {
-    const key = (blockText ?? "").split("\n")[0].trim().slice(0, 160);
+    // Digits masked: "3 open lead(s)" and "2 open lead(s)" are the same gate.
+    const key = (blockText ?? "").split("\n")[0].trim().replace(/\d+/g, "#").slice(0, 160);
     if (key && key === this.last) this.repeats++; else { this.last = key; this.repeats = 1; }
     return this.repeats >= this.threshold;
   }
@@ -169,7 +181,9 @@ export class FinishEscalation {
 }
 
 export function writeNeedsOperator(projectDir: string, blockText: string, finishCalls: number): string {
-  const dir = join(projectDir, "notes", "directives");
+  // notes/escalations/, NOT notes/directives/ — that directory is read back
+  // as the USER's highest-priority directive (audit 2026-08-26).
+  const dir = join(projectDir, "notes", "escalations");
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   const path = join(dir, "needs-operator.md");
   writeFileSync(path, [
@@ -196,8 +210,8 @@ function tokens(id: string): Set<string> {
 export function nearestIds(id: string, known: Iterable<string>, n = 3): string[] {
   const t = tokens(id);
   return [...new Set(known)].filter((k) => k !== id)
-    .map((k) => { let s = 0; for (const x of tokens(k)) if (t.has(x)) s++; return { k, s }; })
-    .filter((x) => x.s >= 2).sort((a, b) => b.s - a.s).slice(0, n).map((x) => x.k);
+    .map((k) => { const kt = tokens(k); let s = 0; for (const x of kt) if (t.has(x)) s++; const need = Math.min(t.size, kt.size) <= 1 ? 1 : 2; return { k, s, need }; })
+    .filter((x) => x.s >= x.need).sort((a, b) => b.s - a.s).slice(0, n).map((x) => x.k);
 }
 
 /** Problems with a results.json's computed.quantities[] / verdicts[], for the write-time hook. */
@@ -211,7 +225,7 @@ export function quantityDeclarationProblems(projectDir: string, experimentId: st
     const near = nearestIds(d.id, others);
     if (near.length > 0) problems.push(`${e}: quantity id "${d.id}" is new but lexically near existing ${near.join(", ")} — reuse the existing id if it is the same observable (the estimate histories must join), or pick a clearly distinct id and say in \`observable\` why it is a different quantity.`);
   }
-  for (const d of table.decls.filter((d) => d.experiment === e && (d.headline || table.headline.includes(d.id)))) {
+  for (const d of table.decls.filter((d) => d.experiment === e && (d.headline || table.headlineDeclared.includes(d.id)))) {
     if (d.uncertainty === undefined) problems.push(`${e}: headline quantity "${d.id}" has no \`uncertainty\` — without σ it can never be corroborated (caps at indicative).`);
     if (!d.observable) problems.push(`${e}: headline quantity "${d.id}" has no \`observable\` sentence — the reviewer's discriminator and the contradiction auditor read it.`);
   }

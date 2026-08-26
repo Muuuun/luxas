@@ -183,7 +183,9 @@ function buildReportWriterContext(projectDir: string): string {
   try {
     const rendered = renderClaimTable(buildClaimTable(projectDir));
     if (rendered) parts.push(rendered + "\nRender caps: CORROBORATED may headline unhedged; CONVERGING / INDICATIVE only with a one-clause hedge naming σ and regime; DISPUTED and CONDITIONAL may not appear in the abstract or conclusion; DISCLOSED only with its countersigned hedge sentence.");
-  } catch { /* legacy project */ }
+  } catch (err) {
+    parts.push(`<claim_status>\n- MALFORMED table could not be built: ${(err as Error).message.slice(0, 120)} — treat every number as INDICATIVE and hedge it\n</claim_status>`);
+  }
   inject("outline", "notes/report_outline.md", 20_000);
   inject("pi_feedback", "reviews/pi_feedback.md", 20_000);
   // Literature: an INDEX of every entry, never a silent truncation. Real
@@ -559,9 +561,11 @@ ${smartTruncate(method, 4000)}
     const rendered = renderClaimTable(table);
     if (rendered) {
       parts.push(rendered);
-      parts.push(`<pi_claim_obligation>\nFor every headline quantity above ([H]), put YOUR OWN number on it before you judge: submit_verdict.estimates = [{quantity, value, sigma, route}] by a route the experiment did not use (a limit, a benchmark in a nearby regime rescaled, a napkin formula — run one read/grep-informed calculation, do not restate the producer's value). For any DISPUTED or CONDITIONAL headline row, also submit a discriminators[] line: "DISCRIMINATOR: <id> — if right: …; if wrong: …; computation: …" naming the computation that would settle it. A "stop" without estimates for every headline quantity is recorded as "steer".\n</pi_claim_obligation>`);
+      parts.push(`<pi_claim_obligation>\nFor every DECLARED headline quantity (${table.headlineDeclared.join(", ") || "none declared"}), put YOUR OWN number on it before you judge: submit_verdict.estimates = [{quantity, value, sigma, route}] by a route the experiment did not use (a limit, a benchmark in a nearby regime rescaled, a napkin formula — run one read/grep-informed calculation, do not restate the producer's value). For any DISPUTED or CONDITIONAL headline row, also submit a discriminators[] line: "DISCRIMINATOR: <id> — if right: …; if wrong: …; computation: …" naming the computation that would settle it. If the brain proposed CLAIM-DISCLOSE for a quantity and the hedge is honest, countersign it via disclose_ok; otherwise do not. A "stop" without estimates for every declared headline quantity is recorded as "steer".\n</pi_claim_obligation>`);
     }
-  } catch { /* legacy project */ }
+  } catch (err) {
+    parts.push(`<claim_status>\n- MALFORMED table could not be built: ${(err as Error).message.slice(0, 120)}\n</claim_status>`);
+  }
 
   const codeBlock = buildProjectCodeBlock(projectDir);
   if (codeBlock) parts.push(codeBlock);
