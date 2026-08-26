@@ -156,7 +156,7 @@ export function renderClaimRegistry(registry: RegistryEntry[]): string {
 
   const statusOf = (r: RegistryEntry): string =>
     r.xval === "corroborated" ? "xval:CORROBORATED (may headline as corroborated)"
-      : r.xval === "discrepant" ? "xval:DISCREPANT (must be resolved; cannot headline)"
+      : r.xval === "discrepant" ? "xval:DISCREPANT (disputed — may headline only at grade disputed with a hedge; the producer cannot resolve it)"
       : r.xval ? `xval:${r.xval} (does not count — grade caps at indicative)`
       : r.planned ? "xval:planned-unrun (grade caps at indicative until executed)"
       : "no-xval (grade caps at indicative)";

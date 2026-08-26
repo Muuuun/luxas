@@ -1,0 +1,162 @@
+[
+  {
+    "value": 0.37,
+    "tex_context": "matrix element to $0.37\\%$",
+    "source_file": "notes/experiments.md",
+    "source_quote": "matching the Safronova coupled-cluster benchmark (5.956 a₀) to 0.37%",
+    "grade": "indicative",
+    "claim_key": "computed.d2_ratio_vs_safronova"
+  },
+  {
+    "value": 90,
+    "tex_context": "measured $2\\pi\\times90$\\,kHz Rabi frequency",
+    "source_file": "notes/experiments.md",
+    "source_quote": "the computed Rabi frequency is 101.25 kHz, 12.5% above the measured 90 kHz",
+    "grade": "indicative",
+    "claim_key": "computed.rabi_38P_khz"
+  },
+  {
+    "value": 75,
+    "tex_context": "places 297.0\\,nm at $n\\approx75$",
+    "source_file": "notes/experiments.md",
+    "source_quote": "The target wavelength 297.0 nm addresses n ≈ 75 (P₁/₂: 75.34, P₃/₂: 75.33)",
+    "grade": "indicative",
+    "claim_key": "computed.n_adopted"
+  },
+  {
+    "value": 0.902,
+    "tex_context": "$\\Omega/\\sqrt{P}=0.902\\,\\mathrm{MHz}/\\sqrt{\\mathrm{mW}}$",
+    "source_file": "notes/experiments.md",
+    "source_quote": "Ω/√P = 0.902 MHz/√mW; reaching Ω = 2π × 1 MHz requires 1.228 mW",
+    "grade": "indicative",
+    "claim_key": "computed.rabi_per_sqrt_power_at_297nm_MHz_per_sqrt_mW"
+  },
+  {
+    "value": 1.228,
+    "tex_context": "$1.2$\\,mW drives a $\\mu$s $\\pi$-pulse",
+    "source_file": "notes/experiments.md",
+    "source_quote": "reaching Ω = 2π × 1 MHz requires 1.228 mW",
+    "grade": "indicative",
+    "claim_key": "computed.power_budget_at_297nm_mW.1.0"
+  },
+  {
+    "value": 221.6,
+    "tex_context": "$221.6\\,\\mu$s blackbody-limited lifetime",
+    "source_file": "notes/experiments.md",
+    "source_quote": "the n = 75 P3/2 lifetime at 300 K is 221.6 us",
+    "grade": "indicative",
+    "claim_key": "computed.lifetime_75p3_2_us.T300"
+  },
+  {
+    "value": 99.89,
+    "tex_context": "recoil-limited ($99.89\\%$ at $10$\\,MHz from the closed-form",
+    "source_file": "notes/experiments.md",
+    "source_quote": "Fidelity ceiling F = 0.9989 (99.89%)",
+    "grade": "indicative",
+    "claim_key": "computed.ceiling.fidelity"
+  },
+  {
+    "value": 0.000386,
+    "tex_context": "photon recoil ($3.86\\times10^{-4}$)",
+    "source_file": "notes/experiments.md",
+    "source_quote": "recoil 3.86e-4, decay 2.08e-4, Doppler 2.02e-4, phase noise 1.93e-4, blockade leakage 6.92e-5",
+    "grade": "indicative",
+    "claim_key": "computed.ceiling.terms.recoil"
+  },
+  {
+    "value": 0.000208,
+    "tex_context": "decay ($2.08\\times10^{-4}$)",
+    "source_file": "notes/experiments.md",
+    "source_quote": "decay 2.08e-4, Doppler 2.02e-4, phase noise 1.93e-4",
+    "grade": "indicative",
+    "claim_key": "computed.ceiling.terms.decay"
+  },
+  {
+    "value": 99.963,
+    "tex_context": "$F(40\\,\\mathrm{MHz})=99.963\\%$",
+    "source_file": "notes/experiments.md",
+    "source_quote": "gives F(40 MHz) = 0.999627 > F(10 MHz) = 0.999090",
+    "grade": "indicative",
+    "claim_key": "computed.corrected_frontier.ordering.f40"
+  },
+  {
+    "value": 99.909,
+    "tex_context": "$F(10\\,\\mathrm{MHz})=99.909\\%$",
+    "source_file": "notes/experiments.md",
+    "source_quote": "F(10 MHz) = 0.999090 (`f40_gt_f10 == true`)",
+    "grade": "indicative",
+    "claim_key": "computed.corrected_frontier.ordering.f10"
+  },
+  {
+    "value": 28,
+    "tex_context": "$28$\\,MHz / $963$\\,mW / $F=99.975\\%$",
+    "source_file": "notes/experiments.md",
+    "source_quote": "The corrected optimum shifts from 19 MHz to 28 MHz (T=5 μK), power 963 mW, F = 0.999750",
+    "grade": "indicative",
+    "claim_key": "computed.corrected_frontier.optimum.5.rabi_MHz"
+  },
+  {
+    "value": 99.975,
+    "tex_context": "$F=99.975\\%$",
+    "source_file": "notes/experiments.md",
+    "source_quote": "power 963 mW, F = 0.999750",
+    "grade": "indicative",
+    "claim_key": "computed.corrected_frontier.optimum.5.fidelity"
+  },
+  {
+    "value": 962.79,
+    "tex_context": "$963$\\,mW",
+    "source_file": "notes/experiments.md",
+    "source_quote": "The corrected optimum shifts from 19 MHz to 28 MHz (T=5 μK), power 963 mW",
+    "grade": "indicative",
+    "claim_key": "computed.corrected_frontier.optimum.5.power_mW"
+  },
+  {
+    "value": 0.0002555,
+    "tex_context": "blockade leakage $2.555\\times10^{-4}$ at $40$\\,MHz",
+    "source_file": "notes/experiments.md",
+    "source_quote": "Blockade leakage remains the dominant channel at 40 MHz (2.555e-4)",
+    "grade": "indicative",
+    "claim_key": "computed.corrected_frontier.anchor_points.40.terms.leakage"
+  },
+  {
+    "value": 2.41e-05,
+    "tex_context": "recoil ($2.41\\times10^{-5}$)",
+    "source_file": "notes/experiments.md",
+    "source_quote": "at 40 MHz recoil (2.41e-5) is below decay (3.26e-5)",
+    "grade": "indicative",
+    "claim_key": "computed.corrected_frontier.anchor_points.40.terms.recoil"
+  },
+  {
+    "value": 3.26e-05,
+    "tex_context": "decay ($3.26\\times10^{-5}$)",
+    "source_file": "notes/experiments.md",
+    "source_quote": "recoil (2.41e-5) is below decay (3.26e-5)",
+    "grade": "indicative",
+    "claim_key": "computed.corrected_frontier.anchor_points.40.terms.decay"
+  },
+  {
+    "value": 99.966,
+    "tex_context": "$F(19\\,\\mathrm{MHz})=99.966\\%$",
+    "source_file": "notes/experiments.md",
+    "source_quote": "f40=0.999627, f10=0.999090, f19=0.999655",
+    "grade": "indicative",
+    "claim_key": "computed.corrected_frontier.ordering.f19"
+  },
+  {
+    "value": 53.77,
+    "tex_context": "crosses the recoil floor at $\\theta^{*}=53.77^\\circ$",
+    "source_file": "notes/experiments.md",
+    "source_quote": "crosses the flat recoil floor at θ* = 53.77°",
+    "grade": "indicative",
+    "claim_key": "computed.f_theta.crossover_angle_deg"
+  },
+  {
+    "value": 1965,
+    "tex_context": "$40$\\,MHz ($1965$\\,mW)",
+    "source_file": "notes/experiments.md",
+    "source_quote": "the Sr/Yb-community 40 MHz point (1965 mW)",
+    "grade": "indicative",
+    "claim_key": "computed.mitigation_verdict.power_mW_at_40MHz"
+  }
+]

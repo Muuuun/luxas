@@ -18,6 +18,8 @@ import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, realpathS
 import { join, dirname, sep as pathSep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { pidAlive } from "../utils.js";
+import { buildClaimTable } from "../claims-table.js";
+import { blindEstimateTask, extractBlindEstimate, extractReviewerLines, headlineDeclsFor, persistReview, reviewCompleteness, reviewerObligationBlock } from "../claims-review.js";
 
 // Primary defense against path-escape via LLM-supplied id; the realpath check
 // in handleContinue is defense-in-depth in case this regex is ever widened.
@@ -584,6 +586,35 @@ export function createSpawnAgentTool(
           // the auto-review loop entirely.
           const envCap = parseInt(process.env.LUXAS_MAX_REVIEW_ITERATIONS ?? "", 10);
           const MAX_REVIEW_ITERATIONS = Number.isFinite(envCap) && envCap >= 0 ? envCap : 3;
+
+          // Claims-first §3.5: the blind estimate is produced by the HARNESS
+          // before the reviewer runs — "preregistered" cannot be enforced
+          // inside one agent turn. A `replicator` in estimate mode sees the
+          // observable sentence and input values only; its ESTIMATE(blind)
+          // line is handed to the reviewer and persisted with the review so
+          // claims-table.ts can read it. LUXAS_BLIND_ESTIMATE=0 disables.
+          const headlineDecls = (() => { try { return headlineDeclsFor(buildClaimTable(projectDir), experimentId); } catch { return []; } })();
+          const headlineIds = [...new Set(headlineDecls.map((d) => d.id))];
+          const blindLines: string[] = [];
+          if (MAX_REVIEW_ITERATIONS > 0 && process.env.LUXAS_BLIND_ESTIMATE !== "0") {
+            for (const decl of headlineDecls) {
+              try {
+                const est = await spawnAgent({
+                  name: "replicator",
+                  projectDir,
+                  templateVars: { ...mergedTemplateVars, QUANTITY_ID: decl.id, MODE: "estimate" },
+                  prompt: blindEstimateTask(decl),
+                  getApiKey,
+                  parentAgentId: `${parentAgentId ?? "brain"}.blind-estimate-${decl.id}`,
+                  depth: (depth ?? 0) + 1,
+                  createSpawnTool: makeSpawnTool,
+                });
+                const line = extractBlindEstimate(est.output ?? "", decl.id);
+                if (line) blindLines.push(line);
+              } catch { /* an estimator failure is recorded as its absence, never as silence about the review */ }
+            }
+          }
+          const obligation = reviewerObligationBlock(headlineIds, blindLines);
           // MAX=0 short-circuits the loop body and falls through to return.
           for (let round = 1; round <= MAX_REVIEW_ITERATIONS; round++) {
             const reviewResult = await spawnAgent({
@@ -596,7 +627,7 @@ export function createSpawnAgentTool(
                 `data/experiments/${experimentId}/runs/run_N/results.json, the referenced ` +
                 `raw_data files, and the cited literature fragments under notes/literature.d/. ` +
                 `Return a VERDICT: satisfied or VERDICT: revise with actionable FEEDBACK per ` +
-                `your system prompt.`,
+                `your system prompt.` + obligation,
               getApiKey,
               parentAgentId: `${parentAgentId ?? "brain"}.experiment-review-${round}`,
               depth: (depth ?? 0) + 1,
@@ -604,6 +635,21 @@ export function createSpawnAgentTool(
             });
 
             const verdictText = reviewResult.output ?? "";
+            // Persist the reviewer's obligation lines (it has no write tool);
+            // an incomplete review is recorded as NO REVIEW for the missing
+            // quantities and the reviewer is re-run, not the experiment.
+            const reviewLines = extractReviewerLines(verdictText);
+            const missing = reviewCompleteness(reviewLines, headlineIds);
+            const verdictLineMatch = verdictText.match(/^\s*#{0,6}\s*VERDICT:\s*\w+.*$/im);
+            try { persistReview(projectDir, experimentId, round, blindLines, reviewLines, verdictLineMatch ? verdictLineMatch[0].trim() : "VERDICT: (none)", missing); }
+            catch { /* persistence failure must not abort the loop; the table will show no review */ }
+            if (missing.length > 0) {
+              if (round === MAX_REVIEW_ITERATIONS) {
+                result = { ...result, output: result.output + `\n\n---\n[experiment_reviewer round ${round}: NO REVIEW — no DISCRIMINATOR for ${missing.join(", ")}; the quantities stay unreviewed]` };
+                break;
+              }
+              continue; // re-run the reviewer with the same obligation, not the experiment
+            }
             // Anchor to a standalone verdict line — reviewer.md emits
             // "VERDICT: satisfied" as the LAST line. The old substring match
             // false-passed on prose like "I cannot return VERDICT: satisfied"

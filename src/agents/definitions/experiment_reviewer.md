@@ -39,6 +39,13 @@ Read in this order — **derive your own verdict from the criterion and the data
 If the L2 section has **no** frozen acceptance criterion / parameter pre-commitment (the agent skipped the Phase-1 discipline), that absence is itself **revise**: an experiment with no pre-committed falsifiable criterion cannot be adjudicated, and a criterion written after seeing the result is not evidence.
 </inputs>
 
+<claim_obligation_standing>
+Claims-first (2026-08-26): a review that does not put a number and a discriminator on the headline quantities is not a review. Your task message carries a `<claim_obligation>` block naming the headline quantity ids in scope and any ESTIMATE(blind) line the harness already recorded from a blind estimator. For EACH id, your response must contain, one per line, exact prefixes:
+  DISCRIMINATOR: <id> — if right: <prediction>; if wrong: <prediction>; computation: <what would tell them apart>
+  SCALING: <id> — expected <exponent> in <parameter>; observed <exponent> from <artifact>   (or "observed not swept")
+and may contain INDEPENDENT: / ANCHOR-OK: / ESTIMATE: / DISCLOSE-OK: lines (see the block). Physics errors announce themselves in exponents: the 297nm leakage that reached the abstract scaled as Ω^4.03 where finite-blockade error goes as Ω² — visible from the producer's own two points with a log and a division. Compute the exponent from the swept data yourself. The harness persists these lines to reviews/ (you have no write tool) and records NO REVIEW for any headline id lacking a DISCRIMINATOR. Never "adjudicate" a dispute by explaining why one method wins; name the computation that would settle it.
+</claim_obligation_standing>
+
 <audit_checklist>
 Your audit must confront the following questions. Each "yes" below is revise-worthy:
 

@@ -16,7 +16,7 @@ import {
 } from "../utils.js";
 import { loadRegistry, type ActiveAgent } from "../active-agents.js";
 import { parseCompileVerdict } from "../tools/report.js";
-import { buildUndispositionedAnomalies, buildIterationLineage } from "../dynamics.js";
+import { buildClaimTable, renderClaimTable } from "../claims-table.js";
 
 export type ContextBuilder = (projectDir: string, extra?: Record<string, any>) => string;
 
@@ -179,6 +179,11 @@ function buildReportWriterContext(projectDir: string): string {
     const reg = renderClaimRegistry(buildClaimRegistry(projectDir));
     if (reg) parts.push(reg);
   }
+  // Claim status (claims-first §3.4 render caps): what the abstract may carry.
+  try {
+    const rendered = renderClaimTable(buildClaimTable(projectDir));
+    if (rendered) parts.push(rendered + "\nRender caps: CORROBORATED may headline unhedged; CONVERGING / INDICATIVE only with a one-clause hedge naming σ and regime; DISPUTED and CONDITIONAL may not appear in the abstract or conclusion; DISCLOSED only with its countersigned hedge sentence.");
+  } catch { /* legacy project */ }
   inject("outline", "notes/report_outline.md", 20_000);
   inject("pi_feedback", "reviews/pi_feedback.md", 20_000);
   // Literature: an INDEX of every entry, never a silent truncation. Real
@@ -282,10 +287,15 @@ function buildExperimentContext(projectDir: string, extra?: Record<string, any>)
     parts.push(`<experiment_notes readonly="true">\n${smartTruncate(expNotes, 3000)}\n</experiment_notes>`);
   }
 
-  // 3b. Research dynamics (src/dynamics.ts): open anomalies you must
-  //     disposition in results.json, and what each re-run inherited.
-  for (const block of [buildUndispositionedAnomalies(projectDir, "experiment"), buildIterationLineage(projectDir)]) {
-    if (block) parts.push(block);
+  // 3b. Claim status (claims-first §3.7): the project's quantity ids and
+  //     their status. Reuse an existing id when you re-estimate a quantity —
+  //     the estimate histories must join; a near-duplicate id is rejected at
+  //     write time.
+  try {
+    const rendered = renderClaimTable(buildClaimTable(projectDir));
+    if (rendered) parts.push(rendered + "\nReuse these ids in computed.quantities[] when your experiment estimates the same observable.");
+  } catch (err) {
+    parts.push(`<claim_status>\n- MALFORMED: ${(err as Error).message.slice(0, 120)}\n</claim_status>`);
   }
 
   // 4. Literature notes
@@ -542,6 +552,17 @@ ${smartTruncate(method, 4000)}
   // Full project code assembly — the report-surface view alone is not enough
   // to catch methodology shortcuts. Read the actual simulation scripts and
   // cross-check against the rigor bar from <field_methodology_standard>.
+  // Claim status + the PI's own obligation (claims-first §3.5): a stop
+  // verdict without an estimate per headline quantity is downgraded to steer.
+  try {
+    const table = buildClaimTable(projectDir);
+    const rendered = renderClaimTable(table);
+    if (rendered) {
+      parts.push(rendered);
+      parts.push(`<pi_claim_obligation>\nFor every headline quantity above ([H]), put YOUR OWN number on it before you judge: submit_verdict.estimates = [{quantity, value, sigma, route}] by a route the experiment did not use (a limit, a benchmark in a nearby regime rescaled, a napkin formula — run one read/grep-informed calculation, do not restate the producer's value). For any DISPUTED or CONDITIONAL headline row, also submit a discriminators[] line: "DISCRIMINATOR: <id> — if right: …; if wrong: …; computation: …" naming the computation that would settle it. A "stop" without estimates for every headline quantity is recorded as "steer".\n</pi_claim_obligation>`);
+    }
+  } catch { /* legacy project */ }
+
   const codeBlock = buildProjectCodeBlock(projectDir);
   if (codeBlock) parts.push(codeBlock);
 

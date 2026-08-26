@@ -74,6 +74,7 @@ number in the abstract and conclusion,
      "source_quote": "<verbatim sentence from that file containing the value>",
      "grade": "corroborated" | "indicative" | "conditional" | "divergent",
      "claim_key": "<picked VERBATIM from <claim_registry> in your context>", // when the number is an experiment result
+     "quantity_id": "<the quantity id from <claim_status>, when the key is declared>",
      "open_dependencies": ["<FollowUp ids this claim depends on>"] }]      // when applicable
 
 Grade semantics (the finish gate RECOMPUTES the cap from structured state
@@ -92,17 +93,7 @@ than its evidence):
   with an unhedged abstract sentence is exactly the promotion leak this schema
   exists to close.
 
-**Pick the VALIDATED key when several express one quantity (2026-08-25).** The
-297nm run executed 8 genuine cross-validations and shipped 10/11 claims at
-`indicative` anyway, because the abstract's sentences cited result keys while
-the agreeing controls lived on sibling keys in the same experiment. When the
-registry lists several keys carrying the same physical content, cite the one
-whose line reads `xval:CORROBORATED` — that is what lets the claim headline at
-corroborated. A QUALITATIVE headline (a functional form, a scaling, a "pure
-sin⁴θ") should cite the quantitative key that ENCODES it: the run's
-`computed.analysis.stretched.n50.sin4_fraction = 1.0` carried an agreeing
-control and was exactly the "pure sin⁴θ" claim — citing it (value 1.0) would
-have made the report's central claim corroborated instead of indicative.
+**Claim status governs the abstract (claims-first, 2026-08-26).** Your context carries `<claim_status>`: one row per quantity id with a status computed from independent estimates. Render caps, enforced by the finish gate: CORROBORATED may headline unhedged; CONVERGING and INDICATIVE only with a one-clause hedge naming σ and the regime of validity (that IS the hedge — a number, an uncertainty, a regime; not the word "indicative"); DISPUTED and CONDITIONAL may not appear in the abstract or conclusion at all — move the sentence to the body with the dispute stated, or leave it out; DISCLOSED only with its countersigned hedge sentence verbatim. A number whose claim_key is declared under a quantity id must cite that id in `quantity_id` and inherit that row's cap.
 
 **claim_key discipline:** your context carries `<claim_registry>` — every
 structured value the experiments produced, one line per key, with its

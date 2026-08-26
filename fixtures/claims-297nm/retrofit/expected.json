@@ -1,0 +1,33 @@
+{
+ "rows": {
+  "n_at_297nm": "indicative",
+  "rabi_38P_khz": "corroborated",
+  "d2_reduced_a0": "corroborated",
+  "rydberg_lifetime_75P_us": "indicative",
+  "c6_75_ghz_um6": "converging",
+  "blockade_shift_4um_GHz": "disputed",
+  "blockade_leakage_10MHz": "disputed",
+  "blockade_leakage_40MHz": "disputed",
+  "decay_40MHz_closedform": "indicative",
+  "decay_40MHz_ME": "indicative",
+  "fidelity_10MHz": "conditional",
+  "fidelity_40MHz": "conditional"
+ },
+ "verdicts": {
+  "ordering_f40_vs_f10": "conditional"
+ },
+ "headline": [
+  "blockade_leakage_10MHz",
+  "blockade_leakage_40MHz",
+  "blockade_shift_4um_GHz",
+  "c6_75_ghz_um6",
+  "decay_40MHz_ME",
+  "decay_40MHz_closedform",
+  "fidelity_10MHz",
+  "fidelity_40MHz",
+  "n_at_297nm",
+  "ordering_f40_vs_f10",
+  "rydberg_lifetime_75P_us"
+ ],
+ "readsDrops": 1
+}

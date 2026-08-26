@@ -15,6 +15,7 @@ import { createCodingToolsForProject } from "./coding.js";
 import { createSpawnAgentTool, getActiveBackgroundAgents } from "./spawn-agent.js";
 import { buildSafetyWrapper } from "../agents/safety-wrappers.js";
 import { getDefinition } from "../agents/registry.js";
+import { FinishEscalation, writeNeedsOperator } from "../claims-review.js";
 import { loadRegistry, removeAgent, isAlive, markFailed, formatExitHint } from "../active-agents.js";
 
 /**
@@ -388,6 +389,12 @@ export function buildResearchTools(
   // runaway backstop for finish-loop variants that evade the frontier-only F2 streak
   // (e.g. the finish→edit→compile→typesetter cycle looping on freshness/typesetter gates).
   let finishCallCount = 0;
+  // Claims-first §3.8 (2026-08-26): the same blocking gate on three consecutive
+  // finish() calls is the livelock signature (297nm: 4 finish calls, 15
+  // consecutive plan.md reads, 3 operator interventions). Escalate to the
+  // operator instead of iterating. Layered UNDER the 12-call global backstop
+  // above — never in place of it.
+  const escalation = new FinishEscalation(3);
 
 /**
  * Gate-cost telemetry: a force-exited run (12-call backstop) was previously
@@ -1222,6 +1229,26 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
       return { content: [{ type: "text" as const, text: `Research complete: ${args.summary}` }], details: { success: true } };
     },
   };
+
+  {
+    const finishExecute = finishTool.execute;
+    (finishTool as any).execute = async (args: any) => {
+      const r = await finishExecute(args);
+      const text = Array.isArray(r?.content) && r.content[0]?.type === "text" ? String(r.content[0].text ?? "") : "";
+      if (r?.details?.success) { escalation.reset(); return r; }
+      if (/^Cannot finish/.test(text) && escalation.record(text)) {
+        const path = writeNeedsOperator(projectDir, text, finishCallCount);
+        callbacks?.onFinish?.();
+        writeFinishStats(projectDir, finishCallCount, true);
+        return { content: [{ type: "text" as const, text:
+          `Escalated to the operator: the same finish gate blocked ${escalation.count} consecutive finish() calls, ` +
+          `so iterating is not reducing the issue. Wrote ${path.replace(projectDir + "/", "")} with the gate text; ` +
+          `the run exits cleanly with its artifacts as they stand. A person decides the next move.` }],
+          details: { success: true } };
+      }
+      return r;
+    };
+  }
 
   const initReport = createInitReportTool(projectDir);
 

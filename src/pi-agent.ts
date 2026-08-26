@@ -24,6 +24,8 @@ import { getApiKey } from "./auth.js";
 import { spawnAgent } from "./agents/spawn.js";
 import { createSpawnToolFactory } from "./tools/spawn-agent.js";
 import { readFileSafe } from "./utils.js";
+import { buildClaimTable } from "./claims-table.js";
+import { formatPIEstimateLines, piEstimateRule, type PIEstimate } from "./claims-review.js";
 
 // PI system prompt is now in agents/definitions/pi.md
 // Mode-specific blocks (survey/research/plan) are in agents/context-builders.ts
@@ -34,6 +36,10 @@ import { readFileSafe } from "./utils.js";
 
 export interface PIVerdict {
   verdict: "continue" | "steer" | "stop";
+  /** Claims-first §3.5: the PI's own estimate per headline quantity (persisted as ESTIMATE lines). */
+  estimates?: PIEstimate[];
+  /** DISCRIMINATOR: lines the PI pre-registers (persisted verbatim). */
+  discriminators?: string[];
   assessment: string;
   issues: string[];
   instructions: string;
@@ -255,6 +261,15 @@ async function evaluateProgress(
         description:
           "Specific actionable instructions for the research agent (empty string if continuing as-is)",
       }),
+      estimates: Type.Optional(Type.Array(Type.Object({
+        quantity: Type.String({ description: "quantity id from <claim_status>" }),
+        value: Type.Number({ description: "your own estimate, by a route the experiment did not use" }),
+        sigma: Type.Optional(Type.Number({ description: "your uncertainty on that estimate" })),
+        route: Type.String({ description: "how you got it, ≤12 words" }),
+      }), { description: "REQUIRED for a stop verdict when <claim_status> lists headline quantities: one entry per headline quantity. A PI that has not put its own number on the headline has not reviewed it." })),
+      discriminators: Type.Optional(Type.Array(Type.String(), {
+        description: 'Lines of the form "DISCRIMINATOR: <id> — if right: …; if wrong: …; computation: …" — the computation that would settle a disputed headline quantity, pre-registered before its result exists.',
+      })),
     }),
     async execute(
       _toolCallId: string,
@@ -263,6 +278,8 @@ async function evaluateProgress(
         assessment: string;
         issues: string[];
         instructions: string;
+        estimates?: PIEstimate[];
+        discriminators?: string[];
       },
     ) {
       // Normalize case/whitespace; an unrecognized verdict string must NOT
@@ -276,6 +293,8 @@ async function evaluateProgress(
         assessment: params.assessment,
         issues: params.issues ?? [],
         instructions: params.instructions ?? "",
+        estimates: Array.isArray(params.estimates) ? params.estimates : undefined,
+        discriminators: Array.isArray(params.discriminators) ? params.discriminators : undefined,
       };
       return {
         content: [{ type: "text" as const, text: "Verdict recorded." }],
@@ -318,7 +337,19 @@ async function evaluateProgress(
   // exhausted Anthropic balance fails every reviewer spawn) and brain can never
   // dispatch experiments. Branch: plan review proceeds with an honest
   // non-approval note; every other gate keeps the fail-closed steer.
-  if (result) return result;
+  if (result) {
+    // Claims-first §3.5: a stop without the PI's own estimate on every headline
+    // quantity is downgraded to steer (fail-closed, never a deadlock).
+    let final: PIVerdict = result;
+    try {
+      const table = buildClaimTable(opts.projectDir);
+      if (table.declared) {
+        const rule = piEstimateRule(final.verdict, final.estimates, table.headline);
+        if (rule.issue) final = { ...final, verdict: rule.verdict, issues: [...final.issues, rule.issue] };
+      }
+    } catch { /* a table failure never changes a verdict */ }
+    return final;
+  }
   if (isPlanReview) {
     return {
       verdict: "continue",
@@ -569,6 +600,11 @@ function formatFeedback(verdict: PIVerdict, toolCallCount: number): string {
   if (verdict.instructions) {
     lines.push("", "## Instructions", verdict.instructions);
   }
+
+  // Claims-first §3.5: ESTIMATE / DISCRIMINATOR lines, parsed by claims-table.ts
+  // from this file (reviews/pi_feedback.md is in its read set).
+  const claimLines = formatPIEstimateLines(verdict.estimates, verdict.discriminators);
+  if (claimLines.length > 0) lines.push("", "## Claim estimates", ...claimLines);
 
   return lines.join("\n") + "\n";
 }

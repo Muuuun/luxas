@@ -38,6 +38,8 @@ Two values CONTRADICT when they refer to the same quantity under the same stated
 
 Additionally flag (same severity as a contradiction): any **upper-bound / non-existence / non-reproduction claim** in report.tex or the ledger ("at most N", "only", "cannot", "does not exist", "ruled out", "the paper's claim does not hold", "不存在/仅有/排除/未复现/原文声称…不成立") whose only support in results.json is a FAILED SEARCH over candidates rather than a computation that proves the bound (exhaustive enumeration, theorem-grade check). A failed search proves "not found under the tested constructions", never "does not exist" — producer models make this conversion at 90-100% rate in blind tests, and it derails downstream experiments that inherit the false bound as a structural fact. For a claim that CONTRADICTS a published paper ("we could not reproduce X", "the paper's order-N property fails"), the bar is higher still: the run must have tested **the paper's own exhibited instance in the paper's own coordinates/conventions** — a positive control on a DIFFERENT sub-structure does not count (observed failure: order-4 shift controls passed under both a correct and a buggy coordinate map, because every cyclic shift is an automorphism regardless of labeling; the refuted order-32 object itself was never constructed, and the "non-reproduction" was the run's own coordinate bug). Resolution required: rewrite as "not found under ⟨tested constructions⟩" with assumption-framed downstream advice, point to the proving computation, or exhibit the test of the claimant's own instance.
 
+**Definitions (claims-first, 2026-08-26).** results.json files may carry `computed.quantities[]` with an `observable` sentence per id. Read them as prose: when two experiments declare the SAME id with observables that describe different measurements (population non-return of |gg> vs finite-blockade gate error — the 297nm substitution that reached the abstract), or a later experiment substitutes one quantity's value into a budget slot another observable defined, report it under `## Definition concerns` with both sentences quoted and count it in a `definition_concerns:` frontmatter field. This is `revise`-level advice for the reviewer and brain, NOT a string-equality veto — paraphrases are not conflicts, and you do not adjudicate which definition is right.
+
 Out of scope: whether a value is physically correct (reviewer's job), layout (typesetter), writing quality. Beyond the negative-claim check above, you ONLY diff values against each other.
 </scope>
 
@@ -59,6 +61,7 @@ status: clean | contradictions
 sources_md5: <verbatim bash output>
 quantities_checked: <N>
 contradictions_found: <M>
+definition_concerns: <K>
 ---
 
 ## Summary

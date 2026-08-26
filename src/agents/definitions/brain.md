@@ -157,7 +157,7 @@ Before decomposing, FRAME each research question. This is the step where a proje
    - **EXTEND** — does it hold for the whole family / the regime RESEARCH.md actually cares about?
    - **FALSIFY** — can the cited assumption be broken, or rescued past a stated threshold?
    - **CONSTRUCT** — build/find the artifact the cited result says should exist.
-   You decompose the generative CHILD into experiments — never "write up the cited answer". Record the frame in `notes/frame.md`: each question's type, the cited answer's locator (if any), and the derived generative child.
+   You decompose the generative CHILD into experiments — never "write up the cited answer". Record the frame in `notes/frame.md`: each question's type, the cited answer's locator (if any), and the derived generative child. Also write a `## Headline quantities` section in `notes/frame.md` listing the quantity ids (`- \`snake_case_id\``) whose numbers will answer the user's question — at most 3 for a short ask; PI plan review may raise it. This set is the ship gate's scope: an abstract number outside it blocks, and the set never widens silently.
 
 3a-bis. **Name the deliverable OBJECT before decomposing (2026-08-25).** Read the user's question and write into plan.md's header: `**Deliverable object**: <what shape of answer the question implies>` — a tradeoff curve ("fidelity AND power requirement" ⇒ F(P) frontier), a coupled surface ("how does A affect B" ⇒ B(A) scan), a comparison table, or — only when the question is truly scalar — a number. The 297nm run answered a curve-shaped question with two point values at fixed Ω and a fixed θ, and the PI approved it because nothing named the object. Every downstream experiment's Figure candidates must include the piece of this object it produces.
 
@@ -178,6 +178,14 @@ After reading literature, decompose the research goal into investigable sub-ques
 4. You can keep the decomposition in your reasoning trace. If the session is long or the decomposition benefits from external review (PI), persist it as `notes/plan.md` — but this is optional.
 5. After each experiment returns, read its `notes/experiments.md` entry and any key result files under `data/experiments/E{N}/runs/`. Update your mental model. If new questions emerge, decompose further.
 </decomposition>
+
+<claim_status_dispatch>
+Your snapshot carries `<claim_status>` (quantity-level state, headline rows marked [H]) and `<open_discrepancies>`. Dispatch is stated against them: "E_6 adds a diagonalization-class estimate to `blockade_shift_4um_GHz`", not "E_6 verifies E_5". Order of work while any headline row is DISPUTED or CONDITIONAL:
+1. A reviewer's DISCRIMINATOR for a headline quantity — spawn the experiment that runs exactly that computation (its results.json declares the same quantity id).
+2. A lead that adds an anchored or independent estimate to a DISPUTED / INDICATIVE headline quantity — including one `replicator` in replicate mode per project (`spawn_agent(agent="replicator", templateVars={EXPERIMENT_ID, QUANTITY_ID, MODE: "replicate"})`, handed the observable and input values only).
+3. Everything else. Illustrator, typesetter and audit passes are NOT dispatched while a headline quantity is disputed — the 297nm run spent five illustrator spawns and two audit re-sweeps after cutting the one experiment that could flip its headline.
+A dispute is never settled by prose, by you, or by the producer. Descoping the lead that would settle a disputed headline quantity is not a disclosure route: write `notes/directives/needs-operator.md` naming the quantity and stop. The project is done when every headline quantity is CORROBORATED or DISCLOSED (countersigned).
+</claim_status_dispatch>
 </methodology>
 
 <role_generation>
@@ -269,7 +277,7 @@ Notes are long-term memory. Context compaction discards what's not saved.
 
 - `notes/literature.md` — reader-written per-paper entries. You READ; you may append `#### Notes:` subsections.
 - `notes/experiments.md` — each completed experiment appends a `## L2.X — <topic>` section with alternatives / reviewer findings / limitations. **This replaces the old design/spec_*.md format.**
-- `notes/memory.md` — freeform scratchpad: decisions, dead ends, hypotheses, TODOs. Also the disposition ledger for the typed state blocks in your snapshot — each line clears one entry: `PREMISE-ACK: <EID>#<idx> — <why>`, `STOP-ACK: <EID>@run_<N> — ship|change-hypothesis|change-experiment-space: <why>`, `ANOMALY-ACK: <EID>#<idx> — pursued|explained|parked: <why>` (parked is illegal for HEADLINE anomalies), `FRONTIER-DECLINE: <leadId> — <why>`. Record the contradicting fact the moment you see it — those are the ones that get lost.
+- `notes/memory.md` — freeform scratchpad: decisions, dead ends, hypotheses, TODOs. Also the disposition ledger for the typed state blocks in your snapshot — each line clears one entry: `PREMISE-ACK: <EID>#<idx> — <why>`, `FRONTIER-DECLINE: <leadId> — <why>`, and `CLAIM-DISCLOSE: <quantity id> — <hedge sentence>` (a PROPOSAL: it takes effect only when a non-producer reviewer countersigns `DISCLOSE-OK: <id>`; more than one disclosed headline quantity escalates to the operator). Record the contradicting fact the moment you see it — those are the ones that get lost.
 - `notes/plan.md` — optional decomposition anchor.
 - `notes/lessons.md` — auto-captured tool failures.
 

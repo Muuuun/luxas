@@ -8,8 +8,8 @@
 
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { readFileSafe, smartTruncate, parseFollowUps } from "./utils.js";
-import { listExperimentDirs } from "./tools/report-integrity.js";
-import { buildStoppingSignal, buildUndispositionedAnomalies, buildIterationLineage } from "./dynamics.js";
+import { listExperimentDirs, xvalVerdict } from "./tools/report-integrity.js";
+import { buildClaimTable, renderClaimTable } from "./claims-table.js";
 import { buildPastResearchDigest, GLOBAL_MEMORY_PATH } from "./memory.js";
 import { buildCareerBlock } from "./career.js";
 import { findUnprocessedPapers, methodologyPath } from "./methodology.js";
@@ -330,6 +330,41 @@ export function buildPremiseCorrections(projectDir: string): string {
   }
 }
 
+/**
+ * Open cross-method disagreements, from executed cross_validation entries
+ * whose harness verdict is DISCREPANT. This is the prior check the
+ * claims-first design (§3.7) requires before a full claim table is injected:
+ * if surfacing today's disputes does not change what the brain dispatches,
+ * a richer table will not either. The producer's cross_validation_resolved
+ * is deliberately ignored (design §3.6 — H2). Deterministic over disk state.
+ */
+export function buildOpenDiscrepancies(projectDir: string): string {
+  const rows: string[] = [];
+  try {
+    for (const e of listExperimentDirs(projectDir)) {
+      if (!e.latestResults) continue;
+      let j: any;
+      try { j = JSON.parse(readFileSafe(e.latestResults) ?? ""); } catch { rows.push(`- ${e.id}: results.json unparseable`); continue; }
+      const xv = j?.computed?.cross_validation;
+      if (!Array.isArray(xv)) continue;
+      for (const x of xv) {
+        if (xvalVerdict(x) !== "discrepant") continue;
+        rows.push(`- ${e.id} ${String(x?.claim_key ?? "?").slice(0, 70)}: ${x.value_a} (${String(x?.method_a ?? "?").slice(0, 36)}) vs ` +
+          `${x.value_b} (${String(x?.method_b ?? "?").slice(0, 36)})`);
+      }
+    }
+  } catch (err) {
+    rows.push(`- MALFORMED: ${(err as Error).message.slice(0, 100)}`);
+  }
+  if (rows.length === 0) return "";
+  return `<open_discrepancies priority="high">\n` +
+    `Two independent methods DISAGREE on these quantities and nothing has settled which is right. ` +
+    `A number equal to either side may headline only at grade "disputed" with a hedge. Settling one ` +
+    `takes a third independent estimate (an experiment with a different route, or a blind replication) ` +
+    `or a non-producer adjudication with a locator — not a paragraph explaining why one method wins.\n` +
+    `${rows.join("\n")}\n</open_discrepancies>`;
+}
+
 function buildResearchFrontier(projectDir: string): string {
   try {
     const exp = readFileSafe(join(projectDir, "notes", "experiments.md"));
@@ -409,12 +444,23 @@ function buildResearchSnapshot(opts: ContextTransformerOptions): string {
   const premises = buildPremiseCorrections(projectDir);
   if (premises) parts.push(premises);
 
-  // Research dynamics as state (src/dynamics.ts, 2026-08-25 human-trace
-  // synthesis): epistemic stopping, anomaly disposition, iteration lineage.
-  // Same untruncated tier as premise corrections — each is a forced fork or a
-  // re-primed attention channel, not a footnote.
-  for (const block of [buildStoppingSignal(projectDir), buildUndispositionedAnomalies(projectDir, "brain"), buildIterationLineage(projectDir)]) {
-    if (block) parts.push(block);
+  // Open cross-method disputes (claims-first design §3.7 prior check,
+  // 2026-08-26): the two-line block that must be shown to change dispatch
+  // before the full <claim_status> table is built. Deterministic over disk.
+  const disputes = buildOpenDiscrepancies(projectDir);
+  if (disputes) parts.push(disputes);
+
+  // Claim status (claims-first design §3.7, 2026-08-26): quantity-level
+  // state — headline rows first, bounded, deterministic. Replaces the
+  // run-level dynamics blocks (stopping / anomalies / lineage): stopping is
+  // "every headline quantity corroborated or disclosed", an anomaly is a
+  // DISPUTED row, lineage is the estimates column. Empty for legacy projects.
+  try {
+    const table = buildClaimTable(projectDir);
+    const rendered = renderClaimTable(table);
+    if (rendered) parts.push(rendered);
+  } catch (err) {
+    parts.push(`<claim_status>\n- MALFORMED table could not be built: ${(err as Error).message.slice(0, 120)}\n</claim_status>`);
   }
 
   // Execution-state snapshot (active sub-agents, completed artifacts, plan

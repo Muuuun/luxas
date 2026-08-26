@@ -32,9 +32,10 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { extractFrontmatterBlock, parseAuditFrontmatter } from "../utils.js";
+import { claimTableIssues } from "../claims-table.js";
 
 export interface IntegrityIssue {
-  kind: "number-provenance" | "experiment-citation" | "disclosure" | "results-schema" | "harness-vocab" | "outline" | "method-blocked";
+  kind: "number-provenance" | "experiment-citation" | "disclosure" | "results-schema" | "harness-vocab" | "outline" | "method-blocked" | "claim-status";
   blocking: boolean;
   text: string;
   /**
@@ -334,13 +335,18 @@ const VERDICT_ENUM = new Set(["confirmed", "refuted", "inconclusive"]);
 //   conditional  — depends on an unrun FollowUp (open_dependencies)
 //   divergent    — the ledger sentence backing it carries a divergence /
 //                  placeholder / needs-confirmation marker
-const GRADE_ORDER: Record<string, number> = { corroborated: 3, indicative: 2, conditional: 1, divergent: 0 };
+//   disputed     — an executed cross-validation on this quantity DISAGREES and
+//                  no third independent estimate or non-producer adjudication
+//                  has settled it (claims-first design, 2026-08-26). The
+//                  producer's cross_validation_resolved does NOT clear this.
+const GRADE_ORDER: Record<string, number> = { corroborated: 4, indicative: 3, conditional: 2, disputed: 1, divergent: 0 };
 // Hedge tokens required in the tex_context of below-indicative claims —
 // normalized-substring match, deliberately generous (the goal is that SOME
 // hedge reaches the reader in the same sentence, not prose policing).
 const HEDGE_TOKENS: Record<string, string[]> = {
   conditional: ["若", "假设", "待", "尚未", "conditional", "pending", "assuming", "provided", "取决"],
   divergent: ["发散", "需完整", "需确认", "上界", "上限", "bound", "divergent", "unverified", "不可靠", "伪影", "待验证", "perturbative regime", "微扰"],
+  disputed: ["disputed", "disagree", "discrepan", "unresolved", "differ by", "under dispute", "两种方法", "不一致", "存疑", "两方法"],
 };
 const DIVERGENCE_MARKERS = /发散|placeholder|占位|pending|待验证|需完整对角化|需确认|不可靠|divergent|unreliable|extrapolat|外推|inaccurate for/i;
 
@@ -366,8 +372,12 @@ export function xvalVerdict(x: any): "corroborated" | "discrepant" | "identical"
   const a = Number(x?.value_a), b = Number(x?.value_b);
   const tol = Number(x?.tolerance_rel);
   if (!Number.isFinite(a) || !Number.isFinite(b) || !Number.isFinite(tol) || tol <= 0 || tol > 0.5) return null;
-  if (a === b) {
-    const smallInt = Number.isInteger(a) && Math.abs(a) < XVAL_EXACT_INT_LIMIT;
+  // Wiring veto (claims-first design §3.3, 2026-08-26): two independent
+  // methods do not reproduce a float to 1e-6 relative — that is the same
+  // computation recorded twice (E6's channel-sum "cross-validated" against
+  // the pipeline it re-summed agreed to 1e-9 and was graded corroborated).
+  if (a === b || Math.abs(a - b) <= 1e-6 * Math.max(Math.abs(a), Math.abs(b))) {
+    const smallInt = Number.isInteger(a) && Number.isInteger(b) && Math.abs(a) < XVAL_EXACT_INT_LIMIT;
     if (!smallInt) return "identical";
   }
   return Math.abs(a - b) <= tol * Math.max(Math.abs(a), Math.abs(b)) ? "corroborated" : "discrepant";
@@ -537,6 +547,18 @@ export function reportIntegrityIssues(projectDir: string): IntegrityIssue[] {
           if (Array.isArray(c?.open_dependencies) && c.open_dependencies.length > 0) {
             cap = Math.min(cap, GRADE_ORDER.conditional);
           }
+          // Disputed cap (claims-first §3.4): a DISCREPANT cross-validation on
+          // this key — or on a value this entry carries (re-keyed copies of a
+          // disputed number are how the 297nm abstract cited E5's 2.555e-4
+          // under E6's key) — caps the grade at `disputed`.
+          {
+            const cv = Number(c?.value);
+            const near = (x: number) => Number.isFinite(cv) && Number.isFinite(x) && x !== 0 &&
+              [cv, cv / 100, cv * 100].some((v) => Math.abs(v - x) <= 5e-3 * Math.abs(x));
+            const hit = xvals.find((x2) => xvalVerdict(x2) === "discrepant" &&
+              ((key && String(x2?.claim_key ?? "") === key) || near(Number(x2?.value_a))));
+            if (hit) cap = Math.min(cap, GRADE_ORDER.disputed);
+          }
           if (DIVERGENCE_MARKERS.test(String(c?.source_quote ?? ""))) {
             cap = Math.min(cap, GRADE_ORDER.divergent);
           }
@@ -544,7 +566,8 @@ export function reportIntegrityIssues(projectDir: string): IntegrityIssue[] {
             const capName = Object.keys(GRADE_ORDER).find((k) => GRADE_ORDER[k] === cap);
             gradeBad.push(`${label}: recorded grade "${grade}" exceeds the recomputed cap "${capName}" ` +
               `(corroborated needs an anchored, agreeing cross_validation entry for claim_key; ` +
-              `open_dependencies caps at conditional; a divergence-marked source_quote caps at divergent)`);
+              `open_dependencies caps at conditional; a DISCREPANT cross-validation on this key or value caps at disputed; ` +
+              `a divergence-marked source_quote caps at divergent)`);
           }
           const hedges = HEDGE_TOKENS[grade];
           if (hedges) {
@@ -890,15 +913,13 @@ export function reportIntegrityIssues(projectDir: string): IntegrityIssue[] {
     //       between two methods is a finding, not a formatting issue.
     {
       const problems: string[] = [];
+      const disputes: string[] = [];
       for (const e of experiments) {
         if (!e.latestResults) continue;
         let j: any;
         try { j = JSON.parse(readFileSync(e.latestResults, "utf-8")); } catch { continue; }
         const xv = j?.computed?.cross_validation;
         if (!Array.isArray(xv) || xv.length === 0) continue;
-        const resolved = new Set(
-          (Array.isArray(j?.computed?.cross_validation_resolved) ? j.computed.cross_validation_resolved : [])
-            .map((r: any) => String(r?.claim_key ?? "")));
         for (const x of xv) {
           const key = String(x?.claim_key ?? "?");
           const verdict = xvalVerdict(x);
@@ -927,14 +948,26 @@ export function reportIntegrityIssues(projectDir: string): IntegrityIssue[] {
               `a self-consistency check is not a cross-validation. Name a genuinely independent method.`);
             continue;
           }
-          if (verdict === "discrepant" && !resolved.has(key)) {
-            problems.push(`${e.id}/${key}: DISCREPANT — |${x.value_a} − ${x.value_b}| exceeds ` +
-              `${x.tolerance_rel} relative tolerance (harness-computed; any agent-recorded verdict is ignored). ` +
-              `Two independent methods disagreeing is a finding: resolve it (find the bug, or record ` +
-              `computed.cross_validation_resolved with a "resolution" naming what you ran) before shipping; ` +
-              `the dependent claim cannot be graded corroborated.`);
+          if (verdict === "discrepant") {
+            disputes.push(`${e.id}/${key}: ${x.value_a} (${String(x?.method_a ?? "?").slice(0, 40)}) vs ` +
+              `${x.value_b} (${String(x?.method_b ?? "?").slice(0, 40)})`);
           }
         }
+      }
+      // Disputes are facts, not formatting issues (claims-first design §3.6,
+      // 2026-08-26): the producer's cross_validation_resolved no longer clears
+      // them — the 297nm run "resolved" a 4.3× disagreement by declaring its own
+      // script authoritative. A dispute is disclosed here (non-blocking) and
+      // enforced where it matters: any claims.json entry carrying the disputed
+      // key or value is capped at grade `disputed` (1c) and must hedge.
+      if (disputes.length > 0) {
+        issues.push({
+          kind: "disclosure", blocking: false,
+          text: `Cross-method DISPUTES on record (${disputes.length}):\n  - ` + disputes.slice(0, 8).join("\n  - ") +
+            `\nA disputed number may headline only at grade "disputed" with a hedge in its sentence, or leave ` +
+            `the abstract. cross_validation_resolved does not settle a dispute; only a third independent ` +
+            `estimate or a non-producer adjudication with a locator does.`,
+        });
       }
       if (problems.length > 0) {
         issues.push({
@@ -1306,6 +1339,15 @@ export function reportIntegrityIssues(projectDir: string): IntegrityIssue[] {
         });
       }
     }
+  }
+
+  // Claim-status gate (claims-first design §3.4/§3.9, 2026-08-26): quantity-
+  // level statuses computed in src/claims-table.ts. Grandfathered — a project
+  // that declares no computed.quantities[] gets no issues here.
+  try {
+    for (const ci of claimTableIssues(projectDir)) issues.push({ kind: "claim-status", blocking: ci.blocking, pushbackExempt: true, text: ci.text });
+  } catch (err) {
+    issues.push({ kind: "claim-status", blocking: false, text: `claim table could not be built: ${(err as Error).message.slice(0, 120)}` });
   }
 
   return issues;

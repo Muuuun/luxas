@@ -32,6 +32,7 @@ import { SAFETY_PRESETS } from "./safety-presets.js";
 import { expandTemplate, extractTextContent } from "../utils.js";
 import { reportIntegrityIssues } from "../tools/report-integrity.js";
 import { buildClaimRegistry, nearestKeys } from "../claims-registry.js";
+import { quantityDeclarationProblems } from "../claims-review.js";
 import type { SafetyConfig } from "./registry.js";
 import type { FileTouchRecord } from "../active-agents.js";
 import {
@@ -388,6 +389,16 @@ function writeTimeValidation(projectDir: string, relPath: string, result: any): 
       }
     }
   } catch { /* unparsable file — the schema gates already speak to that */ }
+  // Claims-first §3.1: quantity declarations validated at the write — id reuse
+  // vs near-duplicate, numeric uncertainty/inputs (strings are MALFORMED, never
+  // coerced), σ + observable on headline quantities.
+  if (isResults) {
+    const m = relPath.match(/data\/experiments\/([^/]+)\//);
+    if (m) {
+      try { keyProblems.push(...quantityDeclarationProblems(projectDir, m[1])); }
+      catch (err) { keyProblems.push(`quantity declarations could not be validated: ${(err as Error).message.slice(0, 100)}`); }
+    }
+  }
   if (relevant.length === 0 && keyProblems.length === 0) return result;
   const feedback = `\n\n[write-time validation of ${relPath} — fix NOW, while you have the context; ` +
     `these same checks block finish() later]\n` +
