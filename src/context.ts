@@ -113,6 +113,9 @@ const COMPACTABLE_TOOLS = new Set([
   "read", "write", "edit", "bash",
   "search_papers", "get_citations", "download_paper",
   "grep", "glob", "web_search", "web_fetch",
+  // Job-control results are re-readable from .agent/jobs/<id>/output.log, so
+  // their (often bulky) transcripts are safe to prune like bash output.
+  "job_status", "job_output", "job_wait", "job_kill",
 ]);
 
 // ── Public interface ─────────────────────────────────
