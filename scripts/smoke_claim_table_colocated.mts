@@ -29,7 +29,9 @@ writeFileSync(join(run, "results.json"), JSON.stringify({
       { id: "blockade_radius_r0_60p", key: "computed.blockade_radius_r0" },
       { id: "n11_scaling_factor_60p", key: "computed.n11_scaling_factor", uncertainty: 0.5 },
       { id: "missing_key_q", key: "computed.nope" },
+      { id: "c6_magic_angle_60p", key: "computed.c6_magic_angle.value_deg" },
     ],
+    c6_magic_angle: { headline: true, observable: "Magic angle where C6(theta) crosses zero, degrees, stretched 60P3/2 pair", value_deg: 24.61, uncertainty: 0.3, uncertainty_source: "fit", inputs: { c6_sin4_coeff_60p: -294.9 } },
     c6_theta: { headline: true, observable: "Van der Waals coefficient C6(theta) [GHz*um^6] for two Rb |60P3/2, mJ=+3/2> atoms", value_fit: { sin4_coeff_ghz_um6: -294.9 }, c6_at_theta_pi2_ghz_um6: -293.0, uncertainty: 0.1, uncertainty_source: "pert vs exact", limit_check: { limit: "n=25 anchor", expected: "6.33 sin^4 ...", observed: "6.333 sin^4 ...", artifact: "x.json" }, inputs: {} },
     c6_anisotropy_ratio: { headline: true, observable: "Ratio |C6(pi/2)|/|C6(0)| for the stretched 60P3/2 pair, dimensionless", value: 28.14, uncertainty: 0.15, uncertainty_source: "basis truncation", limit_check: { limit: "isotropic 70S control", expected: 1.0, observed: 1.02, artifact: "tests/t.py" }, inputs: {} },
     blockade_radius_r0: { headline: true, observable: "Blockade radius r0 = (|C6(pi/2)|/hbar Omega)^(1/6) in micrometers at Omega/2pi = 45.4 kHz", value_um: 13.65, uncertainty: 0.02, uncertainty_source: "1/6 power", inputs: { rabi_frequency: 45.36 } },
@@ -44,6 +46,7 @@ const decl = (id: string) => t.decls.find((d) => d.id === id)!;
 check("object leaf with `value` → value read (28.14)", decl("c6_anisotropy_ratio_60p").value === 28.14);
 check("object leaf with single value_<unit> → value read (13.65)", decl("blockade_radius_r0_60p").value === 13.65);
 check("metadata read from the leaf object: headline/observable/σ/inputs", decl("blockade_radius_r0_60p").headline === true && /Blockade radius/.test(decl("blockade_radius_r0_60p").observable ?? "") && decl("blockade_radius_r0_60p").uncertainty === 0.02 && decl("blockade_radius_r0_60p").inputs.rabi_frequency === 45.36);
+check("shape C: key → numeric sub-leaf, metadata on its parent object", decl("c6_magic_angle_60p").value === 24.61 && decl("c6_magic_angle_60p").headline === true && decl("c6_magic_angle_60p").uncertainty === 0.3 && decl("c6_magic_angle_60p").inputs.c6_sin4_coeff_60p === -294.9 && /Magic angle/.test(decl("c6_magic_angle_60p").observable ?? ""));
 check("numeric limit_check on the leaf is accepted", decl("c6_anisotropy_ratio_60p").limitCheck?.expected === 1.0);
 check("quantities[] entry wins over the leaf (uncertainty 0.5 on a plain numeric leaf)", decl("n11_scaling_factor_60p").value === 3.1 && decl("n11_scaling_factor_60p").uncertainty === 0.5);
 check("co-located headline rows are load-bearing", t.headline.includes("c6_anisotropy_ratio_60p") && t.headline.includes("blockade_radius_r0_60p"));

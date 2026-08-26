@@ -17,10 +17,13 @@
  *
  * Raw JSON is read directly (not via buildClaimTable) so that malformed-but-present
  * fields still count as "attempted" — the point is producer behaviour, not gate output.
+ * Field LOCATION follows resolveQuantity (entry → co-located leaf → numeric leaf's
+ * parent), the same tolerance the table applies; how often producers co-locate
+ * is reported as its own row.
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { parseFrameHeadline, parseReviewerLines, HARNESS_REVIEW_FILE_RE } from "../src/claims-table.ts";
+import { parseFrameHeadline, parseReviewerLines, resolveQuantity, HARNESS_REVIEW_FILE_RE } from "../src/claims-table.ts";
 
 export interface FieldRate { field: string; filled: number; total: number; rate: number | null; valid?: number }
 export interface ComplianceReport {
@@ -73,7 +76,14 @@ export function measureCompliance(projectDir: string): ComplianceReport {
     const arr = j?.computed?.quantities;
     if (Array.isArray(arr) && arr.length) {
       runsDeclaring++;
-      for (const q of arr) { qs.push({ q, j }); if (typeof q?.id === "string") knownIds.add(q.id); }
+      for (const q of arr) {
+        // Same resolution as buildClaimTable: entry fields win, then the
+        // co-located object (leaf or the numeric leaf's parent) fills gaps.
+        const r = typeof q?.key === "string" ? resolveQuantity(j, q.key) : { leaf: undefined, meta: undefined, metaFrom: undefined };
+        const merged = { ...(r.meta ?? {}), ...(q ?? {}) };
+        qs.push({ q: merged, j, raw: q, metaFrom: r.metaFrom, leaf: r.leaf });
+        if (typeof q?.id === "string") knownIds.add(q.id);
+      }
     }
     const varr = j?.computed?.verdicts ?? j?.verdicts;
     if (Array.isArray(varr)) for (const v of varr) vs.push(v);
@@ -86,7 +96,8 @@ export function measureCompliance(projectDir: string): ComplianceReport {
     fr("quantities[] declared (per run)", runsDeclaring, results.length),
     fr("id (string)", count((q) => typeof q.id === "string" && q.id.length > 0), n),
     fr("key (string)", count((q) => typeof q.key === "string"), n,
-      count((q, j) => typeof q.key === "string" && isNum(getPath(j, q.key)))),
+      qs.filter(({ leaf }) => isNum(leaf) || (leaf && typeof leaf === "object" && (isNum((leaf as any).value) || Object.entries(leaf as any).filter(([k, v]) => /^value(_|$)/.test(k) && isNum(v)).length === 1))).length),
+    fr("metadata co-located under computed.* (not on the entry)", qs.filter(({ metaFrom }) => metaFrom !== undefined).length, n),
     fr("headline (boolean present)", count((q) => typeof q.headline === "boolean"), n),
     fr("observable (sentence ≥ 40 chars)", count((q) => typeof q.observable === "string" && q.observable.trim().length >= 40), n),
     fr("uncertainty (present)", count((q) => q.uncertainty !== undefined), n,

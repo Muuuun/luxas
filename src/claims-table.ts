@@ -125,6 +125,28 @@ const num = (v: unknown): number | undefined =>
   typeof v === "number" && Number.isFinite(v) ? v : undefined;
 const posNum = (v: unknown): number | undefined => { const n = num(v); return n !== undefined && n > 0 ? n : undefined; };
 
+/**
+ * Where a quantity's number and metadata live (design §3.1 + the shapes live
+ * producers actually write, 2026-08-26 probe):
+ *   A. key → number; metadata on the quantities[] entry            (design)
+ *   B. key → object {value|value_<unit>, headline, observable, …}   (co-located)
+ *   C. key → number nested in an object that carries the metadata  (co-located,
+ *      after the producer repointed `key` at the numeric sub-leaf)
+ * Fields on the quantities[] entry always win; `meta` is the object consulted
+ * for what the entry omits (undefined for shape A).
+ */
+export function resolveQuantity(j: any, key: string): { leaf: unknown; meta: Record<string, unknown> | undefined; metaFrom: "entry" | "leaf" | "parent" | undefined } {
+  const leaf = leafAt(j, key);
+  const isObj = (x: unknown): x is Record<string, unknown> => !!x && typeof x === "object" && !Array.isArray(x);
+  if (isObj(leaf)) return { leaf, meta: leaf, metaFrom: "leaf" };
+  const parentKey = key.includes(".") ? key.slice(0, key.lastIndexOf(".")) : "";
+  const parent = parentKey ? leafAt(j, parentKey) : undefined;
+  if (typeof leaf === "number" && isObj(parent) && ["headline", "observable", "uncertainty", "limit_check", "inputs"].some((f) => f in parent)) {
+    return { leaf, meta: parent, metaFrom: "parent" };
+  }
+  return { leaf, meta: undefined, metaFrom: undefined };
+}
+
 function leafAt(obj: any, dotted: string): unknown {
   const parts = dotted.replace(/\[(\d+)\]/g, ".$1").split(".");
   let cur = obj;
@@ -155,9 +177,9 @@ function parseExperiment(id: string, j: any): Parsed {
     // entry win, the leaf object fills what the entry omits, and the value is
     // the object's single `value` / `value_<unit>` number. Gates keep their
     // numeric demands; only the LOCATION is tolerated.
-    const leaf = leafAt(j, q.key);
+    const { leaf, meta } = resolveQuantity(j, q.key);
     const leafObj = leaf && typeof leaf === "object" && !Array.isArray(leaf) ? (leaf as Record<string, unknown>) : undefined;
-    const pick = (field: string): unknown => (q[field] !== undefined ? q[field] : leafObj?.[field]);
+    const pick = (field: string): unknown => (q[field] !== undefined ? q[field] : meta?.[field]);
     const decl: QuantityDecl = {
       id: q.id, key: q.key, experiment: id, headline: pick("headline") === true,
       observable: typeof pick("observable") === "string" ? (pick("observable") as string) : undefined,
