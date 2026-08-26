@@ -180,7 +180,7 @@ if (command === "run") {
   }
   try {
     mkdirSync(join(projectDir, ".agent"), { recursive: true });
-    writeFileSync(runCfgPath, JSON.stringify({ model, profile: profile ?? null, savedAt: new Date().toISOString() }, null, 2) + "\n");
+    writeFileSync(runCfgPath, JSON.stringify({ model, profile: profile ?? null, maxCost: maxCost ?? null, savedAt: new Date().toISOString() }, null, 2) + "\n");
   } catch { /* persistence is best-effort */ }
 }
 

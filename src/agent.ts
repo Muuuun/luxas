@@ -185,7 +185,8 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
 
   // Usage tracking: wrap all API providers to append to usage.log (single source of truth)
   const usageLogPath = join(agentDir, "usage.log");
-  installUsageTracking(usageLogPath);
+  // Same $250 runaway backstop as hooks.ts when no --max-cost was given.
+  installUsageTracking(usageLogPath, { maxCostUsd: opts.maxCostUsd ?? 250 });
 
   // Hooks must be created before tools
   // Reader dispatcher: serialized per-project via a promise chain so concurrent

@@ -188,7 +188,42 @@ export async function withTransientRetry<T>(
 
 let installed = false;
 
-export function installUsageTracking(logPath: string): void {
+// ── Cost cap at the point of record ──────────────────
+//
+// The brain's beforeToolCall hook (hooks.ts) also checks the cap, but it only
+// runs between the BRAIN's tool calls. While the brain sits inside one
+// foreground spawn_agent(experiment) — routinely an hour or more — every
+// sub-agent turn is paid without a single check: on 2026-08-26 a
+// `--max-cost 5` probe reached $13 with the experiment still running.
+// Enforcing here, right after each usage line is appended, covers every
+// agent that shares this process; detached background runners read the cap
+// from .agent/run_config.json and install it the same way.
+const costCaps = new Map<string, number>();
+
+export function setCostCap(logPath: string, maxCostUsd: number | undefined): void {
+  if (maxCostUsd !== undefined && Number.isFinite(maxCostUsd)) costCaps.set(logPath, maxCostUsd);
+  else costCaps.delete(logPath);
+}
+
+/**
+ * Kill the process when the recorded total exceeds the cap. `exit` is
+ * injectable for the gate; the default is process.exit (non-swallowable —
+ * a thrown error would just become one more paid model turn).
+ */
+export function enforceCostCap(logPath: string, exit: (code: number) => void = (c) => process.exit(c)): boolean {
+  const cap = costCaps.get(logPath);
+  if (cap === undefined) return false;
+  const totals = readUsageTotals(logPath);
+  if (totals.cost > cap) {
+    console.error(`\n[FATAL] Cost limit exceeded at usage record: $${totals.cost.toFixed(2)} > $${cap}. Killing process.\n`);
+    exit(1);
+    return true;
+  }
+  return false;
+}
+
+export function installUsageTracking(logPath: string, opts: { maxCostUsd?: number } = {}): void {
+  if (opts.maxCostUsd !== undefined) setCostCap(logPath, opts.maxCostUsd);
   if (installed) return;
   installed = true;
 
@@ -222,6 +257,7 @@ export function installUsageTracking(logPath: string): void {
                 cacheWrite: msg.usage.cacheWrite ?? 0,
                 cost: msg.usage.cost?.total ?? 0,
               });
+              enforceCostCap(logPath);
             }
             return msg;
           } catch (err: unknown) {

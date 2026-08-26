@@ -13,7 +13,7 @@
  *     --session .agent/conversations/brain.worker-bg-1.jsonl
  */
 
-import { mkdirSync, appendFileSync } from "node:fs";
+import { mkdirSync, appendFileSync, readFileSync } from "node:fs";
 import { join, isAbsolute, resolve, dirname } from "node:path";
 import { buildAgentFromDefinition, createSubAgentExitCollector, createLengthRecoveryController, runWithLengthRecovery, type SpawnAgentOptions } from "./agents/spawn.js";
 import { Session, deriveState, buildSessionContext } from "./session.js";
@@ -85,8 +85,15 @@ async function main() {
   mkdirSync(dirname(sessionFile), { recursive: true });
   const processStartTime = Date.now();
 
-  // Usage tracking: append to shared usage.log (same file as main process)
-  installUsageTracking(join(agentDir, "usage.log"));
+  // Usage tracking: append to shared usage.log (same file as main process).
+  // The cost cap comes from run_config.json (written by `luxas run`); without
+  // it a detached runner would be the one place the cap is never checked.
+  let maxCostUsd: number | undefined;
+  try {
+    const cfg = JSON.parse(readFileSync(join(agentDir, "run_config.json"), "utf-8"));
+    if (typeof cfg.maxCost === "number" && Number.isFinite(cfg.maxCost)) maxCostUsd = cfg.maxCost;
+  } catch { /* no run_config: fall back to the hooks default below */ }
+  installUsageTracking(join(agentDir, "usage.log"), { maxCostUsd: maxCostUsd ?? 250 });
 
   // Heartbeat: touch every 30s
   touchHeartbeat(agentDir, args.id);
