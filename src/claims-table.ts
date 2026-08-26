@@ -279,7 +279,16 @@ function parseExperiment(id: string, j: any): Parsed {
 // leading minus sign on the value is never eaten (505d006's lesson).
 const NUM = String.raw`[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?`;
 export const ESTIMATE_LINE_RE = new RegExp(String.raw`^\s*ESTIMATE(\(blind\))?:\s*(\S+)\s+[—–-]+\s+(${NUM})(?:\s*(?:±|\+/-)\s*(${NUM}))?\s*(?:via\s+(.*?))?(?:\s+[—–-]+\s*inputs:\s*(.*))?\s*$`);
-const SCALING_LINE_RE = new RegExp(String.raw`^\s*SCALING:\s*(\S+)\s+[—–-]+\s+expected\s+(${NUM})\s+in\s+\S+;\s*observed\s+(${NUM}|not swept)`);
+// Loosened after the 2026-08-26 live probe: reviewers write `expected 1/6 in C6
+// (r0 = ...)`, `observed ~11 from two-point ...`, `observed not swept (single
+// point)`. Fractions, a leading ~, a parenthesised parameter, and trailing
+// prose are all accepted; the numbers are what matter.
+const FRAC = String.raw`(?:${NUM})(?:\s*/\s*(?:${NUM}))?`;
+const SCALING_LINE_RE = new RegExp(String.raw`^\s*SCALING:\s*(\S+)\s+[—–-]+\s+expected\s+~?\s*(${FRAC})\s+in\s+[^;]+;\s*observed\s+(?:~?\s*(${FRAC})|(not swept))`);
+function fracNum(t: string): number {
+  const parts = t.split("/").map((x) => Number(x.trim()));
+  return parts.length === 2 && parts[1] !== 0 ? parts[0] / parts[1] : parts[0];
+}
 /** Only files the HARNESS writes carry attestations; any agent may create other files under reviews/. */
 export const HARNESS_REVIEW_FILE_RE = /^(experiment_review_[^/]+_r\d+\.md|pi_feedback\.md)$/;
 
@@ -321,7 +330,7 @@ export function parseReviewerLines(projectDir: string): ReviewerLines {
         continue;
       }
       let m = line.match(SCALING_LINE_RE);
-      if (m) { out.scaling.push({ id: m[1], expected: Number(m[2]), observed: m[3] === "not swept" ? undefined : Number(m[3]) }); continue; }
+      if (m) { out.scaling.push({ id: m[1], expected: fracNum(m[2]), observed: m[4] ? undefined : fracNum(m[3]) }); continue; }
       if (/^SCALING:/.test(line)) { out.malformed.push(`reviews/${f}: unparseable scaling line "${line.slice(0, 80)}"`); continue; }
       m = line.match(/^DISCRIMINATOR:\s*(\S+)/); if (m) { out.discriminators.push({ id: m[1], text: line }); continue; }
       m = line.match(/^INDEPENDENT:\s*(\S+)/); if (m) { out.independent.add(m[1]); continue; }

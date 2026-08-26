@@ -7,7 +7,7 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildClaimTable } from "../src/claims-table.ts";
+import { buildClaimTable, parseReviewerLines as parseReviewerLinesFor } from "../src/claims-table.ts";
 import { quantityDeclarationProblems } from "../src/claims-review.ts";
 
 let fails = 0;
@@ -54,6 +54,21 @@ check("leaf object with no single value → actionable MALFORMED naming numeric 
 check("string limit_check → accepted silently (demoted §7.4), not an anchor", !t.malformed.some((m) => /c6_theta_60p_mj32.*limit_check/.test(m)) && decl("c6_theta_60p_mj32").limitCheck === undefined);
 check("missing key → says the key does not exist", t.malformed.some((m) => /missing_key_q.*does not exist/.test(m)));
 check("leaf-with-value rows are not MALFORMED", !t.malformed.some((m) => /c6_anisotropy_ratio_60p|blockade_radius_r0_60p/.test(m)), t.malformed.join(" | "));
+
+// SCALING grammar against the two lines the live reviewer actually wrote.
+mkdirSync(join(dir, "reviews"), { recursive: true });
+writeFileSync(join(dir, "reviews", "experiment_review_E1_c6_theta_60p_r1.md"), [
+  "SCALING: c6_sin4_coeff_60p — expected 11 in n*; observed ~11 from two-point (n=25, n=60) ratio: |−294912/6.333| = 46568 → effective exponent ≈ 11.4",
+  "SCALING: blockade_radius_r0_60p — expected 1/6 in C6 (r₀ = (|C6|/ℏΩ)^{1/6}); observed not swept (single-point computation at Ω/2π = 45.4 kHz).",
+  "SCALING: c6_anisotropy_ratio_60p — expected 2 in Omega; observed 4.03 from data/x.csv",
+  "VERDICT: satisfied",
+].join("\n"));
+const t2 = buildClaimTable(dir);
+const sc = (id: string) => parseReviewerLinesFor(dir).scaling.find((x) => x.id === id);
+check("SCALING: `observed ~11 from …` parses (expected 11, observed 11)", sc("c6_sin4_coeff_60p")?.expected === 11 && sc("c6_sin4_coeff_60p")?.observed === 11);
+check("SCALING: `expected 1/6 in C6 (…)` + `observed not swept (…)` parses", Math.abs((sc("blockade_radius_r0_60p")?.expected ?? 0) - 1 / 6) < 1e-9 && sc("blockade_radius_r0_60p")?.observed === undefined);
+check("SCALING: plain numeric form still parses", sc("c6_anisotropy_ratio_60p")?.observed === 4.03);
+check("no MALFORMED scaling lines from the live reviewer text", !t2.malformed.some((m) => /unparseable scaling/.test(m)), t2.malformed.join(" | "));
 
 const problems = quantityDeclarationProblems(dir, "E1_c6_theta_60p");
 check("frame id near-miss hint: C6_60P_mj32_theta ← c6_theta_60p_mj32", problems.some((p) => /frame\.md names headline quantity "C6_60P_mj32_theta".*your "c6_theta_60p_mj32"/.test(p)), problems.join(" | "));

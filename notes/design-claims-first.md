@@ -249,4 +249,7 @@ Reader: `scripts/claims_compliance.mts`; dispatch check: `scripts/claims_dispatc
 | `verdicts[].reads` / `replaces` | 100% | keep |
 | brain `frame.md ## Headline quantities` | present, 3 ids | keep — but the ids did not match the producer's (`C6_60P_mj32_theta` vs `c6_theta_60p_mj32`): the write-time validator now suggests the frame id on a ≥2-token near-miss |
 | producer `headline: true` | on 6/7 quantities | over-declared vs the ≤3 frame set; the obligation scope is the union, so reviewers get 9 ids. Open question §9.2 stands. |
-| reviewer / PI lines | not yet measured at the time of writing (review round pending) | — |
+| reviewer lines (round 1 ran with an EMPTY obligation block — old code saw no headline decls — so this is the reviewer's *spontaneous* behaviour) | DISCRIMINATOR 3/8 ids, SCALING 2, ANCHOR-OK 1, ESTIMATE(blind) 0 (harness spawned none) | keep; `SCALING` grammar loosened (fractions, `~`, parenthesised parameter, trailing prose, `not swept (…)`) — both live lines had been rejected as unparseable |
+| PI `estimates[]` / `discriminators[]` | 0 (PI ran only at the plan stage) | unmeasured |
+| dispatch (§3.7) | NO-SIGNAL: the r₀ dispute arises from the table's σ-distance, not from a DISCREPANT `cross_validation` verdict, so `<open_discrepancies>` never rendered; the brain was killed by the cost cap on its first tool call after E1 anyway | unmeasured — needs a second experiment in a run with the fixed cap |
+| end-to-end table | `blockade_radius_r0_60p` DISPUTED (producer cross-validated r₀ against \|V(r₀)\| in kHz — a different observable filed under the r₀ key); 4 headline rows INDICATIVE; abstract blocked | the design working as intended: a mis-keyed control becomes a dispute routed to people, not a corroboration |
