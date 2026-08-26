@@ -87,7 +87,7 @@ export function measureDispatch(projectDir: string): DispatchReport {
     firstAgent: afterSpawns[0]?.agent ?? null,
     sequence: afterSpawns.map((s) => s.agent + (s.experimentId ? `(${s.experimentId})` : "")),
   };
-  const needsOperator = existsSync(join(projectDir, "notes", "directives", "needs-operator.md"));
+  const needsOperator = existsSync(join(projectDir, "notes", "escalations", "needs-operator.md"));
   let verdict: DispatchReport["verdict"];
   if (!firstSignal) verdict = "no-signal";
   else if (afterSpawns.length === 0) verdict = "no-spawns-after";
