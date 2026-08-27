@@ -74,6 +74,21 @@ check("SCALING: `observed not swept` with no expected clause parses (no status c
 check("SCALING: numeric observed with no expected clause is malformed", t2.malformed.some((m) => /no "expected.*c6_magic_angle_60p/.test(m)), t2.malformed.join(" | "));
 check("no unparseable scaling lines from the live reviewer text", !t2.malformed.some((m) => /unparseable scaling/.test(m)), t2.malformed.join(" | "));
 
+// sign-only disagreement (live run 2026-08-27: −138.86±0.03 vs blind +140±12)
+{
+  const { signOnlyDisagreement, agreement } = await import("../src/claims-table.ts");
+  const own = { quantity: "q", value: -138.86, sigma: 0.03, kind: "own", source: "E1:own" };
+  const blind = { quantity: "q", value: 140, sigma: 12, kind: "blind", source: "review" };
+  check("sign-only: magnitudes agree, signs differ → flagged as convention", agreement(own as any, blind as any) === "disagree" && signOnlyDisagreement(own as any, blind as any));
+  check("sign-only: not when magnitudes also disagree (−16.2 vs +40±3)", !signOnlyDisagreement({ ...own, value: -16.16, sigma: 0.05 } as any, { ...blind, value: 40, sigma: 3 } as any));
+  check("sign-only: missing σ falls back to a 10% magnitude window", signOnlyDisagreement({ ...own, sigma: undefined } as any, { ...blind, value: 141, sigma: undefined } as any) && !signOnlyDisagreement({ ...own, sigma: undefined } as any, { ...blind, value: 170, sigma: undefined } as any));
+  writeFileSync(join(dir, "reviews", "experiment_review_E1_c6_theta_60p_r2.md"), "ESTIMATE(blind): c6_anisotropy_ratio_60p — -28.1 ± 2 via other route — inputs: [own]\nESTIMATE(blind): c6_anisotropy_ratio_60p — -28.1 ± 2 via other route — inputs: [own]\nVERDICT: revise\n");
+  const t3 = buildClaimTable(dir);
+  const r = t3.rows.find((x) => x.id === "c6_anisotropy_ratio_60p")!;
+  check("row reason names the sign convention", r.status === "disputed" && r.reasons.some((x) => /sign convention: blind estimate -28.1/.test(x)), r.reasons.join(" | "));
+  check("duplicate blind lines across rounds produce one reason, not two", r.reasons.filter((x) => /sign convention/.test(x)).length === 1, r.reasons.join(" | "));
+}
+
 const problems = quantityDeclarationProblems(dir, "E1_c6_theta_60p");
 check("frame id near-miss hint: C6_60P_mj32_theta ← c6_theta_60p_mj32", problems.some((p) => /frame\.md names headline quantity "C6_60P_mj32_theta".*your "c6_theta_60p_mj32"/.test(p)), problems.join(" | "));
 check("no hint for a frame id with no near-miss (p2_at_r0_theta)", !problems.some((p) => /"p2_at_r0_theta"/.test(p)), problems.join(" | "));

@@ -421,6 +421,22 @@ export function agreement(a: Estimate, b: Estimate): "agree" | "disagree" | "und
   return "undecidable";
 }
 
+/**
+ * A sign-only disagreement: the magnitudes agree (within 2σ, or within 10% when
+ * a σ is missing) but the signs differ. Live run 2026-08-27: producer −138.86
+ * (attractive = negative) vs blind +140 "repulsive". Still a dispute — a
+ * convention nobody pinned in `observable` is exactly what an unanswered flag
+ * should surface — but the reason says what the one-round answer is.
+ */
+export function signOnlyDisagreement(a: Estimate, b: Estimate): boolean {
+  if (a.value === 0 || b.value === 0 || Math.sign(a.value) === Math.sign(b.value)) return false;
+  const ma = { ...a, value: Math.abs(a.value) }, mb = { ...b, value: Math.abs(b.value) };
+  const ag = agreement(ma, mb);
+  if (ag === "agree") return true;
+  if (ag === "undecidable") { const hi = Math.max(ma.value, mb.value), lo = Math.min(ma.value, mb.value); return hi / lo <= 1.1; }
+  return false;
+}
+
 // ── the table ──────────────────────────────────────────────────────────────
 
 export function buildClaimTable(projectDir: string): ClaimTable {
@@ -511,7 +527,7 @@ export function buildClaimTable(projectDir: string): ClaimTable {
         if (ag === "disagree") { const ups = differing.filter((u) => known.has(u)); propagate.push(...ups); if (ups.length) reasons.push(`dispute propagated to ${ups.join(",")}`); }
         continue;
       }
-      if (ag === "disagree") { disputed = true; reasons.push(`disagree: ${a.source}=${a.value} vs ${b.source}=${b.value}`); }
+      if (ag === "disagree") { disputed = true; reasons.push(signOnlyDisagreement(a, b) ? `sign convention: |${a.source}|=${Math.abs(a.value)} ≈ |${b.source}|=${Math.abs(b.value)} but signs differ — pin the convention in \`observable\` (e.g. "negative = attractive") and restate one estimate with a locator; a physics dispute only if the signs survive that` : `disagree: ${a.source}=${a.value} vs ${b.source}=${b.value}`); }
       else if (ag === "agree") {
         const attested = !headline.has(id) || rev.independent.has(id);
         if (attested) {
@@ -523,7 +539,7 @@ export function buildClaimTable(projectDir: string): ClaimTable {
     }
     const own = producers.find((e) => e.kind === "own");
     for (const bl of rev.blind.filter((e) => e.quantity === id)) {
-      if (own && agreement(own, bl) === "disagree") { disputed = true; reasons.push(`blind reviewer estimate ${bl.value} disagrees with ${own.source}=${own.value} (unanswered)`); }
+      if (own && agreement(own, bl) === "disagree") { disputed = true; reasons.push(signOnlyDisagreement(own, bl) ? `sign convention: blind estimate ${bl.value} vs ${own.source}=${own.value} agree in magnitude, differ in sign — pin the convention in \`observable\` and answer with a locator (unanswered)` : `blind reviewer estimate ${bl.value} disagrees with ${own.source}=${own.value} (unanswered)`); }
     }
     for (const s of rev.scaling.filter((s) => s.id === id)) {
       if (s.observed !== undefined && Math.abs(s.observed - s.expected) > SCALING_TOL) { disputed = true; reasons.push(`scaling: observed exponent ${s.observed} vs expected ${s.expected}`); }
@@ -543,7 +559,7 @@ export function buildClaimTable(projectDir: string): ClaimTable {
     else if (agreeingPair && anyOwnSigma) status = "converging";
     else status = "indicative";
     if (!anyOwnSigma && agreeingPair) reasons.push("no σ on own estimate: capped at indicative");
-    intrinsic.set(id, { status, reasons, propagate });
+    intrinsic.set(id, { status, reasons: [...new Set(reasons)], propagate });
   }
   for (const [id, intr] of intrinsic) for (const up of intr.propagate) {
     headline.add(up);
