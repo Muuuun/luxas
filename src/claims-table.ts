@@ -284,7 +284,7 @@ export const ESTIMATE_LINE_RE = new RegExp(String.raw`^\s*ESTIMATE(\(blind\))?:\
 // point)`. Fractions, a leading ~, a parenthesised parameter, and trailing
 // prose are all accepted; the numbers are what matter.
 const FRAC = String.raw`(?:${NUM})(?:\s*/\s*(?:${NUM}))?`;
-const SCALING_LINE_RE = new RegExp(String.raw`^\s*SCALING:\s*(\S+)\s+[—–-]+\s+expected\s+~?\s*(${FRAC})\s+in\s+[^;]+;\s*observed\s+(?:~?\s*(${FRAC})|(not swept))`);
+const SCALING_LINE_RE = new RegExp(String.raw`^\s*SCALING:\s*(\S+)\s+[—–-]+\s+(?:expected\s+~?\s*(${FRAC})\s+in\s+[^;]+;\s*)?observed\s+(?:~?\s*(${FRAC})|(not swept))`);
 function fracNum(t: string): number {
   const parts = t.split("/").map((x) => Number(x.trim()));
   return parts.length === 2 && parts[1] !== 0 ? parts[0] / parts[1] : parts[0];
@@ -330,7 +330,14 @@ export function parseReviewerLines(projectDir: string): ReviewerLines {
         continue;
       }
       let m = line.match(SCALING_LINE_RE);
-      if (m) { out.scaling.push({ id: m[1], expected: fracNum(m[2]), observed: m[4] ? undefined : fracNum(m[3]) }); continue; }
+      if (m) {
+        // `expected` may be absent only when the reviewer says "not swept"
+        // (live run 2026-08-27); a numeric observed without an expected
+        // exponent is meaningless and stays malformed.
+        if (m[2] === undefined && !m[4]) { out.malformed.push(`reviews/${f}: scaling line has an observed exponent but no "expected <k> in <param>;" clause "${line.slice(0, 80)}"`); continue; }
+        out.scaling.push({ id: m[1], expected: m[2] === undefined ? NaN : fracNum(m[2]), observed: m[4] ? undefined : fracNum(m[3]) });
+        continue;
+      }
       if (/^SCALING:/.test(line)) { out.malformed.push(`reviews/${f}: unparseable scaling line "${line.slice(0, 80)}"`); continue; }
       m = line.match(/^DISCRIMINATOR:\s*(\S+)/); if (m) { out.discriminators.push({ id: m[1], text: line }); continue; }
       m = line.match(/^INDEPENDENT:\s*(\S+)/); if (m) { out.independent.add(m[1]); continue; }

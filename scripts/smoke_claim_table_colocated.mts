@@ -61,6 +61,8 @@ writeFileSync(join(dir, "reviews", "experiment_review_E1_c6_theta_60p_r1.md"), [
   "SCALING: c6_sin4_coeff_60p — expected 11 in n*; observed ~11 from two-point (n=25, n=60) ratio: |−294912/6.333| = 46568 → effective exponent ≈ 11.4",
   "SCALING: blockade_radius_r0_60p — expected 1/6 in C6 (r₀ = (|C6|/ℏΩ)^{1/6}); observed not swept (single-point computation at Ω/2π = 45.4 kHz).",
   "SCALING: c6_anisotropy_ratio_60p — expected 2 in Omega; observed 4.03 from data/x.csv",
+  "SCALING: blockade_radius_r0_60p — observed not swept (single n=60 point; the ratio depends on …)",
+  "SCALING: c6_magic_angle_60p — observed 3.1 from somewhere",
   "VERDICT: satisfied",
 ].join("\n"));
 const t2 = buildClaimTable(dir);
@@ -68,7 +70,9 @@ const sc = (id: string) => parseReviewerLinesFor(dir).scaling.find((x) => x.id =
 check("SCALING: `observed ~11 from …` parses (expected 11, observed 11)", sc("c6_sin4_coeff_60p")?.expected === 11 && sc("c6_sin4_coeff_60p")?.observed === 11);
 check("SCALING: `expected 1/6 in C6 (…)` + `observed not swept (…)` parses", Math.abs((sc("blockade_radius_r0_60p")?.expected ?? 0) - 1 / 6) < 1e-9 && sc("blockade_radius_r0_60p")?.observed === undefined);
 check("SCALING: plain numeric form still parses", sc("c6_anisotropy_ratio_60p")?.observed === 4.03);
-check("no MALFORMED scaling lines from the live reviewer text", !t2.malformed.some((m) => /unparseable scaling/.test(m)), t2.malformed.join(" | "));
+check("SCALING: `observed not swept` with no expected clause parses (no status consequence)", parseReviewerLinesFor(dir).scaling.filter((x) => x.id === "blockade_radius_r0_60p").length === 2);
+check("SCALING: numeric observed with no expected clause is malformed", t2.malformed.some((m) => /c6_magic_angle_60p.*no "expected/.test(m)));
+check("no unparseable scaling lines from the live reviewer text", !t2.malformed.some((m) => /unparseable scaling/.test(m)), t2.malformed.join(" | "));
 
 const problems = quantityDeclarationProblems(dir, "E1_c6_theta_60p");
 check("frame id near-miss hint: C6_60P_mj32_theta ← c6_theta_60p_mj32", problems.some((p) => /frame\.md names headline quantity "C6_60P_mj32_theta".*your "c6_theta_60p_mj32"/.test(p)), problems.join(" | "));
