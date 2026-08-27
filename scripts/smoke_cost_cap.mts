@@ -53,6 +53,7 @@ const runnerSrc = readFileSync("src/subagent-runner.ts", "utf-8");
 check("background runner reads maxCost from run_config.json", /run_config\.json/.test(runnerSrc) && /installUsageTracking\(join\(agentDir, "usage\.log"\), \{ maxCostUsd/.test(runnerSrc));
 const indexSrc = readFileSync("src/index.ts", "utf-8");
 check("luxas run persists maxCost into run_config.json", /maxCost: maxCost \?\? null/.test(indexSrc));
+check("a bare resume inherits maxCost from run_config.json (never widens to the backstop)", /maxCost === undefined && typeof saved\.maxCost === "number"[\s\S]{0,200}maxCost = saved\.maxCost/.test(indexSrc));
 
 if (fails) { console.log(`\n${fails} FAILED`); process.exit(1); }
 console.log("\nALL PASS — the cost cap fires at the usage record, in every agent.");

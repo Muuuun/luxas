@@ -162,6 +162,14 @@ if (command === "run") {
       profile = saved.profile ?? undefined;
       if (saved.profile) console.error(`↺ Inherited --profile ${saved.profile} from the original launch (.agent/run_config.json); pass --profile explicitly to override.`);
     }
+    // --max-cost is inherited like --profile: a resume without the flag must
+    // not silently widen the cap to the $250 backstop (2026-08-28: a $60 run
+    // resumed bare, run_config was rewritten with maxCost:null, and it ran
+    // to $61.42 before being stopped by hand).
+    if (maxCost === undefined && typeof saved.maxCost === "number" && Number.isFinite(saved.maxCost)) {
+      maxCost = saved.maxCost;
+      console.error(`↺ Inherited --max-cost ${saved.maxCost} from the original launch (.agent/run_config.json); pass --max-cost explicitly to override.`);
+    }
     if (explicitProfile && (saved.profile ?? undefined) !== profile) {
       console.error(`⚠ Profile override: original launch used --profile ${saved.profile ?? "(none)"}, this resume uses --profile ${profile ?? "(none)"}. Cost characteristics will differ.`);
     }
