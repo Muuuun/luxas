@@ -63,6 +63,7 @@ writeFileSync(join(dir, "reviews", "experiment_review_E1_c6_theta_60p_r1.md"), [
   "SCALING: c6_anisotropy_ratio_60p — expected 2 in Omega; observed 4.03 from data/x.csv",
   "SCALING: blockade_radius_r0_60p — observed not swept (single n=60 point; the ratio depends on …)",
   "SCALING: c6_magic_angle_60p — observed 3.1 from somewhere",
+  "SCALING: c6_sin4_coeff_60p — expected divergent (∝ 1/C6(θ)^(1/6) as θ→θ*); observed finite at the sampled angles",
   "VERDICT: satisfied",
 ].join("\n"));
 const t2 = buildClaimTable(dir);
@@ -71,6 +72,7 @@ check("SCALING: `observed ~11 from …` parses (expected 11, observed 11)", sc("
 check("SCALING: `expected 1/6 in C6 (…)` + `observed not swept (…)` parses", Math.abs((sc("blockade_radius_r0_60p")?.expected ?? 0) - 1 / 6) < 1e-9 && sc("blockade_radius_r0_60p")?.observed === undefined);
 check("SCALING: plain numeric form still parses", sc("c6_anisotropy_ratio_60p")?.observed === 4.03);
 check("SCALING: `observed not swept` with no expected clause parses (no status consequence)", parseReviewerLinesFor(dir).scaling.filter((x) => x.id === "blockade_radius_r0_60p").length === 2);
+check("SCALING: descriptive `expected divergent …` is recorded, not malformed", parseReviewerLinesFor(dir).scaling.some((x) => x.id === "c6_sin4_coeff_60p" && Number.isNaN(x.expected)) && !t2.malformed.some((m) => /divergent/.test(m)), t2.malformed.join(" | "));
 check("SCALING: numeric observed with no expected clause is malformed", t2.malformed.some((m) => /no "expected.*c6_magic_angle_60p/.test(m)), t2.malformed.join(" | "));
 check("no unparseable scaling lines from the live reviewer text", !t2.malformed.some((m) => /unparseable scaling/.test(m)), t2.malformed.join(" | "));
 

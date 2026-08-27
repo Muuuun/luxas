@@ -338,7 +338,14 @@ export function parseReviewerLines(projectDir: string): ReviewerLines {
         out.scaling.push({ id: m[1], expected: m[2] === undefined ? NaN : fracNum(m[2]), observed: m[4] ? undefined : fracNum(m[3]) });
         continue;
       }
-      if (/^SCALING:/.test(line)) { out.malformed.push(`reviews/${f}: unparseable scaling line "${line.slice(0, 80)}"`); continue; }
+      if (/^SCALING:/.test(line)) {
+        // Descriptive scaling ("expected divergent as θ→θ*", "expected non-power-law"):
+        // legitimate reviewer prose with no numeric exponent. Record the id with
+        // no consequence instead of MALFORMED noise (live run 2026-08-27).
+        const d = line.match(/^SCALING:\s*(\S+)\s+[—–-]+\s+expected\s+\S/);
+        if (d) { out.scaling.push({ id: d[1], expected: NaN, observed: undefined }); continue; }
+        out.malformed.push(`reviews/${f}: unparseable scaling line "${line.slice(0, 80)}"`); continue;
+      }
       m = line.match(/^DISCRIMINATOR:\s*(\S+)/); if (m) { out.discriminators.push({ id: m[1], text: line }); continue; }
       m = line.match(/^INDEPENDENT:\s*(\S+)/); if (m) { out.independent.add(m[1]); continue; }
       m = line.match(/^ANCHOR-OK:\s*(\S+)/); if (m) { out.anchorOk.add(m[1]); continue; }
