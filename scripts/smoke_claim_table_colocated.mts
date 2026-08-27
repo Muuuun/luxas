@@ -71,7 +71,7 @@ check("SCALING: `observed ~11 from …` parses (expected 11, observed 11)", sc("
 check("SCALING: `expected 1/6 in C6 (…)` + `observed not swept (…)` parses", Math.abs((sc("blockade_radius_r0_60p")?.expected ?? 0) - 1 / 6) < 1e-9 && sc("blockade_radius_r0_60p")?.observed === undefined);
 check("SCALING: plain numeric form still parses", sc("c6_anisotropy_ratio_60p")?.observed === 4.03);
 check("SCALING: `observed not swept` with no expected clause parses (no status consequence)", parseReviewerLinesFor(dir).scaling.filter((x) => x.id === "blockade_radius_r0_60p").length === 2);
-check("SCALING: numeric observed with no expected clause is malformed", t2.malformed.some((m) => /c6_magic_angle_60p.*no "expected/.test(m)));
+check("SCALING: numeric observed with no expected clause is malformed", t2.malformed.some((m) => /no "expected.*c6_magic_angle_60p/.test(m)), t2.malformed.join(" | "));
 check("no unparseable scaling lines from the live reviewer text", !t2.malformed.some((m) => /unparseable scaling/.test(m)), t2.malformed.join(" | "));
 
 const problems = quantityDeclarationProblems(dir, "E1_c6_theta_60p");
