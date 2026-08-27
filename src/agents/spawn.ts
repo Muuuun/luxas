@@ -59,7 +59,26 @@ type InlineModel = {
   contextWindow: number;
   maxTokens: number;
   compat?: Record<string, unknown>;
+  /** pi-ai thinking-level → provider reasoning_effort (null = send none). */
+  thinkingLevelMap?: Record<string, string | null>;
 };
+
+// DeepSeek V4 (docs 2026-08: api-docs.deepseek.com/quick_start/pricing).
+// v4-pro is DeepSeek's most capable model (server revision 0813); nothing
+// newer is exposed. `compat` mirrors pi-ai's own catalog entry so thinking
+// mode is requested explicitly (`thinking: {type: "enabled"}`) and
+// reasoning_content is echoed back on assistant turns as the API requires;
+// `thinkingLevelMap` sends reasoning_effort only for the levels DeepSeek
+// defines ("high" / "max"). Prices are the documented PEAK rates so the cost
+// cap never under-counts (the catalog lists off-peak).
+const DEEPSEEK_COMPAT = {
+  supportsStore: false,
+  supportsDeveloperRole: false,
+  maxTokensField: "max_tokens",
+  requiresReasoningContentOnAssistantMessages: true,
+  thinkingFormat: "deepseek",
+} as const;
+const DEEPSEEK_THINKING: Record<string, string | null> = { minimal: null, low: null, medium: null, high: "high", max: "max" };
 
 const MODEL_MAP: Record<string, [string, string] | InlineModel> = {
   // Anthropic
@@ -85,9 +104,11 @@ const MODEL_MAP: Record<string, [string, string] | InlineModel> = {
     baseUrl: "https://api.deepseek.com/v1",
     reasoning: true,
     input: ["text"],
-    cost: { input: 1.667, output: 3.333, cacheRead: 0.139, cacheWrite: 0 },
+    cost: { input: 1.32, output: 3.96, cacheRead: 0.044, cacheWrite: 0 },
     contextWindow: 1048576,
     maxTokens: 393216,
+    compat: { ...DEEPSEEK_COMPAT },
+    thinkingLevelMap: { ...DEEPSEEK_THINKING },
   },
   "deepseek-v4-flash": {
     id: "deepseek-v4-flash",
@@ -97,9 +118,11 @@ const MODEL_MAP: Record<string, [string, string] | InlineModel> = {
     baseUrl: "https://api.deepseek.com/v1",
     reasoning: true,
     input: ["text"],
-    cost: { input: 0.139, output: 0.278, cacheRead: 0.028, cacheWrite: 0 },
+    cost: { input: 0.44, output: 1.32, cacheRead: 0.014, cacheWrite: 0 },
     contextWindow: 1048576,
     maxTokens: 393216,
+    compat: { ...DEEPSEEK_COMPAT },
+    thinkingLevelMap: { ...DEEPSEEK_THINKING },
   },
   // Kimi vision model — used for illustrator/illustrator_write/typesetter
   // when running in --profile dual mode (deepseek text + kimi vision).

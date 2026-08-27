@@ -83,6 +83,7 @@ const MANIFEST: Record<string, GateSpec> = {
 	smoke_claims_compliance: { kind: "assert" },
 	smoke_claims_dispatch: { kind: "assert" },
 	smoke_cost_cap: { kind: "assert" },
+	smoke_deepseek_model: { kind: "assert" },
 	smoke_claim_table_colocated: { kind: "assert" },
 	smoke_overflow_backstop: { kind: "assert" },
 	smoke_prior_art_gate: { kind: "assert" },
