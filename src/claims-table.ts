@@ -536,7 +536,30 @@ export function buildClaimTable(projectDir: string): ClaimTable {
     const reasons: string[] = [];
     const propagate: string[] = [];
     let disputed = false, agreeingPair = false, anchoredAgree = false;
-    const producers = es.filter((e) => e.kind !== "blind" && e.kind !== "posthoc");
+    // Supersession (claims v2 P1, 2026-08-29): a producer estimate is RETIRED
+    // when at least two LATER experiments re-measured the id, agree with each
+    // other, and each disagrees with it — the discriminators ran and settled
+    // the value; the stale number stays in the row's history but no longer
+    // disputes (pp-vs-ss: E3's 22.909±0.01 vs E4 24.65 and E7 24.5 forced a
+    // disclosure). One later route never retires anything (that is a dispute).
+    // Everything from the retired experiment's lineage for this id (its own
+    // replication / cross-validation) retires with it.
+    const allProducers = es.filter((e) => e.kind !== "blind" && e.kind !== "posthoc");
+    const expNum = (e: Estimate) => { const m = String(e.experiment ?? "").match(/^E_?(\d+)/); return m ? parseInt(m[1], 10) : -1; };
+    const retiredExps = new Set<string>();
+    for (const a of allProducers.filter((e) => e.kind === "own")) {
+      const later = allProducers.filter((b) => b.kind === "own" && b.experiment !== a.experiment && expNum(b) > expNum(a) && relation(a, b).rel === "comparable" && agreement(a, b) === "disagree");
+      const agreeingLater: Estimate[][] = [];
+      for (let i = 0; i < later.length; i++) for (let k = i + 1; k < later.length; k++) {
+        if (later[i].experiment !== later[k].experiment && relation(later[i], later[k]).rel === "comparable" && agreement(later[i], later[k]) === "agree") agreeingLater.push([later[i], later[k]]);
+      }
+      if (agreeingLater.length > 0 && a.experiment) {
+        retiredExps.add(a.experiment);
+        const [b, c] = agreeingLater[0];
+        reasons.push(`superseded: ${a.source}=${a.value} retired — re-measured by ${b.source}=${b.value} and ${c.source}=${c.value}, which agree with each other and not with it`);
+      }
+    }
+    const producers = allProducers.filter((e) => !(e.experiment && retiredExps.has(e.experiment)));
     for (let i = 0; i < producers.length; i++) for (let k = i + 1; k < producers.length; k++) {
       const a = producers[i], b = producers[k];
       const { rel, differing } = relation(a, b);

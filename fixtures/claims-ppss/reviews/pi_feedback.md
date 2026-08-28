@@ -223,3 +223,78 @@ DISCRIMINATOR: packing_gain_2d — if right: ~1.38 (strong-blockade rectangular)
 DISCRIMINATOR: pp_interaction_gate_density_per_um2 — if right: ~0.014; if wrong: <0.01 or >0.02; computation: full-cell packing optimization with independently verified cross-talk radii
 DISCLOSE-OK: c6_ss_60
 DISCLOSE-OK: c6_pp_theta0_60_diag
+
+
+---
+
+# PI Feedback
+
+Last reviewed: 2026-08-28T13:25:58.770Z (after 106 tool calls)
+
+## Verdict: STEER
+
+## Assessment
+⚠️ PI review did NOT complete: the reviewer produced no structured verdict after a retry. This is not an approval. Re-run request_pi_review before proceeding; if it recurs, the PI agent is failing to call submit_verdict.
+
+## Instructions
+Re-run the PI review. Do not treat this non-response as a passing verdict.
+
+
+---
+
+# PI Feedback
+
+Last reviewed: 2026-08-28T13:31:12.630Z (after 108 tool calls)
+
+## Verdict: STEER
+
+## Assessment
+⚠️ PI review did NOT complete: the reviewer produced no structured verdict after a retry. This is not an approval. Re-run request_pi_review before proceeding; if it recurs, the PI agent is failing to call submit_verdict.
+
+## Instructions
+Re-run the PI review. Do not treat this non-response as a passing verdict.
+
+
+---
+
+# PI Feedback
+
+Last reviewed: 2026-08-28T14:27:52.309Z (after 125 tool calls)
+
+## Verdict: STEER
+
+## Assessment
+⚠️ PI review did NOT complete: the reviewer produced no structured verdict after a retry. This is not an approval. Re-run request_pi_review before proceeding; if it recurs, the PI agent is failing to call submit_verdict.
+
+## Instructions
+Re-run the PI review. Do not treat this non-response as a passing verdict.
+
+
+---
+
+# PI Feedback
+
+Last reviewed: 2026-08-28T15:45:54.670Z (after 175 tool calls)
+
+## Verdict: STEER
+
+## Assessment
+⚠️ PI review did NOT complete: the reviewer produced no structured verdict after a retry. This is not an approval. Re-run request_pi_review before proceeding; if it recurs, the PI agent is failing to call submit_verdict.
+
+## Instructions
+Re-run the PI review. Do not treat this non-response as a passing verdict.
+
+
+---
+
+# PI Feedback
+
+Last reviewed: 2026-08-28T17:10:54.704Z (after 218 tool calls)
+
+## Verdict: CONTINUE
+
+## Assessment
+⚠️ PI plan-review did NOT complete: the reviewer produced no structured verdict after a retry (typically a transient/credit/infra failure — e.g. the Anthropic-pinned reviewer is unfunded while the producer profile still runs). This is NOT an endorsement of the plan. The plan gate is optional and downstream experiments are still independently reviewed, so proceed rather than deadlock.
+
+## Instructions
+Proceed with experiment dispatch. Record in your pushback/notes that the plan PI-review could not run; rely on your own RESEARCH.md cross-check and the downstream experiment_reviewer gates. Do not represent the plan as PI-approved. Optionally retry request_pi_review later if the infra recovers.

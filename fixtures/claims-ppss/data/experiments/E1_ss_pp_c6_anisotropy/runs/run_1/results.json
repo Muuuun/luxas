@@ -100,7 +100,7 @@
         "id": "c6_ss_60",
         "key": "computed.c6_ss_60_ghz_um6",
         "headline": true,
-        "observable": "Rb 60S1/2 + 60S1/2 van der Waals C6 (GHz um^6), isotropic",
+        "observable": "Rb 60S1/2 + 60S1/2 van der Waals C6 (GHz um^6), isotropic; signed C6 coefficient, negative = repulsive (V = -C6/R^6), GHz um^6",
         "uncertainty": 3.5,
         "uncertainty_source": "absolute sigma = 3.5 GHz um^6 = 2.5% of 138.86 (QDT-model floor from the 43S/70S anchors). Independently confirmed: Singer n^11 -140.27 (1.0%), ARC -141.15 (1.6%), diagonalization -138.42 (0.3%).",
         "inputs": {
@@ -114,7 +114,7 @@
         "id": "c6_pp_theta90_60",
         "key": "computed.c6_pp_theta90_60_ghz_um6",
         "headline": true,
-        "observable": "Rb 60P3/2 |m=3/2| stretched pair C6 at theta=90 deg (GHz um^6), the blockaded (dominant) direction",
+        "observable": "Rb 60P3/2 |m=3/2| stretched pair C6 at theta=90 deg (GHz um^6), the blockaded (dominant) direction; signed C6 coefficient, negative = repulsive (V = -C6/R^6), GHz um^6",
         "uncertainty": 30.0,
         "uncertainty_source": "absolute sigma = 30 GHz um^6 = 10% of 299.11 (near-Forster S+S defect 0.278 GHz; diagonalization 268.08 vs perturbative 299.11 = 10% spread). ARC 292.4 (2.3% off perturbative).",
         "inputs": {
@@ -128,7 +128,7 @@
         "id": "c6_pp_theta0_60_diag",
         "key": "computed.c6_pp_theta0_60_diagonalization_ghz_um6",
         "headline": true,
-        "observable": "Rb 60P3/2 |m=3/2| stretched pair residual C6 at theta=0 deg (GHz um^6) from FULL DIAGONALIZATION with converged energy window (+/-100 GHz); the tight-packing floor",
+        "observable": "Rb 60P3/2 |m=3/2| stretched pair residual C6 at theta=0 deg (GHz um^6) from FULL DIAGONALIZATION with converged energy window (+/-100 GHz); the tight-packing floor; signed C6 coefficient, negative = repulsive (V = -C6/R^6), GHz um^6",
         "uncertainty": 0.3,
         "uncertainty_source": "inter-method envelope with CORRECTED numbers: wide-window diagonalization -10.408, all-channel second-order sum -10.412 (0.04% pairinteraction-internal convergence), and independent ARC blind 10.4+/-3 (central value matches to 0.1%). Headline uncertainty 0.3 = the ~2.5% QDT-model floor (70S anchor), which dominates the sub-0.1% convergence spread. The pre-revision -4.96 and -16.16 were stale artifacts (single-channel partial sum and +/-20 GHz window truncation respectively), NOT valid method spread.",
         "inputs": {

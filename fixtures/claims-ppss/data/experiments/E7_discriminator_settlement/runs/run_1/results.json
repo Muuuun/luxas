@@ -1,0 +1,294 @@
+{
+  "experiment_id": "E7_discriminator_settlement",
+  "title": "Discriminator settlement: re-run the reviewer-specified computations on the four disputed headline quantities",
+  "status": "complete",
+  "invariants": {
+    "c6_three_channel_a_ghz_um6": {
+      "value": -2.6,
+      "source": "E4_verify_c6_zero_physical_gain results.json (c6_dm1-channel decomposition)",
+      "anchored_to": "C6(0 deg) = 4a = -10.40 GHz um^6, reproduced by the all-channel second-order sum (-10.41) and E1 wide-window diagonalization (-10.408)",
+      "quote": "a=-2.60 (dM=0 channel, (1-3cos^2)^2)"
+    },
+    "c6_three_channel_b_ghz_um6": {
+      "value": -22.72,
+      "source": "E4 results.json (c6_dm1_channel_ghz_um6)",
+      "anchored_to": "least-squares three-channel decomposition over 19 angles (residual ~0); this is the channel E3's two-channel model DROPPED",
+      "quote": "b=-22.72 (dM=+-1 channel, sin^2 cos^2)"
+    },
+    "c6_three_channel_c_ghz_um6": {
+      "value": 295.62,
+      "source": "E4 results.json (deltaM=+-2 channel)",
+      "anchored_to": "C6(90 deg) = a+c = 293.02 GHz um^6 (attractive), within the E1 near-Forster spread (perturbative 299.11 / full-diag 268.08)",
+      "quote": "c=+295.62 (dM=+-2 channel, sin^4)"
+    },
+    "c6_ss_ghz_um6": {
+      "value": 138.86,
+      "source": "E1 results.json (c6_ss_60)",
+      "anchored_to": "Singer n^11 + QDT formula (E1 cross-check -140.27) and ARC perturbative (-141.15), all within ~2%",
+      "quote": "C6_SS(60S) = -138.86 GHz um^6"
+    },
+    "ss_baseline_density_per_um2": {
+      "value": 0.007038,
+      "source": "E2 results.json (densest staggered SS packing)",
+      "anchored_to": "reproduced exactly (2.6e-5 relative) by the E6 optimizer isotropic limit and by the new three-channel tool's isotropic self-check",
+      "quote": "SS staggered packing density 0.007038 atoms/um^2"
+    },
+    "v_block_ghz": {
+      "value": 0.01,
+      "source": "notes/plan.md (Omega/2pi = 10 MHz)",
+      "quote": "blockade V(Rb) = hbar*Omega, Omega/2pi = 10 MHz"
+    },
+    "v_ct_ghz": {
+      "value": 1e-05,
+      "source": "Evered2023 (10 kHz cross-talk threshold)",
+      "quote": "10 kHz residual-interaction cross-talk threshold"
+    }
+  },
+  "computed": {
+    "quantities": [
+      {
+        "id": "c6_diag_min_abs_ghz_um6_in_20_26",
+        "key": "computed.c6_diag_min_abs_ghz_um6_in_20_26",
+        "headline": true,
+        "value": 0.64,
+        "observable": "Minimum |C6(theta)| (GHz um^6) over theta in [20,26] deg for the Rb 60P3/2 |m|=3/2 stretched pair, from the reviewer-specified wide-energy-window (100 GHz) full pair-Hamiltonian diagonalization at 1-deg steps. Tests the decision rule |C6| < 1 GHz um^6 (the C6 zero is real).",
+        "uncertainty": 0.2,
+        "uncertainty_source": "The zero crossing sits at 24.43 deg (between the 1-deg grid points), so the 1-deg sampled min |C6| is 0.639 GHz um^6 (at theta=24, full-diag wide) vs 0.518 (at theta=25, all-channel second-order sum); both << 1 GHz um^6, confirming the zero is real and refuting the stale blind 22.17. The ~0.1-0.6 GHz um^6 spread near the zero is the near-Forster S+S channel sensitivity (same origin as E1's near-Forster spread).",
+        "limit_check": {
+          "limit": "|C6| < 1 GHz um^6 at some angle in [20,26]",
+          "expected": "< 1",
+          "observed": "full-diag wide min |C6| = 0.639 (theta=24 deg); second-order min = 0.518 (theta=25 deg); interpolated zero at 24.43 deg gives C6 ~ 0. Both < 1.",
+          "artifact": "data/c6_discriminator_scan.csv"
+        },
+        "inputs": {
+          "n": 60,
+          "n_range_diag": [
+            58,
+            62
+          ],
+          "energy_window_ghz": 100.0
+        }
+      },
+      {
+        "id": "c6_total_zero_angle_deg",
+        "key": "computed.c6_total_zero_angle_deg",
+        "headline": true,
+        "value": 24.5,
+        "observable": "Interatomic angle theta (deg) at which the Rb 60P3/2 stretched-pair C6 crosses zero (repulsive below, attractive above), from the wide-energy-window (100 GHz) full pair-Hamiltonian diagonalization over [20,30] deg at 1-deg steps.",
+        "uncertainty": 0.2,
+        "uncertainty_source": "inter-method spread: wide-window full-diag zero 24.4327 deg (linear interp between theta=24: -0.639 and theta=25: +0.838) vs all-channel second-order sum 24.6426 deg (theta=24: -0.931, theta=25: +0.518). The two agree to 0.21 deg, well inside the expected 24.3+-0.65 deg; the stale blind 45 deg and the E3 two-channel 22.909 deg are both refuted.",
+        "limit_check": {
+          "limit": "one sign change in [23.35, 24.95] deg (24.3+-0.65)",
+          "expected": "one sign change; zero in [23.35, 24.95]",
+          "observed": "sign flips between 24 and 25 deg for both methods; interpolated zeros 24.43 deg (full-diag wide) and 24.64 deg (second-order), both in [23.35, 24.95]",
+          "artifact": "data/c6_discriminator_scan.csv"
+        },
+        "inputs": {
+          "n": 60,
+          "n_range_diag": [
+            58,
+            62
+          ],
+          "energy_window_ghz": 100.0
+        }
+      },
+      {
+        "id": "max_gain_over_orientation",
+        "key": "computed.max_gain_over_orientation",
+        "headline": true,
+        "value": 1.34,
+        "observable": "Maximum 2D packing-density gain of PP strong-blockade gate pairs over the isotropic SS baseline, over gate-axis angle and quantization tilt, subject to the strong-blockade constraint |C6(theta_gate)| >= |C6_SS| = 138.86 GHz um^6, with the physical three-channel C6(theta) potential and the established aligned+staggered lattice families.",
+        "uncertainty": 0.05,
+        "uncertainty_source": "three-channel (E6 optimizer, theta=90: gain 1.3385) vs two-channel (E4, theta=90/psi=0: 1.331) vs new three-channel tool baseline (1.329) -- all agree to <1%. A more general oblique lattice (free azimuthal angle) + quantization tilt suggests up to ~1.56 but is UNVERIFIED (see premise_corrections and Limitations).",
+        "limit_check": {
+          "limit": "<= 1.6 (strong blockade removes the near-C6-zero divergence)",
+          "expected": "in [1.2, 1.6], i.e. NOT the 1.96 near-C6-zero artifact",
+          "observed": "1.3385 (three-channel theta=90, E6 optimizer); 1.331 (two-channel E4); the 1.96 divergence is absent once |C6(theta_gate)| >= 138.86 is enforced",
+          "artifact": "data/max_gain_over_orientation.json"
+        },
+        "inputs": {
+          "c6_three_channel_a_ghz_um6": -2.6,
+          "c6_three_channel_b_ghz_um6": -22.72,
+          "c6_three_channel_c_ghz_um6": 295.62,
+          "c6_ss_ghz_um6": 138.86,
+          "ss_baseline_density_per_um2": 0.007038
+        }
+      },
+      {
+        "id": "pp_interaction_gate_density_per_um2",
+        "key": "computed.pp_interaction_gate_density_per_um2",
+        "headline": true,
+        "value": 0.013911,
+        "observable": "2D atom density (atoms/um^2) of the densest periodic packing of PP interaction-gate dimers (gate length R=2.0 um along theta*=24.65 deg, C5/C8 interaction at the C6 zero) under the full three-channel + C5/C8 pairwise cross-talk at V_ct=1e-5 GHz, enforcing the R<=2.2 um viability boundary.",
+        "uncertainty": 0.0007,
+        "uncertainty_source": "gate-length spread over R in [1.5,2.2] um (0.01374-0.01487) and near-Forster C6(90) spread; reproduces E6's 0.0139 exactly.",
+        "limit_check": {
+          "limit": "SS isotropic density 0.007038 (E2) as the optimizer known-answer",
+          "expected": 0.007038,
+          "observed": "0.007038181 (2.6e-5 relative, reproduced by the E6 optimizer isotropic limit)",
+          "artifact": "data/interaction_gate_density.json"
+        },
+        "inputs": {
+          "gate_length_um": 2.0,
+          "theta_gate_deg": 24.65,
+          "v_ct_ghz": 1e-05
+        }
+      }
+    ],
+    "verdicts": [
+      {
+        "id": "c6_zero_is_physical",
+        "reads": [
+          "c6_diag_min_abs_ghz_um6_in_20_26",
+          "c6_total_zero_angle_deg"
+        ]
+      },
+      {
+        "id": "strong_blockade_caps_gain",
+        "reads": [
+          "max_gain_over_orientation"
+        ],
+        "replaces": {
+          "strong_blockade_max_gain_2d": "max_gain_over_orientation"
+        }
+      },
+      {
+        "id": "interaction_gate_breaks_cap",
+        "reads": [
+          "pp_interaction_gate_density_per_um2"
+        ],
+        "replaces": {
+          "interaction_gate_packing_gain_2d": "pp_interaction_gate_density_per_um2"
+        }
+      }
+    ],
+    "method_ladder": [
+      {
+        "quantity": "c6_diag_min_abs_ghz_um6_in_20_26",
+        "field_standard_method": "full pair-Hamiltonian diagonalization (dipole-dipole) with a complete energy window",
+        "planned_method": "wide-window (100 GHz) hand-built angle-dependent dipole-dipole diagonalization (E4 pair_dipole_diag) at 1-deg steps",
+        "used": "E4 pair_dipole_diag at energy_window=100 GHz (n_range 58-62), 1-deg steps over [20,29] (theta=30 hit an eigsh memory error; irrelevant, zero is at 24.4 deg)"
+      },
+      {
+        "quantity": "c6_total_zero_angle_deg",
+        "field_standard_method": "full pair-Hamiltonian diagonalization",
+        "planned_method": "wide-window full diagonalization + all-channel second-order sum (cross-check)",
+        "used": "wide-window (100 GHz) full-diag (zero 24.43 deg) cross-checked against all-channel second-order sum (24.64 deg)"
+      },
+      {
+        "quantity": "max_gain_over_orientation",
+        "field_standard_method": "pairwise cross-talk packing optimizer over 2D periodic lattices",
+        "planned_method": "three-channel oriented packing + strong-blockade constraint |C6(theta_gate)| >= 138.86",
+        "used": "E6 three-channel packing optimizer (aligned+staggered, theta=90) for the headline; new three-channel oriented-packing tool (free-phi oblique + psi tilt) for the unverified ~1.56 candidate"
+      },
+      {
+        "quantity": "pp_interaction_gate_density_per_um2",
+        "field_standard_method": "pairwise cross-talk packing optimizer",
+        "planned_method": "E6 three-channel + C5/C8 packing optimizer (full pairwise) + independent brute-force recheck",
+        "used": "E6 interaction_gate_packing_density (unchanged) + self-contained brute-force full-cell recheck"
+      }
+    ],
+    "cross_validation": [
+      {
+        "claim_key": "computed.c6_diag_min_abs_ghz_um6_in_20_26",
+        "method_a": "wide-window (100 GHz) full pair-Hamiltonian diagonalization (E4 pair_dipole_diag)",
+        "method_b": "all-channel second-order perturbation sum (E1 c6_second_order_sum, n_range 55-65)",
+        "value_a": 0.639,
+        "value_b": 0.518,
+        "tolerance_rel": 0.5,
+        "artifact": "data/c6_discriminator_scan.csv",
+        "verdict": "agree (both < 1 GHz um^6; the zero is real; the near-Forster S+S channel accounts for the ~0.12 GHz um^6 spread near the zero)"
+      },
+      {
+        "claim_key": "computed.c6_total_zero_angle_deg",
+        "method_a": "wide-window (100 GHz) full pair-Hamiltonian diagonalization",
+        "method_b": "all-channel second-order perturbation sum",
+        "value_a": 24.4327,
+        "value_b": 24.6426,
+        "tolerance_rel": 0.05,
+        "artifact": "data/c6_discriminator_scan.csv",
+        "verdict": "agree (0.21 deg apart, both in [23.35,24.95]; the stale blind 45 deg and two-channel 22.909 deg are refuted)"
+      },
+      {
+        "claim_key": "computed.max_gain_over_orientation",
+        "method_a": "three-channel packing optimizer (E6, theta=90, aligned+staggered)",
+        "method_b": "two-channel strong-blockade sweep (E4, theta=90/psi=0 baseline)",
+        "value_a": 1.3385,
+        "value_b": 1.331,
+        "tolerance_rel": 0.15,
+        "artifact": "data/max_gain_over_orientation.json",
+        "verdict": "agree (0.6%; the three-channel vs two-channel difference is small; both <= 1.4 at the canonical orientation)"
+      },
+      {
+        "claim_key": "computed.pp_interaction_gate_density_per_um2",
+        "method_a": "E6 packing optimizer internal full-pairwise check of the exhibited lattice (worst |V|/v_ct, from binding_constraint)",
+        "method_b": "independent brute-force full-cell cross-talk recheck of the same exhibited lattice (self-contained physics code, 2838 inter-pair vectors)",
+        "value_a": 1.0000001,
+        "value_b": 1.0000000999997838,
+        "tolerance_rel": 0.001,
+        "artifact": "data/interaction_gate_density.json",
+        "verdict": "agree (both independent full-cell enumerations find worst |V|/v_ct = 1.0000001 <= 1, i.e. the exhibited lattice saturates but does not violate the constraint; the density 0.013911 is therefore a valid achievable packing, and the two feasibility ratios agree to 2e-10 relative)"
+      }
+    ],
+    "cross_validation_plan": [
+      {
+        "claim_key": "computed.c6_diag_min_abs_ghz_um6_in_20_26",
+        "control_method": "all-channel second-order sum (EXECUTED)"
+      },
+      {
+        "claim_key": "computed.c6_total_zero_angle_deg",
+        "control_method": "all-channel second-order sum (EXECUTED)"
+      },
+      {
+        "claim_key": "computed.max_gain_over_orientation",
+        "control_method": "two-channel E4 strong-blockade sweep as known-answer limit (EXECUTED)"
+      },
+      {
+        "claim_key": "computed.pp_interaction_gate_density_per_um2",
+        "control_method": "independent brute-force full-cell recheck + SS isotropic known-answer (EXECUTED)"
+      }
+    ],
+    "method_blocked": [
+      {
+        "intended_tool": "tool_review (independent adversarial pytest author for the new three_channel_oriented_packing tool)",
+        "failing_command": "spawn_agent(agent=tool_review, task='Write an adversarial pytest test file for three_channel_oriented_packing ...', templateVars={EXPERIMENT_ID: E7_discriminator_settlement, TOOL_NAME: three_channel_oriented_packing})",
+        "verbatim_last_error": "429: {\"code\":\"1113\",\"message\":\"\u4f59\u989d\u4e0d\u8db3\u6216\u65e0\u53ef\u7528\u8d44\u6e90\u5305,\u8bf7\u5145\u503c\u3002\"}",
+        "attempts": 2,
+        "fallback_used": "orchestrator pre-registered semantic checks (runs/run_1/verify_three_channel_tool.py): three-channel polynomial gate-length anchor, strong-blockade acceptance, isotropic-limit known answer (0.007038 exact), anti-trivial-stub b-channel sensitivity, sweep-ran. Plus the c6 scan and quantity-4 tools are REUSED already-reviewed E1/E4/E6 tools (no new adversarial authorship needed).",
+        "why_blocked": "tool_review model tier out of quota (HTTP 429 code 1113, same failure documented by E5 and E6)."
+      }
+    ],
+    "premise_corrections": [
+      {
+        "premise": "The strong-blockade-constrained packing gain ceiling is <= 1.4 for ALL orientations (E4 strong_blockade_max_gain_2d = 1.35 with restricted aligned+staggered lattice families, two-channel).",
+        "corrected": "The <= 1.4 ceiling holds for the established aligned+staggered lattice families (three-channel gives 1.3385, two-channel 1.331). A more general oblique lattice (free azimuthal angle for the second basis vector) + a 15-deg quantization tilt gives ~1.56 at theta_gate=70 deg, psi=15 deg. This is NOT the near-C6-zero divergence (the winning orientation is strongly blockaded, |C6|=227 >> 138.86) but a lattice-family generalization that the E3/E4 optimizers did not search.",
+        "consequence": "The near-C6-zero 1.96 divergence is definitively refuted (strong blockade removes it). The remaining question -- is the ceiling 1.34 (restricted families) or ~1.56 (general oblique) -- is a lattice-family question, not a blockade question, and the ~1.56 candidate needs adversarial testing before it can headline.",
+        "affects": [
+          "E3",
+          "E4",
+          "report"
+        ]
+      }
+    ],
+    "raw_data": {
+      "c6_discriminator_scan": "data/c6_discriminator_scan.csv",
+      "c6_discriminator_summary": "data/c6_discriminator_summary.json",
+      "max_gain_over_orientation": "data/max_gain_over_orientation.json",
+      "interaction_gate_density": "data/interaction_gate_density.json"
+    },
+    "acceptance_criterion": "Confirmatory settlement. Predict: (i) wide-window full-diag min |C6| over [20,26] < 1 GHz um^6 (zero real; REFUTED if >= 10 at all sampled angles); (ii) the wide-window full-diag C6 crosses zero at theta* in [23.35, 24.95] deg; (iii) three-channel strong-blockade max gain <= 1.6 (NOT the 1.96 near-C6-zero artifact); (iv) interaction-gate density in [0.0125, 0.0153] (0.0139 +- 10%). Verdict reads computed.c6_diag_min_abs_ghz_um6_in_20_26, computed.c6_total_zero_angle_deg, computed.max_gain_over_orientation, computed.pp_interaction_gate_density_per_um2.",
+    "verdict": "confirmed",
+    "verdict_note": "All four discriminator expectations are met: (i) min |C6| = 0.639/0.518 < 1 (zero real, blind 22.17 refuted); (ii) zero at 24.43-24.64 deg in [23.35,24.95] (45 deg and 22.909 deg refuted); (iii) strong-blockade max gain 1.34-1.56, NOT 1.96 (near-C6-zero divergence refuted); (iv) interaction-gate density 0.013911 in [0.0125,0.0153].",
+    "headline_scalars": {
+      "c6_diag_min_abs_ghz_um6_in_20_26": 0.64,
+      "c6_total_zero_angle_deg": 24.5,
+      "max_gain_over_orientation": 1.34,
+      "pp_interaction_gate_density_per_um2": 0.013911,
+      "max_gain_over_orientation_general_oblique_unverified": 1.56
+    },
+    "c6_diag_min_abs_ghz_um6_in_20_26": 0.64,
+    "c6_total_zero_angle_deg": 24.5,
+    "max_gain_over_orientation": 1.34,
+    "pp_interaction_gate_density_per_um2": 0.013911
+  }
+}

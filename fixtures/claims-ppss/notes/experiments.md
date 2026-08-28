@@ -414,3 +414,49 @@ Verdict: **CONFIRMED** — all four sub-conditions hold.
 - `runs/run_1/data/crosstalk_radius_vs_angle.csv` → line plot R_ct(θ) vs θ ∈ [0°, 90°], marking the weak directions (0° ≈ 10.3 µm, θ* = 24.65° ≈ 6.5 µm) vs the strong directions (54.7° ≈ 15.3 µm, 90° ≈ 17.5 µm) — settles *why the gate-axis tilt at the C6 zero matters for packing*.
 - `runs/run_1/data/gate_length_sweep.csv` → gain vs gate length R ∈ [1.5, 2.2] µm — settles *operating-point robustness of the ~2× gain*.
 - `runs/run_1/data/orientation_sweep.csv` → gain vs a₂ lattice direction φ — settles *lattice-orientation robustness* (and shows the fragile near-degenerate φ = 30° outlier at 2.52).
+
+## L2.7 — Discriminator settlement (re-run the reviewer-specified computations on the four disputed headline quantities)
+
+**Status:** Complete
+
+**Experiment dir:** `data/experiments/E7_discriminator_settlement/`
+
+**Key computed leaves:** `computed.c6_diag_min_abs_ghz_um6_in_20_26`, `computed.c6_total_zero_angle_deg`, `computed.max_gain_over_orientation`, `computed.pp_interaction_gate_density_per_um2`, `computed.method_blocked`.
+
+**Acceptance criterion (frozen at Phase 1, verbatim):** "Confirmatory settlement. Predict: (i) wide-window full-diag min |C6| over [20,26] < 1 GHz um^6 (zero real; REFUTED if >= 10 at all sampled angles); (ii) the wide-window full-diag C6 crosses zero at theta* in [23.35, 24.95] deg; (iii) three-channel strong-blockade max gain <= 1.6 (NOT the 1.96 near-C6-zero artifact); (iv) interaction-gate density in [0.0125, 0.0153] (0.0139 +- 10%). Verdict reads computed.c6_diag_min_abs_ghz_um6_in_20_26, computed.c6_total_zero_angle_deg, computed.max_gain_over_orientation, computed.pp_interaction_gate_density_per_um2."
+
+**Verdict: confirmed** — all four discriminator expectations are met.
+
+### Headline findings
+
+1. **The C6 zero is real: `c6_diag_min_abs_ghz_um6_in_20_26` = 0.64 GHz·µm⁶** (wide-window 100 GHz full pair-Hamiltonian diagonalization at 1° steps; the all-channel second-order sum gives 0.52). Both are ≪ 1 GHz·µm⁶, refuting the stale blind estimate 22.17 and confirming the prior producer E4 ≈ 0.007 was in the right regime (E4's window-30 zero sat at exactly 24.0°; the wide window moves the full-diag zero to 24.43°).
+2. **The true C6 zero is at 24.4–24.6°: `c6_total_zero_angle_deg` = 24.5° ± 0.2°.** Wide-window full-diag gives 24.4327°, all-channel second-order gives 24.6426° (0.21° inter-method spread). Both the stale blind 45° and the superseded E3 two-channel 22.909° are refuted.
+3. **The 1.96 near-C6-zero divergence is refuted: `max_gain_over_orientation` = 1.34** (three-channel potential, strong-blockade constraint |C6(θ_gate)| ≥ 138.86 GHz·µm⁶). The three-channel optimizer gives 1.3385 at θ_gate=90°; the two-channel E4 sweep gives 1.331; the new tool's baseline 1.329 — all agree to <1%. The strong-blockade ceiling holds at ~1.34 for the established aligned+staggered lattice families.
+4. **The interaction-gate density is 0.0139 atoms/µm²: `pp_interaction_gate_density_per_um2` = 0.013911** (C5/C8 gate at the C6 zero, R=2 µm, full pairwise cross-talk), reproducing E6's 0.0139 exactly; an independent brute-force full-cell recheck finds worst |V|/v_ct = 1.0000001 (the exhibited lattice saturates but does not violate the constraint).
+5. **Premise correction:** a more general oblique lattice (free azimuthal angle for the second basis vector) + a 15° quantization tilt gives ~1.56 at θ_gate=70° (winning |C6|=227, still strongly blockaded). This is NOT the near-C6-zero divergence — it is a lattice-family generalization the E3/E4 optimizers did not search. It is recorded as **UNVERIFIED** (`headline_scalars.max_gain_over_orientation_general_oblique_unverified = 1.56`) because the new tool is not adversarially tested (tool_review quota-blocked); it must not be narrated as a settled headline.
+
+### Figure candidates
+
+- `runs/run_1/data/c6_discriminator_scan.csv` → line plot C6(θ) vs θ ∈ [20°, 29°] for the two methods (wide-window full-diag and all-channel second-order), marking the two zero crossings (24.43° and 24.64°) — settles the disputed zero angle (45° stale blind and 22.909° two-channel are both refuted).
+
+### Alternatives considered
+
+1. **E3/E4 two-channel oriented packing optimizer (c0, c2 only)** — rejected: drops the dM=±1 b channel, which shifts the C6 zero from ~22.9° to ~24.4–24.6°.
+2. **Narrow (30 GHz) energy-window full diagonalization** — rejected: E1 showed it truncates the attractive D+D channels (defect +20..30 GHz) and shifts the zero; the reviewer's discriminator requires the wide (100 GHz) window.
+3. **pairinteraction SystemPair.set_distance(angle_degree=…)** for finite-angle diagonalization — rejected: E4's method_blocked shows pairinteraction 2.5.1 ignores the angle in the interaction matrix; the hand-built angle-dependent dipole-dipole diagonalization is required.
+4. **Reporting the all-channel second-order sum alone** — rejected: the discriminator explicitly asks for the full pair-Hamiltonian diagonalization as the primary; the second-order sum is retained as the independent cross-validation.
+
+### Limitations
+
+1. **tool_review (adversarial test author) quota-blocked** — HTTP 429 code 1113 ("余额不足或无可用资源包,请充值。") on 2 attempts, and ledger_writer also quota-blocked (400 credit balance). The new `three_channel_oriented_packing` tool therefore lacks adversarial tests; fallback was orchestrator pre-registered semantic checks (isotropic-limit known answer 0.007038 exact, gate-length anchor exact, strong-blockade acceptance, b-channel sensitivity). Recorded as `computed.method_blocked`.
+2. **Wide-window full diagonalization used n_range (58,62)** instead of (55,65) to fit the 100 GHz pair basis in memory; θ=30° hit an eigsh "Not enough memory" error (irrelevant — the zero is at 24.4°).
+3. **Near-Förster S+S sensitivity** near the zero: full-diag C6 is ~0.1–0.6 GHz·µm⁶ higher than the second-order sum there, giving a ~0.2° inter-method zero-angle spread.
+4. **The ~1.56 general-oblique-lattice gain is unverified** (untested optimizer); the settled headline is the restricted-family 1.34.
+5. Single principal quantum number n = 60.
+
+### FollowUp: E8_general_oblique_packing_corroboration
+
+- **Question**: Is the ~1.56 strong-blockade packing gain from a general oblique lattice (free azimuthal angle) + 15° quantization tilt physically real, or an artifact of the untested Nelder-Mead optimizer?
+- **Why this experiment instead of accepting the negative**: the 1.34 headline is a lattice-family lower bound, not a proven ceiling; the general oblique result (1.56) sits between the 1.4 "ceiling" and the 1.6 "breakdown" bins of the frontier discriminator, and deciding which side is real changes the report's headline packing-gain claim.
+- **Estimated effort**: small — one tool (independent second implementation of the oblique-lattice packing optimizer, e.g. a different lattice parameterization + a brute-force/linear-programming cross-check) + adversarial tests.
+- **Decision rule**: if an independently-implemented optimizer reproduces ~1.56 at the exhibited orientation, the ceiling is ~1.6 (upgrade the headline); if it reproduces 1.34 (i.e. the 1.56 was a local-minimum artifact), the ≤1.4 ceiling is confirmed and the 1.56 candidate is discarded.

@@ -19,10 +19,13 @@ const row = (id: string) => t.rows.find((r) => r.id === id)!;
 check("magic-angle C6: toy blind flag answered by E4 → not disputed", row("c6_at_dm0_magic_angle_ghz_um6").status !== "disputed" && row("c6_at_dm0_magic_angle_ghz_um6").reasons.some((x) => /answered by E4/.test(x)), row("c6_at_dm0_magic_angle_ghz_um6").reasons.join(" | "));
 // max_gain_over_orientation: E3=1.956 vs blind 1.07 — no other experiment estimates that id → still disputed (E4 capped it under a different id; the brain must re-key or disclose).
 check("max_gain_over_orientation stays disputed (no independent estimate of that id)", row("max_gain_over_orientation").status === "disputed");
-// zero angle: E3=22.909±0.01 vs E4=24.3±0.35 — producers themselves disagree → disputed for the right reason.
-check("zero angle: producer-vs-producer disagreement is the reason, not the toy blind", row("c6_total_zero_angle_deg").status === "disputed" && row("c6_total_zero_angle_deg").reasons.some((x) => /disagree: E3.*E4|disagree: E4.*E3/.test(x)), row("c6_total_zero_angle_deg").reasons.join(" | "));
-// sign-convention rows were countersigned → disclosed
-check("countersigned sign disputes render as DISCLOSED", row("c6_ss_60").status === "disclosed" && row("c6_pp_theta0_60_diag").status === "disclosed", `${row("c6_ss_60").status}/${row("c6_pp_theta0_60_diag").status}`);
+// zero angle (v2 P1 supersession): E3=22.909±0.01 is retired by E4=24.65 and E7=24.5, which agree with each other → no longer disputed.
+check("zero angle: E3's stale value is SUPERSEDED by E4+E7 (agreeing later routes)", row("c6_total_zero_angle_deg").reasons.some((x) => /superseded: E3.*retired — re-measured by E4.*and E7/.test(x)), row("c6_total_zero_angle_deg").reasons.join(" | "));
+check("zero angle: row is no longer disputed", row("c6_total_zero_angle_deg").status !== "disputed", row("c6_total_zero_angle_deg").status + " :: " + row("c6_total_zero_angle_deg").reasons.join(" | "));
+// min|C6|: E4=0.007 vs E7=0.64 — ONE later route → a dispute, never a supersession.
+check("min|C6|: one later disagreeing route is a dispute, not a supersession", row("c6_diag_min_abs_ghz_um6_in_20_26").status === "disputed" && !row("c6_diag_min_abs_ghz_um6_in_20_26").reasons.some((x) => /superseded/.test(x)));
+// sign-convention rows: observables now state the convention → answered, not disclosed (option 2 executed by the brain)
+check("sign-convention rows answered via the stated convention (not disclosed)", ["c6_ss_60", "c6_pp_theta0_60_diag"].every((id) => row(id).status !== "disputed" && row(id).status !== "disclosed"), `${row("c6_ss_60").status}/${row("c6_pp_theta0_60_diag").status}`);
 check("packing_gain_2d: producer, xval and blind agree (no dispute)", row("packing_gain_2d").status !== "disputed" && row("packing_gain_2d").reasons.some((x) => /blind estimate 1.38 agrees/.test(x)), row("packing_gain_2d").reasons.join(" | "));
 
 // P0.2 obligation scope
