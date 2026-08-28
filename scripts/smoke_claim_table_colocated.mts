@@ -4,7 +4,7 @@
  * metadata + number under the computed leaf object. Also: actionable hints for
  * object-without-value keys, string limit_checks, and frame-id near-misses.
  */
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildClaimTable, parseReviewerLines as parseReviewerLinesFor } from "../src/claims-table.ts";
@@ -87,8 +87,22 @@ check("no unparseable scaling lines from the live reviewer text", !t2.malformed.
   writeFileSync(join(dir, "reviews", "experiment_review_E1_c6_theta_60p_r2.md"), "ESTIMATE(blind): c6_anisotropy_ratio_60p — -28.1 ± 2 via other route — inputs: [own]\nESTIMATE(blind): c6_anisotropy_ratio_60p — -28.1 ± 2 via other route — inputs: [own]\nVERDICT: revise\n");
   const t3 = buildClaimTable(dir);
   const r = t3.rows.find((x) => x.id === "c6_anisotropy_ratio_60p")!;
-  check("row reason names the sign convention", r.status === "disputed" && r.reasons.some((x) => /sign convention: blind estimate -28.1/.test(x)), r.reasons.join(" | "));
+  check("row reason names the sign convention (observable says nothing about sign)", r.status === "disputed" && r.reasons.some((x) => /sign convention: blind estimate -28.1/.test(x)), r.reasons.join(" | "));
   check("duplicate blind lines across rounds produce one reason, not two", r.reasons.filter((x) => /sign convention/.test(x)).length === 1, r.reasons.join(" | "));
+  // Pin the convention in the observable → the flag is answered, no dispute.
+  const { signConventionStated } = await import("../src/claims-table.ts");
+  check("signConventionStated: signed / magnitude / attractive=negative wording", ["signed C6 coefficient (negative = attractive)", "|C6| magnitude, GHz um^6", "van der Waals C6, attractive → negative"].every(signConventionStated) && !signConventionStated("Rb 60S1/2 + 60S1/2 van der Waals C6 (GHz um^6), isotropic"));
+  {
+    const rj = JSON.parse(readFileSync(join(run, "results.json"), "utf-8"));
+    rj.computed.c6_anisotropy_ratio.observable = "Ratio |C6(pi/2)|/|C6(0)|, signed: negative = attractive, dimensionless";
+    writeFileSync(join(run, "results.json"), JSON.stringify(rj));
+    const t4 = buildClaimTable(dir);
+    const r4 = t4.rows.find((x) => x.id === "c6_anisotropy_ratio_60p")!;
+    // (the row still carries the synthetic SCALING 4.03-vs-2 dispute from above; the sign flag itself must be answered)
+    check("convention stated in observable → sign-only flag answered", r4.reasons.some((x) => /convention stated in observable/.test(x)) && !r4.reasons.some((x) => /differ in sign/.test(x)), r4.reasons.join(" | "));
+    rj.computed.c6_anisotropy_ratio.observable = "Ratio |C6(theta=pi/2)|/|C6(theta=0)| for the stretched 60P3/2 pair, dimensionless";
+    writeFileSync(join(run, "results.json"), JSON.stringify(rj));
+  }
 }
 
 const problems = quantityDeclarationProblems(dir, "E1_c6_theta_60p");

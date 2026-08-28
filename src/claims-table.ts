@@ -442,6 +442,12 @@ export function agreement(a: Estimate, b: Estimate): "agree" | "disagree" | "und
  * convention nobody pinned in `observable` is exactly what an unanswered flag
  * should surface — but the reason says what the one-round answer is.
  */
+/** A sign convention is "stated" when the observable names one — signed/magnitude wording or attractive/repulsive/negative/positive mapping. */
+export const SIGN_CONVENTION_RE = /\b(signed(?:\s+coefficient)?|magnitude|absolute value|\|[^|]{1,12}\||negative\s*=\s*\w+|positive\s*=\s*\w+|\w+\s*=\s*(?:negative|positive)|attractive\s*(?:\(|=|is|→|->)\s*[-−+]?|repulsive\s*(?:\(|=|is|→|->)\s*[-−+]?|sign convention[^.;]{0,60})/i;
+export function signConventionStated(observable: string | undefined): boolean {
+  return !!observable && SIGN_CONVENTION_RE.test(observable);
+}
+
 export function signOnlyDisagreement(a: Estimate, b: Estimate): boolean {
   if (a.value === 0 || b.value === 0 || Math.sign(a.value) === Math.sign(b.value)) return false;
   const ma = { ...a, value: Math.abs(a.value) }, mb = { ...b, value: Math.abs(b.value) };
@@ -569,8 +575,19 @@ export function buildClaimTable(projectDir: string): ClaimTable {
       if (!flagged) continue;
       const answer = owns.find((o) => o !== flagged && o.experiment !== flagged.experiment && relation(o, flagged).rel === "comparable" && agreement(o, flagged) === "agree");
       if (answer) { reasons.push(`blind estimate ${bl.value} disagreed with ${flagged.source}=${flagged.value}; answered by ${answer.source}=${answer.value} (independent experiment agrees with the producer)`); continue; }
+      if (signOnlyDisagreement(flagged, bl)) {
+        // A sign-only disagreement is ANSWERED the moment the producer's
+        // observable sentence pins the convention (design §3.5 "answer with a
+        // locator"; 2026-08-28: two such rows were disclosed and escalated to
+        // the operator although four routes agreed on the magnitude).
+        const obs = (declsById.get(id) ?? []).map((d) => d.observable ?? "").join(" ");
+        if (signConventionStated(obs)) { reasons.push(`sign convention: blind estimate ${bl.value} vs ${flagged.source}=${flagged.value} agree in magnitude; convention stated in observable ("${obs.match(SIGN_CONVENTION_RE)?.[0]}") — answered`); continue; }
+        disputed = true;
+        reasons.push(`sign convention: blind estimate ${bl.value} vs ${flagged.source}=${flagged.value} agree in magnitude, differ in sign — state the convention in \`observable\` (e.g. "signed, negative = attractive" or "magnitude |C6|") and the flag is answered; a physics dispute only if the signs survive that (unanswered)`);
+        continue;
+      }
       disputed = true;
-      reasons.push(signOnlyDisagreement(flagged, bl) ? `sign convention: blind estimate ${bl.value} vs ${flagged.source}=${flagged.value} agree in magnitude, differ in sign — pin the convention in \`observable\` and answer with a locator (unanswered)` : `blind reviewer estimate ${bl.value} disagrees with ${flagged.source}=${flagged.value} (unanswered)`);
+      reasons.push(`blind reviewer estimate ${bl.value} disagrees with ${flagged.source}=${flagged.value} (unanswered)`);
     }
     for (const s of rev.scaling.filter((s) => s.id === id)) {
       if (s.observed !== undefined && Math.abs(s.observed - s.expected) > SCALING_TOL) { disputed = true; reasons.push(`scaling: observed exponent ${s.observed} vs expected ${s.expected}`); }
