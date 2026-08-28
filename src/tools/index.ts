@@ -173,8 +173,14 @@ export function parseLatestPIVerdict(projectDir: string):
     return null;
   }
   const matches = [...content.matchAll(/##\s*Verdict:\s*(continue|steer|stop)\b/gi)];
-  if (matches.length === 0) return null;
-  const last = matches[matches.length - 1][1].toLowerCase() as "continue" | "steer" | "stop";
+  // A synthesized no-response verdict ("PI review did NOT complete") is not a
+  // verdict: it neither lifts nor imposes the STOP freeze (2026-08-28).
+  const genuine = matches.filter((m, i) => {
+    const end = i + 1 < matches.length ? matches[i + 1].index! : content.length;
+    return !/did NOT complete/i.test(content.slice(m.index!, end));
+  });
+  if (genuine.length === 0) return null;
+  const last = genuine[genuine.length - 1][1].toLowerCase() as "continue" | "steer" | "stop";
   return { verdict: last, reviewPath: p, reviewMtimeMs: mtimeMs };
 }
 

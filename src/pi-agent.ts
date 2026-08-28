@@ -36,6 +36,8 @@ import { formatPIEstimateLines, piEstimateRule, type PIEstimate, obligationScope
 
 export interface PIVerdict {
   verdict: "continue" | "steer" | "stop";
+  /** Set on the synthesized no-response verdicts: they are not verdicts and never change the STOP freeze. */
+  placeholder?: boolean;
   /** Claims-first §3.5: the PI's own estimate per headline quantity (persisted as ESTIMATE lines). */
   estimates?: PIEstimate[];
   /** DISCRIMINATOR: lines the PI pre-registers (persisted verbatim). */
@@ -364,6 +366,7 @@ async function evaluateProgress(
   if (isPlanReview) {
     return {
       verdict: "continue",
+      placeholder: true,
       assessment:
         "⚠️ PI plan-review did NOT complete: the reviewer produced no structured verdict after a retry " +
         "(typically a transient/credit/infra failure — e.g. the Anthropic-pinned reviewer is unfunded while " +
@@ -378,6 +381,7 @@ async function evaluateProgress(
   }
   return {
     verdict: "steer",
+    placeholder: true,
     assessment:
       "⚠️ PI review did NOT complete: the reviewer produced no structured verdict after a retry. " +
       "This is not an approval. Re-run request_pi_review before proceeding; if it recurs, the PI " +

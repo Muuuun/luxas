@@ -240,9 +240,10 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
   // pi_feedback.md). The file is append-only now, so substring matching
   // would false-positive on an old STOP superseded by a later verdict —
   // use the latest-verdict parser instead.
-  if (parseLatestPIVerdict(projectDir)?.verdict === "stop") {
-    hooks.setPIStopped();
-  }
+  // The persisted flag from the checkpoint is overridden by the latest GENUINE
+  // verdict on disk: a STOP that a later real STEER superseded must not come
+  // back on resume (2026-08-28: it did, on every resume, and deadlocked finish).
+  hooks.setPIStopped(parseLatestPIVerdict(projectDir)?.verdict === "stop");
 
   // Layer 2: Tools (research tools + PI review tool)
   let finishCallback: (() => void) | undefined;
@@ -273,9 +274,8 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
     // brain's claimed milestones against the directive's actual asks.
     userDirective: opts.directive,
     onVerdict: (verdict: PIVerdict, toolCallCount: number) => {
-      if (verdict.verdict === "stop") {
-        hooks.setPIStopped();
-      }
+      if (verdict.verdict === "stop") hooks.setPIStopped(true);
+      else if (!verdict.placeholder) hooks.setPIStopped(false);
       opts.onPIVerdict?.(verdict, toolCallCount);
     },
   };

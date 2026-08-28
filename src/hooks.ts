@@ -9,6 +9,7 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { readFileSafe, extractTextContent } from "./utils.js";
 import { readUsageTotals } from "./usage-log.js";
+import { buildClaimTable } from "./claims-table.js";
 import type { ReminderRegistry } from "./reminders.js";
 import type { ExtensionBus } from "./extensions.js";
 
@@ -37,6 +38,14 @@ export interface ResearchOptions {
 
 export interface CostTracker {
   lastContextTokens: number;  // #3: precise token count from last LLM response (used by compaction)
+}
+
+/** True when the claim table has a DISPUTED/CONDITIONAL headline row (legacy projects: never). */
+function claimTableBlocked(projectDir: string): boolean {
+  try {
+    const t = buildClaimTable(projectDir);
+    return t.declared && t.rows.some((r) => r.headline && (r.status === "disputed" || r.status === "conditional"));
+  } catch { return false; }
 }
 
 export function buildResearchHooks(opts: ResearchOptions) {
@@ -122,10 +131,17 @@ export function buildResearchHooks(opts: ResearchOptions) {
     // (typesetter / illustrator / experiment_reviewer / reviewer) — these
     // are mandated by finish-gate audits, not new research.
     if (piStopped && !FINALIZATION_TOOLS.has(name)) {
-      const isFinalizationSpawn = name === "spawn_agent"
-        && FINALIZATION_HELPER_AGENTS.has(String(args.agent ?? ""));
-      if (!isFinalizationSpawn) {
-        return { block: true, reason: `PI verdict is STOP. Only finalization tools (read, write, edit, compile_latex, request_pi_review, escalate_authority_bound, finish, and spawn_agent for ${[...FINALIZATION_HELPER_AGENTS].join("/")}) are allowed. Tool "${name}"${name === "spawn_agent" ? ` (target: ${args.agent})` : ""} is blocked.` };
+      const target = String(args.agent ?? "");
+      const isFinalizationSpawn = name === "spawn_agent" && FINALIZATION_HELPER_AGENTS.has(target);
+      // Claims-first settling work is finalization (2026-08-28 pp-vs-ss
+      // deadlock): with headline rows DISPUTED/CONDITIONAL, finish() blocks
+      // and every legal move is a replicator or a discriminator experiment —
+      // both of which the STOP freeze refused. The brain wrote three
+      // escalation notes and exited. Replicators are always finalization;
+      // an experiment is, exactly while the table has a blocked headline row.
+      const isSettlingSpawn = name === "spawn_agent" && (target === "replicator" || (target === "experiment" && claimTableBlocked(opts.projectDir)));
+      if (!isFinalizationSpawn && !isSettlingSpawn) {
+        return { block: true, reason: `PI verdict is STOP. Only finalization tools (read, write, edit, compile_latex, request_pi_review, escalate_authority_bound, finish, spawn_agent for ${[...FINALIZATION_HELPER_AGENTS].join("/")}, and — while a headline quantity is DISPUTED/CONDITIONAL — spawn_agent for replicator / experiment to settle it) are allowed. Tool "${name}"${name === "spawn_agent" ? ` (target: ${args.agent})` : ""} is blocked.` };
       }
     }
 
@@ -255,8 +271,8 @@ export function buildResearchHooks(opts: ResearchOptions) {
     }
   };
 
-  /** Call when PI verdict is STOP — blocks non-finalization tools */
-  const setPIStopped = () => { piStopped = true; };
+  /** PI STOP freeze on/off. A genuine later non-STOP verdict clears it; placeholder (no-response) verdicts touch nothing. */
+  const setPIStopped = (v = true) => { piStopped = v; };
 
   /** Snapshot current harness state for session persistence. */
   const snapshotState = () => {
