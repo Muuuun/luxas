@@ -84,14 +84,24 @@ export function parsePlanSections(text: string): Array<{ id: string; index: numb
  * line in notes/memory.md for genuinely non-composite questions.
  * Returns the blocking message, or null when satisfied.
  */
-export function synthesisOwnerIssue(planSrc: string, memorySrc: string): string | null {
+export function synthesisOwnerIssue(planSrc: string, memorySrc: string, ledgerSrc = "", experimentDirs: string[] = []): string | null {
   const sections = parsePlanSections(planSrc);
   if (sections.length < 2) return null;
-  const hasSynth = /^###\s+E_?\d*[^\n]*synth/im.test(planSrc);
-  if (hasSynth) return null;
-  if (/^\s*SYNTH-DECLINE:/m.test(memorySrc)) return null;
+  // Accepted evidence of a synthesis owner (2026-08-28: the pp-vs-ss brain ran
+  // E6 as the synthesis, wrote `# Memory | SYNTH-DECLINE: …` on the title line,
+  // and was blocked twice by a line-start regex over a stale plan.md):
+  //   - a `### E_N … synth…` section in plan.md
+  //   - a `## L2.N …` / `## E_N …` ledger section naming synthesis
+  //   - an experiment directory whose slug names synthesis
+  //   - SYNTH-DECLINE: anywhere on a line of memory.md
+  if (/^###\s+E_?\d*[^\n]*synth/im.test(planSrc)) return null;
+  if (/^##\s+(?:L2\.\d+|E_?\d+)[^\n]*synth/im.test(ledgerSrc)) return null;
+  if (experimentDirs.some((d) => /synth/i.test(d))) return null;
+  if (/SYNTH-DECLINE:/m.test(memorySrc)) return null;
+  const ledgerN = (ledgerSrc.match(/^##\s+(?:L2\.\d+|E_?\d+)\b/gm) ?? []).length;
+  const stale = ledgerN > sections.length ? ` (notes/plan.md lists ${sections.length} experiments but the ledger has ${ledgerN} — the plan is stale; add the sections you actually ran, and name the synthesis one \`### E_N (synthesis)\`.)` : "";
   return (
-    `Cannot finish: the plan has ${sections.length} experiments and NO synthesis owner. ` +
+    `Cannot finish: the plan has ${sections.length} experiments and NO synthesis owner.${stale} ` +
     `Decomposed sub-answers are not the answer to a composite question — the 297nm run computed ` +
     `C6(θ) in one experiment and fidelity at a single θ in another, and nobody computed F(θ) or ` +
     `the F(P) frontier the question asked for. Add a final \`### E_N (synthesis)\` section to ` +
@@ -101,7 +111,7 @@ export function synthesisOwnerIssue(planSrc: string, memorySrc: string): string 
     `mitigation-transfer question: for the dominant limitation found, what does the best comparable ` +
     `system in your corpus (including your own reproductions) do about it — transfer it or refute the ` +
     `transfer. Then dispatch it like any experiment. If the question is genuinely NOT composite, record ` +
-    `\`SYNTH-DECLINE: <one-line reason>\` in notes/memory.md and retry finish.`
+    `\`SYNTH-DECLINE: <one-line reason>\` on its own line in notes/memory.md and retry finish.`
   );
 }
 
@@ -591,7 +601,9 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
       {
         const planSrcS = existsSync(planPath) ? readFileSync(planPath, "utf-8") : "";
         const memSrcS = (() => { try { return readFileSync(join(projectDir, "notes", "memory.md"), "utf-8"); } catch { return ""; } })();
-        const synthIssue = synthesisOwnerIssue(planSrcS, memSrcS);
+        const ledgerSrcS = (() => { try { return readFileSync(join(projectDir, "notes", "experiments.md"), "utf-8"); } catch { return ""; } })();
+        const expDirsS = (() => { try { return readdirSync(join(projectDir, "data", "experiments")); } catch { return [] as string[]; } })();
+        const synthIssue = synthesisOwnerIssue(planSrcS, memSrcS, ledgerSrcS, expDirsS);
         if (synthIssue) return { content: [{ type: "text" as const, text: synthIssue + cheapPendingTrailer(projectDir) }] };
       }
 

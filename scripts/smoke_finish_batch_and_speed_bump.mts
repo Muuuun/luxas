@@ -33,5 +33,16 @@ process.env.LUXAS_COSMETIC_WHILE_DISPUTED = "0";
 check("LUXAS_COSMETIC_WHILE_DISPUTED=0 → refusal", cosmeticSpawnNotice(dir, "report_writer").refuse === true);
 delete process.env.LUXAS_COSMETIC_WHILE_DISPUTED;
 check("legacy project (no quantities) is never bumped", cosmeticSpawnNotice("fixtures/claims-297nm/raw", "illustrator").notice === "");
+// synthesis owner: the forms the pp-vs-ss brain actually produced
+{
+  const { synthesisOwnerIssue } = await import("../src/tools/index.ts");
+  const plan = "### E_1: a\n\n### E_2: b\n";
+  check("stale plan + no evidence → blocked, and told the plan is stale", /plan is stale/.test(synthesisOwnerIssue(plan, "", "## L2.1 — a\n## L2.2 — b\n## L2.3 — c\n", []) ?? ""));
+  check("SYNTH-DECLINE on the title line counts", synthesisOwnerIssue(plan, "# Memory | SYNTH-DECLINE: not composite", "", []) === null);
+  check("ledger section naming synthesis counts", synthesisOwnerIssue(plan, "", "## L2.6 — Interaction-gate packing gain (synthesis of E1–E5)\n", []) === null);
+  check("experiment dir slug naming synthesis counts", synthesisOwnerIssue(plan, "", "", ["E1_x", "E6_synthesis_gain"]) === null);
+  check("plan.md synthesis section still counts", synthesisOwnerIssue(plan + "### E_3 (synthesis)\n", "", "", []) === null);
+  check("single-experiment plan never blocks", synthesisOwnerIssue("### E_1: only\n", "", "", []) === null);
+}
 if (fails) { console.log(`\n${fails} FAILED`); process.exit(1); }
 console.log("\nALL PASS — finish tells the whole story; cosmetic spawns see the ship line.");
