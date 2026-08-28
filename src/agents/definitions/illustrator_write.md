@@ -156,6 +156,22 @@ These encode what the .mplstyle cannot. Apply to every figure:
 - **Multi-panel figures get bold (a) (b) (c) labels**, upper-left of each
   panel, reading left-to-right. Panels sharing an axis share it visibly
   (`sharex`/`sharey`, label once).
+- **Place callouts with `figplace`, not by guessing coordinates** (figures v2
+  convergence experiment: a careful author placing a callout blind in data
+  coordinates needed four render/lint rounds on one busy panel — the legend,
+  the other labels and the curves are invisible at write time). The lint hook
+  dir is on PYTHONPATH:
+  ```python
+  import sys; sys.path.insert(0, "skills/matplotlib-figures/lint_hook")
+  from figplace import annotate_free
+  ann = annotate_free(ax, f"Best: F = {best:.4f}", xy=(R_best, best),
+                      candidates=[(4.9, 0.70, "right"), (2.3, 0.60, "right"), (3.0, 0.82, "left")],
+                      fontsize=8, arrowprops=dict(arrowstyle="-", lw=0.7))
+  assert ann is not None, "no free spot — give more candidates or move the legend"
+  ```
+  It tries candidates in order and draws at the first one clear of lines,
+  legend, other texts and insets (the same occupancy test figlint applies);
+  `free_anchor(..., explain=True)` tells you why each candidate failed.
 - **Budgets (figures v2)**: ≤4 series overlaid in one axes (≤6 is a lint
   WARN, more is unreadable — split into panels or show the optimum plus a
   light-grey envelope of the rest); ≤3 in-axes annotations, each carrying

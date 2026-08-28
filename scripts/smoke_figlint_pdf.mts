@@ -38,6 +38,10 @@ fig, ax = plt.subplots(figsize=(3.4, 2.4)); ax.plot(x, np.sin(x), lw=1.5)
 ax.text(5.0, np.sin(5.0), "label ON the curve", ha="center", va="center", fontsize=9)
 ax.annotate("label beside the curve", xy=(2, np.sin(2)), xytext=(2, -0.85), fontsize=8, ha="center")
 fig.savefig("${dir}/overdata.pdf", bbox_inches="tight"); plt.close(fig)
+# one annotation with a mathtext font switch must not collide with itself
+fig, ax = plt.subplots(figsize=(3.4, 2.4)); ax.plot(x, np.sin(x))
+ax.annotate("Best: F = 0.9967 at R = 2.0 um, $\\Omega$ = 160 MHz", xy=(1, -0.9), fontsize=8)
+fig.savefig("${dir}/mathtext.pdf", bbox_inches="tight"); plt.close(fig)
 `;
 writeFileSync(join(dir, "make.py"), py);
 const hook = "skills/matplotlib-figures/lint_hook";
@@ -55,10 +59,12 @@ const clean = lint("clean.pdf", ["--width", "3.4"]);
 check("clean PDF: exit 0, no errors", clean.status === 0 && JSON.parse(clean.stdout).errors.length === 0, clean.stdout.slice(0, 200) + clean.stderr.slice(0, 200));
 const bad = lint("bad.pdf", ["--width", "3.4"]);
 const bj = JSON.parse(bad.stdout || "{}");
-check("bad PDF: exit 2 with a collision", bad.status === 2 && bj.errors.some((e: string) => /collision "label one/.test(e)), bad.stdout.slice(0, 300));
+check("bad PDF: exit 2 with a collision", bad.status === 2 && bj.errors.some((e: string) => /collision "label (one|two) is long" ⊗ "label (one|two) is long"/.test(e)), bad.stdout.slice(0, 300));
 check("bad PDF: tiny text at print width flagged", bj.errors.some((e: string) => /tiny text/.test(e)));
 check("bad PDF: dense-text warning", bj.warnings.some((w: string) => /dense text/.test(w)));
 check("print-width scaling: 2 pt text is fine at 2× width", (() => { const j = JSON.parse(lint("bad.pdf", ["--width", "12"]).stdout); return !j.errors.some((e: string) => /tiny/.test(e)); })());
+const mt = JSON.parse(lint("mathtext.pdf", ["--width", "3.4"]).stdout || "{}");
+check("mathtext font-switch fragments of one annotation are not a collision", (mt.errors ?? []).length === 0, JSON.stringify(mt.errors));
 const missing = spawnSync("python3", ["skills/matplotlib-figures/scripts/figlint-pdf", join(dir, "nope.pdf"), "--json"], { encoding: "utf-8" });
 check("unreadable file: exit 3 with JSON", missing.status === 3 && /unreadable/.test(missing.stdout));
 if (fails) { console.log(`\n${fails} FAILED`); process.exit(1); }

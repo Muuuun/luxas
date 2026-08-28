@@ -6,6 +6,7 @@ warning. Tick labels are exempt from the clip check and tight saves skip it
 entirely — false positives are how linters get ignored.
 """
 import numpy as np
+from matplotlib.text import Text
 
 
 def _shrunk(bbox, f):
@@ -32,7 +33,10 @@ def lint_figure(fig, fname, tight):
         if not t.get_visible() or not t.get_text().strip():
             continue
         try:
-            ext = t.get_window_extent(renderer)
+            # Text-only box: Annotation.get_window_extent unions in the arrow
+            # patch, so a callout with an arrow "collided" with everything along
+            # the arrow's path (fig4, 2026-08-28).
+            ext = Text.get_window_extent(t, renderer)
         except Exception:
             continue
         if ext.width <= 0 or ext.height <= 0:
@@ -148,7 +152,7 @@ def lint_figure(fig, fname, tight):
                 # The text's CORE (50%): a direct label abutting its curve has
                 # 0–2 samples there; a label laid over the curve has ≥ 5
                 # (measured 2026-08-28 on the archetype set and the pp-vs-ss figures).
-                bb = _shrunk(t.get_window_extent(renderer), 0.5)
+                bb = _shrunk(Text.get_window_extent(t, renderer), 0.5)
             except Exception:
                 continue
             inside = int(((pts[:, 0] > bb.x0) & (pts[:, 0] < bb.x1) & (pts[:, 1] > bb.y0) & (pts[:, 1] < bb.y1)).sum())

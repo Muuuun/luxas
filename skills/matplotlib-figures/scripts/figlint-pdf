@@ -58,6 +58,29 @@ def lint_pdf(path, width_in=None, min_pt=5.0, max_spans=40):
             text = "".join(sp["text"] for sp in spans)
             sizes = [(sp.get("size", 0.0), len(sp["text"].strip())) for sp in spans]
             lines_out.append({"text": text, "bbox": (x0, y0, x1, y1), "sizes": sizes})
+    # Merge fragments of one visual line: a font switch (mathtext Ω, μ, a bold
+    # run) makes PyMuPDF emit separate "lines" on the same baseline that abut or
+    # overlap — they are one label, not a collision (fig4 "…, Ω = 160 MHz").
+    def horizontal(ln):
+        x0, y0, x1, y1 = ln["bbox"]
+        size = max((sz for sz, _ in ln["sizes"]), default=0.0)
+        return size > 0 and (y1 - y0) <= 2.4 * size  # rotated / multi-line boxes never merge (Ω/μ glyph runs report taller boxes)
+    lines_out.sort(key=lambda ln: (round(ln["bbox"][1], 1), ln["bbox"][0]))
+    merged = []
+    for ln in lines_out:
+        if merged and horizontal(ln) and horizontal(merged[-1]):
+            m = merged[-1]
+            ax0, ay0, ax1, ay1 = m["bbox"]; bx0, by0, bx1, by1 = ln["bbox"]
+            vo = min(ay1, by1) - max(ay0, by0)
+            h = min(ay1 - ay0, by1 - by0)
+            em = max(h, 1.0)
+            # adjacent (gap ≤ 0.6 em) or barely overlapping (≤ 0.3 em, kerning) — never two labels laid over each other
+            if h > 0 and vo >= 0.6 * h and (ax1 - 0.3 * em) <= bx0 <= (ax1 + 0.6 * em):
+                m["bbox"] = (min(ax0, bx0), min(ay0, by0), max(ax1, bx1), max(ay1, by1))
+                m["text"] += ln["text"]; m["sizes"] += ln["sizes"]
+                continue
+        merged.append(dict(ln))
+    lines_out = merged
     seen = set()
     for i in range(len(lines_out)):
         for j in range(i + 1, len(lines_out)):
