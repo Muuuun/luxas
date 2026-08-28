@@ -1,0 +1,11 @@
+{
+  "quantity": "c6_at_dm0_magic_angle_ghz_um6",
+  "value": 126.33850554742195,
+  "sigma": 3.0,
+  "route": "Direct second-order dipole-dipole perturbative sum over the full pair basis (all dM channels), field-free, Rb 60P3/2 m=3/2 stretched pair.",
+  "script": "replication/replicate_magic_angle.py",
+  "inputs": {
+    "c6_pp_theta0_60_diagonalization_ghz_um6": -10.41,
+    "c6_pp_theta90_60_ghz_um6": 268.08
+  }
+}

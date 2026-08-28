@@ -25,7 +25,7 @@ import { spawnAgent } from "./agents/spawn.js";
 import { createSpawnToolFactory } from "./tools/spawn-agent.js";
 import { readFileSafe } from "./utils.js";
 import { buildClaimTable } from "./claims-table.js";
-import { formatPIEstimateLines, piEstimateRule, type PIEstimate } from "./claims-review.js";
+import { formatPIEstimateLines, piEstimateRule, type PIEstimate, obligationScope } from "./claims-review.js";
 
 // PI system prompt is now in agents/definitions/pi.md
 // Mode-specific blocks (survey/research/plan) are in agents/context-builders.ts
@@ -351,7 +351,7 @@ async function evaluateProgress(
     try {
       const table = buildClaimTable(opts.projectDir);
       if (table.declared) {
-        const rule = piEstimateRule(final.verdict, final.estimates, table.headlineDeclared);
+        const rule = piEstimateRule(final.verdict, final.estimates, obligationScope(table));
         if (rule.issue) final = { ...final, verdict: rule.verdict, issues: [...final.issues, rule.issue] };
       }
     } catch (err) {

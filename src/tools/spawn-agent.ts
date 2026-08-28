@@ -19,7 +19,7 @@ import { join, dirname, sep as pathSep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { pidAlive } from "../utils.js";
 import { buildClaimTable, parseFrameHeadline } from "../claims-table.js";
-import { blindEstimateTask, extractBlindEstimate, extractReviewerLines, headlineDeclsFor, persistReview, reviewCompleteness, reviewerObligationBlock, selectBlindEstimateDecls } from "../claims-review.js";
+import { blindEstimateTask, extractBlindEstimate, extractReviewerLines, headlineDeclsFor, persistReview, reviewCompleteness, reviewerObligationBlock, selectBlindEstimateDecls, stampBlindInputs, cosmeticSpawnNotice } from "../claims-review.js";
 
 // Primary defense against path-escape via LLM-supplied id; the realpath check
 // in handleContinue is defense-in-depth in case this regex is ever widened.
@@ -566,6 +566,8 @@ export function createSpawnAgentTool(
 
       // ── Foreground mode (default) ──
       const initialTask = taskList[0];
+      const cosmetic = cosmeticSpawnNotice(projectDir, params.agent);
+      if (cosmetic.refuse) return errResult(cosmetic.notice);
       let result = await spawnAgent({ ...baseOpts, prompt: initialTask, contextExtra: { task: initialTask } });
 
       // Auto-review loop: after any foreground experiment completes, spawn
@@ -618,7 +620,8 @@ export function createSpawnAgentTool(
                   depth: (depth ?? 0) + 1,
                   createSpawnTool: makeSpawnTool,
                 });
-                const line = extractBlindEstimate(est.output ?? "", decl.id);
+                const raw = extractBlindEstimate(est.output ?? "", decl.id);
+                const line = raw ? stampBlindInputs(raw, decl.inputs) : null;
                 if (line) blindLines.push(line);
                 else claimNotes.push(`[blind estimator for ${decl.id} returned no ESTIMATE(blind) line]`);
               } catch (err) { claimNotes.push(`[blind estimator for ${decl.id} failed: ${(err as Error).message.slice(0, 100)}]`); }
@@ -706,7 +709,7 @@ export function createSpawnAgentTool(
       }
 
       return {
-        content: [{ type: "text" as const, text: `[agent: ${result.agentId}]\n${result.output}${formatExitHint(result.exit, projectDir)}` }],
+        content: [{ type: "text" as const, text: `${cosmetic.notice ? cosmetic.notice + "\n\n" : ""}[agent: ${result.agentId}]\n${result.output}${formatExitHint(result.exit, projectDir)}` }],
         details: { elapsed: result.elapsed, success: result.success, exit: slimExit(result.exit), agentId: result.agentId },
       };
     },

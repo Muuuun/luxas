@@ -1,0 +1,8 @@
+{
+  "quantity": "c6_total_zero_angle_deg",
+  "value": 45.0,
+  "sigma": 10.0,
+  "route": "two-channel C6=(1-3cos^2t)^2-sin^4t, equal magnitude -> 45 deg",
+  "script": "replication/c6_zero_angle.py",
+  "inputs": {}
+}

@@ -1,0 +1,74 @@
+[
+  {
+    "value": 1.98,
+    "tex_context": "yields a 1.98$\\times$ packing-density gain (robust 1.95--2.11$\\times$ across",
+    "source_file": "notes/experiments.md",
+    "source_quote": "Interaction-gate 2D packing gain = 1.98 ± 0.1",
+    "grade": "corroborated",
+    "claim_key": "computed.interaction_gate_packing_gain_2d"
+  },
+  {
+    "value": 1.95,
+    "tex_context": "(robust 1.95--2.11$\\times$ across $R\\in[1.5,2.2]$~\\um)",
+    "source_file": "notes/experiments.md",
+    "source_quote": "gain ranges from 1.95 (R = 2.2 µm, density 0.01374) to 2.11 (R = 1.5 µm, density 0.01487) over R ∈ [1.5, 2.2] µm",
+    "grade": "indicative"
+  },
+  {
+    "value": 2.11,
+    "tex_context": "(robust 1.95--2.11$\\times$ across $R\\in[1.5,2.2]$~\\um)",
+    "source_file": "notes/experiments.md",
+    "source_quote": "gain ranges from 1.95 (R = 2.2 µm, density 0.01374) to 2.11 (R = 1.5 µm, density 0.01487) over R ∈ [1.5, 2.2] µm",
+    "grade": "indicative"
+  },
+  {
+    "value": 26,
+    "tex_context": "the $\\approx$26$\\times$ P--P anisotropy compresses to a $\\approx$1.35$\\times$",
+    "source_file": "notes/experiments.md",
+    "source_quote": "Physical PP anisotropy is ~26–29×",
+    "grade": "indicative",
+    "claim_key": "computed.c6_pp_anisotropy_60_diagonalization",
+    "quantity_id": "c6_pp_anisotropy_60_diag"
+  },
+  {
+    "value": 1.35,
+    "tex_context": "a $\\approx$1.35$\\times$ strong-blockade packing gain",
+    "source_file": "notes/experiments.md",
+    "source_quote": "The strong-blockade-constrained max 2D packing gain is 1.35",
+    "grade": "corroborated",
+    "claim_key": "computed.strong_blockade_max_gain_2d"
+  },
+  {
+    "value": 24.65,
+    "tex_context": "angle $\\theta^*\\approx24.65^\\circ$ (three-channel model; bounded to $\\pm0.35^\\circ$ inter-method spread)",
+    "source_file": "notes/experiments.md",
+    "source_quote": "the three-channel C6 zero is at 24.65°, not the E4 headline 24.3°",
+    "grade": "divergent",
+    "claim_key": "computed.c6_total_zero_angle_deg",
+    "quantity_id": "c6_total_zero_angle_deg"
+  },
+  {
+    "value": 0.9967,
+    "tex_context": "is viable (fidelity 0.9967 at $R=2.0$~\\um)",
+    "source_file": "notes/experiments.md",
+    "source_quote": "max two-qubit CZ fidelity 0.9967 (>= 0.99)",
+    "grade": "corroborated",
+    "claim_key": "computed.cz_gate_max_fidelity"
+  },
+  {
+    "value": 2.0,
+    "tex_context": "(fidelity 0.9967 at $R=2.0$~\\um), and orienting",
+    "source_file": "notes/experiments.md",
+    "source_quote": "The optimum under the interaction (pi-pi-hold-pi-pi) gate is at R = 2.0 µm, Ω = 160 MHz, t_gate = 0.1855 µs",
+    "grade": "indicative",
+    "claim_key": "computed.optimal_gate_config.R_um"
+  },
+  {
+    "value": 1.476,
+    "tex_context": "the existing $n=75$ gain estimate (1.476, E2) uses",
+    "source_file": "notes/experiments.md",
+    "source_quote": "At the n = 75 canonical operating point the 2D gain is 1.476",
+    "grade": "indicative",
+    "claim_key": "computed.gain_2d_n75"
+  }
+]

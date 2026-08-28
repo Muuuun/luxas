@@ -1,0 +1,146 @@
+\documentclass[twocolumn]{article}
+\usepackage{amsmath, amssymb, graphicx, tabularx}
+\usepackage{dblfloatfix}% allow figure*/table* at [b] and on the final page — without it double-column floats defer page after page and pile up at the document end
+% Relax float placement so figures land near their \ref instead of drifting:
+\renewcommand{\topfraction}{0.9}
+\renewcommand{\dbltopfraction}{0.9}
+\renewcommand{\textfraction}{0.07}
+\renewcommand{\floatpagefraction}{0.85}
+\renewcommand{\dblfloatpagefraction}{0.85}
+\providecommand{\affiliation}[1]{}% safety net: \affiliation is a revtex4-2/APS-only command; in [article] it is undefined and its argument text spills onto page 1 (triggers "Missing \begin{document}"). No-op it so a stray \affiliation can never leak.
+\newcommand{\um}{$\mu$m}
+\newcommand{\gum}[1]{GHz\,$\mu$m$^{#1}$}% GHz um^k shorthand
+
+\title{The PP $\sin^4\theta$ anisotropy doubles Rydberg two-qubit gate array density --- through an angular zero, not the raw anisotropy}
+\author{Luxas \\ \small Singularity Research}
+
+\begin{document}
+\twocolumn[
+  \begin{@twocolumnfalse}
+    \maketitle
+    \begin{abstract}
+    Parallel two-qubit Rydberg-blockade gates are cross-talk limited: independent gate pairs must be separated beyond the blockade radius, so array density is set by the geometry of the van der Waals (vdW) interaction. Exploiting the strong angular anisotropy of the P--P vdW interaction for Rb $nP_{3/2}$ stretched pairs, we compute the packing-density gain relative to the isotropic S--S gate. The anisotropy alone does not yield a large gain: because the blockade and cross-talk radii scale as the sixth root of $|C_6|$, the $\approx$26$\times$ P--P anisotropy compresses to a $\approx$1.35$\times$ strong-blockade packing gain. The decisive lever is instead the existence of an angle $\theta^*\approx24.65^\circ$ (three-channel model; bounded to $\pm0.35^\circ$ inter-method spread) at which the three-channel $C_6(\theta)$ vanishes --- where the repulsive $\Delta M=0$ and $\Delta M=\pm1$ channels cancel the attractive $\Delta M=\pm2$ channel. At this angle a compact weak-blockade gate driven by the residual $C_5/C_8$ quadrupole interaction is viable (fidelity 0.9967 at $R=2.0$~\um), and orienting gate pairs at $\theta^*$ yields a 1.98$\times$ packing-density gain (robust 1.95--2.11$\times$ across $R\in{[}1.5,2.2{]}$~\um) relative to the S--S gate --- roughly doubling the atom count per unit area, rather than the $\approx$26$\times$ a raw-anisotropy reading would suggest or the $\approx$1.35$\times$ strong-blockade ceiling. The result is computed at $n=60$; the $n\approx75$ canonical operating point (single-photon excitation near 297~nm) requires a follow-up computation of the wide-window $\theta=0$ residual and the $C_6$-zero angle at that $n$.
+    \end{abstract}
+    \vspace{6pt}
+  \end{@twocolumnfalse}
+]
+
+\section{Parallel two-qubit Rydberg gates are cross-talk limited, and the packing gain is set by blockade-radius scaling, not the raw anisotropy}
+\label{sec:intro}
+
+A two-qubit Rydberg gate entangles a pair of atoms by coherently driving both to a Rydberg state $|r\rangle$; the vdW shift $V=C_6/r^6$ between two Rydberg atoms suppresses double excitation whenever $|V|\gg\hbar\Omega$, the blockade \cite{Saffman2010,Low2012}. The length scale that enters any packing estimate is the blockade radius,
+\begin{equation}
+R_b(\theta)=\Bigl(\frac{|C_6(\theta)|}{\hbar\Omega}\Bigr)^{1/6},
+\label{eq:rb}
+\end{equation}
+set by where the vdW shift matches the Rabi broadening \cite{Low2012,Browaeys2016}. In a parallel gate array the binding constraint is not the blockade itself but the cross-talk between \emph{independent} pairs: two gate sites must be separated far enough that the residual vdW interaction between an atom in one pair and an atom in another is negligible compared with the gate scale \cite{Levine2019,Evered2023,Li2026}. For S--S states the vdW interaction is isotropic, with no F\"orster zeros \cite{Walker2008,Saffman2010}, so every direction is equally blockaded and the array density is set by a single radius. Evered et al.\ operate $53S_{1/2}$ blockade gates at $2$~\um\ separation ($V/2\pi\approx450$~MHz) with inter-site cross-talk at the $10$~kHz scale \cite{Evered2023}; the residual-ZZ characterization of Li et al.\ shows this cross-talk floor is far from negligible at legal spacing \cite{Li2026}, and Warttmann et al.\ quantify the addressing-leakage crosstalk that further constrains packing \cite{Warttmann2026}.
+
+The P--P interaction is different: for higher angular-momentum Rydberg states the vdW matrix couples Zeeman sublevels and is strongly anisotropic in the angle $\theta$ between the interatomic axis and the quantization axis \cite{Vermersch2015,Walker2008}. For a stretched $nP_{3/2}$, $|m_j|=3/2$ pair, the $\Delta M=\pm2$ dipole--dipole channel carries a $\sin^2\theta$ matrix element, which squares in second order to a $\sin^4\theta$ contribution to $C_6(\theta)$ \cite{Wadenpfuhl2025,Glaetzle2015,ParisMandoki2016}. The interaction is maximal at $\theta=90^\circ$ and, naively, near-vanishing along $\theta=0^\circ$ --- an anisotropy measured directly for $D$-states \cite{Barredo2014,Browaeys2016,Vybornyi2022} and one might hope to exploit it by orienting gate pairs along a decoupled direction.
+
+The question this work addresses is quantitative: how many more gate pairs per unit area can the P--P anisotropy pack, relative to the isotropic S--S baseline? The answer is \emph{not} the raw anisotropy, because both the gate's own blockade radius and the inter-pair cross-talk radius scale as $|C_6|^{1/6}$ in Eq.~\eqref{eq:rb}; every factor of anisotropy in $C_6$ is compressed to its sixth root in a packing gain. The real lever is the \emph{existence} of an angle at which $C_6(\theta)$ passes through zero. Section~\ref{sec:anisotropy} settles the P--P anisotropy and its $\theta=0$ residual; Sec.~\ref{sec:sixthroot} derives the sixth-root packing law and the strong-blockade cap; Sec.~\ref{sec:zero} locates the genuine three-channel $C_6$ zero; Secs.~\ref{sec:gate} and \ref{sec:gain} show that a weak-blockade $C_5/C_8$ gate at that zero is viable and breaks the cap; Sec.~\ref{sec:conclusion} states the caveats. Figure~\ref{fig:geometry} sketches the two gate geometries compared throughout.
+
+\begin{figure*}
+  \centering
+  \includegraphics[width=\linewidth]{figures/fig1_geometry.pdf}
+  \caption{Geometry of the two gate families. The quantization axis $\hat z$ lies in the plane. The S--S vdW interaction is isotropic, so a strong-blockade S--S gate requires a separation $R\sim4.9$~\um set by the blockade radius (the P--P strong-blockade gate at $\theta=90^\circ$ needs the larger $R\sim5.5$~\um). The P--P interaction is angular: a strong-blockade gate at $\theta=90^\circ$ (red) and a compact weak-blockade interaction gate at the three-channel $C_6$ zero $\theta^*=24.65^\circ$ (purple, $R=2.0$~\um) --- the geometry that doubles the packing density. The $54.7^\circ$ direction is only a single-channel (magic-angle) zero, not a total zero.}
+  \label{fig:geometry}
+\end{figure*}
+
+\section{The P--P anisotropy is $\approx$26$\times$, not the na\"ively expected $\sim10^6\times$}
+\label{sec:anisotropy}
+
+We compute $C_6$ for the Rb $60P_{3/2}$, $|m_j|=3/2$ stretched pair and for the $60S_{1/2}$ S--S reference, using the pair-interaction Hamiltonian diagonalization of Weber et al.\ \cite{Weber2017} cross-checked against an all-channel second-order perturbation sum, the ARC perturbative $C_6$, and the Singer $n^{11}$ formula. The S--S reference reproduces its field-standard anchors: $C_6(43S)=-2.4413$~\gum{6} against $-2.441$~\gum{6} of L\"ow et al.\ \cite{Low2012} (0.014\% deviation), and $C_6(70S)=-868.6$~\gum{6} within the published eigenvalue set $\{891,862,862,853\}$~\gum{6} of Walker and Saffman \cite{Walker2008}. The S--S coefficient is isotropic to better than 2\% (the $C_6(90^\circ)/C_6(0^\circ)$ ratio stays in 1.012--1.019 across $n=40$--$80$), and $C_6^{\text{SS}}(60)=-138.86$~\gum{6} is confirmed by the Singer formula ($-140.27$~\gum{6}, 1.0\% off) and ARC ($-141.15$~\gum{6}, 1.6\% off).
+
+At $\theta=90^\circ$ the stretched P--P pair is strongly interacting, $C_6(90^\circ)=+299.11$~\gum{6} perturbatively, with a full-diagonalization control of $+268.08$~\gum{6} and an ARC value of $+292.4$~\gum{6}. The $\sim$10\% spread between these is the near-F\"orster $S+S$ resonance (defect 0.278~GHz), and it is the dominant uncertainty of the $\theta=90^\circ$ anchor. At $\theta=0^\circ$, the interaction does \emph{not} vanish: the na\"ive degenerate-perturbation $C_6$ returns $-1.36\times10^{-5}$~\gum{6} only because it silently drops the $\Delta M=0$ channel. The converged wide-window diagonalization gives $C_6(0^\circ)=-10.41$~\gum{6}$\pm0.3$~\gum{6}, confirmed to 0.04\% central value by the all-channel second-order sum ($-10.412$~\gum{6}) and an ARC blind evaluation ($10.4\pm3$~\gum{6}). The headline uncertainty is the $\sim$2.5\% quantum-defect-theory (QDT) model floor inherited from the $70S$ anchor, not the inter-method convergence. The residual is 7.5\% of $|C_6^{\text{SS}}|$ (10.41 vs.\ 138.86~\gum{6}) and sets the tight-packing floor for any P--P gate geometry.
+
+Two artifacts explain the older $\sim10^6\times$ anisotropy claim. First, the degenerate-perturbation channel miss above. Second, an energy-window truncation: the default $\pm20$~GHz window keeps the repulsive $S{+}D$ channels (cumulative $-16.16$~\gum{6}) but excludes the attractive $D{+}D$ channels (defect $+20$--$30$~GHz); sweeping the window gives $-16.16$ ($\pm20$~GHz), $-12.04$ ($\pm25$), $-9.63$ ($\pm30$), and $-10.41$ ($\pm100$), with the second-order cumulative sum tracking identically. With the settled $\theta=0$ and $\theta=90^\circ$ values, the physical P--P anisotropy is $\approx$26--29$\times$: $25.76$ (both-diagonalization, $268.08/10.41$) or $28.74$ (mixed, $299.11/10.41$).
+
+\section{The packing gain is the sixth root of the anisotropy --- $\approx$1.35$\times$, not 26$\times$}
+\label{sec:sixthroot}
+
+Because both the gate's blockade radius and the inter-pair cross-talk radius scale as $|C_6|^{1/6}$, a two-dimensional array has one lattice direction set by the $\theta=0$ (decoupled) direction and one by the $\theta=90^\circ$ (gate) direction. The rectangular-lattice packing gain is
+\begin{equation}
+g_\mathrm{2D}=\bigl[(|C_6^{\text{SS}}/C_6(0^\circ)|)(|C_6^{\text{SS}}/C_6(90^\circ)|)\bigr]^{1/6},
+\label{eq:sixthroot}
+\end{equation}
+which at $n=60$ factors into $f_\mathrm{dec}=(138.86/10.41)^{1/6}=1.540$ along the decoupled axis and $f_\mathrm{gate}=(138.86/268.08)^{1/6}=0.896$ along the gate axis. The product, $1.540\times0.896=1.380$, is the analytic rectangular gain; a densest staggered packing (allowing the S--S baseline to exploit a triangular-like lattice, $\sim$11\% denser) lowers it to $1.315$. The two agree to 4.7\%, traced to the S--S staggered-lattice advantage, not to a diagonal-neighbor constraint. The 3D gain is smaller, $1.237$, because two of three lattice directions then sit at $\theta=90^\circ$ and the gate-direction penalty enters squared ($f_\mathrm{dec}f_\mathrm{gate}^{\,2}$). The near-F\"orster $\theta=90^\circ$ spread propagates only at sixth-root level ($\sim$1.7\%) (Fig.~\ref{fig:gain_anisotropy}).
+
+The magic-distance mechanism of Vermersch et al.\ \cite{Vermersch2015} cannot raise the gain: at $\theta=0$ the angular coupling matrix $D(\theta)$ vanishes, the $|m,m\rangle$ pair states are pure-blockade eigenstates, and the field-free potential $V=-C_6/r^6$ is monotonic with no zero crossing. Even with a hypothetical zero $\theta=0$ residual, the gain is capped at $\approx$1.34--1.47$\times$ (rectangular 1.471 / staggered 1.341): the binding constraint then shifts to the diagonal neighbor at $\theta\approx30^\circ$, set by the gate pair's finite blockade extent $d_\mathrm{gate}=5.47$~\um\ rather than by the optical-trap floor. The strong-blockade-constrained maximum is 1.35, under the requirement $|C_6(\theta_\mathrm{gate})|\ge|C_6^{\text{SS}}|=138.86$~\gum{6}.
+
+\begin{figure}
+  \centering
+  \includegraphics[width=\columnwidth]{figures/fig3_gain_vs_anisotropy.pdf}
+  \caption{The packing gain is the sixth root of the anisotropy. The strong-blockade 2D gain follows the $A^{1/6}$ law (solid curve), so the $\approx$26$\times$ anisotropy compresses to $\approx$1.35$\times$; the shaded band marks the settled anisotropy range 25.76--28.74. The full anisotropy is not realized because the blockade and cross-talk radii both scale as $|C_6|^{1/6}$.}
+  \label{fig:gain_anisotropy}
+\end{figure}
+
+\section{The $54.7^\circ$ magic angle is a channel zero, not a total zero --- the true $C_6$ zero is at $24.65^\circ$}
+\label{sec:zero}
+
+The P--P $C_6$ decomposes into three angular channels,
+\begin{equation}
+C_6(\theta)=a(1-3\cos^2\theta)^2+b\,\sin^2\theta\cos^2\theta+c\,\sin^4\theta,
+\label{eq:threechannel}
+\end{equation}
+with $a=-2.60$, $b=-22.72$, $c=+295.62$~\gum{6}: the squared $\Delta M=0$, $\Delta M=\pm1$, and $\Delta M=\pm2$ dipole--dipole channels of $\hat V_{dd}$, respectively --- the three $\Delta M$ angular factors of \cite{Wadenpfuhl2025} Eq.~(2) and \cite{Vermersch2015} Appendix~A. The $\Delta M=0$ factor $(1-3\cos^2\theta)^2$ vanishes at the magic angle $54.7^\circ$ --- but this is a \emph{channel} zero, not a total zero: the $\sin^4\theta$ channel remains at $4/9$ of its maximum there, so $C_6(54.7^\circ)=+126.3$~\gum{6}, comparable to $C_6(90^\circ)$ and far from zero. (The earlier two-channel value $+120.3$~\gum{6} neglected the $\Delta M=\pm1$ channel $b=-22.7$~\gum{6}, which shifts the total.) The genuine total zero, where the repulsive $\Delta M=0,\pm1$ channels cancel the attractive $\Delta M=\pm2$ channel, solves $C_6(\theta^*)=0$ and lies at $\theta^*=24.65^\circ$ in the three-channel model; an explicit all-channel second-order sum places it at $24.65^\circ$ and a hand-built full dipole--dipole diagonalization with Zeeman lifting at $24.0^\circ$, both confirming a sign change in $[20,26]^\circ$ with $\min|C_6|=0.007$~\gum{6}. The inter-method spread is $\pm0.35^\circ$ (headline 24.3$\pm$0.35$^\circ$; the three-channel root 24.65$^\circ$ is used throughout the packing analysis; Fig.~\ref{fig:c6_angular}).
+
+This corrects two earlier readings. The $\Delta M=\pm1$ channel is not negligible (8\% of $c$), and it shifts the zero $\sim$1.4$^\circ$ from the two-channel location 22.9$^\circ$. The initial degenerate-perturbation $\sin^4$-fraction 0.9999999 was an artifact of the pair-interaction $C_6$ class silently dropping the $\Delta M=0$ and $\Delta M=\pm1$ channels; the true $\sin^4$ fraction among the three channels is $c/(|a|+|b|+c)\approx0.93$.
+
+\begin{figure}
+  \centering
+  \includegraphics[width=\columnwidth]{figures/fig2_c6_angular.pdf}
+  \caption{Hero figure: the three-channel $C_6(\theta)$ of the Rb $60P_{3/2}$ stretched pair, Eq.~\eqref{eq:threechannel} with $a=-2.60$, $b=-22.72$, $c=+295.62$~\gum{6}. The $\Delta M=0$ channel vanishes at $54.7^\circ$ (open marker) but the total $C_6(54.7^\circ)=+126.3$~\gum{6} remains far from zero; the genuine total zero, where the repulsive $\Delta M=0,\pm1$ channels cancel the attractive $\Delta M=\pm2$ channel, lies at $\theta^*=24.65^\circ$ (filled marker).}
+  \label{fig:c6_angular}
+\end{figure}
+
+\section{A weak-blockade $C_5/C_8$ interaction gate is viable at the $C_6$ zero}
+\label{sec:gate}
+
+At $\theta^*$ the leading $C_6$ vanishes and the interaction floor is set by the quadrupole terms,
+\begin{equation}
+V(R)=\frac{C_5}{R^5}+\frac{C_8}{R^8},
+\label{eq:quadrupole}
+\end{equation}
+with $C_5=-0.126~\mathrm{GHz}\,\mu\mathrm{m}^5$ and $C_8=+1.747~\mathrm{GHz}\,\mu\mathrm{m}^8$.
+At $R=2.0$~\um\ this gives $V=-2.887$~MHz --- few-MHz, not sub-MHz --- with a dead zone where $C_5$ and $C_8$ cancel at $R=2.4024$~\um, and a genuinely sub-MHz regime ($|V|\le0.27$~MHz) only for $R\ge2.4$~\um. A $\pi$-$\pi$-hold-$\pi$-$\pi$ interaction gate on this floor reaches fidelity 0.9967 at $R=2.0$~\um, $\Omega=160$~MHz, $t_\mathrm{gate}=0.1855$~$\mu$s. The grid maximum (0.9994 at $R=1.0$~\um) is flagged unreliable because higher multipoles ($C_{9+}$) are uncomputed there.
+
+Viability is confined to $R\lesssim2.2$~\um. The fundamental bound $E\ge2/(V\tau)$ of Saffman \cite{Saffman2016} requires $|V|\ge0.318$~MHz for fidelity $\ge0.99$, which holds only for $R\le2.2874$~\um; in the sub-MHz regime ($R\ge2.5$~\um) the best fidelity caps at 0.981, below threshold (Fig.~\ref{fig:gate_viability}). A master-equation simulation and the analytic Eq.~(34) of Saffman et al.\ \cite{Saffman2010} agree to $\sim$10\% on infidelity across $R=2.0$--$3.0$~\um. The $\tau=100$~$\mu$s lifetime is the $60S$ value; $60P_{3/2}$ decays faster, so the computed fidelity is an upper bound (strengthening the not-viable sub-MHz conclusion).
+
+\begin{figure}
+  \centering
+  \includegraphics[width=\columnwidth]{figures/fig4_gate_viability.pdf}
+  \caption{Two-qubit gate fidelity vs.\ separation $R$ near the $C_6$ zero, for the $\pi$-$\pi$-hold-$\pi$-$\pi$ interaction gate on the $C_5/C_8$ floor. The optimum (0.9967 at $R=2.0$~\um, $\Omega=160$~MHz) exceeds the 0.99 threshold (dashed); viability is confined to $R\lesssim2.2$~\um, with a $C_5$--$C_8$ dead zone at $R=2.40$~\um\ and sub-MHz interactions beyond.}
+  \label{fig:gate_viability}
+\end{figure}
+
+\section{The interaction gate recovers $\approx$2$\times$ packing gain, breaking the strong-blockade cap}
+\label{sec:gain}
+
+Orienting gate pairs at the $C_6$ zero $\theta^*=24.65^\circ$ with the compact $R=2.0$~\um\ interaction gate yields a 2D packing gain of $1.98\pm0.1$ (P--P density $0.013911$ atoms/\um$^2$ vs.\ S--S $0.007038$ atoms/\um$^2$), substantially exceeding the 1.35$\times$ strong-blockade cap. The mechanism is a shorter gate length plus anisotropic cross-talk: the gate length is $2.0$~\um\ vs.\ the S--S blockade radius $4.90$~\um\ (2.4$\times$ shorter), and with the gate axis at $\theta^*$ the along-gate cross-talk radius is only $6.54$~\um\ (vs.\ $15.26$~\um\ at $54.7^\circ$ and $17.54$~\um\ at $90^\circ$). The along-gate stacking pitch is therefore $8.54$~\um\ ($=6.54+2.0$) against $36.66$~\um\ for S--S ($\sim$4.3$\times$ tighter), which more than compensates the looser perpendicular stacking ($L_2=40.36$~\um) forced by the large cross-talk radius at $\sim$90$^\circ$ ($17.54$~\um); the unit cell is $143.77$~\um$^2$.
+
+The gain is robust across the fidelity-viable gate-length range: 1.95 at $R=2.2$~\um\ to 2.11 at $R=1.5$~\um, exceeding 1.6 across $R\in[1.5,2.2]$~\um\ (Fig.~\ref{fig:interaction_gain}). Across lattice orientations (gate-axis lattice vector angles $0^\circ,45^\circ,60^\circ,90^\circ,120^\circ,-24.65^\circ$) the gain stays 1.97--1.99; the $30^\circ$ orientation gives 2.52 but is near-degenerate (lattice angle $\sim$5.35$^\circ$) and is excluded as fragile. Cross-validation: the S--S density is reproduced exactly ($0.007038$, $2.6\times10^{-5}$ relative error vs.\ Sec.~III), and the strong-blockade P--P gain is reproduced at 1.3385 vs.\ 1.331 (0.6\%, within the near-F\"orster spread of $C_6(90^\circ)$: 293.02 three-channel vs.\ 268.08 full-diagonalization).
+
+\begin{figure}
+  \centering
+  \includegraphics[width=\columnwidth]{figures/fig5_interaction_gate_gain.pdf}
+  \caption{Interaction-gate packing gain vs.\ gate length $R\in[1.5,2.2]$~\um. The gain (1.95--2.11$\times$) exceeds the 1.35$\times$ strong-blockade cap across the entire fidelity-viable range, breaking the cap; the shaded region marks the robust operating window.}
+  \label{fig:interaction_gain}
+\end{figure}
+
+\section{The P--P angular zero doubles the packing density --- but the headline is $n=60$, and $n=75$ remains a follow-up}
+\label{sec:conclusion}
+
+Exploiting the P--P angular zero yields $\approx$2$\times$ denser parallel gate arrays --- not the $\approx$26$\times$ a raw-anisotropy reading would suggest, and not the $\approx$1.35$\times$ strong-blockade ceiling. The lever is the \emph{existence} of a $C_6$ zero together with a viable higher-multipole gate, not the anisotropy magnitude: the sixth root compresses the $\approx$26$\times$ anisotropy to $\approx$1.35$\times$, and only the weak-blockade $C_5/C_8$ interaction gate at $\theta^*=24.65^\circ$ recovers the remaining factor to 1.98$\times$ (robust 1.95--2.11$\times$).
+
+The headline is computed at $n=60$. The canonical operating point (Rb, $n\approx75$, single-photon excitation near 297~nm) is \emph{not} established: the wide-window $\theta=0$ residual and the $C_6$-zero angle at $n=75$ have not been computed, and the existing $n=75$ gain estimate (1.476, Sec.~III) uses the $\pm20$~GHz energy window that overestimates the $\theta=0$ residual by $\sim$1.5$\times$ at $n=60$ ($-16.16$ vs.\ the settled $-10.41$~\gum{6}). We therefore report the $n=60$ result and flag the $n=75$ refinement as required future work, rather than extrapolating.
+
+\textbf{Limitations.} All computed $C_6$ values are QDT-class, bounded by the $\sim$2.5\% model floor of the $70S$ anchor; inter-method agreement below that floor is not evidence of better absolute accuracy. The $\theta=90^\circ$ anchor carries a $\sim$10\% near-F\"orster spread. The $C_5/C_8$ coefficients are evaluated at $\theta^*$ only, with $C_8$ convergence not swept and higher multipoles neglected (unreliable at $R<1.5$~\um). The packing optimizer is a grid-plus-bisection search, not a certified global optimum, and the $\tau=100$~$\mu$s lifetime assumption makes the gate fidelity an upper bound. The headline gain is a single-$n$ ($n=60$) result. An independent adversarial test-authorship step for the gate-fidelity and packing-density computations did not execute (the reviewer model returned a quota error) and was replaced by pre-registered analytic checks plus master-equation-vs-analytic cross-validation, leaving those results single-method indicative. Unverified prior-project cross-check leads recorded in the project notes (an earlier 297-nm single-photon analysis) were not used in this work.
+
+\section*{Methods and Scope Statement}
+
+Interaction coefficients were computed with the pair-interaction Hamiltonian diagonalization of Weber et al.\ \cite{Weber2017}, an all-channel second-order perturbation sum, the ARC perturbative $C_6$, and the Singer $n^{11}$ formula; anchors were reproduced against L\"ow et al.\ \cite{Low2012} ($43S$) and Walker--Saffman \cite{Walker2008} ($70S$). Values settled by three or more independent methods, with central-value agreement stated: the $\theta=0$ residual $-10.41$~\gum{6} (wide-window diagonalization $-10.408$, all-channel second-order sum $-10.412$, ARC $10.4\pm3$; 0.04\% central value, headline $\pm0.3$~\gum{6}); $C_6^{\text{SS}}(60)=-138.86$~\gum{6} (pair-interaction $-138.86$, Singer $-140.27$, ARC $-141.15$; 1--2\% spread); $C_6(90^\circ)\approx299$~\gum{6} (perturbative $299.11$, ARC $292.4$, diagonalization $268.08$; $\sim$10\% near-F\"orster spread); $C_6(54.7^\circ)=+126.3$~\gum{6} (three-channel; second-order $126.10$ vs.\ full diagonalization $126.43$); and the $C_6$ zero $\theta^*=24.65^\circ$ (three-channel/second-order sum $24.65^\circ$ vs.\ full diagonalization $24.0^\circ$; headline $24.3\pm0.35^\circ$). Single-method (indicative) results: the interaction-gate packing gain 1.98$\times$ (packing optimizer, cross-validated against Sec.~III/Sec.~IV baseline densities to $<1\%$) and the gate fidelity 0.9967 (master equation, cross-checked against Saffman--Walker--M\o lmer Eq.~(34) \cite{Saffman2010} to $\sim$10\% on infidelity). The $n=75$ gap: all headline values are at $n=60$; the wide-window $\theta=0$ residual and the $C_6$-zero angle at $n=75$ are not computed, and the Sec.~III $n=75$ gain (1.476) uses the $\pm20$~GHz window and is indicative only.
+
+\bibliographystyle{unsrt}
+\bibliography{references}
+
+\end{document}

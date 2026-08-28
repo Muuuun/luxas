@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { md5OrNull, extractFrontmatterBlock, parseAuditFrontmatter, parseFollowUps, readFileSafe } from "../utils.js";
 import type { Agent } from "@earendil-works/pi-agent-core";
 import { createReportTools, parseCompileVerdict, gateBlockingIssues } from "./report.js";
-import { reportIntegrityIssues, formatIntegrityIssues, evidenceSourcesDigest } from "./report-integrity.js";
+import { reportIntegrityIssues, formatIntegrityIssues, evidenceSourcesDigest, cheapPendingTrailer } from "./report-integrity.js";
 import { createInitReportTool } from "./init-report.js";
 import { pdfPagesDigest } from "./figure-gen.js";
 import { createAuthorityEscalationTools } from "./authority-escalation.js";
@@ -592,7 +592,7 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
         const planSrcS = existsSync(planPath) ? readFileSync(planPath, "utf-8") : "";
         const memSrcS = (() => { try { return readFileSync(join(projectDir, "notes", "memory.md"), "utf-8"); } catch { return ""; } })();
         const synthIssue = synthesisOwnerIssue(planSrcS, memSrcS);
-        if (synthIssue) return { content: [{ type: "text" as const, text: synthIssue }] };
+        if (synthIssue) return { content: [{ type: "text" as const, text: synthIssue + cheapPendingTrailer(projectDir) }] };
       }
 
       const planExperiments = existsSync(planPath)
@@ -674,7 +674,7 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
           lines.push(`→ Either spawn experiment to drive these to Complete, or remove if written in error (note: brain cannot edit experiments.md by design — this entry came from an experiment agent and only that agent class can clean it up).`);
         }
 
-        return { content: [{ type: "text" as const, text: lines.join("\n") }] };
+        return { content: [{ type: "text" as const, text: lines.join("\n") + cheapPendingTrailer(projectDir) }] };
       }
 
       // Frontier-disposition gate (Step 3): every OPEN generative lead an

@@ -62,12 +62,50 @@ export function experimentNumberOf(experimentId: string): string | null {
 }
 
 /** This experiment's declarations in the DECLARED headline set (frame.md ∪ headline:true) — the obligation scope (audit 2026-08-26: the load-bearing closure is for gates, not for spawn counts). */
-export function headlineDeclsFor(table: ClaimTable, experimentId: string): QuantityDecl[] {
+export const OBLIGATION_CAP_PER_EXPERIMENT = 3;
+
+/**
+ * Obligation scope for one experiment (v2 plan P0.2, PI's version): every
+ * declaration stays tabled and comparable, but the blind estimator, the
+ * reviewer and the PI owe lines only for the frame's ids plus at most
+ * OBLIGATION_CAP_PER_EXPERIMENT producer-declared headline ids, ranked by
+ * load — how many verdicts read the id and how many other declarations take
+ * it as an input — then by relative σ (tighter first). Producers marked 6/7
+ * and 23 ids `headline: true` in the live runs; this bounds the review bill
+ * without letting a producer hide the load-bearing number.
+ */
+export function headlineDeclsFor(table: ClaimTable, experimentId: string, cap = OBLIGATION_CAP_PER_EXPERIMENT): QuantityDecl[] {
   const e = experimentNumberOf(experimentId);
   if (!e) return [];
-  const headline = new Set(table.headlineDeclared);
+  const frame = new Set(table.frameHeadline ?? []);
   const seen = new Set<string>();
-  return table.decls.filter((d) => d.experiment === e && (d.headline || headline.has(d.id)) && d.value !== undefined && !seen.has(d.id) && seen.add(d.id));
+  const mine = table.decls.filter((d) => d.experiment === e && (d.headline || frame.has(d.id) || table.headlineDeclared.includes(d.id)) && d.value !== undefined && !seen.has(d.id) && seen.add(d.id));
+  const load = (id: string) => table.verdicts.filter((v) => v.reads.includes(id)).length + table.decls.filter((d) => d.id !== id && id in d.inputs).length;
+  const relSigma = (d: QuantityDecl) => d.uncertainty !== undefined && d.value ? d.uncertainty / Math.abs(d.value) : Infinity;
+  const inFrame = mine.filter((d) => frame.has(d.id));
+  const rest = mine.filter((d) => !frame.has(d.id)).sort((a, b) => load(b.id) - load(a.id) || relSigma(a) - relSigma(b));
+  return [...inFrame, ...rest.slice(0, cap)];
+}
+
+/** Project-wide obligation scope: frame ids ∪ each experiment's capped headline set (PI estimate rule uses this). */
+export function obligationScope(table: ClaimTable): string[] {
+  const out = new Set<string>(table.frameHeadline ?? []);
+  for (const e of new Set(table.decls.map((d) => d.experiment))) for (const d of headlineDeclsFor(table, e)) out.add(d.id);
+  return [...out];
+}
+
+/**
+ * Ensure a replicator's ESTIMATE(blind) line carries the input values the
+ * harness handed it (v2 plan P0.1): a blind estimate with `inputs: []` made
+ * against declared inputs would be compared as if input-free, and could
+ * never expire when those inputs move. Only fills an EMPTY/missing bracket.
+ */
+export function stampBlindInputs(line: string, inputs: Record<string, number>): string {
+  const stamp = Object.entries(inputs).map(([k, v]) => `${k}=${v}`).join(", ");
+  if (!stamp) return line;
+  if (/inputs:\s*\[\s*\]\s*$/.test(line)) return line.replace(/inputs:\s*\[\s*\]\s*$/, `inputs: [${stamp}]`);
+  if (!/inputs:\s*\[/.test(line)) return `${line.trimEnd()} — inputs: [${stamp}]`;
+  return line;
 }
 
 /**
@@ -97,6 +135,8 @@ export function blindEstimateTask(decl: QuantityDecl): string {
     `INPUTS (values the producer used; treat as given): ${inputs || "(none declared)"}`,
     ``,
     `Produce your estimate by a route you choose (closed form, limiting case, scaling from a known benchmark, a short script). Run at least one bash/python line so the number is transcript-anchored.`,
+    `State, in one sentence before the last line, the DEFINITION you assumed: the observable, its units, its sign convention (e.g. "negative = attractive") and the fixed parameters — a definitional mismatch is the most common reason two correct routes disagree, and the reviewer needs it to tell that case from a physics dispute.`,
+    `A toy or napkin route is welcome (it can flag and it can converge) but say so in the route text; it is never an anchor.`,
     `Your LAST line must be exactly:`,
     `ESTIMATE(blind): ${decl.id} — <value> ± <sigma> via <route in ≤12 words> — inputs: [${Object.keys(decl.inputs).map((k) => `${k}=${decl.inputs[k]}`).join(", ")}]`,
   ].join("\n");
@@ -254,9 +294,38 @@ export function quantityDeclarationProblems(projectDir: string, experimentId: st
     const near = mine.filter((m) => [...m.toLowerCase().split(/[_\W]+/)].filter((t) => ft.has(t)).length >= 2);
     if (near.length > 0) problems.push(`${e}: notes/frame.md names headline quantity "${fid}" but no experiment declares it; your "${near[0]}" looks like the same observable — declare it under the frame id "${fid}" (the ship gate and the reviewer obligation are scoped to frame ids; a near-miss id leaves the headline unreviewed).`);
   }
+  const declaredHeadline = table.decls.filter((d) => d.experiment === e && d.headline).map((d) => d.id);
+  if (declaredHeadline.length > OBLIGATION_CAP_PER_EXPERIMENT) {
+    const kept = headlineDeclsFor(table, experimentId).map((d) => d.id);
+    problems.push(`${e}: ${declaredHeadline.length} quantities are marked headline:true; the reviewer/blind-estimate obligation covers only the frame's ids plus ${OBLIGATION_CAP_PER_EXPERIMENT} by load — this round: ${kept.join(", ")}. Every declaration stays in the table; if the number the abstract will quote is not among those, mark fewer as headline or name it in notes/frame.md.`);
+  }
   for (const d of table.decls.filter((d) => d.experiment === e && (d.headline || table.headlineDeclared.includes(d.id)))) {
     if (d.uncertainty === undefined) problems.push(`${e}: headline quantity "${d.id}" has no \`uncertainty\` — without σ it can never be corroborated (caps at indicative).`);
     if (!d.observable) problems.push(`${e}: headline quantity "${d.id}" has no \`observable\` sentence — the reviewer's discriminator and the contradiction auditor read it.`);
   }
   return problems;
+}
+
+export const COSMETIC_AGENTS = new Set(["illustrator", "illustrator_write", "typesetter", "report_writer", "contradiction_auditor", "prior_art_auditor"]);
+
+/**
+ * Speed bump for cosmetic spawns while a headline row is disputed/conditional
+ * (v2 plan P0.5, design §3.7). Returns "" when the ship line is clean or the
+ * agent is not cosmetic; otherwise the ship line + legal moves, to be
+ * PREPENDED to the spawn result (non-blocking, the default) — or, with
+ * LUXAS_COSMETIC_WHILE_DISPUTED=0, the reason the spawn is refused. The
+ * pp-vs-ss run spent ~$25 on figures and a report the gate then blocked.
+ */
+export function cosmeticSpawnNotice(projectDir: string, agent: string): { notice: string; refuse: boolean } {
+  if (!COSMETIC_AGENTS.has(agent)) return { notice: "", refuse: false };
+  let table: ClaimTable;
+  try { table = buildClaimTable(projectDir); } catch { return { notice: "", refuse: false }; }
+  if (!table.declared) return { notice: "", refuse: false };
+  const blocked = table.rows.filter((r) => r.headline && (r.status === "disputed" || r.status === "conditional")).map((r) => `${r.id} (${r.status})`);
+  if (blocked.length === 0) return { notice: "", refuse: false };
+  const refuse = process.env.LUXAS_COSMETIC_WHILE_DISPUTED === "0";
+  const notice = `[claim gate] ${blocked.length} headline quantit${blocked.length === 1 ? "y is" : "ies are"} disputed/conditional — the abstract cannot ship and figures/report text built now will be redrawn: ${blocked.join(", ")}. ` +
+    `Legal moves: run the reviewer's DISCRIMINATOR as an experiment, spawn a replicator (replicate mode) on the highest-load disputed id, or propose CLAIM-DISCLOSE for a non-producer to countersign. ` +
+    (refuse ? `Refused (LUXAS_COSMETIC_WHILE_DISPUTED=0). Spawn "${agent}" once the ship line is clean.` : `Spawning "${agent}" anyway — the dollars are yours to spend; the ship line is not.`);
+  return { notice, refuse };
 }

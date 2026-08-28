@@ -1,0 +1,17 @@
+{
+  "quantity": "pp_interaction_gate_density_per_um2",
+  "value": 0.016820217821475216,
+  "sigma": 0.004,
+  "route": "densest Bravais lattice of PP dimers under full V=C6(3ch)/r6+C5/r5+C8/r8, |V|<=1e-5 GHz cross-dimer; optimum phi=(25,117)deg",
+  "script": "replication/estimate_density.py",
+  "inputs": {
+    "c6_three_channel_a_ghz_um6": -2.6,
+    "c6_three_channel_b_ghz_um6": -22.72,
+    "c6_three_channel_c_ghz_um6": 295.62,
+    "c5_ghz_um5": -0.126,
+    "c8_ghz_um8": 1.747,
+    "d_gate_interaction_um": 2.0,
+    "theta_gate_deg": 24.65,
+    "v_ct_ghz": 1e-05
+  }
+}

@@ -1,0 +1,307 @@
+{
+  "experiment_id": "E6_interaction_gate_packing_gain",
+  "question": "With the interaction gate viable at R ~ 2.0 um (vs strong-blockade C6 gate at R ~ 5.5 um), what is the corrected packing gain when the C5/C8 dead zone and the R <= 2.2 um viability boundary are enforced?",
+  "invariants": {
+    "c6_three_channel_a_ghz_um6": {
+      "value": -2.6,
+      "source": "data/experiments/E4_verify_c6_zero_physical_gain/runs/run_1/results.json (deltaM=0 channel strength)",
+      "quote": "a=-2.60 (deltaM=0 channel, (1-3cos^2)^2)"
+    },
+    "c6_three_channel_b_ghz_um6": {
+      "value": -22.72,
+      "source": "data/experiments/E4_verify_c6_zero_physical_gain/runs/run_1/results.json (c6_dm1_channel_ghz_um6)",
+      "quote": "b=-22.72 (deltaM=+-1 channel)"
+    },
+    "c6_three_channel_c_ghz_um6": {
+      "value": 295.62,
+      "source": "data/experiments/E4_verify_c6_zero_physical_gain/runs/run_1/results.json (deltaM=+-2 channel)",
+      "quote": "c=+295.62 (deltaM=+-2 channel)"
+    },
+    "c5_ghz_um5": {
+      "value": -0.126,
+      "source": "data/experiments/E4_verify_c6_zero_physical_gain/runs/run_1/results.json (c5_at_zero_ghz_um5)",
+      "quote": "C5=-0.126 GHz*um^5 at theta* (quadrupole-quadrupole)"
+    },
+    "c8_ghz_um8": {
+      "value": 1.747,
+      "source": "data/experiments/E4_verify_c6_zero_physical_gain/runs/run_1/results.json (c8_at_zero_ghz_um8)",
+      "quote": "C8=+1.747 GHz*um^8 at theta* (dipole-quadrupole)"
+    },
+    "c6_ss_ghz_um6": {
+      "value": 138.86,
+      "source": "data/experiments/E1_ss_pp_c6_anisotropy/runs/run_1/results.json (c6_ss_60)",
+      "quote": "C6_SS(60S)=-138.86 GHz*um^6"
+    },
+    "v_block_ghz": {
+      "value": 0.01,
+      "source": "notes/plan.md (Omega/2pi = 10 MHz operating point)",
+      "quote": "blockade V(Rb) = hbar*Omega with Omega/2pi=10 MHz"
+    },
+    "v_ct_ghz": {
+      "value": 1e-05,
+      "source": "Evered2023 (notes/literature.d/Evered2023.md), 10 kHz cross-talk threshold",
+      "quote": "10 kHz residual-interaction cross-talk threshold"
+    },
+    "d_gate_interaction_um": {
+      "value": 2.0,
+      "source": "data/experiments/E5_weak_blockade_gate_viability/runs/run_1/results.json (optimal_gate_config R_um)",
+      "quote": "R=2.0 um, Omega=160 MHz, V=-2.887 MHz (fidelity 0.9967)"
+    },
+    "theta_gate_deg": {
+      "value": 24.65,
+      "source": "three-channel C6 zero (E4 second-order sum zero 24.65 deg; E4 headline 24.3 deg inter-method average)",
+      "quote": "C6(theta*)=0 at theta*=24.65 deg (three-channel model)"
+    },
+    "ss_baseline_density_per_um2_e2": {
+      "value": 0.007038,
+      "source": "data/experiments/E2_pp_packing_density/runs/run_1/results.json",
+      "quote": "SS staggered packing density 0.007038 atoms/um^2"
+    }
+  },
+  "computed": {
+    "quantities": [
+      {
+        "id": "interaction_gate_packing_gain_2d",
+        "key": "computed.interaction_gate_packing_gain_2d",
+        "headline": true,
+        "observable": "Ratio of the 2D atom-packing density of the PP interaction gate (two atoms at R=2.0 um along theta*=24.65 deg, C5/C8 interaction at the C6 zero) to the SS strong-blockade gate (isotropic C6=138.86 GHz*um^6, blockade radius at V_block=0.01 GHz), both subject to a 10 kHz pairwise cross-talk threshold (V_ct=1e-5 GHz), with the full three-channel + C5/C8 potential. DISTINCT from E2 packing_gain_2d (PP strong-blockade gate vs SS, gate axis 90 deg): this is a different gate mechanism (C5/C8 weak-interaction gate at the C6 zero, R=2.0 um vs blockade radius 5.5 um), a separate observable with its own estimate history.",
+        "value": 1.9765,
+        "uncertainty": 0.1,
+        "uncertainty_source": "gate-length sweep over R in [1.5,2.2] um (gain 1.95-2.11) plus near-Forster spread of C6(90 deg) (293 vs 268 GHz*um^6, sixth-root suppressed) and a2-orientation robustness (1.97-1.99 for non-degenerate orientations).",
+        "limit_check": {
+          "limit": "strong-blockade PP gain = 1.331 (E4 baseline)",
+          "expected": 1.331,
+          "observed": 1.3385,
+          "artifact": "runs/run_1/collect.py (strong_blockade_pp_gain)"
+        },
+        "inputs": {
+          "c6_ss_ghz_um6": 138.86,
+          "d_gate_interaction_um": 2.0,
+          "theta_gate_deg": 24.65,
+          "v_ct_ghz": 1e-05,
+          "v_block_ghz": 0.01
+        }
+      },
+      {
+        "id": "pp_interaction_gate_density_per_um2",
+        "key": "computed.pp_interaction_gate_density_per_um2",
+        "headline": true,
+        "observable": "2D atom density (atoms/um^2) of the densest periodic packing of PP interaction-gate dimers (R=2.0 um, theta*=24.65 deg) under the full three-channel + C5/C8 cross-talk at V_ct=1e-5 GHz.",
+        "value": 0.013911,
+        "uncertainty": 0.0007,
+        "uncertainty_source": "gate-length spread (0.01374-0.01487 over R in [1.5,2.2] um) and near-Forster C6(90 deg) spread.",
+        "limit_check": {
+          "limit": "SS isotropic density 0.007038 (E2) as the isotropic-anisotropy limit",
+          "expected": 0.007038,
+          "observed": 0.007038,
+          "artifact": "runs/run_1/collect.py (ss_density)"
+        },
+        "inputs": {
+          "c6_three_channel_a_ghz_um6": -2.6,
+          "c6_three_channel_b_ghz_um6": -22.72,
+          "c6_three_channel_c_ghz_um6": 295.62,
+          "c5_ghz_um5": -0.126,
+          "c8_ghz_um8": 1.747,
+          "d_gate_interaction_um": 2.0,
+          "theta_gate_deg": 24.65,
+          "v_ct_ghz": 1e-05
+        }
+      },
+      {
+        "id": "ss_baseline_density_per_um2",
+        "key": "computed.ss_baseline_density_per_um2",
+        "headline": false,
+        "observable": "2D atom density of the SS strong-blockade gate (isotropic C6=138.86, blockade radius 4.90 um at V_block=0.01 GHz) at V_ct=1e-5 GHz, recomputed with the E6 optimizer as a cross-check.",
+        "value": 0.007038,
+        "uncertainty": 0.0001,
+        "uncertainty_source": "reproduction of E2 value 0.007038 to 2.6e-5 relative.",
+        "limit_check": {
+          "limit": "E2 canonical 0.007038",
+          "expected": 0.007038,
+          "observed": 0.007038,
+          "artifact": "runs/run_1/collect.py (ss_density)"
+        },
+        "inputs": {
+          "c6_ss_ghz_um6": 138.86,
+          "v_block_ghz": 0.01,
+          "v_ct_ghz": 1e-05
+        }
+      }
+    ],
+    "verdicts": [
+      {
+        "id": "interaction_gate_breaks_cap",
+        "reads": [
+          "interaction_gate_packing_gain_2d"
+        ]
+      }
+    ],
+    "method_ladder": [
+      {
+        "quantity": "pp_interaction_gate_density_per_um2",
+        "field_standard_method": "pairwise cross-talk packing optimizer over 2D periodic lattices (E2/E3 class)",
+        "planned_method": "grid-sweep + bisection packing optimizer with three-channel + C5/C8 potential and fixed gate length",
+        "used": "grid-sweep + bisection packing optimizer with three-channel + C5/C8 potential and fixed gate length"
+      },
+      {
+        "quantity": "interaction_gate_packing_gain_2d",
+        "field_standard_method": "density ratio PP/SS from the same optimizer",
+        "planned_method": "density ratio PP interaction gate / SS strong-blockade gate from the same optimizer",
+        "used": "density ratio PP interaction gate / SS strong-blockade gate from the same optimizer"
+      },
+      {
+        "quantity": "crosstalk radius R_ct(theta)",
+        "field_standard_method": "root-find |V(r,theta)|=v_ct on the full signed potential",
+        "planned_method": "same",
+        "used": "same"
+      }
+    ],
+    "cross_validation": [
+      {
+        "claim_key": "computed.ss_baseline_density_per_um2",
+        "method_a": "E6 packing optimizer (grid sweep + bisection, isotropic staggered lattice)",
+        "method_b": "E2 independently-verified staggered packing density",
+        "value_a": 0.007038181,
+        "value_b": 0.007038,
+        "tolerance_rel": 0.15,
+        "artifact": "runs/run_1/collect.py",
+        "verdict": "agree"
+      },
+      {
+        "claim_key": "computed.interaction_gate_packing_gain_2d",
+        "method_a": "E6 three-channel strong-blockade PP gain (gate at 90 deg, blockade length (293.02/0.01)^(1/6))",
+        "method_b": "E4 strong-blockade PP baseline (two-channel, C6(90)=268.08)",
+        "value_a": 1.3385,
+        "value_b": 1.331,
+        "tolerance_rel": 0.15,
+        "artifact": "runs/run_1/collect.py",
+        "verdict": "agree"
+      },
+      {
+        "claim_key": "computed.pp_interaction_gate_density_per_um2",
+        "method_a": "packing optimizer internal full-pairwise cross-talk evaluation of the exhibited lattice (L1=8.5418, L2=40.3555 um, aligned)",
+        "method_b": "independent brute-force full-cell cross-talk re-check (self-contained physics code, 300 um enumeration, 2838 inter-pair vectors)",
+        "value_a": 1.0,
+        "value_b": 1.000034,
+        "tolerance_rel": 0.001,
+        "artifact": "runs/run_1/brute_force_reecheck.py",
+        "verdict": "agree",
+        "note": "Both independent methods confirm the exhibited lattice saturates the cross-talk constraint at worst |V|/v_ct = 1.0000 (feasible; binding constraint at ratio ~1), so the reported density 0.013911 is a valid achievable packing."
+      }
+    ],
+    "cross_validation_plan": [
+      {
+        "claim_key": "computed.interaction_gate_packing_gain_2d",
+        "control_method": "reproduce E2 SS density 0.007038 and E4 strong-blockade PP gain 1.331 with the same optimizer (executed; both agree)"
+      },
+      {
+        "claim_key": "computed.pp_interaction_gate_density_per_um2",
+        "control_method": "independent brute-force full-cell cross-talk re-check (binding |V|/v_ct = 1.0000); and known-answer isotropic limit 0.007038"
+      }
+    ],
+    "acceptance_criterion": "Compute G = 2D packing-density gain of the PP interaction gate (R=2.0 um, theta*=24.65 deg) over the SS strong-blockade gate (isotropic, blockade radius at V_block=0.01 GHz), both at V_ct=1e-5 GHz, with the full three-channel + C5/C8 potential. Verdict reads computed.interaction_gate_packing_gain_2d. CONFIRMED (~1.35 cap holds) iff G < 1.6; REFUTED (cap breaks) iff G >= 1.6.",
+    "verdict": "refuted",
+    "verdict_note": "interaction_gate_packing_gain_2d = 1.9765 >= 1.6, so the ~1.35x strong-blockade packing cap is BROKEN by the R~2 um C5/C8 interaction gate.",
+    "interaction_gate_packing_gain_2d": 1.9765,
+    "pp_interaction_gate_density_per_um2": 0.013911,
+    "ss_baseline_density_per_um2": 0.007038,
+    "pp_lattice_L1_um": 8.5418,
+    "pp_lattice_L2_um": 40.3555,
+    "pp_unit_cell_um2": 143.77,
+    "crosstalk_radii_um": {
+      "theta0": 10.26,
+      "theta_gate_24.65deg": 6.54,
+      "theta54.7": 15.26,
+      "theta90": 17.54
+    },
+    "gate_length_sweep": [
+      {
+        "gate_length_um": 1.5,
+        "density": 0.01487,
+        "gain": 2.1127
+      },
+      {
+        "gate_length_um": 1.8,
+        "density": 0.01421,
+        "gain": 2.0189
+      },
+      {
+        "gate_length_um": 2.0,
+        "density": 0.013911,
+        "gain": 1.9765
+      },
+      {
+        "gate_length_um": 2.2,
+        "density": 0.013738,
+        "gain": 1.952
+      }
+    ],
+    "orientation_sweep": [
+      {
+        "a2_angle_deg": 0.0,
+        "gain": 1.9765
+      },
+      {
+        "a2_angle_deg": 30.0,
+        "gain": 2.5188
+      },
+      {
+        "a2_angle_deg": 45.0,
+        "gain": 1.9708
+      },
+      {
+        "a2_angle_deg": 60.0,
+        "gain": 1.9843
+      },
+      {
+        "a2_angle_deg": 90.0,
+        "gain": 1.9917
+      },
+      {
+        "a2_angle_deg": 120.0,
+        "gain": 1.9931
+      },
+      {
+        "a2_angle_deg": -24.65,
+        "gain": 1.9717
+      }
+    ],
+    "raw_data": {
+      "gate_length_sweep": "data/gate_length_sweep.csv",
+      "orientation_sweep": "data/orientation_sweep.csv",
+      "crosstalk_radius_vs_angle": "data/crosstalk_radius_vs_angle.csv"
+    },
+    "method_blocked": [
+      {
+        "intended_tool": "tool_review (independent adversarial pytest authors for interaction_gate_potential and interaction_gate_packing_density)",
+        "failing_command": "spawn_agent(agent=tool_review, ...)",
+        "verbatim_last_error": "429: {\"code\":\"1113\",\"message\":\"\u4f59\u989d\u4e0d\u8db3\u6216\u65e0\u53ef\u7528\u8d44\u6e90\u5305,\u8bf7\u5145\u503c\u3002\"}",
+        "attempts": 3,
+        "fallback_used": "orchestrator pre-registered analytic checks + master-vs-known-answer cross-validation (SS density 0.007038 reproduced to 2.6e-5; strong-blockade PP gain 1.3385 vs E4 1.331; independent brute-force feasibility worst |V|/v_ct = 1.0000)",
+        "why_blocked": "tool_review model tier out of quota (same failure documented by E5, 5 consecutive 429s)."
+      }
+    ],
+    "premise_corrections": [
+      {
+        "premise": "E4/E5 headline: the C6 zero (interaction-gate axis) is at theta* = 24.3 deg.",
+        "corrected": "The three-channel model C6(theta)=a(1-3cos^2)^2+b sin^2 cos^2+c sin^4 (a=-2.60,b=-22.72,c=295.62) has its exact zero at 24.65 deg; at 24.3 deg C6 = -0.51 GHz*um^6, which at R=2.0 um contributes +8 MHz and flips the gate interaction from V=-2.887 MHz to +5.0 MHz.",
+        "consequence": "The interaction gate axis must sit at theta*=24.65 deg (the three-channel C6 zero, consistent with E5's C5/C8 evaluation point) for the gate interaction to match E5's V=-2.887 MHz. E6 uses 24.65 deg.",
+        "affects": [
+          "E5",
+          "E6",
+          "report"
+        ]
+      }
+    ],
+    "cannot_comply": [],
+    "method_blocked_resolved": [
+      {
+        "intended_tool": "tool_review (independent adversarial pytest authors for interaction_gate_potential and interaction_gate_packing_density)",
+        "resolution": "accept-with-disclosure",
+        "evidence": "interaction_gate_packing_density optimizer independently cross-validated: SS baseline density reproduced to 2.6e-5 relative error (0.007038181 vs E2 0.007038), strong-blockade PP gain reproduced 1.3385 vs E4 1.331 (0.6%), and an independent brute-force full-cell cross-talk re-check confirmed worst |V|/v_ct = 1.0000 (binding constraint saturated, not violated).",
+        "disclosure": "Independent adversarial pytest authorship was not executed (tool_review model tier out of quota, HTTP 429 code 1113, 3 attempts). Disclosed in the L2.6 Limitations section (limitation #1) and in the retained method_blocked entry.",
+        "resolved_by": "brain (accept-with-disclosure)"
+      }
+    ]
+  }
+}

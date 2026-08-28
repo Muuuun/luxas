@@ -1,0 +1,11 @@
+{
+  "quantity": "c6_ss_vs_pp_ratio",
+  "value": 0.5179846149387421,
+  "sigma": 0.001,
+  "route": "abs(C6_SS/C6_PP) direct arithmetic on the two given C6 inputs; signed ratio is negative",
+  "script": "replication/estimate_c6_ratio.py",
+  "inputs": {
+    "c6_ss_60": -138.86163356371736,
+    "c6_pp_theta90_60": 268.0806139003557
+  }
+}

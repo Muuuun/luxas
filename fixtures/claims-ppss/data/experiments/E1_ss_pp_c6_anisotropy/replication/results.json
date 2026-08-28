@@ -1,0 +1,8 @@
+{
+  "quantity": "c6_pp_theta90_60",
+  "value": 292.4,
+  "sigma": 30.0,
+  "route": "ARC (Alkali Rydberg Calculator) second-order perturbative vdW coefficient for the stretched pair state |60 P3/2, mj=3/2> x |60 P3/2, mj=3/2> at theta=90 deg, convention V(R)=-C6/R^6.",
+  "script": "replication/c6_pp_theta90_60.py",
+  "inputs": {"n": 60, "l": 1, "j": 1.5, "m": 1.5}
+}

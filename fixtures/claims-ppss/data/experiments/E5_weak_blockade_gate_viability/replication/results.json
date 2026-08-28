@@ -1,0 +1,12 @@
+{
+  "quantity": "fundamental_max_viable_separation_um",
+  "value": 2.2876466319159903,
+  "sigma": 0.005,
+  "route": "Bisection root of |V(R)| = |-C5/R^5 - C8/R^8| = 0.318 MHz on the attractive branch below the 2.40 um sign crossing; large-R branch peaks at 0.270 MHz.",
+  "script": "replication/estimate.py",
+  "inputs": {
+    "c5_at_zero_ghz_um5": -0.126,
+    "c8_at_zero_ghz_um8": 1.747,
+    "rydberg_lifetime_tau_us": 100
+  }
+}

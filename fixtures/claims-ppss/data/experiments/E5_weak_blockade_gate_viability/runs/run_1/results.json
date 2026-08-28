@@ -1,0 +1,236 @@
+{
+  "experiment_id": "E5_weak_blockade_gate_viability",
+  "title": "Weak-blockade C5/C8 gate viability: is a 0.99-fidelity two-qubit phase gate possible near the C6 zero?",
+  "status": "complete",
+  "invariants": {
+    "c5_at_zero_ghz_um5": {
+      "value": -0.126,
+      "source": "E4_verify_c6_zero_physical_gain",
+      "anchored_to": "E4 direct quadrupole-quadrupole matrix element <aa|V_QQ|aa> R^5 at theta=24.65 deg (V_QQ = -C5/R^5); reproduced verbatim from E4 results.json computed.c5_at_zero_ghz_um5",
+      "quote": "computed.c5_at_zero_ghz_um5 = -0.126 GHz um^5 (E4 results.json, quadrupole_floor.json key 24.65)"
+    },
+    "c8_at_zero_ghz_um8": {
+      "value": 1.747,
+      "source": "E4_verify_c6_zero_physical_gain",
+      "anchored_to": "E4 second-order dipole-quadrupole perturbation sum over 4200 channels (n_range 58-62, l 0-3) at theta=24.65 deg (V_DQ = -C8/R^8); reproduced verbatim from E4 results.json computed.c8_at_zero_ghz_um8",
+      "quote": "computed.c8_at_zero_ghz_um8 = +1.747 GHz um^8 (E4 results.json, quadrupole_floor.json key 24.65)"
+    },
+    "rydberg_lifetime_tau_us": {
+      "value": 100.0,
+      "source": "Low2012 (43S lifetime) scaled to n=60; Saffman2010 uses tau=100 us for Rb",
+      "anchored_to": "Low2012 43S: spontaneous-only 80.8 us, 42.3 us incl. 300 K blackbody; n^3 scaling to n=60 gives 80.8*(60/43)^3 = 220 us spontaneous; adding BBR (1/tau_bb ~ n^-2 scaled from Low2012) gives ~97 us total at 300 K, matching the field-standard tau=100 us.",
+      "quote": "Low2012 note: '43S lifetime 42.3 us incl. blackbody radiation (300 K) -> 3.76 kHz linewidth; spontaneous-only lifetime 80.8 us'; Saffman2010 note: '(omega_10/2pi=6834 MHz, tau=100 us)'."
+    },
+    "ground_hyperfine_omega10_MHz": {
+      "value": 6834.0,
+      "source": "Saffman2010 (Rb 87 ground-state hyperfine splitting)",
+      "anchored_to": "Saffman2010 interaction-gate bound E_min=(2^{7/2} pi/(tau omega_10))^{1/2} ~= 0.003 quoted for 87Rb (omega_10/2pi=6834 MHz, tau=100 us).",
+      "quote": "Saffman2010 note: 'interaction-gate lower bound E_min=(2^{7/2}pi/(tau omega_10))^{1/2}~=0.003 for 87Rb (omega_10/2pi=6834 MHz, tau=100 us)'."
+    },
+    "target_pair": {
+      "value": "Rb 60P3/2 m=3/2 stretched pair (n=60, l=1, j=1.5, m=1.5), interatomic axis at theta*=24.3 deg where C6 ~ 0",
+      "source": "E1-E4 convention"
+    }
+  },
+  "computed": {
+    "cz_gate_max_fidelity": 0.9967,
+    "optimal_gate_config": {
+      "R_um": 2.0,
+      "Omega_MHz": 160.0,
+      "t_gate_us": 0.1855,
+      "gate": "interaction (pi-pi-hold-pi-pi)",
+      "fidelity": 0.9967,
+      "V_MHz": -2.887
+    },
+    "fundamental_min_interaction_mhz_for_0_99": 0.318,
+    "fundamental_max_viable_separation_um": 2.2874,
+    "sign_crossing_separation_um": 2.4024,
+    "sub_mhz_regime_max_fidelity": 0.981,
+    "grid_max_fidelity_short_R_um1": 0.9994,
+    "quantities": [
+      {
+        "id": "cz_gate_max_fidelity",
+        "key": "computed.cz_gate_max_fidelity",
+        "headline": true,
+        "value": 0.9967,
+        "observable": "Maximum entanglement (process) fidelity of the two-atom controlled-Z gate (best of the pi-2pi-pi blockade gate and the pi-pi-hold-pi-pi interaction gate) over R in [1,5] um and Omega in [1,500] MHz, with the C5/C8 interaction at the C6 zero (C5=-0.126 GHz um^5, C8=+1.747 GHz um^8) and Rydberg lifetime tau=100 us. Reported at the reliable optimum R=2.0 um (the grid maximum 0.9994 at R=1.0 um sits at the unverified short-R multipole-expansion edge).",
+        "uncertainty": 0.005,
+        "uncertainty_source": "master-equation vs analytic Eq.34 agree to ~10% on the infidelity (0.0033 vs 0.0030 at R=2.0 um); Omega/R grid resolution (R step 0.2 um, Omega up to 2x) bounds the optimum location; uncomputed higher multipoles (C9+) and unswept C8 convergence at short R add model uncertainty",
+        "limit_check": {
+          "limit": "fidelity >= 0.99 at some (R, Omega) -> VIABLE",
+          "expected": ">= 0.99 if a viable configuration exists",
+          "observed": "0.9967 at R=2.0 um, Omega=160 MHz (interaction gate); 0.993 at R=2.2 um; collapses to ~0.41 in the R=2.4 um sign-crossing dead zone",
+          "artifact": "data/best_gate_vs_R.json"
+        },
+        "inputs": {
+          "c5_at_zero_ghz_um5": -0.126,
+          "c8_at_zero_ghz_um8": 1.747,
+          "rydberg_lifetime_tau_us": 100.0,
+          "ground_hyperfine_omega10_MHz": 6834.0
+        }
+      },
+      {
+        "id": "fundamental_min_interaction_mhz_for_0_99",
+        "key": "computed.fundamental_min_interaction_mhz_for_0_99",
+        "headline": true,
+        "value": 0.318,
+        "observable": "Minimum interaction shift |V| (regular MHz) required for fidelity >= 0.99, from the Saffman2016 fundamental bound E >= 2/(V tau) = 0.01 -> V >= 2/(0.01 tau) = 0.318 MHz at tau=100 us.",
+        "uncertainty": 0.03,
+        "uncertainty_source": "propagated from the tau=100 us lifetime uncertainty (~10%; the Rb 60P3/2 state is shorter-lived than the 60S anchor, which only raises this threshold and strengthens the NOT-viable conclusion in the sub-MHz regime)",
+        "limit_check": {
+          "limit": "V >= 0.318 MHz necessary for F >= 0.99",
+          "expected": "0.318 MHz",
+          "observed": "0.318 MHz (Delta_dd_req_MHz)",
+          "artifact": "data/best_gate_vs_R.json"
+        },
+        "inputs": {
+          "rydberg_lifetime_tau_us": 100.0
+        }
+      },
+      {
+        "id": "fundamental_max_viable_separation_um",
+        "key": "computed.fundamental_max_viable_separation_um",
+        "headline": true,
+        "value": 2.2874,
+        "observable": "Largest atom separation (um) at which |V(R)| = |-C5/R^5 - C8/R^8| still exceeds the 0.318 MHz fundamental threshold; beyond this (and past the R=2.40 um sign crossing) |V| never recovers above 0.27 MHz.",
+        "uncertainty": 0.05,
+        "uncertainty_source": "sensitivity to the C8 value (E4 convergence unswept); C8 +/- 0.05 GHz um^8 shifts the crossing and the threshold radius by ~0.05 um",
+        "limit_check": {
+          "limit": "|V| >= 0.318 MHz holds only for R <= ~2.29 um",
+          "expected": "a maximum separation near 2.3 um",
+          "observed": "2.2874 um; |V(R=2.2)=0.74 MHz|, |V(R=2.4)~0|, max |V| for R>2.4 is 0.27 MHz at R~2.8 um (below threshold)",
+          "artifact": "data/fundamental_bound_vs_R.csv"
+        },
+        "inputs": {
+          "c5_at_zero_ghz_um5": -0.126,
+          "c8_at_zero_ghz_um8": 1.747,
+          "rydberg_lifetime_tau_us": 100.0
+        }
+      },
+      {
+        "id": "sub_mhz_regime_max_fidelity",
+        "key": "computed.sub_mhz_regime_max_fidelity",
+        "headline": true,
+        "value": 0.981,
+        "observable": "Maximum gate fidelity (best of blockade + interaction gate) restricted to the genuinely sub-MHz regime R >= 2.5 um where |V| <= 0.25 MHz (the 'sub-MHz at 2-3 um' regime the follow-up described).",
+        "uncertainty": 0.005,
+        "uncertainty_source": "grid resolution and C8 convergence uncertainty",
+        "limit_check": {
+          "limit": "fidelity < 0.99 in the sub-MHz regime (R >= 2.5 um)",
+          "expected": "below 0.99",
+          "observed": "0.981 (R=2.8 um), 0.980 (R=3.0 um), 0.966 (R=2.5 um), 0.949 (R=4 um) — all below 0.99",
+          "artifact": "data/best_gate_vs_R.json"
+        },
+        "inputs": {
+          "c5_at_zero_ghz_um5": -0.126,
+          "c8_at_zero_ghz_um8": 1.747,
+          "rydberg_lifetime_tau_us": 100.0
+        }
+      }
+    ],
+    "verdicts": [
+      {
+        "id": "weak_blockade_gate_viable",
+        "reads": [
+          "cz_gate_max_fidelity"
+        ]
+      }
+    ],
+    "method_ladder": [
+      {
+        "quantity": "cz_gate_max_fidelity",
+        "field_standard_method": "two-atom Lindblad master-equation simulation of the Rydberg CZ gate (qutip-class)",
+        "planned_method": "qutip mesolve of the pi-2pi-pi blockade gate + the pi-pi-hold-pi-pi interaction gate, with Rydberg-lifetime decay and off-resonant spectator coupling",
+        "used": "qutip 5.3.0 liouvillian exponentiation (pi-2pi-pi blockade gate + pi-pi-hold-pi-pi interaction gate), Choi-state process fidelity to diag(1,-1,-1,-1)"
+      },
+      {
+        "quantity": "gate error budget (analytic)",
+        "field_standard_method": "Saffman 2010 Eq. 34 interaction-gate error formula + Saffman 2016 Eq. Elimit fundamental bound",
+        "planned_method": "same closed-form error budget (decay + leakage + off-resonant) + 2/(V tau) bound",
+        "used": "Saffman 2010 Eq. 34 (eps_decay, eps_leak=2(V/Omega)^2, eps_offres=(Omega/omega10)^2) + Saffman 2016 E_fund = 2/(V tau)"
+      }
+    ],
+    "cross_validation": [
+      {
+        "claim_key": "computed.cz_gate_max_fidelity",
+        "method_a": "master-equation interaction gate (qutip liouvillian)",
+        "method_b": "Saffman 2010 Eq. 34 analytic interaction-gate error (E -> F = 1 - E)",
+        "value_a": 0.9967,
+        "value_b": 0.997,
+        "tolerance_rel": 0.1,
+        "artifact": "data/cross_validation.json",
+        "verdict": "AGREE (master infidelity 0.0033 vs analytic E 0.0030 at R=2.0 um, Omega=160 MHz; also agree at R=2.2/2.5/3.0 um to within ~10%)"
+      },
+      {
+        "claim_key": "computed.fundamental_min_interaction_mhz_for_0_99",
+        "method_a": "Saffman 2016 fundamental bound E >= 2/(V tau) solved for V at E=0.01, tau=100 us (analytic lower bound; 2/(0.01 tau) angular -> 0.318 MHz regular)",
+        "method_b": "numeric master-equation interaction-gate V-scan (qutip): smallest |V| (MHz) where the pi-pi-hold-pi-pi process fidelity reaches 0.99, optimizing over Omega, tau=100 us",
+        "value_a": 0.318,
+        "value_b": 0.56,
+        "tolerance_rel": 1.0,
+        "artifact": "data/numeric_threshold_scan.json",
+        "verdict": "CONSISTENT (value_b = 0.56 MHz is the actual interaction-gate threshold, 1.76x the 0.318 MHz fundamental lower bound; the numeric actual correctly lies above the analytic necessary bound, so the bound is not violated)"
+      }
+    ],
+    "cross_validation_plan": [
+      {
+        "claim_key": "computed.cz_gate_max_fidelity",
+        "control_method": "Saffman 2010 Eq. 34 analytic interaction-gate error at the optimal point (independent of the master equation)"
+      },
+      {
+        "claim_key": "computed.fundamental_min_interaction_mhz_for_0_99",
+        "control_method": "direct 2/(V tau) re-derivation"
+      }
+    ],
+    "method_blocked": [
+      {
+        "intended_tool": "tool_review independent test-authorship agent (adversarial pytest for cz_gate_fidelity and gate_error_budget)",
+        "failing_command": "spawn_agent(agent=\"tool_review\", task=\"<TOOL_NAME: cz_gate_fidelity / gate_error_budget ...>\", templateVars={EXPERIMENT_ID: \"E5_weak_blockade_gate_viability\", TOOL_NAME: ...})",
+        "verbatim_last_error": "429: {\\\"code\\\":\\\"1113\\\",\\\"message\\\":\\\"\\u4f59\\u989d\\u4e0d\\u8db3\\u6216\\u65e0\\u53ef\\u7528\\u8d44\\u6e90\\u5305,\\u8bf7\\u5145\\u503c\\u3002\\\"}",
+        "attempts": 5,
+        "fallback_used": "orchestrator self-verification: (1) pre-registered analytic expectations in the orchestrator's Phase-1 reasoning trace (F_e=0.25 no-interaction limit, F_e->1 strong-blockade limit, Saffman Eq.34 E~0.3% at R=2 um, 2/(V tau)=0.318 MHz threshold) checked against the running tools' outputs; (2) tool_impl's own degenerate-limit self-checks (F=0.2500 no-interaction, F=0.9999999 strong, F=0.9967 at R=2 um); (3) cross-validation master-equation vs analytic formula agreeing to ~10%.",
+        "why_blocked": "the tool_review sub-agent model tier is out of quota (HTTP 429 insufficient-balance from the provider); the two tool_impl agents (different tier) succeeded. Independent adversarial test files could therefore not be produced; the tools were instead verified against the orchestrator's pre-registered analytic estimates and cross-validated against each other."
+      }
+    ],
+    "premise_corrections": [
+      {
+        "premise": "FollowUp framing: near the C6 zero the interaction is dominated by C5/C8 and is 'sub-MHz at 2-3 um'.",
+        "corrected": "The C8/R^8 term makes the interaction few-MHz at R=2.0 um (V=-2.89 MHz), NOT sub-MHz; V(R) crosses zero at R=2.402 um (dead zone where C5 and C8 cancel), and is sub-MHz (|V| <= 0.27 MHz) only for R >= 2.4 um.",
+        "consequence": "The viable gate configurations (F>=0.99) live at R <= 2.2 um (|V| >= 0.7 MHz), not in the sub-MHz regime. The sub-MHz regime (R >= 2.5 um) is explicitly NOT viable (F <= 0.98).",
+        "affects": [
+          "E5",
+          "report",
+          "E6_followup"
+        ]
+      }
+    ],
+    "raw_data": {
+      "interaction_gate_fidelity": "data/interaction_gate_fidelity.csv",
+      "interaction_gate_leakage": "data/interaction_gate_leakage.csv",
+      "interaction_gate_decay": "data/interaction_gate_decay.csv",
+      "blockade_gate_fidelity": "data/blockade_gate_fidelity.csv",
+      "analytic_error": "data/analytic_error.csv",
+      "analytic_eps_decay": "data/analytic_eps_decay.csv",
+      "analytic_eps_leak": "data/analytic_eps_leak.csv",
+      "analytic_eps_leak_strong": "data/analytic_eps_leak_strong.csv",
+      "analytic_eps_offres_vs_omega": "data/analytic_eps_offres_vs_omega.csv",
+      "fundamental_bound_vs_R": "data/fundamental_bound_vs_R.csv",
+      "interaction_vs_R": "data/interaction_vs_R.csv",
+      "best_gate_vs_R": "data/best_gate_vs_R.json",
+      "cross_validation": "data/cross_validation.json",
+      "numeric_threshold_scan": "data/numeric_threshold_scan.json"
+    },
+    "acceptance_criterion": "Existence/optimization. Sweep R in [1,5] um and Omega in [1,500] MHz at the C5/C8 interaction (C5=-0.126 GHz um^5, C8=+1.747 GHz um^8 at theta*~=24.3 deg), tau=100 us. Let F_max = computed.cz_gate_max_fidelity. VIABLE iff F_max >= 0.99; NOT VIABLE iff F_max < 0.99. Single-fault guards (the fidelity observable must respond): (a) with V=0 (no interaction) the CZ entanglement fidelity must collapse to ~0.25 (no entangling power); (b) with tau->inf and strong interaction the fidelity must approach 1. Both guards were checked and passed (F=0.2502 no-interaction, F=0.9999999 strong no-decay).",
+    "verdict": "viable",
+    "method_blocked_resolved": [
+      {
+        "resolves": "tool_review independent test-authorship agent (adversarial pytest for cz_gate_fidelity and gate_error_budget)",
+        "resolution": "accept-with-disclosure",
+        "disclosure": "Independent adversarial pytest files were not produced (tool_review quota, HTTP 429). cz_gate_fidelity was verified against pre-registered analytic degenerate limits (no-interaction entanglement fidelity F_e=0.25, strong-blockade F_e approaching 1) and cross-validated against the Saffman-Walker-Moelmer Eq. (34) analytic gate-error budget, agreeing to about 10 percent on the infidelity across R=2.0-3.0 um. gate_error_budget was verified by closed-form recomputation and the E lower bound 2/(V tau) fundamental limit.",
+        "evidence_paths": [
+          "data/cross_validation.json"
+        ]
+      }
+    ]
+  }
+}

@@ -108,6 +108,8 @@ export interface ClaimTable {
   headline: string[];
   /** Declared set only: frame.md ∪ headline:true. Obligations (blind estimator, reviewer, PI) use this. */
   headlineDeclared: string[];
+  /** Ids named in notes/frame.md (obligation scope puts these first — claims-review headlineDeclsFor). */
+  frameHeadline: string[];
   malformed: string[];
   /** Non-blocking notes (undeclared input keys, etc.). */
   notes: string[];
@@ -325,7 +327,8 @@ export function parseReviewerLines(projectDir: string): ReviewerLines {
             if (/^producer$/i.test(tok)) producerSupplied = true;
           }
         }
-        const e: Estimate = { quantity: m[2], value: Number(m[3]), sigma: m[4] ? posNum(Number(m[4])) : undefined, kind: m[1] && !producerSupplied ? "blind" : "posthoc", source: `review:${f}`, script: `review:${f}:${m[5] ?? ""}`, inputs };
+        // A blind line with no `via <route>` cannot be judged (v2 plan P0.6): recorded, never flags.
+        const e: Estimate = { quantity: m[2], value: Number(m[3]), sigma: m[4] ? posNum(Number(m[4])) : undefined, kind: m[1] && !producerSupplied && m[5]?.trim() ? "blind" : "posthoc", source: `review:${f}`, script: `review:${f}:${m[5] ?? ""}`, inputs };
         (e.kind === "blind" ? out.blind : out.posthoc).push(e);
         continue;
       }
@@ -383,6 +386,7 @@ function parseDisclosures(projectDir: string): Set<string> {
 // ── comparison rules (design §3.3, §3.4; audit-hardened) ───────────────────
 
 const WIRING_REL = 1e-6;
+const INPUT_MATCH_REL = 1e-2;
 const SIGMA_K = 2;
 const RATIO_VETO = 3;
 const SIGMA_CAP_FRAC = 0.5;
@@ -402,7 +406,10 @@ export function relation(a: Estimate, b: Estimate): { rel: PairRelation; differi
   const differing: string[] = [];
   if (a.inputs && b.inputs) {
     for (const k of Object.keys(a.inputs)) {
-      if (k in b.inputs && relDiff(a.inputs[k], b.inputs[k]) > WIRING_REL) differing.push(k);
+      // Inputs are quoted, not computed: a blind line writes -0.152 for the
+      // producer's -0.151863. 1% is a rounding; the 5.6× between E4's and E5's
+      // blockade shift (297nm) is a different regime.
+      if (k in b.inputs && relDiff(a.inputs[k], b.inputs[k]) > INPUT_MATCH_REL) differing.push(k);
     }
   }
   if (differing.length > 0) return { rel: "incomparable", differing };
@@ -544,9 +551,26 @@ export function buildClaimTable(projectDir: string): ClaimTable {
         } else reasons.push(`agree but unattested (no INDEPENDENT line): ${a.source} ~ ${b.source}`);
       } else reasons.push(`undecidable (missing σ): ${a.source} vs ${b.source}`);
     }
-    const own = producers.find((e) => e.kind === "own");
+    // Blind estimates (design §3.5/§3.6.1, v2 plan P0.1 2026-08-28). A blind
+    // line is compared with the SAME comparability rule as producer pairs —
+    // an estimate made against input values that have since moved is
+    // incomparable, not wrong. A disagreeing blind flag is ANSWERED when a
+    // later own-estimate of the same id from a DIFFERENT experiment is
+    // comparable and agrees with the flagged producer: the discriminator ran,
+    // the outlier stays in the row beside it. Sign-only disagreements keep the
+    // convention hint. Nothing here is written by a producer or the brain.
+    const owns = producers.filter((e) => e.kind === "own");
     for (const bl of rev.blind.filter((e) => e.quantity === id)) {
-      if (own && agreement(own, bl) === "disagree") { disputed = true; reasons.push(signOnlyDisagreement(own, bl) ? `sign convention: blind estimate ${bl.value} vs ${own.source}=${own.value} agree in magnitude, differ in sign — pin the convention in \`observable\` and answer with a locator (unanswered)` : `blind reviewer estimate ${bl.value} disagrees with ${own.source}=${own.value} (unanswered)`); }
+      const comparable = owns.filter((o) => relation(o, bl).rel !== "incomparable");
+      if (owns.length && comparable.length === 0) { reasons.push(`blind estimate ${bl.value} incomparable: its inputs (${Object.entries(bl.inputs ?? {}).map(([k, v]) => `${k}=${v}`).join(",") || "none"}) differ in value from the producer's — re-estimate against current inputs`); continue; }
+      const agreeingOwn = comparable.find((o) => agreement(o, bl) === "agree");
+      if (agreeingOwn) { reasons.push(`blind estimate ${bl.value} agrees with ${agreeingOwn.source}`); continue; }
+      const flagged = comparable[0];
+      if (!flagged) continue;
+      const answer = owns.find((o) => o !== flagged && o.experiment !== flagged.experiment && relation(o, flagged).rel === "comparable" && agreement(o, flagged) === "agree");
+      if (answer) { reasons.push(`blind estimate ${bl.value} disagreed with ${flagged.source}=${flagged.value}; answered by ${answer.source}=${answer.value} (independent experiment agrees with the producer)`); continue; }
+      disputed = true;
+      reasons.push(signOnlyDisagreement(flagged, bl) ? `sign convention: blind estimate ${bl.value} vs ${flagged.source}=${flagged.value} agree in magnitude, differ in sign — pin the convention in \`observable\` and answer with a locator (unanswered)` : `blind reviewer estimate ${bl.value} disagrees with ${flagged.source}=${flagged.value} (unanswered)`);
     }
     for (const s of rev.scaling.filter((s) => s.id === id)) {
       if (s.observed !== undefined && Math.abs(s.observed - s.expected) > SCALING_TOL) { disputed = true; reasons.push(`scaling: observed exponent ${s.observed} vs expected ${s.expected}`); }
@@ -611,7 +635,7 @@ export function buildClaimTable(projectDir: string): ClaimTable {
   }
   const disclosedHeadlineCount = rows.filter((r) => r.headline && r.status === "disclosed").length;
   return {
-    rows, verdicts: vRows, headline: [...headline].sort(), headlineDeclared: [...headlineDeclared].sort(),
+    rows, verdicts: vRows, headline: [...headline].sort(), headlineDeclared: [...headlineDeclared].sort(), frameHeadline: parseFrameHeadline(projectDir),
     malformed, notes, readsDrops, declared, decls, discriminators: rev.discriminators, disclosedHeadlineCount,
   };
 }
@@ -645,8 +669,20 @@ export function claimTableIssues(projectDir: string, table: ClaimTable = buildCl
       // is still that number (audit C3).
       if (!row) {
         const cv = Number(c?.value);
+        // v2 plan P0.4: a round number ("2.0 μm", "0.99") is not evidence of
+        // re-keying unless it sits next to the disputed id's name, and a
+        // number that IS another quantity's own estimate never matches.
+        const sig = Number.isFinite(cv) ? String(Math.abs(cv)).replace(/^0\.0*|\./g, "").replace(/e.*$/i, "").replace(/^0+/, "").length : 0;
+        const ownOfOther = (r: ClaimRow) => table.rows.some((o) => o.id !== r.id && o.estimates.some((e) => e.kind === "own" && relDiff(e.value, cv) <= 5e-3));
         if (Number.isFinite(cv) && cv !== 0) {
-          for (const r of table.rows) if (bad.has(r.status) && r.estimates.some((e) => [cv, cv / 100, cv * 100].some((v) => relDiff(v, e.value) <= 5e-3))) { row = r; break; }
+          const ctxFull = String(c?.tex_context ?? "");
+          for (const r of table.rows) {
+            if (!bad.has(r.status)) continue;
+            const adjacent = ctxFull.includes(r.id);
+            if (sig < 3 && !adjacent) continue;
+            if (ownOfOther(r)) continue;
+            if (r.estimates.some((e) => [cv, cv / 100, cv * 100].some((v) => relDiff(v, e.value) <= 5e-3))) { row = r; break; }
+          }
         }
         if (!row) continue;
         issues.push({ blocking: true, text: `"${ctx}" carries a value equal to an estimate of ${row.id} (status ${row.status}) under a different key — the same number under another name inherits the status. ${LEGAL_MOVES}` });

@@ -1,0 +1,323 @@
+{
+  "experiment_id": "E2_pp_packing_density",
+  "title": "PP vs SS packing-density comparison for parallel two-qubit Rydberg-blockade gate arrays",
+  "species": "87Rb",
+  "run_dir": "data/experiments/E2_pp_packing_density/runs/run_1",
+  "methods": {
+    "production": "geometric lattice packing under FULL pairwise cross-talk exclusion (blockade radius + angle-dependent cross-talk radius, densest axis-aligned and staggered lattices)",
+    "control": "closed-form sixth-root scaling law (analytic), verified against the numerical packing",
+    "magic_distance": "zero-crossing analysis of the theta=0 pair potential V(r)=-C3/r^3-C6/r^6 (Vermersch2015 magic-distance condition)"
+  },
+  "conventions": {
+    "c6_sign": "interaction potential V(r) = -C6/r^6; C6<0 => repulsive, C6>0 => attractive; radii use magnitudes |C6|",
+    "angle": "theta = angle between interatomic axis and quantization axis; theta=0 along quantization axis (decoupled), theta=90 perpendicular (blockaded/gate axis)",
+    "units": "C6 in GHz*um^6; V_block, V_ct in GHz (energy/h); radii in um; density in atoms/um^2 (2D) or atoms/um^3 (3D)",
+    "geometry_2d": "quantization axis IN plane; gate pair axis theta=90 (blockaded), rows stacked theta=0 (decoupled)",
+    "geometry_3d": "quantization axis OUT of plane; in-plane directions theta=90, layer stacking theta=0"
+  },
+  "invariants": {
+    "omega_2pi_mhz": {
+      "value": 10.0,
+      "source": "plan.md E_2 canonical operating point",
+      "anchored_to": "canonical Rydberg gate Rabi frequency (Rb n~75, Omega/2pi=10 MHz)",
+      "note": "k_block = 1 (Saffman blockade radius convention V(Rb) = hbar*Omega)"
+    },
+    "v_block_ghz": {
+      "value": 0.01,
+      "source": "Saffman2010 Eq 29",
+      "anchored_to": "blockade radius Rb defined by collective Rabi ~ vdW shift: V(Rb)=hbar*Omega",
+      "quote": "sqrt(eta R_b^3) Omega ~ V(R_b) -- collective Rabi frequency comparable to the vdW shift defines R_b"
+    },
+    "v_ct_ghz": {
+      "value": 1e-05,
+      "source": "Evered2023",
+      "anchored_to": "measured inter-site cross-talk between parallel Rydberg gate sites ~10 kHz",
+      "quote": "Cross-talk between gate sites is on the scale of 10 kHz and 'should be negligible.'"
+    },
+    "r_trap_um": {
+      "value": 2.0,
+      "source": "Evered2023",
+      "anchored_to": "atom spacing 2 um in the 60-atom parallel-gate array",
+      "quote": "atom spacing 2 um with blockade V_Ryd/2pi ~ 450 MHz"
+    },
+    "c6_ss_60_ghz_um6": {
+      "value": -138.86163356371736,
+      "source": "E1_ss_pp_c6_anisotropy results.json (computed.c6_ss_60_ghz_um6)",
+      "anchored_to": "SS isotropic C6 at n=60 (architectural commitment: read from E1, not re-derived)"
+    },
+    "c6_pp_theta90_60_diag_ghz_um6": {
+      "value": 268.0806139003557,
+      "source": "E1_ss_pp_c6_anisotropy results.json (cross_validation value_b, full diagonalization)",
+      "anchored_to": "PP stretched-pair C6(theta=90) at n=60, full diagonalization (near-Forster S+S defect 0.278 GHz)"
+    },
+    "c6_pp_theta90_60_pert_ghz_um6": {
+      "value": 299.10912743715437,
+      "source": "E1_ss_pp_c6_anisotropy results.json (computed.c6_pp_theta90_60_ghz_um6, perturbative)",
+      "anchored_to": "PP stretched-pair C6(theta=90) at n=60, degenerate perturbation theory"
+    },
+    "c6_pp_theta0_60_ghz_um6": {
+      "value": -10.41,
+      "source": "E1_ss_pp_c6_anisotropy results.json (computed.c6_pp_theta0_60_diagonalization_ghz_um6, wide-window settled)",
+      "anchored_to": "PP stretched-pair residual C6(theta=0) at n=60, wide-window (+/-100 GHz) full diagonalization, settled by 3 methods to 0.04%"
+    }
+  },
+  "computed": {
+    "method_ladder": [
+      {
+        "quantity": "blockade radius Rb(theta) = (|C6(theta)|/V_block)^(1/6)",
+        "field_standard_method": "Saffman2010 Eq 29 (V(Rb) = hbar*Omega)",
+        "planned_method": "Saffman2010 Eq 29",
+        "used": "Saffman2010 Eq 29"
+      },
+      {
+        "quantity": "cross-talk exclusion radius R_ct(theta) = (|C6(theta)|/V_ct)^(1/6)",
+        "field_standard_method": "Evered2023 inter-site cross-talk threshold (~10 kHz) + Li2026 residual-vdW model V=C6/r^6",
+        "planned_method": "same",
+        "used": "same"
+      },
+      {
+        "quantity": "packing density gain rho_PP/rho_SS",
+        "field_standard_method": "geometric lattice packing under full pairwise exclusion (densest packing)",
+        "planned_method": "analytic sixth-root closed form (primary) cross-validated against numerical lattice packing (control)",
+        "used": "both: analytic sixth-root closed form + numerical full-pairwise lattice packing (axis-aligned + staggered)"
+      }
+    ],
+    "quantities": [
+      {
+        "id": "packing_gain_2d",
+        "key": "computed.packing_gain_2d",
+        "headline": true,
+        "observable": "2D packing-density gain rho_PP/rho_SS (quantization axis in-plane), sixth-root scaling law. Settled value at n=60 (wide-window theta=0 residual): 1.38 analytic / 1.315 numerical-densest (staggered). Canonical operating point n=75: 1.48 (theta=0 residual window-limited, indicative).",
+        "uncertainty": 0.1,
+        "uncertainty_source": "envelope of (a) theta=90 near-Forster treatment spread 268.08-299.11 GHz um^6 -> gain 1.355-1.380 (1.7%, sixth-root suppressed), (b) rectangular-vs-staggered packing definition 1.315-1.380 (4.7%, SS triangular advantage), and (c) the n=75 theta=0 window-limited residual (window-20 -128.76 is likely ~1.5x too large, pushing the n=75 gain toward ~1.6). Absolute sigma 0.1 covers [1.29, 1.48].",
+        "inputs": {
+          "c6_ss_60": -138.86163356371736,
+          "c6_pp_theta0_60_diag": -10.41,
+          "c6_pp_theta90_60": 268.0806139003557
+        }
+      },
+      {
+        "id": "gain_3d_n60",
+        "key": "computed.gain_3d_n60",
+        "headline": false,
+        "observable": "3D packing-density gain at n=60 (quantization axis out-of-plane), analytic sixth-root law (= numerical packing to <0.01%)",
+        "uncertainty": 0.02,
+        "uncertainty_source": "theta=90 treatment spread 268.08-299.11 -> gain 1.237-1.192 (3.7%); analytic and numerical packing agree to <0.01% at each treatment",
+        "inputs": {
+          "c6_ss_60": -138.86163356371736,
+          "c6_pp_theta0_60_diag": -10.41,
+          "c6_pp_theta90_60": 268.0806139003557
+        }
+      },
+      {
+        "id": "gain_2d_n75",
+        "key": "computed.gain_2d_n75",
+        "headline": true,
+        "observable": "2D packing-density gain at n=75 (canonical operating point), analytic sixth-root law; CAVEAT: theta=0 residual -128.76 GHz um^6 uses the +/-20 GHz energy window (window-limited, likely overestimate), so this gain is INDICATIVE",
+        "uncertainty": 0.1,
+        "uncertainty_source": "dominated by the theta=0 window-limited residual (window-20 -128.76 is likely ~1.5x too large, as at n=60 where window-20 gives -16.16 vs settled -10.41); if the n=75 residual is ~1.5x smaller the gain rises toward ~1.6",
+        "inputs": {
+          "c6_ss_75": -1961.0673228944313,
+          "c6_pp_theta0_75_window20": -128.756613,
+          "c6_pp_theta90_75": 2883.430272636706
+        }
+      },
+      {
+        "id": "factor_decoupled_n60",
+        "key": "computed.factor_decoupled_n60",
+        "headline": false,
+        "observable": "sixth-root decoupled-direction factor (|C6_SS|/|C6_0|)^(1/6) at n=60, the row-direction (theta=0) gain contribution",
+        "uncertainty": 0.01,
+        "uncertainty_source": "C6_0 uncertainty 0.3 GHz um^6 (2.9%) -> sixth-root 0.5%; C6_SS QDT floor 2.5% -> 0.4%",
+        "inputs": {
+          "c6_ss_60": -138.86163356371736,
+          "c6_pp_theta0_60_diag": -10.41
+        }
+      },
+      {
+        "id": "factor_gate_n60",
+        "key": "computed.factor_gate_n60",
+        "headline": false,
+        "observable": "sixth-root gate-direction factor (|C6_SS|/|C6_90|)^(1/6) at n=60, the penalty from PP being stronger than SS at theta=90",
+        "uncertainty": 0.01,
+        "uncertainty_source": "theta=90 near-Forster treatment spread 268.08-299.11 -> factor 0.896-0.880 (1.8%)",
+        "inputs": {
+          "c6_ss_60": -138.86163356371736,
+          "c6_pp_theta90_60": 268.0806139003557
+        }
+      },
+      {
+        "id": "c6_ss_vs_pp_ratio",
+        "key": "computed.c6_ss_vs_pp_ratio",
+        "headline": true,
+        "observable": "magnitude offset C6_SS / C6_PP(theta=90) at n=60 (the gate-direction strength ratio that partially cancels the anisotropy gain; frame headline quantity)",
+        "uncertainty": 0.03,
+        "uncertainty_source": "theta=90 treatment spread 268.08-299.11 -> ratio 0.518-0.464 (10%, sixth-root suppresses to ~1.7% in the gain)",
+        "inputs": {
+          "c6_ss_60": -138.86163356371736,
+          "c6_pp_theta90_60": 268.0806139003557
+        }
+      },
+      {
+        "id": "a_crit_n60",
+        "key": "computed.a_crit_n60",
+        "headline": false,
+        "observable": "critical anisotropy A_crit = (|C6_90|/|C6_SS|)^2 above which the 2D PP gain exceeds 1",
+        "uncertainty": 0.2,
+        "uncertainty_source": "theta=90 treatment spread -> A_crit 3.73 (diag) to 4.64 (pert)",
+        "inputs": {
+          "c6_ss_60": -138.86163356371736,
+          "c6_pp_theta90_60": 268.0806139003557
+        }
+      },
+      {
+        "id": "trap_limited_upper_bound_n60",
+        "key": "computed.trap_limited_upper_bound_n60",
+        "headline": false,
+        "observable": "2D packing gain if the theta=0 residual were negligible (C6_0 -> 0, trap floor 2 um); DIAGONAL-LIMITED, not trap-limited",
+        "uncertainty": 0.05,
+        "uncertainty_source": "rectangular-lattice diagonal-bound value 1.471 vs numerical staggered 1.341; the binding constraint is the diagonal neighbor at theta~30 deg (from the gate pair's finite theta=90 extent d_gate=5.47 um), NOT the trap floor",
+        "inputs": {
+          "c6_ss_60": -138.86163356371736,
+          "c6_pp_theta90_60": 268.0806139003557,
+          "r_trap_um": 2.0
+        }
+      }
+    ],
+    "verdicts": [
+      {
+        "id": "sixth_root_not_full_anisotropy",
+        "reads": [
+          "packing_gain_2d",
+          "factor_decoupled_n60",
+          "factor_gate_n60"
+        ],
+        "statement": "the 2D gain is the SIXTH ROOT of the anisotropy product (~1.38x), NOT the full ~26x anisotropy ratio"
+      },
+      {
+        "id": "diagonal_not_binding_n60",
+        "reads": [
+          "packing_gain_2d"
+        ],
+        "statement": "the diagonal neighbor is NOT the binding constraint on the quantization-axis spacing at n=60 (cross-talk-limited): the theta=0 same-column neighbor sets it (R_ct(0)=10.07 um); the diagonal at theta=28.5 deg sits at 1.15x margin"
+      },
+      {
+        "id": "magic_distance_cannot_help",
+        "reads": [],
+        "statement": "the Vermersch2015 magic-distance mechanism cannot cancel the theta=0 residual interaction (c-coupling vanishes at theta=0), so it cannot raise the gain"
+      }
+    ],
+    "packing_gain_2d": 1.3800920903957115,
+    "gain_2d_n60_packing": 1.3146191446659026,
+    "gain_2d_n60_analytic_pert_theta90": 1.3551291603735367,
+    "gain_2d_n60_packing_pert_theta90": 1.2879007032138197,
+    "gain_3d_n60": 1.2367850025552363,
+    "gain_3d_n60_pert_theta90": 1.192448023586805,
+    "gain_2d_n75": 1.476446341817795,
+    "gain_2d_n75_packing": 1.4106973260248847,
+    "gain_3d_n75": 1.3845697629966307,
+    "factor_decoupled_n60": 1.5400042643124956,
+    "factor_gate_n60": 0.8961612135612016,
+    "c6_ss_vs_pp_ratio": 0.5179948357278094,
+    "c6_ss_vs_pp_ratio_pert_theta90": 0.4643330066903148,
+    "anisotropy_n60": 25.75222035546164,
+    "anisotropy_n60_mixed": 28.7391,
+    "a_crit_n60": 3.7270590943316715,
+    "a_crit_n60_pert_theta90": 4.639752258724139,
+    "trap_limited_upper_bound_n60": 1.471,
+    "trap_limited_upper_bound_n60_staggered": 1.3411152067053986,
+    "trap_limited_lz_um": 9.446,
+    "trap_limited_diagonal_theta_deg": 30.1,
+    "magic_distance_conclusion": {
+      "magic_distance_exists": false,
+      "r0_um": null,
+      "reason": "Field-free theta=0 case (C3 = 0): V(r) = -C6/r^6 is monotonic in r, so no zero crossing exists. Per Vermersch2015, the magic distance arises from the Zeeman c-coupling proportional to the angular matrix D(theta), which vanishes at theta=0 (the |m,m> states are pure-blockade eigenstates there); hence no magic distance exists at theta=0 in the field-free case."
+    },
+    "binding_constraint_n60": {
+      "cross_talk_limited": "quantization-axis (theta=0) spacing set by the same-column neighbor at R_ct(0)=10.07 um, NOT the diagonal; gate-axis spacing set by R_ct(90)+d_gate = 22.77 um; the diagonal (0,d_gate)-(L_z,0) at theta=28.5 deg has 1.15x margin",
+      "trap_limited_residual_negligible": "the DIAGONAL neighbor (theta~30 deg, from the gate pair's finite theta=90 extent) becomes the binding constraint, capping L_z at 9.45 um instead of the 2 um trap floor"
+    },
+    "densities_n60": {
+      "ss_2d_rect_um2": 0.006321,
+      "pp_2d_rect_um2": 0.008725,
+      "ss_2d_staggered_um2": 0.0070381537831572805,
+      "pp_2d_staggered_um2": 0.00925249170644131,
+      "ss_3d_staggered_um3": 0.0004539712747937162,
+      "pp_3d_staggered_um3": 0.000561464864255805
+    },
+    "blockade_radii_n60": {
+      "rb_ss_um": 4.903,
+      "rb_pp_theta90_um": 5.471,
+      "rct_ss_um": 15.504,
+      "rct_pp_theta0_um": 10.067,
+      "rct_pp_theta90_um": 17.3
+    },
+    "cross_validation_plan": [
+      {
+        "claim_key": "computed.packing_gain_2d",
+        "control_method": "numerical full-pairwise lattice packing (axis-aligned + staggered), independent of the analytic closed form"
+      },
+      {
+        "claim_key": "computed.gain_3d_n60",
+        "control_method": "numerical full-pairwise lattice packing, independent of the analytic closed form"
+      }
+    ],
+    "cross_validation": [
+      {
+        "claim_key": "computed.packing_gain_2d",
+        "method_a": "analytic sixth-root closed form (rectangular lattice)",
+        "method_b": "numerical full-pairwise lattice packing (densest, staggered allowed)",
+        "value_a": 1.3800920903957115,
+        "value_b": 1.3146191446659026,
+        "tolerance_rel": 0.1,
+        "artifact": "scripts/sixth_root_scaling.py + scripts/packing_density.py",
+        "note": "agree to 4.7%. The gap is NOT the diagonal neighbor (rectangular diagonal has 1.15x margin); it is the SS baseline using a staggered (triangular-like) lattice, which is ~11% denser than the rectangular SS lattice. Both methods give ~1.3-1.4x, not ~26x."
+      },
+      {
+        "claim_key": "computed.gain_3d_n60",
+        "method_a": "analytic sixth-root closed form",
+        "method_b": "direct geometric 3D density ratio from blockade/cross-talk radii (orthorhombic SS vs PP unit cells, d_gate terms retained, no sixth-root product formula assumed)",
+        "value_a": 1.2367850025552363,
+        "value_b": 1.2367850025552365,
+        "tolerance_rel": 0.05,
+        "artifact": "runs/run_1/collect_numbers.py (geometric density ratio) + scripts/sixth_root_scaling.py",
+        "note": "independent geometric-density-ratio method agrees with the analytic sixth-root to ~1e-16, verifying the d_gate terms cancel exactly in 3D; staggering does not help in 3D (the optimizer reduces to the orthorhombic lattice)."
+      }
+    ],
+    "premise_corrections": [
+      {
+        "premise": "user premise: '0 degree almost no interaction', so PP gates can be packed ~26x denser along the decoupled axis",
+        "corrected": "E1 settled the theta=0 residual at C6=-10.41 GHz um^6 (7.5% of SS C6). This gives a theta=0 cross-talk radius of 10.07 um, so the row-direction sixth-root factor is only (|C6_SS/C6_0|)^(1/6)=1.54, not 26.",
+        "consequence": "the 2D packing gain is ~1.3-1.4x, not ~26x",
+        "affects": [
+          "report"
+        ]
+      },
+      {
+        "premise": "packing gain scales with the full anisotropy ratio (~26-29x)",
+        "corrected": "the gain is the SIXTH ROOT of the anisotropy: gain_D = [(|C6_SS/C6_0|)(|C6_SS/C6_90|)^(D-1)]^(1/6), because blockade/cross-talk radii scale as C6^(1/6). The PP gate-direction strength (C6_90=268 vs C6_SS=139) partially offsets the decoupled-direction gain.",
+        "consequence": "even the full 26-29x anisotropy yields only ~1.38x (2D) / ~1.24x (3D)",
+        "affects": [
+          "report"
+        ]
+      },
+      {
+        "premise": "in the trap-limited (negligible residual) regime the theta=0 spacing is set by the optical trap floor and the gain is ~R_ctSS/R_trap ~ 7x",
+        "corrected": "the DIAGONAL neighbor (gate pair's finite theta=90 extent d_gate=5.47 um) binds at theta~30 deg, capping L_z at 9.45 um instead of the 2 um trap floor. The trap-limited gain is ~1.47x (rectangular) / ~1.34x (staggered), not ~7x.",
+        "consequence": "even with a zero residual, the sin^4(theta) interaction at intermediate angles from the offset gate-pair atoms limits the gain to ~1.3-1.5x",
+        "affects": [
+          "report"
+        ]
+      }
+    ],
+    "raw_data": {
+      "gain_vs_n_csv": "data/gain_vs_n.csv",
+      "gain_vs_anisotropy_csv": "data/gain_vs_anisotropy.csv",
+      "diagonal_check_py": "diagonal_check.py",
+      "trap_limited_check_py": "trap_limited_check.py",
+      "collect_numbers_py": "collect_numbers.py"
+    },
+    "acceptance_criterion": "Confirmatory. Predict at n=60 (wide-window-settled): (1) the 2D packing-density gain rho_PP/rho_SS equals the sixth-root scaling law gain_2d = [(|C6_SS/C6_0|)(|C6_SS/C6_90|)]^(1/6) within 15% (central ~1.38, clearly NOT the full ~26x anisotropy); (2) the two sixth-root factors are f_dec=(|C6_SS/C6_0|)^(1/6) in [1.3,1.8] and f_gate=(|C6_SS/C6_90|)^(1/6) in [0.75,0.95]; (3) the diagonal neighbor is NOT the binding constraint on the quantization-axis spacing at n=60 (the theta=0 same-column neighbor sets it; analytic law and full-pairwise packing agree <5%); (4) the magic-distance mechanism cannot raise the gain. Verdict reads computed.packing_gain_2d, computed.gain_2d_n60_packing, computed.factor_decoupled_n60, computed.factor_gate_n60, computed.binding_constraint_n60, computed.magic_distance_conclusion. CONFIRMED iff (1) gain matches sixth-root within 15% and is < the 26x anisotropy; (2) f_dec in [1.3,1.8] and f_gate in [0.75,0.95]; (3) diagonal not binding / methods agree <5%; (4) magic-distance refuted. Single-fault response: an artifact returning gain=1.0 fails (1); one returning gain=26 (the full anisotropy) fails (1); one returning isotropic packing fails (2)/(3).",
+    "verdict": "confirmed"
+  }
+}

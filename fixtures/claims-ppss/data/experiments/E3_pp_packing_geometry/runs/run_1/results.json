@@ -1,0 +1,258 @@
+{
+  "experiment_id": "E3_pp_packing_geometry",
+  "title": "PP packing gain vs gate/lattice orientation (does the dM=0 magic angle break the ~1.4x cap?)",
+  "date": "2026-08-27",
+  "status": "Complete",
+  "acceptance_criterion": "Confirmatory hypothesis test. Hypothesis: a non-parallel / tilted-quantization-axis gate geometry placing the binding diagonal neighbor at the dM=0 magic angle (54.7 deg) removes the diagonal-neighbor constraint and pushes the 2D packing gain above the ~1.3-1.4x cap. Predictions: (1) the dM=0 magic angle does NOT zero the total C6 - the (1-3cos^2 theta)^2 channel vanishes there but the sin^4 theta channel remains, so |C6(54.7 deg)| = c2*(4/9) ~ 120 GHz*um^6 >> 0; (2) the genuine total-C6 zero is at a different angle theta* ~ 22.9 deg (repulsive dM=0 cancels attractive dM=+-2); (3) the maximum 2D packing gain over orientation at n=60 does not exceed 1.6x. Verdict reads computed.max_gain_over_orientation, computed.c6_at_dm0_magic_angle_ghz_um6, computed.c6_total_zero_angle_deg. CONFIRMED iff (max gain <= 1.6x) AND (|C6(54.7 deg)| > 10 GHz*um^6); REFUTED (ceiling geometry-specific, directive reopens) iff (max gain > 1.6x) OR (|C6(54.7 deg)| < 1 GHz*um^6).",
+  "verdict": "refuted",
+  "verdict_note": "Mechanical application of the frozen criterion: computed.max_gain_over_orientation = 1.956 > 1.6, which triggers the REFUTED branch (the ~1.4x cap is NOT a robust ceiling within the C6 model). Independently, prediction (1) is CONFIRMED: |C6(54.7 deg)| = 120.3 >> 10 GHz*um^6, so the dM=0 magic angle does NOT zero the interaction and cannot be the mechanism that removes the diagonal constraint. CRITICAL CAVEAT: the >1.6x orientations (theta_gate ~ 24-30 deg) sit near the genuine total-C6 zero at 22.9 deg, where the two-channel model's leading term vanishes and the gain DIVERGES as theta_gate -> 22.9 deg (gate length -> 0). This is a model breakdown, not a physical packing win: (a) the C6 zero is an unverified interpolation (E1 anchored only theta=0,90), (b) near the zero the higher-order (C8) interaction dominates so the physical interaction does not vanish, (c) the gate is a weak-blockade configuration (C6(26 deg)=4.7 vs C6(90 deg)=268 GHz*um^6). For a physical strong-blockade gate (theta_gate=90 deg) the gain stays ~1.33-1.40x.",
+  "invariants": {
+    "c6_pp_theta0_60_ghz_um6": {
+      "value": -10.41,
+      "source": "data/experiments/E1_ss_pp_c6_anisotropy/runs/run_1/results.json",
+      "anchored_to": "E1 settled theta=0 residual (wide-window full diagonalization, computed.c6_pp_theta0_60_diagonalization_ghz_um6)",
+      "note": "read, not re-derived"
+    },
+    "c6_pp_theta90_60_ghz_um6": {
+      "value": 268.08,
+      "source": "data/experiments/E1_ss_pp_c6_anisotropy/runs/run_1/results.json",
+      "anchored_to": "E1 theta=90 near-Forster full diagonalization (computed.c6_pp_theta90_60_ghz_um6)",
+      "note": "read, not re-derived"
+    },
+    "v_block_ghz": {
+      "value": 0.01,
+      "source": "Saffman2010 blockade-radius convention (V(Rb)=hbar*Omega)",
+      "anchored_to": "E2 packing_density.py used V_block=0.01 GHz (10 MHz Rabi)",
+      "note": "same convention as E2"
+    },
+    "v_ct_ghz": {
+      "value": 1e-05,
+      "source": "Evered2023 cross-talk threshold (10 kHz)",
+      "anchored_to": "E2 packing_density.py used V_ct=1e-5 GHz",
+      "note": "same convention as E2"
+    },
+    "ss_staggered_density_per_um2": {
+      "value": 0.0070381537831572805,
+      "source": "data/experiments/E2_pp_packing_density/runs/run_1/results.json",
+      "anchored_to": "E2 densest SS staggered packing density (isotropic C6=138.86)",
+      "note": "SS baseline for gain = PP_density / this"
+    },
+    "angular_model": "C6(theta) = c0*(1-3*cos^2 theta)^2 + c2*sin^4 theta, with c0 = C6(0)/4, c2 = C6(90) - C6(0)/4"
+  },
+  "computed": {
+    "c0_ghz_um6": -2.6025,
+    "c2_ghz_um6": 270.6825,
+    "dm0_magic_angle_deg": 54.735610317245346,
+    "c6_at_dm0_magic_angle_ghz_um6": 120.30333333333333,
+    "c6_total_zero_angle_deg": 22.909217253708306,
+    "min_abs_c6_angle_deg": 22.909217253708306,
+    "min_abs_c6_ghz_um6": 0.0,
+    "c6_at_theta0_ghz_um6": -10.41,
+    "c6_at_theta90_ghz_um6": 268.08,
+    "c6_at_theta_gate_30_ghz_um6": 12.85,
+    "baseline_gain_theta90_psi0": 1.331390559647206,
+    "baseline_density_theta90_psi0_per_um2": 0.009370531504240871,
+    "baseline_gate_length_um": 5.470714730282495,
+    "baseline_crosstalk_radii_um": {
+      "theta0": 10.067,
+      "theta90": 17.3
+    },
+    "max_gain_over_orientation": 1.9562143186734626,
+    "max_gain_orientation": {
+      "theta_gate_deg": 26,
+      "psi_deg": 22,
+      "density_per_um2": 0.013768137207638073,
+      "gate_length_um": 2.7905871269473184,
+      "staggered": false,
+      "lattice_basis_um": [
+        [
+          70.76637088363928,
+          17.926509086631718
+        ],
+        [
+          8.10324714232885,
+          0.0
+        ]
+      ],
+      "binding_constraint": "cross-talk |C6(theta=156.897 deg ~ 23.1 deg)|/r^6 = 1e-05 GHz at r = 5.44143 um (diagonal neighbor near the C6 zero)"
+    },
+    "coarse_sweep_max_gain": 1.7287851148727607,
+    "coarse_sweep_max_orientation": {
+      "theta_gate_deg": 30,
+      "psi_deg": 20
+    },
+    "gain_divergence_note": "The packing gain in the C6 model DIVERGES as the gate axis theta_gate approaches the total-C6 zero at 22.909 deg (gate length -> 0). Sweep points: 1.73x at theta_gate=30, 1.96x at theta_gate=26, still climbing at theta_gate=24 (1.77x with gate_length 2.31 um, near the 2 um addressing floor). This is a model-breakdown regime, not a physical ceiling.",
+    "method_ladder": [
+      {
+        "quantity": "packing_gain_vs_orientation",
+        "field_standard_method": "geometric lattice packing under full pairwise cross-talk exclusion (densest-packing constrained optimizer)",
+        "planned_method": "generalized E2 packing optimizer over (gate_axis_angle, quant_axis_tilt)",
+        "used": "generalized E2 optimizer (oblique-aligned + staggered families, scipy bounded Brent + scan for L1, scan+bisection for L2, full neighbor-cell enumeration)"
+      },
+      {
+        "quantity": "c6_total_zero_angle",
+        "field_standard_method": "analytic root-finding of the two-channel dipole-dipole angular model",
+        "planned_method": "closed-form quadratic in cos^2(theta) + numeric grid verification",
+        "used": "closed-form quadratic roots (numpy.roots with degenerate-linear fallback) + 181-point grid sign check"
+      },
+      {
+        "quantity": "c6_at_dm0_magic_angle",
+        "field_standard_method": "closed-form evaluation c2*(4/9)",
+        "planned_method": "closed-form",
+        "used": "closed-form c2*(4/9) + grid cross-check"
+      }
+    ],
+    "cross_validation": [
+      {
+        "claim_key": "computed.baseline_gain_theta90_psi0",
+        "method_a": "generalized oriented packing at (theta_gate=90, psi=0)",
+        "method_b": "E2 axis-aligned packing_density (data/experiments/E2_pp_packing_density)",
+        "value_a": 1.3314,
+        "value_b": 1.3146,
+        "tolerance_rel": 0.05,
+        "artifact": "runs/run_1/sweep_orientation.py",
+        "verdict": "consistent (1.3% spread, lattice-family definition differs slightly)"
+      },
+      {
+        "claim_key": "computed.c6_total_zero_angle_deg",
+        "method_a": "three-channel all-channel second-order sum root (E4)",
+        "method_b": "hand-built full dipole-dipole diagonalization (E4)",
+        "value_a": 24.65,
+        "value_b": 24.0,
+        "tolerance_rel": 0.1,
+        "artifact": "data/experiments/E4_verify_c6_zero_physical_gain/runs/run_1/data/c6_angle_scan.csv",
+        "verdict": "AGREE (0.65 deg spread). The E3 two-channel 22.909 deg is SUPERSEDED by the three-channel 24.65 deg: the neglected dM=+-1 channel shifts the genuine zero."
+      },
+      {
+        "claim_key": "computed.c6_at_dm0_magic_angle_ghz_um6",
+        "method_a": "closed-form two-channel c2*(4/9) at 54.7356 deg",
+        "method_b": "direct three-channel model evaluation (all-channel second-order sum, E4) at 54.7 deg",
+        "value_a": 120.30333333333333,
+        "value_b": 126.1019,
+        "tolerance_rel": 0.1,
+        "artifact": "data/experiments/E4_verify_c6_zero_physical_gain/runs/run_1/data/c6_angle_scan.csv",
+        "verdict": "AGREE within 10% (4.6% gap). The ~5.8 GHz*um^6 residual is the neglected dM=+-1 channel; the three-channel 126.10 supersedes the two-channel 120.30 (full-diagonalization control 126.43 agrees with the three-channel, so the discrepancy is attributed to the two-channel model, not to arithmetic)."
+      }
+    ],
+    "cross_validation_plan": [
+      {
+        "claim_key": "computed.baseline_gain_theta90_psi0",
+        "control_method": "reproduce E2 axis-aligned gain (positive control on the generalized optimizer)"
+      },
+      {
+        "claim_key": "computed.c6_total_zero_angle_deg",
+        "control_method": "independent numeric root-finding vs closed form"
+      },
+      {
+        "claim_key": "computed.c6_at_dm0_magic_angle_ghz_um6",
+        "control_method": "closed-form c2*(4/9) vs direct model evaluation"
+      }
+    ],
+    "quantities": [
+      {
+        "id": "max_gain_over_orientation",
+        "key": "computed.max_gain_over_orientation",
+        "headline": true,
+        "observable": "maximum 2D packing gain (PP density / SS staggered density 0.007038 atoms/um^2) over gate-axis angle theta_gate in [24,90] deg and quantization-axis tilt psi in [0,26] deg, at n=60, C6 model, V_block=0.01 GHz, V_ct=1e-5 GHz",
+        "uncertainty": 0.15,
+        "uncertainty_source": "orientation-grid + optimizer heuristic spread (coarse 1.73 vs fine 1.96); NOTE this is a C6-model UPPER BOUND - the physical value is lower (model breakdown near the C6 zero at 22.9 deg)"
+      },
+      {
+        "id": "c6_at_dm0_magic_angle_ghz_um6",
+        "key": "computed.c6_at_dm0_magic_angle_ghz_um6",
+        "headline": true,
+        "observable": "total two-channel C6 at the dM=0 magic angle 54.7356 deg, GHz*um^6 (the load-bearing discriminator for the magic-angle hypothesis)",
+        "uncertainty": 14.0,
+        "uncertainty_source": "propagated from the theta=90 near-Forster treatment spread (268.08 vs 299.11 GHz*um^6, ~11%) through c2 = C6(90) - C6(0)/4; the qualitative conclusion (|C6(54.7 deg)| ~ 120 >> 0, not a zero) is robust to this spread",
+        "limit_check": {
+          "limit": "c2*(4/9) closed form",
+          "expected": 120.3,
+          "observed": 120.30333333333333,
+          "artifact": "scripts/c6_angular_zero_analysis.py"
+        }
+      },
+      {
+        "id": "c6_total_zero_angle_deg",
+        "key": "computed.c6_total_zero_angle_deg",
+        "headline": true,
+        "observable": "angle in [0,90] deg where the total two-channel C6(theta)=0 (repulsive dM=0 cancels attractive dM=+-2) [SUPERSEDED: E3 two-channel value 22.909 deg is superseded by E4 three-channel 24.65 deg]",
+        "uncertainty": 0.01,
+        "uncertainty_source": "closed-form quadratic root; input C6(0),C6(90) uncertainty propagates to ~0.01 deg",
+        "limit_check": {
+          "limit": "quadratic in cos^2(theta) closed form",
+          "expected": 22.909,
+          "observed": 22.909217253708306,
+          "artifact": "scripts/c6_angular_zero_analysis.py"
+        },
+        "superseded": true,
+        "superseded_by": "E4 three-channel all-channel second-order sum root 24.65 deg (full pair-Hamiltonian diagonalization control 24.0 deg); the E3 two-channel model neglected the dM=+-1 channel, which shifts the genuine zero from 22.909 to 24.65 deg"
+      }
+    ],
+    "verdicts": [
+      {
+        "id": "dM0_magic_angle_removes_diagonal_constraint",
+        "reads": [
+          "c6_at_dm0_magic_angle_ghz_um6",
+          "c6_total_zero_angle_deg",
+          "max_gain_over_orientation"
+        ],
+        "replaces": {}
+      }
+    ],
+    "premise_corrections": [
+      {
+        "premise": "The dM=0 magic angle (54.7 deg, where (1-3cos^2 theta)^2 vanishes) can remove the diagonal-neighbor constraint and break the ~1.4x packing cap",
+        "corrected": "The dM=0 magic angle zeroes ONLY the (1-3cos^2 theta)^2 channel; the total C6 at 54.7 deg is +120.30 GHz*um^6 (the sin^4 theta dM=+-2 channel remains at 4/9 of its max), which is LARGER than C6(0)=-10.41 and C6(30)=12.85. It cannot remove the interaction. The genuine total-C6 zero is at 22.909 deg, where the repulsive dM=0 and attractive dM=+-2 channels cancel.",
+        "consequence": "The E2 FollowUp's stated mechanism (54.7 deg) is physically incorrect; the relevant angle is 22.9 deg. Any geometry lever must target 22.9 deg, not 54.7 deg.",
+        "affects": [
+          "E2",
+          "E3",
+          "report"
+        ]
+      },
+      {
+        "premise": "No orientation exceeds ~1.5x, so the ~1.3-1.4x gain is a robust ceiling for field-free PP vdW gates",
+        "corrected": "In the two-channel C6 model, orientations near the total-C6 zero at 22.9 deg DO exceed 1.6x (1.73x at theta_gate=30, 1.96x at theta_gate=26, divergent as theta_gate->22.9 deg). But this is a MODEL BREAKDOWN: (a) the C6 zero at 22.9 deg is an unverified interpolation (E1 anchored only theta=0,90); (b) near the zero the higher-order C8 interaction dominates so the physical interaction does NOT vanish; (c) these orientations are weak-blockade gates (C6(26 deg)=4.7 vs C6(90 deg)=268 GHz*um^6, 57x weaker).",
+        "consequence": "The ~1.4x ceiling is robust for physical strong-blockade gates (theta_gate=90 deg), but the C6 model itself admits unphysical divergent gains near its zero. Downstream experiments must add a strong-blockade / higher-order constraint before quoting any >1.4x figure.",
+        "affects": [
+          "E3",
+          "report"
+        ]
+      }
+    ],
+    "raw_data": {
+      "orientation_sweep_coarse": "data/orientation_sweep.csv",
+      "orientation_sweep_fine": "data/orientation_sweep_fine.csv",
+      "angular_analysis": "data/angular_analysis.json",
+      "sweep_summary": "data/sweep_summary.json"
+    },
+    "method_blocked": [
+      {
+        "intended_tool": "math sub-agent (independent symbolic verification of the zero-crossing / magic-angle derivation)",
+        "failing_command": "spawn_agent(agent='math', task='derive C6 zeros and magic angle ...')",
+        "verbatim_last_error": "No API key for provider: openai-codex",
+        "attempts": 1,
+        "fallback_used": "manual closed-form derivation + numeric verification via the reviewed c6_angular_zero_analysis tool (28 passing tests, closed-form + grid agreement exact)",
+        "why_blocked": "math sub-agent backend unavailable (no openai-codex API key)"
+      }
+    ],
+    "cannot_comply": [],
+    "limitations": [
+      "The dM=0-magic-angle hypothesis (54.7 deg) is a channel/total confusion: the total C6 there is +120 GHz*um^6, not zero.",
+      "The genuine total-C6 zero at 22.9 deg is a MODEL interpolation (E1 anchored only theta=0,90); its exact location and the smallness of C6 near it are unverified. Near the zero the vdW leading term vanishes and higher-order (C8) terms dominate, so the physical interaction does NOT vanish there.",
+      "The >1.6x gains are model UPPER BOUNDS, not physical packing wins: they require a weak-blockade gate orientation (C6 up to 57x weaker than theta=90 deg) and exploit the model zero.",
+      "Optimizer heuristic (scan + bounded Brent for L1, scan + bisection for L2) shows non-smooth landscape (1.73x vs 1.96x at nearby points); the quoted max is the best found, not a certified global optimum.",
+      "Lattice-family definition differs slightly from E2 (stagger offset fixed at half-period along the gate axis vs E2's free offset along the row axis), giving ~1.3% density spread at baseline.",
+      "No independent math sub-agent (backend unavailable); analytic derivation done by the orchestrator and verified numerically by the reviewed tool."
+    ],
+    "method_blocked_resolved": [
+      {
+        "intended_tool": "math sub-agent (independent symbolic verification of the C6 zero-crossing / dM=0 magic-angle derivation)",
+        "resolution": "accept-with-disclosure",
+        "fallback_used": "manual closed-form algebra for the two-channel C6 zero (quadratic in cos^2(theta)) and the dM=0 magic-angle value c2*(4/9); verified numerically against the reviewed c6_angular_zero_analysis tool (28 passing tests, closed-form and 181-point grid in exact agreement)",
+        "cross_check": "the manual results agree exactly with the reviewed tool's independent numeric evaluation (22.9092 deg zero, 120.3033 GHz*um^6 magic-angle C6); both were subsequently corroborated/corrected by E4's three-channel full-diagonalization analysis (zero -> 24.65 deg, magic-angle C6 -> 126.1 GHz*um^6)",
+        "disposition": "accepted - the derivation is elementary algebra verified numerically; the disclosure is that no independent symbolic engine was used"
+      }
+    ]
+  }
+}

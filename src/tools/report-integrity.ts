@@ -1414,3 +1414,19 @@ export function formatIntegrityIssues(issues: IntegrityIssue[]): string {
     .map((i) => `${i.blocking ? "✗ [blocks finish]" : "⚠"} (${i.kind}) ${i.text}`)
     .join("\n\n");
 }
+
+/**
+ * "Also pending" trailer for finish() blocks that return before the integrity
+ * batch (v2 plan P0.4/§3.8): the brain paid a full experiment cycle in the
+ * pp-vs-ss run to learn about six claim-status issues one call after the
+ * synthesis-owner block. Cheap (pure, ms) and appended AFTER a blank line so
+ * FinishEscalation, which keys on the first line, is unaffected.
+ */
+export function cheapPendingTrailer(projectDir: string, max = 8): string {
+  let issues: IntegrityIssue[] = [];
+  try { issues = reportIntegrityIssues(projectDir).filter((i) => i.blocking); } catch { return ""; }
+  if (issues.length === 0) return "";
+  const shown = issues.slice(0, max).map((i) => `  - [${i.kind ?? "issue"}] ${i.text.split("\n")[0].slice(0, 220)}`);
+  const more = issues.length > max ? `\n  … and ${issues.length - max} more` : "";
+  return `\n\nAlso pending (${issues.length} further blocking gate issue(s) — the same checks run again at the next finish(); fix them in the same pass):\n${shown.join("\n")}${more}`;
+}
