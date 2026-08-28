@@ -47,6 +47,10 @@ export const FOREGROUND_BUDGET_MS = 90_000;
 // brain + every sibling experiment — as it did 2026-07-02). 75% leaves headroom
 // for the brain, sibling experiments, and the inbox/studio services.
 const FIGLINT_HOOK_DIR = joinPath(dirname(fileURLToPath(import.meta.url)), "..", "..", "skills", "matplotlib-figures", "lint_hook");
+// The Sisyphus checkout root. Every agent prompt that says
+// `$LUXAS_ROOT/skills/...` assumed this existed; until 2026-08-28 nothing set
+// it (the figure_auditor's first run printed `LUXAS_ROOT=` and went hunting).
+const LUXAS_ROOT = joinPath(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 const EXPERIMENT_MEM_CAP_KB = Math.floor((totalmem() / 1024) * 0.75);
 
@@ -169,7 +173,7 @@ export function createHardenedBashTool(cwd: string, opts?: BashOptions) {
           // on the 297nm run (figures flow through brain/experiment paths
           // that never read the illustrator prompts); the tool layer does
           // not rely on being read.
-          env: { ...process.env, PYTHONPATH: FIGLINT_HOOK_DIR + (process.env.PYTHONPATH ? `:${process.env.PYTHONPATH}` : "") },
+          env: { ...process.env, LUXAS_ROOT: process.env.LUXAS_ROOT || LUXAS_ROOT, PYTHONPATH: FIGLINT_HOOK_DIR + (process.env.PYTHONPATH ? `:${process.env.PYTHONPATH}` : "") },
         });
 
         const pid = child.pid;

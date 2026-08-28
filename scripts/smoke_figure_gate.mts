@@ -58,5 +58,6 @@ check("message names files and the reproduce command", /bad\.pdf[\s\S]*figlint-p
 process.env.LUXAS_FIGLINT_GATE = "0";
 check("LUXAS_FIGLINT_GATE=0 disables", figureLintIssues(dir, "report.tex").length === 0);
 delete process.env.LUXAS_FIGLINT_GATE;
+check("hardened bash exports LUXAS_ROOT (prompts reference $LUXAS_ROOT/skills/...)", /LUXAS_ROOT: process\.env\.LUXAS_ROOT \|\| LUXAS_ROOT/.test(readFileSync("src/tools/bash-hardened.ts", "utf-8")));
 if (fails) { console.log(`\n${fails} FAILED`); process.exit(1); }
 console.log("\nALL PASS — figlint finally has a consumer: compile_latex.");

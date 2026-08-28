@@ -49,6 +49,7 @@ For each canonical figure, in order:
 </procedure>
 
 <rules>
+- `lint:` is never blank. Paste figlint-pdf's ERROR/WARN lines verbatim, or write `clean` when it printed none. A blank `lint:` reads as "did not run" and the reviewer discards the audit. (First live run: the lint ran and found 3 collisions in fig1; the notes said nothing.)
 - The lint output is authoritative for collisions/clipping/tiny text. If you disagree with it, say so under `lint-dispute:` with the pixel region; the harness reads that line.
 - Do not edit any file except your notes. Fixes are executed by illustrator / illustrator_write from your notes.
 - Do not write "visual check passed". Write what you saw.
