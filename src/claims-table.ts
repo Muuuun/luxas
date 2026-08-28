@@ -110,6 +110,8 @@ export interface ClaimTable {
   headlineDeclared: string[];
   /** Ids named in notes/frame.md (obligation scope puts these first — claims-review headlineDeclsFor). */
   frameHeadline: string[];
+  /** Premises from notes/frame.md that entered no experiment as an input and are not declared quantities. */
+  premisesUnused: string[];
   malformed: string[];
   /** Non-blocking notes (undeclared input keys, etc.). */
   notes: string[];
@@ -372,6 +374,20 @@ export function parseFrameHeadline(projectDir: string): string[] {
     if (mm) ids.push(mm[1]);
   }
   return ids;
+}
+
+/** `## Premises` lines in notes/frame.md: `- \`id\` = value — text` (v2, 2026-08-29). */
+export function parseFramePremises(projectDir: string): { id: string; value: string; text: string }[] {
+  let text = "";
+  try { text = readFileSync(join(projectDir, "notes", "frame.md"), "utf-8"); } catch { return []; }
+  const m = text.match(/(?:^|\n)##+[ \t]*Premises[^\n]*\n([\s\S]*?)(?=\n##|$)/i);
+  if (!m) return [];
+  const out: { id: string; value: string; text: string }[] = [];
+  for (const line of m[1].split("\n")) {
+    const mm = line.match(/^\s*[-*]\s*`?([A-Za-z0-9_]+)`?\s*(?:=\s*([^—–-]+?))?\s*(?:[—–-]+\s*(.*))?$/);
+    if (mm) out.push({ id: mm[1], value: (mm[2] ?? "").trim(), text: (mm[3] ?? "").trim() });
+  }
+  return out;
 }
 
 function parseDisclosures(projectDir: string): Set<string> {
@@ -676,6 +692,7 @@ export function buildClaimTable(projectDir: string): ClaimTable {
   const disclosedHeadlineCount = rows.filter((r) => r.headline && r.status === "disclosed").length;
   return {
     rows, verdicts: vRows, headline: [...headline].sort(), headlineDeclared: [...headlineDeclared].sort(), frameHeadline: parseFrameHeadline(projectDir),
+    premisesUnused: parseFramePremises(projectDir).map((p) => p.id).filter((pid) => !known.has(pid) && !decls.some((d) => pid in d.inputs)),
     malformed, notes, readsDrops, declared, decls, discriminators: rev.discriminators, disclosedHeadlineCount,
   };
 }
@@ -692,6 +709,8 @@ export function claimTableIssues(projectDir: string, table: ClaimTable = buildCl
   const issues: ClaimIssue[] = [];
   if (table.malformed.length > 0) issues.push({ blocking: true, text: `Malformed quantity declarations:\n  - ${table.malformed.join("\n  - ")}` });
   for (const d of table.readsDrops) issues.push({ blocking: true, text: `Verdict reads-diff: ${d}. Name the replacement in verdicts[].replaces (it must be a quantity this verdict reads) or restore the read.` });
+  // Premises that never entered the evidence (non-blocking; v2 2026-08-29).
+  if (table.premisesUnused.length > 0) issues.push({ blocking: false, text: `Premise(s) from notes/frame.md entered no experiment: ${table.premisesUnused.join(", ")}. A premise is not free — declare it as an \`inputs\` value under that id in the experiments that rely on it, or make it a headline quantity whose cost is computed (e.g. flat-top beam → residual Rabi inhomogeneity → fidelity loss). A referee will ask.` });
   if (table.disclosedHeadlineCount > 1) issues.push({ blocking: true, text: `${table.disclosedHeadlineCount} headline quantities are DISCLOSED disputes. A report resting on more than one disclosed dispute is a review request, not a report — escalate to the operator (notes/escalations/needs-operator.md) instead of shipping.` });
   let claims: any[] = [];
   try { claims = JSON.parse(readFileSync(join(projectDir, "report", "claims.json"), "utf-8")); } catch { claims = []; }

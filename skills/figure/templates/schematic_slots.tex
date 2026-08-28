@@ -1,0 +1,58 @@
+% schematic_slots.tex — TikZ schematic with LABEL SLOTS (figures v2, 2026-08-29)
+%
+% Free-hand TikZ labels collided twice in production (fig1_geometry: "θ = 90°"
+% under "R ~ 5.5 µm", an inset whose axis labels crossed its curve). This
+% template gives every label a named slot around a named node; two labels may
+% never share a slot, and slots are spaced so that ~7 words of 9 pt text fit.
+%
+% Usage: copy to figures/<name>.tex, replace the DEMO block, compile with
+%   pdflatex <name>.tex && python3 $LUXAS_ROOT/skills/matplotlib-figures/scripts/figlint-pdf <name>.pdf --width <in>
+% The lint must print no ERROR before the figure is used.
+\documentclass[tikz,border=4pt]{standalone}
+\usepackage{amsmath,amssymb}
+\usetikzlibrary{arrows.meta,calc,positioning,angles,quotes}
+\tikzset{
+  every node/.style={font=\sffamily\small},
+  slot/.style={inner sep=2pt, outer sep=1pt, align=center},
+  axis/.style={-{Latex[length=2.2mm]}, line width=0.8pt},
+  guide/.style={densely dashed, line width=0.6pt},
+  lead/.style={line width=0.5pt, shorten >=2pt, shorten <=2pt},
+  site/.style={circle, fill, inner sep=1.6pt},
+}
+% \slotlabel{<anchor node>}{<slot>}{<text>}  slots: N S E W NE NW SE SW (offset ~5mm)
+% Slot tables are plain \csname macros used through shift= and ++( ) — no calc parsing.
+\def\slotoffN{0,5mm}    \def\slotanchorN{south}
+\def\slotoffS{0,-5mm}   \def\slotanchorS{north}
+\def\slotoffE{5mm,0}    \def\slotanchorE{west}
+\def\slotoffW{-5mm,0}   \def\slotanchorW{east}
+\def\slotoffNE{4mm,4mm}   \def\slotanchorNE{south west}
+\def\slotoffNW{-4mm,4mm}  \def\slotanchorNW{south east}
+\def\slotoffSE{4mm,-4mm}  \def\slotanchorSE{north west}
+\def\slotoffSW{-4mm,-4mm} \def\slotanchorSW{north east}
+\newcommand{\slotlabel}[3]{%
+  \edef\slotA{\csname slotanchor#2\endcsname}\edef\slotO{\csname slotoff#2\endcsname}%
+  \node[slot, anchor=\slotA, shift={(\slotO)}] at (#1) {#3};}
+% \callout{<anchor node>}{<slot>}{<text>}  = slot label + leader line
+\newcommand{\callout}[3]{\slotlabel{#1}{#2}{#3}\edef\slotO{\csname slotoff#2\endcsname}\draw[lead] (#1) -- ++(\slotO);}
+\begin{document}
+\begin{tikzpicture}[x=1cm,y=1cm]
+  % ---- DEMO (replace): two gate geometries on a quantization axis ----
+  \coordinate (O) at (0,0);
+  \draw[axis] (O) -- (6,0) coordinate (Zend);
+  \slotlabel{Zend}{E}{$\hat z$ (quantization axis)}
+  \draw[axis] (O) -- (0,4) coordinate (Xend);
+  \slotlabel{Xend}{N}{$\hat x$}
+  % strong-blockade pair at theta = 90 deg
+  \node[site] (A1) at (0.0,3.0) {};
+  \node[site] (A2) at (0.0,1.5) {};
+  \draw[guide] (A1) -- (A2);
+  \callout{A1}{W}{$\theta = 90^\circ$, $R \sim 5.5\,\mu$m}
+  % interaction gate at theta* along a tilted axis
+  \coordinate (T) at ({4*cos(24.65)},{4*sin(24.65)});
+  \draw[guide] (O) -- (T);
+  \node[site] (B1) at ({2.0*cos(24.65)},{2.0*sin(24.65)}) {};
+  \node[site] (B2) at ({3.0*cos(24.65)},{3.0*sin(24.65)}) {};
+  \callout{B2}{SE}{$\theta^\ast = 24.65^\circ$, $R = 2.0\,\mu$m}
+  \pic[draw, angle radius=9mm, angle eccentricity=1.45, "$\theta^\ast$"] {angle = Zend--O--T};
+\end{tikzpicture}
+\end{document}

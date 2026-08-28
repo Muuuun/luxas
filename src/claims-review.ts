@@ -197,15 +197,29 @@ export function reviewerObligationBlock(headlineIds: string[], blindLines: strin
 export interface PIEstimate { quantity: string; value: number; sigma?: number; route: string }
 
 /** Design §3.5 for the PI: `stop` requires an estimate per headline quantity; otherwise it becomes `steer`. */
-export function piEstimateRule(verdict: "continue" | "steer" | "stop", estimates: PIEstimate[] | undefined, headlineIds: string[]): { verdict: "continue" | "steer" | "stop"; issue?: string } {
+export function piEstimateRule(verdict: "continue" | "steer" | "stop", estimates: PIEstimate[] | undefined, headlineIds: string[], discriminators?: string[]): { verdict: "continue" | "steer" | "stop"; issue?: string } {
   if (verdict !== "stop" || headlineIds.length === 0) return { verdict };
   const have = new Set((estimates ?? []).map((e) => e.quantity));
   const missing = headlineIds.filter((id) => !have.has(id));
-  if (missing.length === 0) return { verdict };
+  if (missing.length > 0) {
+    return {
+      verdict: "steer",
+      issue: `PI stop verdict withheld: no independent estimate recorded for headline quantit${missing.length === 1 ? "y" : "ies"} ${missing.join(", ")}. ` +
+        `A PI that has not put its own number on the headline has not reviewed it — supply estimates (value ± sigma via a route the experiment did not use) in the next review.`,
+    };
+  }
+  // Referee pass (2026-08-29, path-to-publishable experiment 3): the three
+  // objections a referee raised on the pp-vs-ss manuscript were all "the one
+  // computation you must show before I accept this claim". A STOP must name
+  // that computation per headline quantity; the brain then runs it or
+  // discloses. Same DISCRIMINATOR grammar, obligatory only at STOP.
+  const disc = new Set((discriminators ?? []).map((d) => (d.match(/^\s*DISCRIMINATOR:\s*(\S+)/) ?? [])[1]).filter(Boolean));
+  const noDisc = headlineIds.filter((id) => !disc.has(id));
+  if (noDisc.length === 0) return { verdict };
   return {
     verdict: "steer",
-    issue: `PI stop verdict withheld: no independent estimate recorded for headline quantit${missing.length === 1 ? "y" : "ies"} ${missing.join(", ")}. ` +
-      `A PI that has not put its own number on the headline has not reviewed it — supply estimates (value ± sigma via a route the experiment did not use) in the next review.`,
+    issue: `PI stop verdict withheld (referee pass): no DISCRIMINATOR for headline quantit${noDisc.length === 1 ? "y" : "ies"} ${noDisc.join(", ")}. ` +
+      `For each, write the single computation a referee would demand before accepting the claim — "DISCRIMINATOR: <id> — if right: …; if wrong: …; computation: …" — the brain must run it or disclose it before the report ships. A stop that names no such computation is an endorsement, not a review.`,
   };
 }
 

@@ -23,7 +23,7 @@
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { parseFrameHeadline, parseReviewerLines, resolveQuantity, HARNESS_REVIEW_FILE_RE } from "../src/claims-table.ts";
+import { parseFrameHeadline, parseFramePremises, parseReviewerLines, resolveQuantity, buildClaimTable, HARNESS_REVIEW_FILE_RE } from "../src/claims-table.ts";
 
 export interface FieldRate { field: string; filled: number; total: number; rate: number | null; valid?: number }
 export interface ComplianceReport {
@@ -36,7 +36,7 @@ export interface ComplianceReport {
   fields: FieldRate[];
   reviewer: { files: number; headlineIdsInScope: string[]; perLine: FieldRate[]; malformed: string[] };
   pi: { present: boolean; estimateLines: number; discriminatorLines: number };
-  brain: { frameHeadline: string[]; headlineTrue: string[] };
+  brain: { frameHeadline: string[]; headlineTrue: string[]; premises: number; premisesUnused: string[] };
   below80: string[];
 }
 
@@ -153,7 +153,7 @@ export function measureCompliance(projectDir: string): ComplianceReport {
     projectDir, experiments, runsWithResults: results.length, runsDeclaringQuantities: runsDeclaring,
     quantities: n, verdicts: nv, fields,
     reviewer: { files: reviewFiles.length, headlineIdsInScope: scope, perLine, malformed: lines.malformed },
-    pi, brain: { frameHeadline: frame, headlineTrue }, below80,
+    pi, brain: { frameHeadline: frame, headlineTrue, premises: parseFramePremises(projectDir).length, premisesUnused: (() => { try { return buildClaimTable(projectDir).premisesUnused; } catch { return []; } })() }, below80,
   };
 }
 
@@ -169,7 +169,7 @@ export function renderCompliance(r: ComplianceReport): string {
   out.push(`experiments ${r.experiments}, runs with results.json ${r.runsWithResults}, runs declaring quantities ${r.runsDeclaringQuantities}, quantities ${r.quantities}, verdicts ${r.verdicts}`);
   out.push(`\nexperiment (producer):`);
   out.push(...r.fields.map(row));
-  out.push(`\nbrain: frame.md headline = [${r.brain.frameHeadline.join(", ") || "—"}]; headline:true = [${r.brain.headlineTrue.join(", ") || "—"}]`);
+  out.push(`\nbrain: frame.md headline = [${r.brain.frameHeadline.join(", ") || "—"}]; headline:true = [${r.brain.headlineTrue.join(", ") || "—"}]; premises = ${r.brain.premises} (unused: ${r.brain.premisesUnused.join(", ") || "none"})`);
   out.push(`\nreviewer (${r.reviewer.files} harness review files; scope = [${r.reviewer.headlineIdsInScope.join(", ") || "—"}]):`);
   out.push(...r.reviewer.perLine.map(row));
   if (r.reviewer.malformed.length) out.push(`  malformed lines: ${r.reviewer.malformed.length}\n    ` + r.reviewer.malformed.slice(0, 5).join("\n    "));

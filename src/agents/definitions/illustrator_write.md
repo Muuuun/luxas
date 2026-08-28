@@ -156,6 +156,11 @@ These encode what the .mplstyle cannot. Apply to every figure:
 - **Multi-panel figures get bold (a) (b) (c) labels**, upper-left of each
   panel, reading left-to-right. Panels sharing an axis share it visibly
   (`sharex`/`sharey`, label once).
+- **Schematics (TikZ) start from `$LUXAS_ROOT/skills/figure/templates/schematic_slots.tex`**:
+  named nodes, every label in a named slot (`\slotlabel{node}{NE}{text}`,
+  `\callout{node}{SE}{text}`), two labels never in one slot; compile, then
+  `figlint-pdf` at the print width (7.0 in for figure*). fig1 of the pp-vs-ss
+  run collided three times as free-hand TikZ.
 - **Place callouts with `figplace`, not by guessing coordinates** (figures v2
   convergence experiment: a careful author placing a callout blind in data
   coordinates needed four render/lint rounds on one busy panel — the legend,

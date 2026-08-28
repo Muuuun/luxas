@@ -19,3 +19,7 @@
 - SS n=75: C6 ≈ 2441·(75/43)¹¹ ≈ 1100 GHz·μm⁶ (Low2012 43S anchor, n¹¹). [estimate]
 - PP n=75 θ=90°: ≈ 3482 GHz·μm⁶ (near-Förster enhanced, from adjacent project E2 n¹¹ extrapolation). [from single_photon_297nm, unverified here]
 - → gain ≈ (C6_SS/C6_0)^(1/6) · (C6_SS/C6_PP(90°))^(1/6); with 56× anisotropy → ~1.3×; with 10⁶ (field-free) → ~7×. The magnitude offset (P-P ~3× stronger than S-S) costs ~0.8× in the gate direction.
+
+## Premises
+- `flat_top_beam` = given — uniform Rabi frequency over the array (RESEARCH.md: "assume it is flat-top and can be used over a relatively large region")
+- `n` = 60 — principal quantum number of the Rydberg states (E1 declares it as an input)

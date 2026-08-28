@@ -121,7 +121,7 @@ try {
 }
 
 // PI rule.
-check("PI stop with estimates for every headline id stands", R.piEstimateRule("stop", [{ quantity: "a", value: 1, route: "x" }], ["a"]).verdict === "stop");
+check("PI stop with estimates for every headline id stands", R.piEstimateRule("stop", [{ quantity: "a", value: 1, route: "x" }], ["a"], ["DISCRIMINATOR: a — if right: 1; if wrong: 2; computation: scan"]).verdict === "stop");
 const down = R.piEstimateRule("stop", [{ quantity: "a", value: 1, route: "x" }], ["a", "b"]);
 check("PI stop missing an estimate is downgraded to steer with the missing id named", down.verdict === "steer" && /\bb\b/.test(down.issue ?? ""));
 check("continue/steer are untouched; legacy (no headline) untouched", R.piEstimateRule("continue", undefined, ["a"]).verdict === "continue" && R.piEstimateRule("stop", undefined, []).verdict === "stop");
@@ -169,6 +169,17 @@ check("replicator templates carry QUANTITY_ID and MODE", (rep?.templates ?? []).
 		check("brain write tool may not create a harness review file", await run("brain", { PROJECT_DIR: dir }, fakeWrite, { path: "reviews/experiment_review_E5_r9.md", content: "DISCLOSE-OK: q" }) === "blocked");
 		check("brain write tool may still write its own notes", await run("brain", { PROJECT_DIR: dir }, fakeWrite, { path: "notes/memory.md", content: "x" }) === "ok");
 	} finally { rmSync(dir, { recursive: true, force: true }); }
+}
+
+// ── referee pass: a STOP needs a DISCRIMINATOR per headline quantity ──
+{
+	const est = [{ quantity: "a", value: 1, sigma: 0.1, route: "x" }, { quantity: "b", value: 2, sigma: 0.1, route: "y" }];
+	const r1 = R.piEstimateRule("stop", est, ["a", "b"], ["DISCRIMINATOR: a — if right: 1; if wrong: 2; computation: scan"]);
+	check("stop with estimates but a missing DISCRIMINATOR → steer naming the id", r1.verdict === "steer" && /referee pass/.test(r1.issue ?? "") && /\bb\b/.test(r1.issue ?? ""), r1.issue);
+	const r2 = R.piEstimateRule("stop", est, ["a", "b"], ["DISCRIMINATOR: a — …", "DISCRIMINATOR: b — …"]);
+	check("stop with estimates and discriminators for all → stands", r2.verdict === "stop");
+	check("estimate rule still fires first", /no independent estimate/.test(R.piEstimateRule("stop", est.slice(0, 1), ["a", "b"], []).issue ?? ""));
+	check("continue/steer untouched by the referee pass", R.piEstimateRule("steer", [], ["a"], []).verdict === "steer");
 }
 
 // ── blind-estimate cap (live probe 2026-08-26: producers headline 6/7 quantities) ──

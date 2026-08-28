@@ -252,7 +252,19 @@ Steps:
        once; regenerating already-clean figures alongside fixed ones is
        free (same `python3` invocation).
    (d) Apply any brief-specific patches per figure (e.g. "fix legend
-       overlap in panel a of figure X"). If the script doesn't already
+       overlap in panel a of figure X"). **Any patch that moves a label or
+       callout is done with `figplace`, never by guessing coordinates**
+       (figures v2 convergence experiment: blind placement needed four
+       render rounds on one panel). Turn the auditor's FIXES into the
+       candidate list and let the code pick the first free spot:
+         import sys; sys.path.insert(0, "skills/matplotlib-figures/lint_hook")
+         from figplace import annotate_free
+         ann = annotate_free(ax, text, xy=(x0, y0), candidates=[(x1, y1, "right"), (x2, y2, "left"), ...], fontsize=8)
+         assert ann is not None   # no free spot → add candidates or move the legend, do not force it
+       For TikZ schematics, start from `$LUXAS_ROOT/skills/figure/templates/schematic_slots.tex`
+       (every label in a named slot, two labels never share one), compile, and
+       run `figlint-pdf` on the PDF at the figure's print width — free-hand
+       label placement shipped three collisions twice. If the script doesn't already
        savefig a PNG next to each PDF, add a second savefig for each so
        vision self-check is one Read call away:
          plt.savefig("report/figures/<name>.pdf")

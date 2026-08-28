@@ -272,7 +272,7 @@ async function evaluateProgress(
         route: Type.String({ description: "how you got it, ≤12 words" }),
       }), { description: "REQUIRED for a stop verdict when <claim_status> lists headline quantities: one entry per headline quantity. A PI that has not put its own number on the headline has not reviewed it." })),
       discriminators: Type.Optional(Type.Array(Type.String(), {
-        description: 'Lines of the form "DISCRIMINATOR: <id> — if right: …; if wrong: …; computation: …" — the computation that would settle a disputed headline quantity, pre-registered before its result exists.',
+        description: 'Lines of the form "DISCRIMINATOR: <id> — if right: …; if wrong: …; computation: …" — the computation that would settle a disputed headline quantity, pre-registered before its result exists. REQUIRED on a "stop" verdict for EVERY headline quantity (referee pass): name the one computation a referee would demand before accepting that claim (a finer scan across the crux, a sensitivity the model never varied, the number at the operating point). A stop without them is downgraded to steer.',
       })),
       disclose_ok: Type.Optional(Type.Array(Type.String(), {
         description: "Quantity ids whose CLAIM-DISCLOSE (in notes/memory.md) you COUNTERSIGN as an honest, adequately hedged disclosure of an unresolved dispute. You are not the producer; the brain cannot countersign its own proposal.",
@@ -353,7 +353,7 @@ async function evaluateProgress(
     try {
       const table = buildClaimTable(opts.projectDir);
       if (table.declared) {
-        const rule = piEstimateRule(final.verdict, final.estimates, obligationScope(table));
+        const rule = piEstimateRule(final.verdict, final.estimates, obligationScope(table), final.discriminators);
         if (rule.issue) final = { ...final, verdict: rule.verdict, issues: [...final.issues, rule.issue] };
       }
     } catch (err) {

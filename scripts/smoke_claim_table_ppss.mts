@@ -36,6 +36,18 @@ const scope = obligationScope(t);
 check("project obligation scope is bounded (frame + 3/experiment) and includes frame ids", scope.length <= t.frameHeadline.length + 3 * 6 && t.frameHeadline.every((f) => scope.includes(f)), String(scope.length));
 check("write-time hint names the kept ids when >3 headline:true", quantityDeclarationProblems(dir, "E4_verify_c6_zero_physical_gain").some((p) => /7 quantities are marked headline:true.*this round:/.test(p)));
 
+// v2 P4: premises as quantities
+{
+  const { parseFramePremises } = await import("../src/claims-table.ts");
+  const prem = parseFramePremises(dir);
+  check("frame.md ## Premises parsed (id, value, text)", prem.length === 2 && prem[0].id === "flat_top_beam" && prem[0].value === "given" && /uniform Rabi/.test(prem[0].text), JSON.stringify(prem));
+  const t5 = buildClaimTable(dir);
+  check("premise used as an input somewhere (n) is not 'unused'; flat_top_beam is", t5.premisesUnused.includes("flat_top_beam") && !t5.premisesUnused.includes("n"), t5.premisesUnused.join(","));
+  const { reportIntegrityIssues } = await import("../src/tools/report-integrity.ts");
+  const note = reportIntegrityIssues(dir).find((i) => /Premise\(s\) from notes\/frame\.md entered no experiment/.test(i.text));
+  check("finish gate lists the unused premise, non-blocking", !!note && note.blocking === false && /flat_top_beam/.test(note.text));
+}
+
 // P0.1 stamping
 check("stampBlindInputs fills an empty bracket", stampBlindInputs("ESTIMATE(blind): q — 1 ± 0.1 via napkin — inputs: []", { a: 2, b: -3.5 }).endsWith("inputs: [a=2, b=-3.5]"));
 check("stampBlindInputs appends when the bracket is missing", /— inputs: \[a=2\]$/.test(stampBlindInputs("ESTIMATE(blind): q — 1 ± 0.1 via napkin", { a: 2 })));
