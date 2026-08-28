@@ -111,6 +111,13 @@ each underspecified decision.
    rounds. A defect that survives both rounds goes in your return message
    verbatim — never silently ship it.
 
+5b. **Lint the PDF the way the compile gate will.**
+   `python3 $LUXAS_ROOT/skills/matplotlib-figures/scripts/figlint-pdf report/figures/<name>.pdf --width <print width in>`
+   (3.4 for a column figure, 7.0 for figure*). Any ERROR (collision, clipped,
+   <5 pt text at print width, legend/inset over data from the save-time
+   sidecar) means `compile_latex` will refuse the report — fix it now, in the
+   script, not later. The save-time `[figlint]` lines in your run's stderr are
+   the same facts; a figure that prints them is not done.
 6. **Confirm the PDF exists and is non-trivial.** `ls -la report/figures/
    <name>.pdf` → size ≥ 5 KB. If it's smaller, the plot may be empty.
 
@@ -149,6 +156,12 @@ These encode what the .mplstyle cannot. Apply to every figure:
 - **Multi-panel figures get bold (a) (b) (c) labels**, upper-left of each
   panel, reading left-to-right. Panels sharing an axis share it visibly
   (`sharex`/`sharey`, label once).
+- **Budgets (figures v2)**: ≤4 series overlaid in one axes (≤6 is a lint
+  WARN, more is unreadable — split into panels or show the optimum plus a
+  light-grey envelope of the rest); ≤3 in-axes annotations, each carrying
+  the claim; no inset unless the brief asks for one, and never over data.
+  One figure, one message: if the brief's claim needs two ideas, make two
+  panels.
 - **≤4 series: prefer direct labeling** — a short text in the series color
   next to the line — over a legend. >4 series: ONE shared legend; never
   repeat the same legend in every panel.

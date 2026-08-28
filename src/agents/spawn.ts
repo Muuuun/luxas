@@ -222,6 +222,10 @@ const GLM_REVIEWER_AGENTS = new Set([
 ]);
 
 function applyProfile(modelKey: string, agentName?: string): string {
+  // figure_auditor (figures v2, 2026-08-28) keeps a vision model that can
+  // actually see — the cheap vision profile "passed" five broken figures.
+  // Override only via LUXAS_VISION_AUDIT_MODEL_PROFILE; never the text profile.
+  if (agentName === "figure_auditor") return process.env.LUXAS_VISION_AUDIT_MODEL_PROFILE || modelKey;
   if (agentName && VISION_REQUIRED_AGENTS.has(agentName)) {
     const visionProfile = process.env.LUXAS_VISION_MODEL_PROFILE;
     if (visionProfile) return visionProfile;

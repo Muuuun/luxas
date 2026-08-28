@@ -1,0 +1,129 @@
+#!/usr/bin/env python3
+"""figlint-pdf — layout lint on a rendered figure PDF (any producer: matplotlib,
+TikZ/pgfplots, imported vector art). Reads the PDF text layer with PyMuPDF and
+checks what the reader will actually see at print size.
+
+  ERROR collision   two text spans overlap (bboxes shrunk 15% to ignore kerning
+                    touches; tick-label pairs exempt — they are set by the axis)
+  ERROR clipped     a text span extends past the page crop box
+  ERROR tiny text   at the print width (--width inches, from \\includegraphics)
+                    a span renders below --min-pt (default 5 pt)
+  WARN  dense text  more than --max-spans text spans on one page (default 40):
+                    a figure that needs that many labels is two figures
+
+Usage: figlint-pdf FILE.pdf [--width 3.4] [--min-pt 5] [--max-spans 40] [--json]
+Exit: 0 clean/warnings, 2 on any ERROR, 3 if the file cannot be read.
+"""
+import argparse, json, sys
+
+
+def shrink(b, f=0.85):
+    x0, y0, x1, y1 = b
+    w, h = (x1 - x0) * f, (y1 - y0) * f
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    return (cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2)
+
+
+def overlaps(a, b):
+    return not (a[2] <= b[0] or b[2] <= a[0] or a[3] <= b[1] or b[3] <= a[1])
+
+
+def is_ticklike(text):
+    t = text.strip().replace("−", "-").replace("×", "x")
+    return bool(t) and all(c in "0123456789.-+x^e " for c in t) or t in ("0", "10", "10^", "π")
+
+
+def lint_pdf(path, width_in=None, min_pt=5.0, max_spans=40):
+    import fitz
+    errors, warnings, lines_out = [], [], []
+    doc = fitz.open(path)
+    page = doc[0]
+    crop = page.rect
+    scale = 1.0
+    if width_in:
+        page_w_in = crop.width / 72.0
+        scale = width_in / page_w_in if page_w_in > 0 else 1.0
+    # Compare at LINE level: mathtext renders one annotation as many spans
+    # ("C", "6", "≈", "24.65°") that legitimately abut; only text on
+    # different lines can collide in the reader's sense.
+    n_spans = 0
+    for block in page.get_text("dict")["blocks"]:
+        for line in block.get("lines", []):
+            spans = [sp for sp in line.get("spans", []) if sp.get("text", "").strip()]
+            if not spans:
+                continue
+            n_spans += len(spans)
+            x0 = min(sp["bbox"][0] for sp in spans); y0 = min(sp["bbox"][1] for sp in spans)
+            x1 = max(sp["bbox"][2] for sp in spans); y1 = max(sp["bbox"][3] for sp in spans)
+            text = "".join(sp["text"] for sp in spans)
+            sizes = [(sp.get("size", 0.0), len(sp["text"].strip())) for sp in spans]
+            lines_out.append({"text": text, "bbox": (x0, y0, x1, y1), "sizes": sizes})
+    seen = set()
+    for i in range(len(lines_out)):
+        for j in range(i + 1, len(lines_out)):
+            a, b = lines_out[i], lines_out[j]
+            if is_ticklike(a["text"]) and is_ticklike(b["text"]):
+                continue
+            sa, sb = shrink(a["bbox"], 0.8), shrink(b["bbox"], 0.8)
+            if not overlaps(sa, sb):
+                continue
+            ix = min(sa[2], sb[2]) - max(sa[0], sb[0]); iy = min(sa[3], sb[3]) - max(sa[1], sb[1])
+            smaller = min((sa[2] - sa[0]) * (sa[3] - sa[1]), (sb[2] - sb[0]) * (sb[3] - sb[1]))
+            if smaller <= 0 or ix * iy < 0.15 * smaller:
+                continue
+            key = (a["text"][:30], b["text"][:30])
+            if key in seen:
+                continue
+            seen.add(key)
+            errors.append(f'collision "{a["text"][:40]}" ⊗ "{b["text"][:40]}"')
+    pad = 1.0
+    for ln in lines_out:
+        x0, y0, x1, y1 = ln["bbox"]
+        if x0 < crop.x0 - pad or x1 > crop.x1 + pad or y0 < crop.y0 - pad or y1 > crop.y1 + pad:
+            errors.append(f'clipped "{ln["text"][:40]}" extends past the page edge')
+    if width_in:
+        # Sub/superscripts (≤2 chars) are legitimately small; judge words.
+        tiny = []
+        for ln in lines_out:
+            for size, nch in ln["sizes"]:
+                if nch >= 3 and size * scale < min_pt and not is_ticklike(ln["text"]):
+                    tiny.append((ln["text"], size * scale)); break
+        for text, pt in tiny[:6]:
+            errors.append(f'tiny text "{text[:40]}" renders at {pt:.1f} pt at {width_in:.2f} in print width (min {min_pt} pt)')
+        if len(tiny) > 6:
+            errors.append(f"tiny text: {len(tiny) - 6} more lines below {min_pt} pt")
+    if len(lines_out) > max_spans:
+        warnings.append(f"dense text: {len(lines_out)} text lines on one figure (> {max_spans}) — split panels or drop annotations")
+    return errors, warnings, {"lines": len(lines_out), "spans": n_spans, "scale": scale, "page_w_in": crop.width / 72.0}
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("pdf")
+    ap.add_argument("--width", type=float, default=None, help="print width in inches (from \\includegraphics)")
+    ap.add_argument("--min-pt", type=float, default=5.0)
+    ap.add_argument("--max-spans", type=int, default=40)
+    ap.add_argument("--json", action="store_true")
+    a = ap.parse_args()
+    try:
+        errors, warnings, meta = lint_pdf(a.pdf, a.width, a.min_pt, a.max_spans)
+    except Exception as e:  # unreadable
+        if a.json:
+            print(json.dumps({"file": a.pdf, "errors": [], "warnings": [], "unreadable": str(e)[:200]}))
+        else:
+            print(f"[figlint-pdf] cannot read {a.pdf}: {e}", file=sys.stderr)
+        sys.exit(3)
+    if a.json:
+        print(json.dumps({"file": a.pdf, "errors": errors, "warnings": warnings, **meta}))
+    else:
+        for w in warnings:
+            print(f"[figlint-pdf] WARN  {a.pdf}: {w}", file=sys.stderr)
+        for e in errors:
+            print(f"[figlint-pdf] ERROR {a.pdf}: {e}", file=sys.stderr)
+        if errors:
+            print(f"[figlint-pdf] {len(errors)} layout error(s) in {a.pdf}", file=sys.stderr)
+    sys.exit(2 if errors else 0)
+
+
+if __name__ == "__main__":
+    main()

@@ -63,6 +63,58 @@ def lint_figure(fig, fname, tight):
                     or ext.y0 < fig_bbox.y0 - pad or ext.y1 > fig_bbox.y1 + pad):
                 errors.append(f'{fname}: clipped "{t.get_text()[:40]}" extends past the canvas edge')
 
+    # Composition budgets (figures v2, 2026-08-28 — the pp-vs-ss run shipped an
+    # 8-series spaghetti panel with 10 annotations and an inset over the data).
+    # Budgets are WARN (judgment stays with the reviewer); occlusion is ERROR.
+    from matplotlib.legend import Legend
+    for ax in fig.get_axes():
+        if getattr(ax, "_figlint_inset", False):
+            continue
+        n_lines = len([ln for ln in ax.get_lines() if ln.get_visible() and len(np.ravel(ln.get_xdata())) > 1])
+        if n_lines > 6:
+            warnings.append(f"{fname}: {n_lines} line series overlaid in one axes (> 6) — split into panels or drop series; the reader cannot follow more")
+        n_annot = len([t for t in ax.texts if t.get_visible() and t.get_text().strip()])
+        if n_annot > 4:
+            warnings.append(f"{fname}: {n_annot} in-axes annotations (> 4) — keep the ones that carry the claim, move the rest to the caption")
+        leg = ax.get_legend()
+        if leg is not None and leg.get_visible():
+            try:
+                lb = leg.get_window_extent(renderer)
+                hidden = 0
+                for ln in ax.get_lines():
+                    if not ln.get_visible():
+                        continue
+                    xy = np.column_stack([np.ravel(ln.get_xdata()), np.ravel(ln.get_ydata())]).astype(float)
+                    xy = xy[np.isfinite(xy).all(axis=1)]
+                    if len(xy) == 0:
+                        continue
+                    disp = ax.transData.transform(xy)
+                    hidden += int(((disp[:, 0] > lb.x0) & (disp[:, 0] < lb.x1) & (disp[:, 1] > lb.y0) & (disp[:, 1] < lb.y1)).sum())
+                if hidden >= 3:
+                    errors.append(f"{fname}: legend covers {hidden} data points — move it to an empty corner (loc='best' is not enough) or outside the axes")
+            except Exception:
+                pass
+        # an inset axes whose box overlaps the parent's data is occlusion
+        for child in list(getattr(ax, "child_axes", [])) + [c for c in fig.get_axes() if c is not ax]:
+            if child.get_visible() is False:
+                continue
+            try:
+                if ax.bbox.contains(*child.bbox.p0) and ax.bbox.contains(*child.bbox.p1) and child.bbox.width < 0.7 * ax.bbox.width:
+                    child._figlint_inset = True
+                    cb = child.get_tightbbox(renderer) or child.bbox
+                    hidden = 0
+                    for ln in ax.get_lines():
+                        xy = np.column_stack([np.ravel(ln.get_xdata()), np.ravel(ln.get_ydata())]).astype(float)
+                        xy = xy[np.isfinite(xy).all(axis=1)]
+                        if len(xy) == 0:
+                            continue
+                        disp = ax.transData.transform(xy)
+                        hidden += int(((disp[:, 0] > cb.x0) & (disp[:, 0] < cb.x1) & (disp[:, 1] > cb.y0) & (disp[:, 1] < cb.y1)).sum())
+                    if hidden >= 3:
+                        errors.append(f"{fname}: inset covers {hidden} data points of the parent axes — move the inset to an empty region or make it a panel")
+            except Exception:
+                pass
+
     for ax in fig.get_axes():
         for which in ("x", "y"):
             if getattr(ax, f"get_{which}scale")() != "linear":

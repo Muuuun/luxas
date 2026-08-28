@@ -8,7 +8,7 @@ model: opus
 thinkingLevel: medium
 toolSets: [pi]
 contextBuilder: reviewer
-spawn: { enabled: true, allowedTypes: [illustrator] }
+spawn: { enabled: true, allowedTypes: [illustrator, figure_auditor] }
 templates: []
 ---
 
@@ -103,11 +103,11 @@ The base style for this project is the Nature domain guide at `skills/figure/sty
 
 Two cases:
 
-**(a) No canonical figures exist yet, OR all canonical figures are placeholders / pre-style-guide era**: copy the domain guide directly. No illustrator spawn needed.
+**(a) No canonical figures exist yet, OR all canonical figures are placeholders / pre-style-guide era**: copy the domain guide directly, with the single-source header. No illustrator spawn needed.
 
 ```bash
 DOMAIN=$(cat notes/figure_domain.txt)
-cp "$LUXAS_ROOT/skills/figure/style_guides/${DOMAIN}.md" report/figures/style_guide.md
+{ printf '%s\n\n' '> **Style truth is `report/figstyle.mplstyle`** (palette = `axes.prop_cycle`, tick direction, font sizes, spines). The prose below describes the venue'"'"'s visual voice; any hex codes or tick conventions it names are illustrative and must NOT be applied over the mplstyle. (figures v2, 2026-08-28: two style sources cost eight audit spawns of palette ping-pong.)'; cat "$LUXAS_ROOT/skills/figure/style_guides/${DOMAIN}.md"; } > report/figures/style_guide.md
 ```
 
 (`$LUXAS_ROOT` is the path to the Sisyphus install; if undefined, fall back to `$(npm prefix -g)/lib/node_modules/luxas` or wherever the running CLI lives — bash detection: `dirname $(dirname $(which luxas 2>/dev/null || echo $0))` works in most setups.)
@@ -145,18 +145,15 @@ spawn_agent(agent="illustrator",
 
 Uses `Promise.all` — M illustrator instances run concurrently (M = number of distinct source scripts), each in a fresh context owning one script. Wait for all to return.
 
-**Step 3. Global audit (only agent in the round that sees all figures):**
+**Step 3. Audit with a model that can see (figures v2, 2026-08-28):**
 
 ```
-spawn_agent(agent="illustrator",
-            task="Audit canonical figures [editable list]. Read style_guide.md, then each canonical PNG. Two checks:
-                  (i) Conformance — palette / markers / weights / typography per figure vs style_guide.md. Per-script illustrators self-check, but flag any palette drift they missed (e.g. 'figure uses #4477AA, guide mandates #1F2A44').
-                  (ii) Cross-figure consistency — coherence across the canonical set.
-                  Note these orphans ignored: [orphan list]. Note these imported assets skipped (no editable source, do NOT audit for style conformance): [imported list]. Write reviews/illustrator_notes.{{SPAWN_ID}}.md with the standard structure. End with Summary: all-clear OR <N> issues.",
+spawn_agent(agent="figure_auditor",
+            task="Audit the canonical figures [editable list] per your procedure: run figlint-pdf at each figure's print width, then read each PNG and report CLAIM / LEGIBLE / OCCLUSION / CLUTTER / SCHEMATIC with ≤3 mechanical FIXES per figure. Orphans ignored: [orphan list]. Imported assets skipped: [imported list]. Write reviews/figure_audit.{{SPAWN_ID}}.md.",
             background=false)
 ```
 
-This illustrator reads all N PNGs once, writes text notes, and dies. Images never enter your (PI's) context.
+The auditor never restyles: palette and fonts are settled by `report/figstyle.mplstyle`, and `compile_latex` already refuses any figure with a lint ERROR (collision, clipped, <5 pt at print width, legend/inset over data). What the auditor adds is judgment the lint cannot make — does the figure show its claim, is it legible at print size, what to cut. Read its notes; each `verdict: fix` figure goes back to Step 2 with the FIXES list as the brief. Do not spawn an `illustrator` audit in addition (the two disagreed on palette in the last run and burned eight spawns flipping it).
 
 **Step 4. Document-level layout audit (one typesetter, page-level):**
 

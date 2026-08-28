@@ -42,8 +42,22 @@ def _install():
                     print(f"[figlint] {len(errors)} layout error(s) in {os.path.basename(str(fname))} — "
                           f"fix label positions/canvas before using this figure in the report.", file=sys.stderr)
             except Exception:
-                pass  # linting must never break the science script
-            return orig(self, fname, *a, **k)
+                errors, warnings = [], []  # linting must never break the science script
+            result = orig(self, fname, *a, **k)
+            # Sidecar for the compile-time gate (figures v2, 2026-08-28): the
+            # findings above were printed in the pp-vs-ss run and shipped anyway.
+            # compile_latex reads <file>.figlint.json when its md5 matches.
+            try:
+                import hashlib, json
+                fp = str(fname)
+                if os.path.isfile(fp) and fp.lower().endswith((".pdf", ".png", ".svg")):
+                    with open(fp, "rb") as fh:
+                        md5 = hashlib.md5(fh.read()).hexdigest()
+                    with open(fp + ".figlint.json", "w") as fh:
+                        json.dump({"file": os.path.basename(fp), "md5": md5, "errors": errors, "warnings": warnings}, fh)
+            except Exception:
+                pass
+            return result
 
         Figure.savefig = patched
     except Exception:

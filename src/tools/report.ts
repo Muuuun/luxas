@@ -6,11 +6,79 @@
  */
 
 import { Type } from "@earendil-works/pi-ai/compat";
-import { execSync } from "node:child_process";
+import { execSync, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { join, basename, resolve } from "node:path";
+import { join, basename, resolve, dirname } from "node:path";
 import { applyAuthorityEscalationSection } from "./authority-escalation.js";
 import { reportIntegrityIssues, formatIntegrityIssues } from "./report-integrity.js";
+
+// ── Figure layout gate (figures v2, 2026-08-28) ─────────────────────────────
+//
+// The pp-vs-ss run shipped five figures with text collisions, a 3.9 pt legend
+// and an 8-series spaghetti panel although figlint had printed every one of
+// those errors at save time: the lint was a producer with no consumer. This is
+// the consumer. Before compiling, every \includegraphics{figures/X.pdf} is
+// linted on its PDF text layer (covers TikZ too) at its print width, plus the
+// save-time sidecar (composition budgets) when its md5 still matches. Any
+// ERROR refuses the compile with the list. LUXAS_FIGLINT_GATE=0 disables.
+const FIGLINT_PDF = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "skills", "matplotlib-figures", "scripts", "figlint-pdf");
+
+export interface FigureLintIssue { file: string; errors: string[]; warnings: string[] }
+
+/** Print width in inches for an \includegraphics options string inside a figure/figure* env. */
+export function includeWidthInches(opts: string, starred: boolean, columnIn = 3.4, textIn = 7.0): number {
+  const inches = opts.match(/width\s*=\s*([0-9.]+)\s*(in|cm)\b/);
+  if (inches) return inches[2] === "cm" ? Number(inches[1]) / 2.54 : Number(inches[1]);
+  const m = opts.match(/width\s*=\s*([0-9.]*)\s*\\(columnwidth|linewidth|textwidth)/);
+  if (!m) return starred ? textIn : columnIn;
+  const frac = m[1] ? Number(m[1]) : 1;
+  const unit = m[2];
+  const base = unit === "textwidth" ? textIn : unit === "columnwidth" ? columnIn : (starred ? textIn : columnIn);
+  return (Number.isFinite(frac) && frac > 0 ? frac : 1) * base;
+}
+
+export function figureLintIssues(dir: string, texfile: string): FigureLintIssue[] {
+  if (process.env.LUXAS_FIGLINT_GATE === "0") return [];
+  let src = "";
+  try { src = readFileSync(join(dir, texfile), "utf-8"); } catch { return []; }
+  const out: FigureLintIssue[] = [];
+  const envRe = /\\begin\{(figure\*?)\}([\s\S]*?)\\end\{figure\*?\}/g;
+  let em: RegExpExecArray | null;
+  const seen = new Set<string>();
+  while ((em = envRe.exec(src))) {
+    const starred = em[1].endsWith("*");
+    const incRe = /\\includegraphics\s*(?:\[([^\]]*)\])?\s*\{([^}]+)\}/g;
+    let im: RegExpExecArray | null;
+    while ((im = incRe.exec(em[2]))) {
+      let rel = im[2].trim();
+      if (!/\.pdf$/i.test(rel)) rel = rel.replace(/\.[a-z]+$/i, "") + ".pdf";
+      const abs = join(dir, rel);
+      if (seen.has(abs) || !existsSync(abs)) continue;
+      seen.add(abs);
+      const width = includeWidthInches(im[1] ?? "", starred);
+      const errors: string[] = [], warnings: string[] = [];
+      const r = spawnSync("python3", [FIGLINT_PDF, abs, "--json", "--width", String(width)], { encoding: "utf-8", timeout: 20_000 });
+      try { const j = JSON.parse(r.stdout || "{}"); errors.push(...(j.errors ?? [])); warnings.push(...(j.warnings ?? [])); } catch { /* unreadable → not this gate's job */ }
+      try {
+        const side = JSON.parse(readFileSync(abs + ".figlint.json", "utf-8"));
+        const md5 = createHash("md5").update(readFileSync(abs)).digest("hex");
+        if (side.md5 === md5) { for (const e of side.errors ?? []) if (!errors.includes(e)) errors.push(String(e)); for (const w of side.warnings ?? []) if (!warnings.includes(w)) warnings.push(String(w)); }
+      } catch { /* no sidecar (TikZ, imported) */ }
+      if (errors.length || warnings.length) out.push({ file: rel, errors, warnings });
+    }
+  }
+  return out;
+}
+
+export function formatFigureLint(issues: FigureLintIssue[]): string {
+  const bad = issues.filter((i) => i.errors.length);
+  const lines = ["✗ Figure layout check failed — these figures ship unreadable as rendered (text collisions, clipped or sub-5 pt text at print width, legend/inset over data):", ""];
+  for (const i of bad) { lines.push(`  ${i.file}`); for (const e of i.errors) lines.push(`    ERROR ${e}`); for (const w of i.warnings) lines.push(`    warn  ${w}`); }
+  lines.push("", "Fix the plot script / TikZ source (move or drop labels, split panels, enlarge fonts, move the legend), re-render, then compile again. `python3 skills/matplotlib-figures/scripts/figlint-pdf <pdf> --width <in>` reproduces this list. LUXAS_FIGLINT_GATE=0 disables the gate.");
+  return lines.join("\n");
+}
 
 const CompileParams = Type.Object({
   dir: Type.Optional(Type.String({ description: "Report directory (default: report/)" })),
@@ -140,6 +208,13 @@ export function createReportTools(projectDir: string) {
       const promoted = promoteTablesInTwoColumn(dir, texfile);
 
       // Pre-compile check: figures from other papers must have \cite{}
+      // Pre-compile check: figure layout (figures v2) — collisions, tiny text,
+      // occlusion. Deterministic; the consumer of figlint's findings.
+      const figIssues = figureLintIssues(dir, texfile);
+      if (figIssues.some((i) => i.errors.length > 0)) {
+        return { content: [{ type: "text" as const, text: formatFigureLint(figIssues) }], details: { success: false } };
+      }
+
       const citationErrors = checkFigureCitations(dir, texfile, projectDir);
       if (citationErrors.length > 0) {
         const msg = "✗ Figure citation check failed — figures from other papers MUST have \\cite{} in their figure environment:\n\n" +

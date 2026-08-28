@@ -102,8 +102,11 @@ Steps:
    source (grep / read — no vision). Items tagged `[vision]` require the
    Read tool on the PNG.
 
-   1. `[script]` **Palette hex codes** in the plot script match
-      `style_guide.md` palette (or project `style_overrides.md`).
+   1. `[script]` **Palette hex codes** in the plot script match the
+      `axes.prop_cycle` of `report/figstyle.mplstyle` (the single style
+      truth). Hex codes quoted in `style_guide.md` prose are venue flavour,
+      not a target — never restyle a figure from the mplstyle palette to
+      them (figures v2, 2026-08-28).
    2. `[script]` **Font size hierarchy**: axis labels ≥ tick labels ≥
       annotations, each within the guide's bracket.
    3. `[script]` **Line weights**: connectors ≥ 0.75 pt; primary data
@@ -115,8 +118,12 @@ Steps:
    6. `[script]` **Tick direction** (`in` / `out`) matches guide.
    7. `[script]` **Spines**: no top/right unless guide mandates;
       `ax.spines[...].set_visible(...)` calls consistent across panels.
-   8. `[vision]` **No clipped / overlapping text** (labels, legend,
-      annotations).
+   8. `[lint]` **No clipped / overlapping / tiny text**: run
+      `python3 $LUXAS_ROOT/skills/matplotlib-figures/scripts/figlint-pdf <pdf> --width <print width in>`
+      and paste its ERROR lines; the item passes only when it prints none.
+      Your eyes are a second opinion, not a substitute — the cheap vision
+      model wrote "no overlaps" over four colliding figures in the last run,
+      and `compile_latex` refuses any figure the lint rejects.
    9. `[vision]` **No font fallback / missing-glyph box** in rendered PNG.
    10. `[script]` **`fontweight="bold"` + `usetex=True`** incompatibility:
        if the script sets `text.usetex = True` (or `rcParams["text.usetex"]`),

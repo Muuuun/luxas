@@ -2,13 +2,14 @@
  * init_report tool — create LaTeX scaffold for the report.
  */
 
-import { existsSync, writeFileSync, mkdirSync, copyFileSync } from "node:fs";
+import { existsSync, writeFileSync, mkdirSync, copyFileSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execSync } from "node:child_process";
 
 const LUXAS_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const GENERAL_MPLSTYLE = join(LUXAS_ROOT, "skills", "venue-specific", "figstyles", "general.mplstyle");
+export const STYLE_TRUTH_HEADER = "> **Style truth is `report/figstyle.mplstyle`** (palette = `axes.prop_cycle`, tick direction, font sizes, spines). The prose below describes the venue's visual voice; any hex codes or tick conventions it names are illustrative and must NOT be applied over the mplstyle.\n\n";
 const DEFAULT_STYLE_GUIDE = join(LUXAS_ROOT, "skills", "figure", "style_guides", "_default.md");
 
 function makeScaffold(title: string): string {
@@ -100,7 +101,10 @@ export function createInitReportTool(projectDir: string) {
       const styleGuidePath = join(reportDir, "figures", "style_guide.md");
       if (!existsSync(styleGuidePath) && existsSync(DEFAULT_STYLE_GUIDE)) {
         mkdirSync(join(reportDir, "figures"), { recursive: true });
-        copyFileSync(DEFAULT_STYLE_GUIDE, styleGuidePath);
+        // Single style source (figures v2, 2026-08-28): the mplstyle is the
+        // truth; the prose guide is voice. Two sources cost eight audit
+        // spawns of palette ping-pong in the pp-vs-ss run.
+        writeFileSync(styleGuidePath, STYLE_TRUTH_HEADER + readFileSync(DEFAULT_STYLE_GUIDE, "utf-8"));
       }
 
       if (existsSync(texPath)) {
