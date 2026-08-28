@@ -342,7 +342,7 @@ export function parseReviewerLines(projectDir: string): ReviewerLines {
         // Descriptive scaling ("expected divergent as θ→θ*", "expected non-power-law"):
         // legitimate reviewer prose with no numeric exponent. Record the id with
         // no consequence instead of MALFORMED noise (live run 2026-08-27).
-        const d = line.match(/^SCALING:\s*(\S+)\s+[—–-]+\s+expected\s+\S/);
+        const d = line.match(/^SCALING:\s*(\S+)\s+[—–-]+\s+expected:?\s+\S/);
         if (d) { out.scaling.push({ id: d[1], expected: NaN, observed: undefined }); continue; }
         out.malformed.push(`reviews/${f}: unparseable scaling line "${line.slice(0, 80)}"`); continue;
       }

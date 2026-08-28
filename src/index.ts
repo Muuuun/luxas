@@ -10,6 +10,7 @@
  *   luxas init [project-dir] --prompt "..." Generate RESEARCH.md from a topic
  *   luxas init [project-dir] --prompt-file <path> Read prompt from a file (use this for multi-line input)
  *   luxas list                           List all projects
+ *   luxas stop [project-dir]             Stop a running project (run.pid + every process naming the dir)
  *   luxas figures [project-dir]          Re-audit and re-render figures
  *          [--figure NAME]               Target one figure only (e.g. --figure 1)
  *          [--audit-only]                Audit existing figures, no regeneration
@@ -228,6 +229,12 @@ if (command === "init") {
 if (command === "list") {
   listProjects();
   process.exit(0);
+}
+
+if (command === "stop") {
+  const { stopRun } = await import("./stop-run.js");
+  const r = stopRun(projectDir);
+  process.exit(r.survivors.length === 0 ? 0 : 1);
 }
 
 if (command === "run") {
