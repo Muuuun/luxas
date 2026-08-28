@@ -115,6 +115,46 @@ def lint_figure(fig, fname, tight):
             except Exception:
                 pass
 
+    # Text over data (figures v2 convergence experiment, 2026-08-28): after
+    # every fix round the same defect remained in all four data plots — an
+    # annotation laid across the curve it describes. Deterministic: sample each
+    # visible line densely in display space and count samples inside a text
+    # bbox (tick labels and axis labels excluded). ≥ 3 samples = ERROR.
+    for ax in fig.get_axes():
+        if getattr(ax, "_figlint_inset", False):
+            continue
+        samples = []
+        for ln in ax.get_lines():
+            if not ln.get_visible():
+                continue
+            xy = np.column_stack([np.ravel(ln.get_xdata()), np.ravel(ln.get_ydata())]).astype(float)
+            xy = xy[np.isfinite(xy).all(axis=1)]
+            if len(xy) < 2:
+                continue
+            disp = ax.transData.transform(xy)
+            seg = np.diff(disp, axis=0)
+            n = np.clip((np.hypot(seg[:, 0], seg[:, 1]) / 3.0).astype(int), 1, 200)
+            for (p0, d, k) in zip(disp[:-1], seg, n):
+                t = np.linspace(0, 1, k, endpoint=False)[:, None]
+                samples.append(p0 + t * d)
+        if not samples:
+            continue
+        pts = np.vstack(samples)
+        axis_labels = {id(ax.xaxis.label), id(ax.yaxis.label), id(ax.title)}
+        for t in ax.texts + ([ax.get_legend()] if False else []):
+            if not t.get_visible() or not t.get_text().strip() or id(t) in axis_labels or id(t) in ticklabels:
+                continue
+            try:
+                # The text's CORE (50%): a direct label abutting its curve has
+                # 0–2 samples there; a label laid over the curve has ≥ 5
+                # (measured 2026-08-28 on the archetype set and the pp-vs-ss figures).
+                bb = _shrunk(t.get_window_extent(renderer), 0.5)
+            except Exception:
+                continue
+            inside = int(((pts[:, 0] > bb.x0) & (pts[:, 0] < bb.x1) & (pts[:, 1] > bb.y0) & (pts[:, 1] < bb.y1)).sum())
+            if inside >= 4:
+                errors.append(f'{fname}: annotation "{t.get_text()[:40]}" lies over a data line ({inside} samples under it) — move it beside the curve (offset points) or into empty space')
+
     for ax in fig.get_axes():
         for which in ("x", "y"):
             if getattr(ax, f"get_{which}scale")() != "linear":

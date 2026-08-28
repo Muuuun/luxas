@@ -701,6 +701,8 @@ export function reportIntegrityIssues(projectDir: string): IntegrityIssue[] {
       [/\b[a-z]+(?:_[a-z]+)+\.[a-z]+(?:_[a-z]+)*\b/, "internal JSON field path in prose"],
       [/E\d+\s*(实验|分类实验|对比实验)?(中的|通过|的裁决)/, "experiment-pipeline reference in reader prose"],
       [/PI\s*(反馈|修订|review|steer)/i, "PI-review process narrated in the report"],
+      // Figure-brief vocabulary leaking into captions (pp-vs-ss: "Hero figure: …").
+      [/\b(hero figure|canonical figure|figure brief)\b/i, "figure-pipeline vocabulary in a caption"],
     ];
     for (const [re, label] of vocabPatterns) {
       const m = prose.match(re);

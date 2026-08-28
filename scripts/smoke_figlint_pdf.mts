@@ -33,6 +33,11 @@ for k in range(8): ax.plot(x, np.sin(x + k/3), label="s%d" % k)
 ax.legend(loc="center"); ax.text(1,0,"a"); ax.text(2,0,"b"); ax.text(3,0,"c"); ax.text(4,0,"d"); ax.text(6,0,"e")
 ins = ax.inset_axes([0.3, 0.3, 0.4, 0.4]); ins.plot(x, x)
 fig.savefig("${dir}/budget.pdf", bbox_inches="tight"); plt.close(fig)
+# text over data vs text beside data
+fig, ax = plt.subplots(figsize=(3.4, 2.4)); ax.plot(x, np.sin(x), lw=1.5)
+ax.text(5.0, np.sin(5.0), "label ON the curve", ha="center", va="center", fontsize=9)
+ax.annotate("label beside the curve", xy=(2, np.sin(2)), xytext=(2, -0.85), fontsize=8, ha="center")
+fig.savefig("${dir}/overdata.pdf", bbox_inches="tight"); plt.close(fig)
 `;
 writeFileSync(join(dir, "make.py"), py);
 const hook = "skills/matplotlib-figures/lint_hook";
@@ -43,6 +48,8 @@ check("figlint_core WARN: >6 series overlaid", /8 line series overlaid/.test(cor
 check("figlint_core WARN: >4 annotations", /5 in-axes annotations/.test(core));
 check("figlint_core ERROR: legend covers data", /legend covers \d+ data points/.test(core));
 check("figlint_core ERROR: inset covers data", /inset covers \d+ data points/.test(core));
+check("figlint_core ERROR: annotation over a data line", /annotation "label ON the curve" lies over a data line/.test(core), core.slice(-500));
+check("figlint_core: a label beside the curve is not flagged", !/label beside the curve/.test(core));
 const lint = (f: string, extra: string[] = []) => spawnSync("python3", ["skills/matplotlib-figures/scripts/figlint-pdf", join(dir, f), "--json", ...extra], { encoding: "utf-8" });
 const clean = lint("clean.pdf", ["--width", "3.4"]);
 check("clean PDF: exit 0, no errors", clean.status === 0 && JSON.parse(clean.stdout).errors.length === 0, clean.stdout.slice(0, 200) + clean.stderr.slice(0, 200));
