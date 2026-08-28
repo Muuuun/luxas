@@ -55,5 +55,14 @@ const indexSrc = readFileSync("src/index.ts", "utf-8");
 check("luxas run persists maxCost into run_config.json", /maxCost: maxCost \?\? null/.test(indexSrc));
 check("a bare resume inherits maxCost from run_config.json (never widens to the backstop)", /maxCost === undefined && typeof saved\.maxCost === "number"[\s\S]{0,200}maxCost = saved\.maxCost/.test(indexSrc));
 
+// unfunded provider → fatal, not transient
+{
+  const { isUnfundedProviderError } = await import("../src/usage-log.ts");
+  check("unfunded: Anthropic credit message", isUnfundedProviderError("400 {\"type\":\"error\",\"error\":{\"message\":\"Your credit balance is too low to access the Anthropic API.\"}}"));
+  check("unfunded: DeepSeek 402 Insufficient Balance", isUnfundedProviderError("402: {\"message\":\"Insufficient Balance\"}"));
+  check("not unfunded: overloaded / rate limit / network", !isUnfundedProviderError("529 overloaded_error") && !isUnfundedProviderError("429 rate_limit_error") && !isUnfundedProviderError("fetch failed"));
+  const src2 = readFileSync("src/usage-log.ts", "utf-8");
+  check("stream wrapper exits on an unfunded error (LUXAS_UNFUNDED_EXIT=0 opts out)", /isUnfundedProviderError\(msg\?\.errorMessage\)[\s\S]{0,400}process\.exit\(1\)/.test(src2) && /LUXAS_UNFUNDED_EXIT/.test(src2));
+}
 if (fails) { console.log(`\n${fails} FAILED`); process.exit(1); }
 console.log("\nALL PASS — the cost cap fires at the usage record, in every agent.");

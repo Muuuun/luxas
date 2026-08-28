@@ -222,6 +222,18 @@ export function enforceCostCap(logPath: string, exit: (code: number) => void = (
   return false;
 }
 
+/**
+ * A provider refusing for lack of funds is not a transient error and not a
+ * model failure: every later turn on that provider fails the same way while
+ * the OTHER providers keep spending (2026-08-28: Anthropic-pinned reviewers
+ * went unfunded at ~13:00; DeepSeek producers spent ~$20 more on work nobody
+ * could review, and the PI's no-response placeholders fed a finish deadlock).
+ */
+export const UNFUNDED_PROVIDER_RE = /credit balance is too low|insufficient[_ ]balance|insufficient[_ ]quota|billing hard limit|payment required|402\b/i;
+export function isUnfundedProviderError(text: unknown): boolean {
+  return typeof text === "string" && UNFUNDED_PROVIDER_RE.test(text);
+}
+
 export function installUsageTracking(logPath: string, opts: { maxCostUsd?: number } = {}): void {
   if (opts.maxCostUsd !== undefined) setCostCap(logPath, opts.maxCostUsd);
   if (installed) return;
@@ -246,6 +258,11 @@ export function installUsageTracking(logPath: string, opts: { maxCostUsd?: numbe
         while (true) {
           try {
             const msg = await activeStream.result();
+            if (msg?.stopReason === "error" && isUnfundedProviderError(msg?.errorMessage) && process.env.LUXAS_UNFUNDED_EXIT !== "0") {
+              console.error(`\n[FATAL] Provider ${model?.provider ?? api} refuses for lack of funds: ${String(msg.errorMessage).slice(0, 160)}. ` +
+                `Stopping the run so the other providers do not keep spending on work this one cannot review. Top up, then resume (checkpoint is live).\n`);
+              process.exit(1);
+            }
             if (msg?.usage) {
               appendUsage(logPath, {
                 timestamp: Date.now(),
