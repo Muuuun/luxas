@@ -112,7 +112,11 @@ def lint_pdf(path, width_in=None, min_pt=5.0, max_spans=40):
                 ax0_, ay0_, ax1_, ay1_ = a["bbox"]; bx0_, by0_, bx1_, by1_ = b["bbox"]
                 gapx = max(bx0_ - ax1_, ax0_ - bx1_); vo_ = min(ay1_, by1_) - max(ay0_, by0_)
                 hmin = min(ay1_ - ay0_, by1_ - by0_)
-                if gapx < 1.0 and hmin > 0 and vo_ >= 0.3 * hmin and len(a["text"].strip()) >= 3 and len(b["text"].strip()) >= 3:
+                # Mathematical-alphanumeric glyphs (U+1D400–1D7FF) come from mathtext's font
+                # fallback splitting one label into baseline-shifted spans (Linux DejaVu); a
+                # TikZ/CM label never contains them, so such pairs are one label, not two.
+                mathfrag = any(0x1D400 <= ord(ch) <= 0x1D7FF for ch in a["text"] + b["text"])
+                if not mathfrag and gapx < 1.0 and hmin > 0 and vo_ >= 0.3 * hmin and len(a["text"].strip()) >= 3 and len(b["text"].strip()) >= 3:
                     key = (a["text"][:30], b["text"][:30])
                     if key not in seen:
                         seen.add(key); errors.append(f'touching labels "{a["text"][:30]}" | "{b["text"][:30]}" — no gap between two labels; move one')
