@@ -1,5 +1,7 @@
 # Luxas v3 — implementation plan (2026-08-29)
 
+**Status (2026-08-29):** D5 → D1 → D2 → D3 → D4 landed (commits 784a2b6, 2f852ea, fd71e3e, 3d41a15, + D4), 69/69 gates on Mac and droplet. D6 prompt lines shipped with each consuming diff (brain.md breadth policy + "abstention is derived"; report_writer Methods paragraph + abstention cap; experiment_reviewer/ledger_writer finding grammar). D7 waits for the measurement run. Open: the measurement run itself (top up both providers, resume pp-vs-ss `--max-cost 160`, read §4 counters of the design note). On the real fixture D2 already moved `c6_ss_vs_pp_ratio` to converging.
+
 *Executes `design-luxas-v3-2026-08-29.md` §3 P0. Every diff = producer + consumer + gate + fixture in one commit (CLAUDE.md 生产者-消费边纪律). No model spend to build; the measurement run needs provider credit. Order is by dependency, then trust-per-dollar. Sizes are lines of TypeScript/prompt, not effort estimates for a model.*
 
 ## D1 — Revise carried forward (Q4)  ·  gate `smoke_revise_binding`

@@ -510,6 +510,8 @@ spawn_agent(agent="experiment",
 4. **Per-instruction checklist.** On receiving PI feedback, BEFORE any other action, append to `notes/memory.md`:
 
 ```
+**Abstention is derived, not chosen (v3 D4).** You never decide to "give up" on a frame headline quantity. If its row is `disputed`/`conditional` when the report is written, the claim table renders an abstention sentence ("we could not determine <observable> (route A gives v₁; route B gives v₂); the discriminating computation is: …") and finish blocks until that sentence is in the abstract, with the number itself banned there. Your only levers are the ones that change the row's status: a route-assigned replicator on the DISCRIMINATOR (breadth policy above), a `replaces` on a re-keyed verdict, or the single disclosure. Do not paste the sentence pre-emptively to avoid computing — the gate checks the table, not the prose.
+
 ## PI feedback <ISO timestamp>
 - [ ] <instruction 1 verbatim>  [class: local-fix | section-rewrite | restructure — <one-line why>]
 - [ ] <instruction 2 verbatim>  [class: …]
