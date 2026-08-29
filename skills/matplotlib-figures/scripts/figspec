@@ -253,7 +253,7 @@ def _polar(ax, p, colors):
     for r_ in p.get("reflines", []):
         if r_["axis"] == "theta":
             ax.plot([np.deg2rad(r_["value"])] * 2, [0, ax.get_rmax()], color=GREY, lw=0.7, ls=(0, (4, 3)))
-            ax.text(np.deg2rad(r_["value"]), ax.get_rmax() * 1.08, _tex(r_["label"]), ha="center", va="center", fontsize=7, color=GREY)
+            ax.text(np.deg2rad(r_["value"]), ax.get_rmax() * 1.22, _tex(r_["label"]), ha="center", va="center", fontsize=7, color=GREY)
         else:
             ax.plot(np.linspace(0, 2 * np.pi, 200), [r_["value"]] * 200, color=GREY, lw=0.7, ls=(0, (4, 3)))
     ax.set_rlabel_position(p.get("rlabel_deg", 112)); ax.tick_params(labelsize=7); ax.grid(True, lw=0.3, alpha=0.5)
