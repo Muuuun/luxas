@@ -1,0 +1,55 @@
+# Design: Luxas v3 — what the automated-research literature says we should change (debate-adjudicated, 2026-08-29)
+
+*Input: `survey-automated-research-2026-08-29.md` (Anthropic's automated alignment researchers, AlphaEvolve, Co-Scientist, the verification-gap survey, the 100-task AutoResearch diagnostic, Lossfunk's four attempts, StatefulDiscovery, the Calibration Turn, preregistration, judge agents) and Luxas's own traces (`architecture-review-2026-08-28.md`, `path-to-publishable-2026-08-28.md`, `plan-claims-first-v2.md`). Three independent positions over §5's questions Q1–Q7: VERIFICATION (trust per dollar), SEARCH (breadth vs ritual), OPERATOR (dollars, hours, attention). §1 compresses them; §2 adjudicates; §3 is the plan; §4 the counters.*
+
+## 1. The positions
+
+**Verification.** The 82.5 % failure in the literature — "diagnosed a flaw, reported the unrevised conclusion" — is *encoded in our harness*: at the iteration cap the review loop writes "REVISE but cap reached — accepting current state" into a spawn result nobody reads at finish; `persistReview` writes `VERDICT: revise` to the review file; no consumer looks at that line; the ledger stays `Complete`. Binding that (the flaw must reach the load-bearing artifact) is the highest trust-per-dollar change. Anchor-exfiltration detection is a 30-line reuse of the wiring veto and should *cap* to `indicative`, not block (a legitimate limiting-case reproduction will trip it). A pre-compute monitor has nothing to read — the Evidence Contract is not on disk before Phase 3, and forcing it there is the spec-dict anti-pattern. Breadth without an anchored leg multiplies disputes (three toy blind estimates with `inputs: []` produced three false disputes). Abstention is a render cap: "we could not determine X (estimates disagree; discriminator …)". Warns the cost lens: round 3 of E1 is what moved θ=0 from −16.2 to −10.4 — cut illustration during dispute, not the reviewer round that computes.
+
+**Search.** Breadth paid exactly once in the trace and it was breadth of *routes* (E3 → toy blind → E4 cap → E6), never of samples; 17 replicators against 23 self-declared ids was ritual. The evaluator Luxas has is `agreement()` between routes `relation()` says are not wiring — so the only breadth worth buying adds a new comparable, non-wired estimate to a one-legged or disputed row. The decisive bug: **replicate-mode computing estimates can only dispute, never settle** — the table never lets a blind/replication estimate form an agreeing pair, so K discriminators cannot close a row and it lives forever in disputed → disclosure → escalation ("the 08-28 livelock in another costume"). Fix: a route-assigned, computing (`via [job]`) replication counts as a leg; same-route-string joins the wiring test; supersession treats replicate legs as "later". Refuses tournaments, meta-reviewers, allocators: each adds a model grading a model, none adds a comparable number. Refuses a live operator queue. Warns the verification lens: attestations were 1/23 and 0/23 — reviewers do not produce evidence; computations do.
+
+**Operator.** A shippable paper on this stack is **$110–130, 30–36 h, 2–3 operator touches**; envelope: search $8–12, experiments $40–50 (do not cut), review ≤ $25 (≤ 30 %), figures ≤ $12 (≤ 12 %), report $8–10, operator ≤ $2. Builds the queue: `notes/escalations/queue.jsonl` ← run, `answers.jsonl` ← `luxas answer <project> <id> <option|text>`; the run keeps doing legal work under an `<operator_pending>` block, sleeps in 10-min ticks (≈ $0) when nothing legal remains, applies a default after `LUXAS_OPERATOR_TIMEOUT_H` (6 h); every decision lands in `report/claims.json decisions[]` and a fixed Methods paragraph. Pre-compute monitor only as a regex rule set ($0); K ≤ 3 discriminators only on disputed *frame* rows under `--max-cost 5`; abstention as `undetermined`; refuses any monitor agent and any chat surface. Warns the search lens: the expensive part of an experiment is the impl/review pair (~$7–8), not the model call.
+
+## 2. Adjudication
+
+| Q | decision | reasoning |
+|---|---|---|
+| **Q1 pre-compute monitor** | **PROMPT + one write-time lint; no agent.** `experiment.md` Phase 1: "name the control's route in one clause; a second call of the same function is not a control". Write-time lint on `cross_validation_plan`: `method_a`/`method_b` must differ in more than a library name (route-string test). | All three reject an LLM monitor; verification is right that there is nothing on disk to monitor pre-compute; the survey's monitor worked on *constraints*, which here are two checkable facts. |
+| **Q2 breadth** | **DO the leg rule; policy, not dispatcher.** In `claims-table.ts`: a replicate-mode estimate with an executed route (`via … [job]`) and a route string different from the producer's counts as a comparable leg (can form `converging`, can supersede); same-route-string ⇒ wiring; model id recorded, same-model-same-route ⇒ wiring. `brain.md`: on the top disputed *frame* row, spawn up to `LUXAS_BREADTH_K` (default 2) route-assigned replicators, routes taken from the reviewer's DISCRIMINATOR lines; breadth budget `LUXAS_BREADTH_FRAC` (default 0.15 of the cap); never on rows already converging. No K-dispatcher, no meta-reviewer. | Search's insight is the one that converts ~$25 of existing replicator spend from "can only dispute" to "can settle"; verification's toy-dispute worry is answered by requiring an executed route and an assigned, different route string; operator's caps bound it. |
+| **Q3 detectors** | **DO anchor-exfiltration (cap to `indicative`)**: own value = any `invariants.*` leaf or anchored `value_b` to 1e-6 with no job owned by that experiment whose command names the producing script. **DO best-of-N as advisory + Methods line**: job registry shows > 1 run for the id and results.json reports one → issue "runs executed N, reported k — state the selection policy"; `ledger_writer`/`report_writer` prompt: "runs executed: N; reported: run_k because …". **REJECT test-mode detection** (no stable signature; false positives get ignored). | Unanimous on the first; the survey's disclosure checklist (attempt counts + selection policy) settles the second as a report obligation first, gate second. |
+| **Q4 binding revise** | **DO — the highest trust-per-dollar item.** (a) `reportIntegrityIssues`: an experiment whose latest `experiment_review_*_r<max>.md` says `VERDICT: revise` blocks finish unless the ledger section's Limitations (or `computed.reviewer_open_issues[]`) quotes the feedback's first sentence — the flaw must reach the artifact the referee reads. (b) `buildClaimTable`: quantities of such an experiment are capped `indicative` until a `finding_answered: <locator>` line exists. Fixture: `claims-ppss` E1 r3 (revise at cap). | All three converge; it is "compare the report to the run directory" for the one artifact pair Luxas already produces and never compares. |
+| **Q5 abstention** | **DO as a render obligation, derived not chosen.** A frame headline id that is `disputed`/`conditional` at finish must appear in the abstract as "we could not determine <observable> (<routes> give v₁, v₂; discriminator: …)" — the row's reason, verbatim; the number itself stays banned. An abstained frame id counts as neither disclosure nor block for the finish gate. Gate: claim-status issue requires the sentence (id or observable present in the abstract). | Verification's render-cap and search's render-status are the same thing; operator's brain-settable state is rejected (the brain must not decide when to give up). Removes the "second disclosure" escalation on exactly the rows breadth already tried on. |
+| **Q6 operator queue** | **P1, minimal, after one run under Q4+Q5.** Build `luxas answer` + `queue.jsonl`/`answers.jsonl` + `<operator_pending>` + default-on-timeout + `decisions[]` → Methods paragraph; no mail, no chat. Trigger only where a human decision is genuinely required (disclosure countersign, >1 disclosure, descoping a frontier lead) — never for gates the harness can settle. | The two deferrals are right that this week's deadlock was a harness bug, now fixed; the operator is right that the remaining escalations are genuine judgment and that restart-with-`--directive` loses in-flight work. Decide after the counter (escalations per run) is measured under Q4+Q5. |
+| **Q7 prompt vs infra** | **Rule adopted:** if a check reads two artifacts the agent already produced and asserts a relation, it is a gate with a fixture; if it asks the agent to do something well, it is a prompt. Gates this cycle: Q4, Q3-anchor, Q2 leg/wiring rules, Q5 sentence check, Q1 route lint. Prompts: Q1 wording, breadth policy, selection-policy line, abstention wording, "compute before you flag". | Unanimous, and it is CLAUDE.md's rule. |
+
+**Refused this cycle (unanimous or 2–1):** an LLM pre-compute monitor; Elo tournaments, evolution, meta-reviewers; a K-estimate dispatcher/allocator; mechanical INDEPENDENT from "different agent"; test-mode detection; a chat/web operator surface; cutting review iterations or the blind cap as savings (the cost lens' one rejected item — round 3 of E1 was the round that computed).
+
+**Adopted as policy:** the operator's budget envelope (review ≤ 30 %, figures ≤ 12 % of project cost; `usage.log` by agent type is the counter).
+
+## 3. Plan
+
+**P0 (gates + prompts, no model spend to build, one diff each with fixture):**
+1. Q4 revise-carried-forward: finish block + `indicative` cap + `finding_answered:` line.
+2. Q2 leg rule: replicate legs count; route-string wiring; model id in estimates; supersession treats replicate legs as later.
+3. Q3 anchor-exfiltration cap; best-of-N advisory issue.
+4. Q5 abstention sentence obligation for disputed/conditional frame ids.
+5. Q1 route lint on `cross_validation_plan` + the Phase-1 sentence.
+6. Prompts: `brain.md` breadth policy (`LUXAS_BREADTH_K`, `LUXAS_BREADTH_FRAC`); `report_writer.md` Methods paragraph "runs executed / reported / selection policy / human decisions"; `experiment_reviewer.md` `finding_answered:` grammar.
+
+**P1:** minimal operator queue; context-block change log with its `claims_dispatch` consumer; the figure items still open in `design-figures-v2.md`.
+
+**Measurement run:** finish pp-vs-ss under P0 (needs credit; ~$25), then one project from scratch. Counters below, written before the run.
+
+## 4. Counters (decided now)
+
+| counter | baseline (pp-vs-ss) | target |
+|---|---|---|
+| `revise`-at-cap experiments whose ledger carries the flaw | 0 of 1 | 1 of 1 |
+| headline rows `converging`/`corroborated` at finish | 0 | ≥ 2 (the leg rule) |
+| replicator spawns / rows settled | 17 / 0 | ≤ 8 / ≥ 2 |
+| disclosures used | 2 | ≤ 1 |
+| abstentions rendered for frame ids | 0 | = disputed frame rows at finish |
+| anchor-exfiltration hits (manually read) | — | count, then judge |
+| review share of cost / figure share | 30 % / 23 % | ≤ 30 % / ≤ 12 % |
+| operator touches per run | 3 restarts | ≤ 1 |
+| total | $128, no finish | ≤ $130 with finish |
