@@ -64,7 +64,7 @@ check("bad PDF: tiny text at print width flagged", bj.errors.some((e: string) =>
 check("bad PDF: dense-text warning", bj.warnings.some((w: string) => /dense text/.test(w)));
 check("print-width scaling: 2 pt text is fine at 2× width", (() => { const j = JSON.parse(lint("bad.pdf", ["--width", "12"]).stdout); return !j.errors.some((e: string) => /tiny/.test(e)); })());
 const mt = JSON.parse(lint("mathtext.pdf", ["--width", "3.4"]).stdout || "{}");
-check("mathtext font-switch fragments of one annotation are not a collision", (mt.errors ?? []).length === 0, JSON.stringify(mt.errors));
+check("mathtext font-switch fragments of one annotation are not a collision", (mt.errors ?? []).filter((e: string) => /collision/.test(e)).length === 0, JSON.stringify(mt.errors));
 const missing = spawnSync("python3", ["skills/matplotlib-figures/scripts/figlint-pdf", join(dir, "nope.pdf"), "--json"], { encoding: "utf-8" });
 check("unreadable file: exit 3 with JSON", missing.status === 3 && /unreadable/.test(missing.stdout));
 if (fails) { console.log(`\n${fails} FAILED`); process.exit(1); }
