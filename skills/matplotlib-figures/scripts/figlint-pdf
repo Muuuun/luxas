@@ -58,7 +58,8 @@ def lint_pdf(path, width_in=None, min_pt=5.0, max_spans=40):
             text = "".join(sp["text"] for sp in spans)
             sizes = [(sp.get("size", 0.0), len(sp["text"].strip())) for sp in spans]
             d_ = line.get("dir", (1, 0))
-            lines_out.append({"text": text, "bbox": (x0, y0, x1, y1), "sizes": sizes, "rotated": abs(d_[1]) > 0.1})
+            lines_out.append({"text": text, "bbox": (x0, y0, x1, y1), "sizes": sizes, "rotated": abs(d_[1]) > 0.1,
+                              "pieces": [(text, (x0, y0, x1, y1), max((sz for sz, _ in sizes), default=0.0))]})
     # Merge fragments of one visual line: a font switch (mathtext Ω, μ, a bold
     # run) makes PyMuPDF emit separate "lines" on the same baseline that abut or
     # overlap — they are one label, not a collision (fig4 "…, Ω = 160 MHz").
@@ -85,10 +86,22 @@ def lint_pdf(path, width_in=None, min_pt=5.0, max_spans=40):
                     abutting.append(f'abutting labels "{ta[:30]}" | "{tb[:30]}" — separate labels set with no gap; move one')
                     merged.append(dict(ln)); continue
                 m["bbox"] = (min(ax0, bx0), min(ay0, by0), max(ax1, bx1), max(ay1, by1))
-                m["text"] += ln["text"]; m["sizes"] += ln["sizes"]
+                m["text"] += ln["text"]; m["sizes"] += ln["sizes"]; m["pieces"] = m.get("pieces", []) + ln.get("pieces", [])
                 continue
         merged.append(dict(ln))
     lines_out = merged
+    # A 1–2 glyph piece flush at the END or START of a merged line, at the SAME size and
+    # baseline as its neighbour, is a separate label set against another ("R≈5.5 µm"+"ẑ",
+    # fig1 2026-08-29); a sub/superscript is smaller and baseline-shifted, so it passes.
+    for ln in lines_out:
+        pcs = ln.get("pieces", [])
+        if len(pcs) < 2:
+            continue
+        for (short, long_) in ((pcs[-1], pcs[-2]), (pcs[0], pcs[1])):
+            st, sb, ss = short; lt, lb, ls_ = long_
+            if 1 <= len(st.strip()) <= 2 and len(lt.strip()) >= 3 and ss > 0 and ls_ > 0 and abs(ss - ls_) <= 0.2 * ls_ and abs(sb[3] - lb[3]) <= 0.25 * ls_ and lt.strip()[-1:].isalnum():
+                abutting.append(f'label "{lt.strip()[:30]}" set flush against "{st.strip()}" — no gap between two labels; move one')
+                break
     errors.extend(abutting[:4])
     seen = set()
     for i in range(len(lines_out)):
@@ -116,7 +129,13 @@ def lint_pdf(path, width_in=None, min_pt=5.0, max_spans=40):
                 # fallback splitting one label into baseline-shifted spans (Linux DejaVu); a
                 # TikZ/CM label never contains them, so such pairs are one label, not two.
                 mathfrag = any(0x1D400 <= ord(ch) <= 0x1D7FF for ch in a["text"] + b["text"])
-                if not mathfrag and gapx < 1.0 and hmin > 0 and vo_ >= 0.3 * hmin and len(a["text"].strip()) >= 3 and len(b["text"].strip()) >= 3:
+                la, lb_ = len(a["text"].strip()), len(b["text"].strip())
+                sza = max((sz for sz, _ in a["sizes"]), default=0.0); szb = max((sz for sz, _ in b["sizes"]), default=0.0)
+                nested = (ax0_ >= bx0_ - 2 and ax1_ <= bx1_ + 2) or (bx0_ >= ax0_ - 2 and bx1_ <= ax1_ + 2)
+                # a 1–2 glyph label ("ẑ") flush against a longer one counts when it is the same
+                # size and not nested (a sub/superscript is smaller and sits inside the range)
+                short_ok = min(la, lb_) >= 1 and max(la, lb_) >= 3 and sza > 0 and szb > 0 and abs(sza - szb) <= 0.2 * max(sza, szb) and not nested
+                if not mathfrag and gapx < 1.0 and hmin > 0 and vo_ >= 0.3 * hmin and ((la >= 3 and lb_ >= 3) or short_ok):
                     key = (a["text"][:30], b["text"][:30])
                     if key not in seen:
                         seen.add(key); errors.append(f'touching labels "{a["text"][:30]}" | "{b["text"][:30]}" — no gap between two labels; move one')

@@ -95,6 +95,8 @@ def _occupancy(ax):
         pts.append(disp)
     pts = np.vstack(pts) if pts else np.zeros((0, 2))
     boxes = [t.get_window_extent(r) for t in ax.texts if t.get_text()]
+    for lab in list(ax.get_xticklabels()) + list(ax.get_yticklabels()):   # tick labels are obstacles too
+        if lab.get_text() and lab.get_visible(): boxes.append(lab.get_window_extent(r))
     if ax.get_legend(): boxes.append(ax.get_legend().get_window_extent(r))
     return pts, boxes, ax.get_window_extent(r)
 
@@ -253,7 +255,7 @@ def _polar(ax, p, colors):
     for r_ in p.get("reflines", []):
         if r_["axis"] == "theta":
             ax.plot([np.deg2rad(r_["value"])] * 2, [0, ax.get_rmax()], color=GREY, lw=0.7, ls=(0, (4, 3)))
-            ax.text(np.deg2rad(r_["value"]), ax.get_rmax() * 1.22, _tex(r_["label"]), ha="center", va="center", fontsize=7, color=GREY)
+            p.setdefault("_late", []).append(("polarref", r_))
         else:
             ax.plot(np.linspace(0, 2 * np.pi, 200), [r_["value"]] * 200, color=GREY, lw=0.7, ls=(0, (4, 3)))
     ax.set_rlabel_position(p.get("rlabel_deg", 112)); ax.tick_params(labelsize=7); ax.grid(True, lw=0.3, alpha=0.5)
@@ -304,7 +306,12 @@ def render(spec, out):
     # Pass 2 — text, each placement measured against the final geometry.
     for ax, p, ends in zip(axes, panels, ends_by_panel):
         if p.get("type") in ("heatmap", "polar"):
-            _highlight(ax, p) if p.get("type") == "heatmap" else None
+            if p.get("type") == "heatmap": _highlight(ax, p)
+            for kind, r_ in p.get("_late", []):
+                if kind != "polarref": continue
+                anchor = ax.transData.transform((np.deg2rad(r_["value"]), ax.get_rmax() * 1.16))
+                t = place_text(ax, _tex(r_["label"]), anchor, [(0, 0), (0, 9), (0, -9), (9, 0), (-9, 0), (0, 18), (9, 9), (-9, 9)], allow_outside=True, fontsize=7, color=GREY)
+                if t is None: print("polar refline label did not fit:", r_["label"], file=sys.stderr)
             continue
         _direct_labels(ax, ends)
         for kind, obj in p.get("_late", []):
