@@ -655,7 +655,8 @@ export function createSpawnAgentTool(
             const reviewLines = extractReviewerLines(verdictText);
             const missing = reviewCompleteness(reviewLines, headlineIds);
             const verdictLineMatch = verdictText.match(/^\s*#{0,6}\s*VERDICT:\s*\w+.*$/im);
-            try { persistReview(projectDir, experimentId, round, blindLines, reviewLines, verdictLineMatch ? verdictLineMatch[0].trim() : "VERDICT: (none)", missing); }
+            const feedbackForFile = (verdictText.match(/FEEDBACK:\s*([\s\S]*?)$/i) ?? [])[1];
+            try { persistReview(projectDir, experimentId, round, blindLines, reviewLines, verdictLineMatch ? verdictLineMatch[0].trim() : "VERDICT: (none)", missing, feedbackForFile); }
             catch (err) { claimNotes.push(`[review persistence failed round ${round}: ${(err as Error).message.slice(0, 100)}]`); }
             if (missing.length > 0) claimNotes.push(`[experiment_reviewer round ${round}: NO REVIEW for ${missing.join(", ")} — DISCRIMINATOR/SCALING lines missing; attestations withheld]`);
             // Anchor to a standalone verdict line — reviewer.md emits

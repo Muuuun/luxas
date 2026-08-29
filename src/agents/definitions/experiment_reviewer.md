@@ -89,7 +89,7 @@ FEEDBACK:
 - Issue 3: <...>
 ```
 
-The FEEDBACK block is machine-parsed and will be injected verbatim into the experiment agent's next-round prompt. Be specific and actionable. Not "improve the red team" but "compute forward scattering via full eigenmode-sum using data/prior_project/runs/run_0/eigendata_N2000.npz and compare t_revival to single-Γ_eff prediction in Table 1". Each feedback item should map to one concrete file edit or one tool re-run.
+The FEEDBACK block is machine-parsed, persisted to reviews/experiment_review_<EID>_r<N>.md, and injected verbatim into the experiment agent's next-round prompt. **Its first sentence names the flaw** (one sentence, ≥ 12 words, concrete: which quantity/artifact, what is wrong) — at the iteration cap the finish gate requires the ledger to quote or answer exactly that sentence (v3 D1, 2026-08-29). Be specific and actionable. Not "improve the red team" but "compute forward scattering via full eigenmode-sum using data/prior_project/runs/run_0/eigendata_N2000.npz and compare t_revival to single-Γ_eff prediction in Table 1". Each feedback item should map to one concrete file edit or one tool re-run.
 
 Bar: revise liberally. A false negative (weak conclusion passes) is far more expensive than an extra iteration. Errs on the side of demanding rigor.
 </verdict_format>

@@ -56,6 +56,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { listExperimentDirs } from "./tools/report-integrity.js";
+import { openReviewFindings } from "./claims-review.js";
 
 // ── types ──────────────────────────────────────────────────────────────────
 
@@ -654,6 +655,21 @@ export function buildClaimTable(projectDir: string): ClaimTable {
     if (t.status !== "disputed" && t.status !== "disclosed") { t.status = "disputed"; t.reasons.push(`disputed by propagation from ${id}`); }
     intrinsic.set(up, t);
   }
+  // v3 D1: quantities of an experiment whose latest review is `revise` with an
+  // unanswered finding are capped at indicative (the flaw is open).
+  const openFindings = openReviewFindings(projectDir);
+  for (const id of ids) {
+    const cur = intrinsic.get(id)!;
+    for (const d of declsById.get(id) ?? []) {
+      const f = openFindings.get(d.experiment);
+      if (f && !f.answered) {
+        if (cur.status === "corroborated" || cur.status === "converging") cur.status = "indicative";
+        const line = `reviewer finding open (${f.experiment} round ${f.round}): "${f.sentence.slice(0, 120)}" — answer it with finding_answered: <locator> in the ledger`;
+        if (!cur.reasons.includes(line)) cur.reasons.push(line);
+        break;
+      }
+    }
+  }
   // Conditional via disputed/disclosed/conditional inputs — fixed point.
   // (Design §3.4 also lists `indicative` inputs; not applied — it would make
   // nearly every quantity conditional. Recorded deviation.)
@@ -707,6 +723,11 @@ const LEGAL_MOVES = `Legal moves: run the discriminating computation (a comparab
 export function claimTableIssues(projectDir: string, table: ClaimTable = buildClaimTable(projectDir)): ClaimIssue[] {
   if (!table.declared) return [];
   const issues: ClaimIssue[] = [];
+  // v3 D1: an open reviewer finding must reach the ledger before finish.
+  for (const f of openReviewFindings(projectDir).values()) {
+    if (f.answered || f.quoted) continue;
+    issues.push({ blocking: true, text: `[review-open] ${f.experiment}: the latest experiment_reviewer round (${f.round}) voted REVISE and its finding never reached the ledger: "${f.sentence.slice(0, 200)}". In the experiment's L2 section (### Limitations) add either \`finding_answered: <one clause> — <locator: path:line | job_id | results.json key>\` (then the quantities lift from indicative) or \`finding_open: "<the reviewer's sentence, verbatim>"\` (ships with the flaw disclosed). A diagnosed flaw that stays in a spawn result is the 82.5 % failure.` });
+  }
   if (table.malformed.length > 0) issues.push({ blocking: true, text: `Malformed quantity declarations:\n  - ${table.malformed.join("\n  - ")}` });
   for (const d of table.readsDrops) issues.push({ blocking: true, text: `Verdict reads-diff: ${d}. Name the replacement in verdicts[].replaces (it must be a quantity this verdict reads) or restore the read.` });
   // Premises that never entered the evidence (non-blocking; v2 2026-08-29).

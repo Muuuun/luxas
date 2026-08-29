@@ -25,7 +25,7 @@
  *    review can supply them).
  */
 
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync , readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseFrameHeadline, buildClaimTable, ESTIMATE_LINE_RE, type ClaimTable, type QuantityDecl } from "./claims-table.js";
 
@@ -150,7 +150,7 @@ export function extractBlindEstimate(text: string, quantityId: string): string |
 }
 
 /** Write reviews/experiment_review_<EID>_r<round>.md — the file claims-table.ts reads. */
-export function persistReview(projectDir: string, experimentId: string, round: number, blindLines: string[], reviewerLines: ReviewLine[], verdictLine: string, missing: string[]): string {
+export function persistReview(projectDir: string, experimentId: string, round: number, blindLines: string[], reviewerLines: ReviewLine[], verdictLine: string, missing: string[], feedback?: string): string {
   const dir = join(projectDir, "reviews");
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   const path = join(dir, `experiment_review_${experimentId}_r${round}.md`);
@@ -169,11 +169,86 @@ export function persistReview(projectDir: string, experimentId: string, round: n
     ``,
     missing.length ? `REVIEW-INCOMPLETE: no DISCRIMINATOR+SCALING for ${missing.join(", ")} — NO REVIEW for those quantities; attestation lines withheld` : `REVIEW-COMPLETE`,
     verdictLine,
+    // v3 D1 (2026-08-29): the reviewer's feedback used to live only in the
+    // spawn result the brain read once; at the iteration cap it vanished.
+    // Persisted here so finish() can require the flaw to reach the ledger.
+    ...(feedback && feedback.trim() ? [``, `FEEDBACK:`, feedback.trim().slice(0, 1200)] : []),
     ``,
   ].join("\n");
   writeFileSync(path, body);
   return path;
 }
+
+// ── v3 D1: revise carried forward ──────────────────────────────────────────
+//
+// The 100-task AutoResearch diagnostic: in 82.5 % of failed runs the agent
+// diagnosed a critical flaw during self-review and reported the unrevised
+// conclusion. Luxas encoded exactly that: `VERDICT: revise` at the iteration
+// cap went into a spawn result, the ledger stayed `Complete`. Now: the flaw
+// must reach the artifact the referee reads — the L2 section quotes it
+// (`finding_open:`) or answers it with a locator (`finding_answered:`).
+export interface OpenFinding { experiment: string; round: number; sentence: string; feedback: string; answered: boolean; quoted: boolean }
+
+const LOCATOR_RE = /(?:[\w./-]+\.(?:py|json|csv|npz|tex|md):\d+|job_[0-9a-f]{6,}|results\.json|runs\/run_\d+|computed\.[\w.]+)/;
+function firstSentence(text: string): string {
+  const t = text.replace(/\s+/g, " ").trim();
+  const m = t.match(/^(.{20,}?[.!?])(\s|$)/);
+  return (m ? m[1] : t.slice(0, 200)).trim();
+}
+function wordTokens(s: string): string[] { return s.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").split(/\s+/).filter((w) => w.length > 0); }
+/** True when `haystack` contains any 8-token window of `needle` (verbatim quote, punctuation-insensitive). */
+export function quotesSentence(haystack: string, needle: string, window = 8): boolean {
+  const h = wordTokens(haystack).join(" ");
+  const n = wordTokens(needle);
+  if (n.length < window) return n.length > 0 && h.includes(n.join(" "));
+  for (let i = 0; i + window <= n.length; i++) if (h.includes(n.slice(i, i + window).join(" "))) return true;
+  return false;
+}
+
+/** Experiments whose latest review is `revise` with a FEEDBACK block, and how the ledger/results answered it. */
+export function openReviewFindings(projectDir: string): Map<string, OpenFinding> {
+  const out = new Map<string, OpenFinding>();
+  if (process.env.LUXAS_REVISE_BINDING === "0") return out;
+  const dir = join(projectDir, "reviews");
+  if (!existsSync(dir)) return out;
+  const latest = new Map<string, { round: number; file: string }>();
+  for (const f of readdirSync(dir)) {
+    const m = f.match(/^experiment_review_(.+)_r(\d+)\.md$/);
+    if (!m) continue;
+    const r = parseInt(m[2], 10);
+    const cur = latest.get(m[1]);
+    if (!cur || r > cur.round) latest.set(m[1], { round: r, file: join(dir, f) });
+  }
+  let ledger = "";
+  try { ledger = readFileSync(join(projectDir, "notes", "experiments.md"), "utf-8"); } catch { /* none */ }
+  for (const [eid, { round, file }] of latest) {
+    let text = "";
+    try { text = readFileSync(file, "utf-8"); } catch { continue; }
+    if (!/^\s*#{0,6}\s*VERDICT:\s*revise\b/im.test(text)) continue;
+    const fb = text.match(/^FEEDBACK:\s*\n([\s\S]*)$/m);
+    if (!fb || !fb[1].trim()) continue;
+    const feedback = fb[1].trim();
+    const sentence = firstSentence(feedback);
+    const e = experimentNumberOf(eid) ?? eid;
+    // The ledger section for this experiment (## L2.N …) and results.json open-issues.
+    const n = e.replace(/^E/, "");
+    const sec = ledger.match(new RegExp(`(?:^|\\n)##\\s+L2\\.${n}\\b[\\s\\S]*?(?=\\n##\\s|$)`));
+    let section = sec ? sec[0] : "";
+    try {
+      const runs = join(projectDir, "data", "experiments", eid, "runs");
+      for (const r of readdirSync(runs)) {
+        const j = JSON.parse(readFileSync(join(runs, r, "results.json"), "utf-8"));
+        const ro = j?.computed?.reviewer_open_issues;
+        if (Array.isArray(ro)) section += "\n" + ro.map((x: unknown) => typeof x === "string" ? x : JSON.stringify(x)).join("\n");
+      }
+    } catch { /* no runs */ }
+    const answered = [...section.matchAll(/finding_answered:\s*([^\n]*)/gi)].some((m) => LOCATOR_RE.test(m[1]));
+    const quoted = [...section.matchAll(/finding_open:\s*([^\n]*)/gi)].some((m) => quotesSentence(m[1], sentence));
+    out.set(e, { experiment: e, round, sentence, feedback, answered, quoted });
+  }
+  return out;
+}
+
 
 /** Headline ids (this experiment's) for the reviewer prompt, plus the rendered blind lines. */
 export function reviewerObligationBlock(headlineIds: string[], blindLines: string[]): string {

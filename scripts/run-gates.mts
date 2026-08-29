@@ -92,6 +92,7 @@ const MANIFEST: Record<string, GateSpec> = {
 	smoke_pi_stop_settling: { kind: "assert" },
 	smoke_figplace: { kind: "assert" },
 	smoke_schematic_template: { kind: "assert" },
+	smoke_revise_binding: { kind: "assert" },
 	smoke_claim_table_colocated: { kind: "assert" },
 	smoke_overflow_backstop: { kind: "assert" },
 	smoke_prior_art_gate: { kind: "assert" },
