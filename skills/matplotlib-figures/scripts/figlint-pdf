@@ -67,7 +67,7 @@ def lint_pdf(path, width_in=None, min_pt=5.0, max_spans=40):
         size = max((sz for sz, _ in ln["sizes"]), default=0.0)
         return size > 0 and (y1 - y0) <= 2.4 * size  # rotated / multi-line boxes never merge (Ω/μ glyph runs report taller boxes)
     lines_out.sort(key=lambda ln: (round(ln["bbox"][1], 1), ln["bbox"][0]))
-    merged = []
+    merged = []; abutting = []
     for ln in lines_out:
         if merged and horizontal(ln) and horizontal(merged[-1]):
             m = merged[-1]
@@ -77,11 +77,19 @@ def lint_pdf(path, width_in=None, min_pt=5.0, max_spans=40):
             em = max(h, 1.0)
             # adjacent (gap ≤ 0.6 em) or barely overlapping (≤ 0.3 em, kerning) — never two labels laid over each other
             if h > 0 and vo >= 0.6 * h and (ax1 - 0.3 * em) <= bx0 <= (ax1 + 0.6 * em):
+                # Two word-runs (≥ 4 chars, each with a space) that abut are two labels set too
+                # close, not a font switch inside one label (fig1 2026-08-29: "1 μm" ran into
+                # "interaction gate, …" on the same baseline and merged silently).
+                ta, tb = m["text"].strip(), ln["text"].strip()
+                if len(ta) >= 4 and len(tb) >= 4 and " " in ta and " " in tb and bx0 >= ax1 - 0.3 * em:
+                    abutting.append(f'abutting labels "{ta[:30]}" | "{tb[:30]}" — separate labels set with no gap; move one')
+                    merged.append(dict(ln)); continue
                 m["bbox"] = (min(ax0, bx0), min(ay0, by0), max(ax1, bx1), max(ay1, by1))
                 m["text"] += ln["text"]; m["sizes"] += ln["sizes"]
                 continue
         merged.append(dict(ln))
     lines_out = merged
+    errors.extend(abutting[:4])
     seen = set()
     for i in range(len(lines_out)):
         for j in range(i + 1, len(lines_out)):
