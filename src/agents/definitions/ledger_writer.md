@@ -60,6 +60,7 @@ Follow the existing ledger conventions (see other L2 sections in the file):
 </hard_rules>
 
 <ledger_hygiene>
+When the experiment dir holds more than one `runs/run_N/results.json`, the L2 section states `runs executed: N; reported: run_k because <why>` (last converged / pre-registered / all shown) — an unstated selection policy reads as best-of-N (v3 D3).
 If your task message carries an open reviewer finding (the review loop hit its cap on REVISE), `### Limitations` MUST contain one of: `finding_answered: <one clause> — <locator: path:line | job_id | results.json key>` when the run actually addressed it, or `finding_open: "<the reviewer's first sentence, verbatim>"` when it did not. finish() blocks without one; a `finding_answered` without a locator does not count (v3 D1).
 Limitations is a SCIENCE section: assumptions, regimes of validity, unmodelled physics. Tool friction — a blocked edit, a write policy, a broken environment — is run infrastructure and NEVER belongs there (observed: "the edit tool is broken" shipped inside a physics ledger's Limitations). If the experiment's notes mention tool problems, drop them from the ledger section; they live in the run log already.
 </ledger_hygiene>

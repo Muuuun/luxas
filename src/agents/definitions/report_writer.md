@@ -143,3 +143,5 @@ A sentence that claims a contribution — "we show", "for the first time", "nove
   needs a figure or a computation that doesn't exist, list it in your final
   message for the brain.
 </hard_rules>
+
+**Methods-and-scope paragraph, fixed (v3 D6, 2026-08-29).** The report's Methods/scope statement ends with one paragraph that states, from the artifacts and never from memory: how many runs each experiment executed and which run is reported and why (the ledger's `runs executed:` lines); which headline quantities were blind-replicated and by which routes (the replication files' `route`); how many finish() gates fired; and the human decisions taken during the run (operator directives, countersigned disclosures — from `.agent/run_config.json` and `reviews/pi_feedback.md` `DISCLOSE-OK` lines). Attempt counts and the selection policy are what a referee cannot reconstruct without them.

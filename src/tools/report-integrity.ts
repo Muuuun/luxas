@@ -35,7 +35,7 @@ import { extractFrontmatterBlock, parseAuditFrontmatter } from "../utils.js";
 import { claimTableIssues } from "../claims-table.js";
 
 export interface IntegrityIssue {
-  kind: "number-provenance" | "experiment-citation" | "disclosure" | "results-schema" | "harness-vocab" | "outline" | "method-blocked" | "claim-status";
+  kind: "number-provenance" | "experiment-citation" | "disclosure" | "results-schema" | "harness-vocab" | "outline" | "method-blocked" | "claim-status" | "selection-policy";
   blocking: boolean;
   text: string;
   /**
@@ -1357,6 +1357,23 @@ export function reportIntegrityIssues(projectDir: string): IntegrityIssue[] {
   // that declares no computed.quantities[] gets no issues here.
   try {
     for (const ci of claimTableIssues(projectDir)) issues.push({ kind: "claim-status", blocking: ci.blocking, pushbackExempt: true, text: ci.text });
+    // v3 D3: best-of-N — several runs, one reported, no stated selection policy
+    // (the verification-gap survey's first disclosure item). Advisory; the
+    // Methods paragraph is the consumer.
+    try {
+      let ledger = "";
+      try { ledger = readFileSync(join(projectDir, "notes", "experiments.md"), "utf-8"); } catch { /* none */ }
+      for (const e of listExperimentDirs(projectDir)) {
+        const runsDir = join(e.dir, "runs");
+        if (!existsSync(runsDir)) continue;
+        const runs = readdirSync(runsDir).filter((r) => /^run_\d+$/.test(r) && existsSync(join(runsDir, r, "results.json")));
+        if (runs.length < 2) continue;
+        const n = e.id.replace(/^E/, "");
+        const sec = ledger.match(new RegExp(`(?:^|\\n)##\\s+L2\\.${n}\\b[\\s\\S]*?(?=\\n##\\s|$)`));
+        if (sec && /runs executed:\s*\d+/i.test(sec[0])) continue;
+        issues.push({ kind: "selection-policy", blocking: false, text: `${e.id}: ${runs.length} runs carry a results.json (${runs.join(", ")}) and the ledger states no selection policy. Add to its L2 section: "runs executed: ${runs.length}; reported: run_<k> because <why — last converged / pre-registered / all shown>" — best-of-N with the policy unstated is the cheapest way to report a lucky run as the result.` });
+      }
+    } catch { /* advisory */ }
   } catch (err) {
     issues.push({ kind: "claim-status", blocking: false, text: `claim table could not be built: ${(err as Error).message.slice(0, 120)}` });
   }

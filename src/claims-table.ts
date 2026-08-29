@@ -54,9 +54,10 @@
  */
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, basename } from "node:path";
 import { listExperimentDirs } from "./tools/report-integrity.js";
 import { openReviewFindings, sameRoute } from "./claims-review.js";
+import { listJobIds, readState } from "./jobs/registry.js";
 
 // ── types ──────────────────────────────────────────────────────────────────
 
@@ -168,10 +169,34 @@ function leafAt(obj: any, dotted: string): unknown {
   return cur;
 }
 
-interface Parsed { quantities: QuantityDecl[]; verdicts: VerdictDecl[]; estimates: Estimate[]; malformed: string[] }
+interface Parsed { quantities: QuantityDecl[]; verdicts: VerdictDecl[]; estimates: Estimate[]; malformed: string[]; anchors: { key: string; value: number }[] }
+
+/** True when any job in .agent/jobs ran a file under data/experiments/<dir>/scripts (the producing computation exists). */
+export function experimentRanScripts(projectDir: string, expDirName: string): boolean {
+  try {
+    for (const id of listJobIds(projectDir)) {
+      const st = readState(projectDir, id);
+      const cmd = String(st?.command ?? "");
+      if (cmd.includes(`${expDirName}/scripts/`) || (String(st?.ownerAgentId ?? "").includes("experiment") && /\bscripts\/[\w.-]+\.py\b/.test(cmd) && cmd.includes(expDirName))) return true;
+    }
+  } catch { /* no jobs dir */ }
+  return false;
+}
+
+/** Numeric leaves under `invariants` (literature inputs), recursively, with their dotted keys. */
+function invariantLeaves(inv: unknown, prefix = "invariants"): { key: string; value: number }[] {
+  const out: { key: string; value: number }[] = [];
+  const walk = (v: unknown, k: string) => {
+    if (typeof v === "number" && Number.isFinite(v)) out.push({ key: k, value: v });
+    else if (Array.isArray(v)) v.forEach((x, i) => walk(x, `${k}[${i}]`));
+    else if (v && typeof v === "object") for (const [kk, vv] of Object.entries(v as Record<string, unknown>)) if (!/^(source|quote|anchored_to)$/.test(kk)) walk(vv, `${k}.${kk}`);
+  };
+  walk(inv, prefix);
+  return out;
+}
 
 function parseExperiment(id: string, j: any): Parsed {
-  const out: Parsed = { quantities: [], verdicts: [], estimates: [], malformed: [] };
+  const out: Parsed = { quantities: [], verdicts: [], estimates: [], malformed: [], anchors: invariantLeaves(j?.invariants) };
   const computed = j?.computed;
   if (!computed || typeof computed !== "object") return out;
   const qs = computed.quantities;
@@ -490,6 +515,8 @@ export function buildClaimTable(projectDir: string): ClaimTable {
   const verdicts: VerdictDecl[] = [];
   const estimates: Estimate[] = [];
   const malformed: string[] = [];
+  const anchorsByExp = new Map<string, { key: string; value: number }[]>();
+  const dirByExp = new Map<string, string>();
   const notes: string[] = [];
   const dirs = [...listExperimentDirs(projectDir)].sort((x, y) => x.id.localeCompare(y.id, undefined, { numeric: true }));
   for (const e of dirs) {
@@ -498,7 +525,7 @@ export function buildClaimTable(projectDir: string): ClaimTable {
     try { j = JSON.parse(readFileSync(e.latestResults, "utf-8")); }
     catch (err) { malformed.push(`${e.id}: results.json unparseable (${(err as Error).message.slice(0, 60)})`); continue; }
     const p = parseExperiment(e.id, j);
-    decls.push(...p.quantities); verdicts.push(...p.verdicts); estimates.push(...p.estimates); malformed.push(...p.malformed);
+    decls.push(...p.quantities); verdicts.push(...p.verdicts); estimates.push(...p.estimates); malformed.push(...p.malformed); anchorsByExp.set(e.id, [...(anchorsByExp.get(e.id) ?? []), ...p.anchors]); dirByExp.set(e.id, basename(e.dir));
   }
   // Replicator results (design §3.6.2): data/experiments/<dir>/replication/results.json.
   for (const e of dirs) {
@@ -564,6 +591,7 @@ export function buildClaimTable(projectDir: string): ClaimTable {
     const reasons: string[] = [];
     const propagate: string[] = [];
     let disputed = false, agreeingPair = false, anchoredAgree = false;
+    let anchorExfil: string | null = null;
     // Supersession (claims v2 P1, 2026-08-29): a producer estimate is RETIRED
     // when at least two LATER experiments re-measured the id, agree with each
     // other, and each disagrees with it — the discriminators ran and settled
@@ -649,6 +677,18 @@ export function buildClaimTable(projectDir: string): ClaimTable {
       disputed = true;
       reasons.push(`blind reviewer estimate ${bl.value} disagrees with ${flagged.source}=${flagged.value} (unanswered)`);
     }
+    // v3 D3: anchor exfiltration — a "computed" value equal to a literature
+    // input to 1e-6, with no job that ran this experiment's scripts, is the
+    // literature number read back (the cheapest reward hack; 2.4 % base rate
+    // under monitors in the literature). Capped at indicative, never blocked:
+    // a legitimate limiting-case reproduction trips the same test.
+    if (process.env.LUXAS_ANCHOR_EXFIL !== "0") for (const own of producers.filter((e) => e.kind === "own")) {
+      const hit = (anchorsByExp.get(own.experiment ?? "") ?? []).find((a) => a.value !== 0 && relDiff(a.value, own.value) <= 1e-6);
+      if (!hit) continue;
+      const dirName = dirByExp.get(own.experiment ?? "") ?? "";
+      if (dirName && experimentRanScripts(projectDir, dirName)) { reasons.push(`value equals literature input ${hit.key} to 1e-6 — but a job ran this experiment's scripts (reproduction, not exfiltration)`); continue; }
+      anchorExfil = `computed value ${own.value} equals literature input ${hit.key} to 1e-6 with no job that ran data/experiments/${dirName || own.experiment}/scripts — a literature number read back is not a computation; capped at indicative`;
+    }
     for (const s of rev.scaling.filter((s) => s.id === id)) {
       if (s.observed !== undefined && Math.abs(s.observed - s.expected) > SCALING_TOL) { disputed = true; reasons.push(`scaling: observed exponent ${s.observed} vs expected ${s.expected}`); }
     }
@@ -667,6 +707,7 @@ export function buildClaimTable(projectDir: string): ClaimTable {
     else if (agreeingPair && anyOwnSigma) status = "converging";
     else status = "indicative";
     if (!anyOwnSigma && agreeingPair) reasons.push("no σ on own estimate: capped at indicative");
+    if (anchorExfil) { if (status === "corroborated" || status === "converging") status = "indicative"; reasons.push(anchorExfil); }
     intrinsic.set(id, { status, reasons: [...new Set(reasons)], propagate });
   }
   for (const [id, intr] of intrinsic) for (const up of intr.propagate) {
