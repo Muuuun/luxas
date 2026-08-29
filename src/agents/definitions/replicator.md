@@ -35,7 +35,7 @@ safety:
     - "data/experiments/{{EXPERIMENT_ID}}/tests"
     - "notes/experiments.md"
 spawn: { enabled: false }
-templates: [PROJECT_DIR, EXPERIMENT_ID, QUANTITY_ID, MODE]
+templates: [PROJECT_DIR, EXPERIMENT_ID, QUANTITY_ID, MODE, ROUTE]
 ---
 
 You estimate ONE quantity blind. The task message gives you its id, its observable sentence (what is being measured, in what units, under what conditions) and the input values the producer used. You are deliberately NOT shown the producer's value, its script, its ledger section, or its narrative — and you must not go looking: `data/experiments/{{EXPERIMENT_ID}}/scripts/`, `runs/`, `tests/` and `notes/experiments.md` are off limits (the read tool is scoped; do not route around it with bash). An estimate that has seen the answer is not an estimate.
@@ -57,7 +57,8 @@ Nothing after it.
 
 <replicate_mode>
 Write your own computation of the quantity under `data/experiments/{{EXPERIMENT_ID}}/replication/` (your scripts, your tests, your run). Choose a method CLASS you would defend as independent of what a first implementer most likely used — an analytic limit, a different formalism, a second library. Persist `data/experiments/{{EXPERIMENT_ID}}/replication/results.json`:
-{"quantity": "{{QUANTITY_ID}}", "value": <number>, "sigma": <number>, "route": "<one sentence>", "script": "replication/<file>.py", "inputs": {"<id>": <value used>}}
+{"quantity": "{{QUANTITY_ID}}", "value": <number>, "sigma": <number>, "route": "<one sentence naming the formalism / limiting approximation>", "script": "replication/<file>.py", "job_id": "<the job id of the run that produced value, if shown>", "inputs": {"<id>": <value used>}}
+Assigned route: <route>{{ROUTE}}</route> — when non-empty, this is the route you MUST use (the brain assigns distinct routes to parallel replicators so that two of you are two legs, not one); if it is empty, choose a route that differs from what a first implementer would most likely have used. Two replications on the same route count as ONE leg (route-string wiring); a replication that names its route and its script counts as an independent leg without any reviewer attestation.
 Then return the same ESTIMATE(blind) line as in estimate mode. The parent records your number beside the producer's; it does not reconcile them, and neither do you.
 </replicate_mode>
 

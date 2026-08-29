@@ -56,7 +56,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { listExperimentDirs } from "./tools/report-integrity.js";
-import { openReviewFindings } from "./claims-review.js";
+import { openReviewFindings, sameRoute } from "./claims-review.js";
 
 // ── types ──────────────────────────────────────────────────────────────────
 
@@ -88,6 +88,12 @@ export interface Estimate {
   inputs?: Record<string, number>;
   /** Literature / benchmark anchor locator, when the producer supplied one. */
   anchor?: string;
+  /** Route description (formalism / limiting approximation); same route ⇒ wiring (v3 D2). */
+  route?: string;
+  /** Model id that produced a replication/blind estimate; same model + same route ⇒ wiring. */
+  model?: string;
+  /** Executed-computation marker for replications: a script under replication/ or a job id. */
+  job?: string;
 }
 
 export type ClaimStatus = "corroborated" | "converging" | "indicative" | "conditional" | "disputed" | "disclosed";
@@ -241,7 +247,8 @@ function parseExperiment(id: string, j: any): Parsed {
     if (v !== undefined) decl.value = v;
     out.quantities.push(decl);
     if (v !== undefined) {
-      out.estimates.push({ quantity: q.id, value: v, sigma: decl.uncertainty, kind: "own", source: `${id}:${q.key}`, experiment: id, script: `${id}:own`, inputs: decl.inputs });
+      const xvOwn = (Array.isArray(computed.cross_validation) ? computed.cross_validation : []).find((x: any) => String(x?.claim_key ?? "") === q.key);
+      out.estimates.push({ quantity: q.id, value: v, sigma: decl.uncertainty, kind: "own", source: `${id}:${q.key}`, experiment: id, script: `${id}:own`, inputs: decl.inputs, route: typeof xvOwn?.method_a === "string" ? xvOwn.method_a : undefined });
     }
   }
   const vs = computed.verdicts;
@@ -272,7 +279,7 @@ function parseExperiment(id: string, j: any): Parsed {
     out.estimates.push({
       quantity: qid, value: b, sigma: posNum(x?.sigma_b), kind: "xval",
       source: `${id}:xval:${String(x?.method_b ?? "?").slice(0, 40)}`, experiment: id,
-      script: typeof x?.artifact_b === "string" ? x.artifact_b : undefined,
+      script: typeof x?.artifact_b === "string" ? x.artifact_b : undefined, route: typeof x?.method_b === "string" ? x.method_b : undefined,
       inputs: (x?.inputs_b && typeof x.inputs_b === "object") ? x.inputs_b : undefined,
       anchor: typeof x?.anchor === "string" ? x.anchor : undefined,
     });
@@ -331,7 +338,7 @@ export function parseReviewerLines(projectDir: string): ReviewerLines {
           }
         }
         // A blind line with no `via <route>` cannot be judged (v2 plan P0.6): recorded, never flags.
-        const e: Estimate = { quantity: m[2], value: Number(m[3]), sigma: m[4] ? posNum(Number(m[4])) : undefined, kind: m[1] && !producerSupplied && m[5]?.trim() ? "blind" : "posthoc", source: `review:${f}`, script: `review:${f}:${m[5] ?? ""}`, inputs };
+        const e: Estimate = { quantity: m[2], value: Number(m[3]), sigma: m[4] ? posNum(Number(m[4])) : undefined, kind: m[1] && !producerSupplied && m[5]?.trim() ? "blind" : "posthoc", source: `review:${f}`, script: `review:${f}:${m[5] ?? ""}`, inputs, route: m[5]?.trim() || undefined };
         (e.kind === "blind" ? out.blind : out.posthoc).push(e);
         continue;
       }
@@ -420,6 +427,8 @@ export function relation(a: Estimate, b: Estimate): { rel: PairRelation; differi
   const bothInt = Number.isInteger(a.value) && Number.isInteger(b.value);
   if (!bothInt && relDiff(a.value, b.value) < WIRING_REL) return { rel: "wiring", differing: [] };
   if (a.script && b.script && a.script === b.script) return { rel: "wiring", differing: [] };
+  // v3 D2: two names for one route are one leg; same model on the same route too.
+  if (a.route && b.route && sameRoute(a.route, b.route) && (a.kind !== "own" || b.kind !== "own")) return { rel: "wiring", differing: [] };
   const differing: string[] = [];
   if (a.inputs && b.inputs) {
     for (const k of Object.keys(a.inputs)) {
@@ -501,7 +510,9 @@ export function buildClaimTable(projectDir: string): ClaimTable {
       if (typeof r?.quantity !== "string" || v === undefined) { malformed.push(`${e.id}: replication/results.json needs {quantity: string, value: number}`); continue; }
       const inputs: Record<string, number> = {};
       if (r?.inputs && typeof r.inputs === "object") for (const [k, x] of Object.entries(r.inputs)) { const n = num(x); if (n !== undefined) inputs[k] = n; }
-      estimates.push({ quantity: r.quantity, value: v, sigma: posNum(r?.sigma), kind: "replication", source: `${e.id}:replication`, experiment: e.id, script: `replication:${e.id}:${String(r?.script ?? "")}`, inputs });
+      estimates.push({ quantity: r.quantity, value: v, sigma: posNum(r?.sigma), kind: "replication", source: `${e.id}:replication`, experiment: e.id, script: `replication:${e.id}:${String(r?.script ?? "")}`, inputs,
+        route: typeof r?.route === "string" ? r.route : undefined, model: typeof r?.model === "string" ? r.model : undefined,
+        job: typeof r?.job_id === "string" ? r.job_id : (typeof r?.script === "string" && /replication\//.test(r.script) ? r.script : undefined) });
     } catch (err) { malformed.push(`${e.id}: replication/results.json unparseable (${(err as Error).message.slice(0, 60)})`); }
   }
   const declared = decls.length > 0 || verdicts.length > 0;
@@ -562,13 +573,13 @@ export function buildClaimTable(projectDir: string): ClaimTable {
     // Everything from the retired experiment's lineage for this id (its own
     // replication / cross-validation) retires with it.
     const allProducers = es.filter((e) => e.kind !== "blind" && e.kind !== "posthoc");
-    const expNum = (e: Estimate) => { const m = String(e.experiment ?? "").match(/^E_?(\d+)/); return m ? parseInt(m[1], 10) : -1; };
+    const expNum = (e: Estimate) => { const m = String(e.experiment ?? "").match(/^E_?(\d+)/); return (m ? parseInt(m[1], 10) : -1) + (e.kind === "replication" ? 0.5 : 0); };
     const retiredExps = new Set<string>();
     for (const a of allProducers.filter((e) => e.kind === "own")) {
-      const later = allProducers.filter((b) => b.kind === "own" && b.experiment !== a.experiment && expNum(b) > expNum(a) && relation(a, b).rel === "comparable" && agreement(a, b) === "disagree");
+      const later = allProducers.filter((b) => (b.kind === "own" || (b.kind === "replication" && !!b.route && !!b.job)) && !(b.kind === "own" && b.experiment === a.experiment) && expNum(b) > expNum(a) && relation(a, b).rel === "comparable" && agreement(a, b) === "disagree");
       const agreeingLater: Estimate[][] = [];
       for (let i = 0; i < later.length; i++) for (let k = i + 1; k < later.length; k++) {
-        if (later[i].experiment !== later[k].experiment && relation(later[i], later[k]).rel === "comparable" && agreement(later[i], later[k]) === "agree") agreeingLater.push([later[i], later[k]]);
+        if ((later[i].experiment !== later[k].experiment || later[i].kind !== later[k].kind) && relation(later[i], later[k]).rel === "comparable" && agreement(later[i], later[k]) === "agree") agreeingLater.push([later[i], later[k]]);
       }
       if (agreeingLater.length > 0 && a.experiment) {
         retiredExps.add(a.experiment);
@@ -589,12 +600,21 @@ export function buildClaimTable(projectDir: string): ClaimTable {
       }
       if (ag === "disagree") { disputed = true; reasons.push(signOnlyDisagreement(a, b) ? `sign convention: |${a.source}|=${Math.abs(a.value)} ≈ |${b.source}|=${Math.abs(b.value)} but signs differ — pin the convention in \`observable\` (e.g. "negative = attractive") and restate one estimate with a locator; a physics dispute only if the signs survive that` : `disagree: ${a.source}=${a.value} vs ${b.source}=${b.value}`); }
       else if (ag === "agree") {
-        const attested = !headline.has(id) || rev.independent.has(id);
+        // v3 D2: a computing replication on an ASSIGNED route that differs from
+        // its partner's is independent by construction (the harness chose the
+        // route, the replicator never saw the producer's value) — it needs no
+        // INDEPENDENT line to count as a leg.
+        const computingLeg = (x: Estimate) => x.kind === "replication" && !!x.route && !!x.job && process.env.LUXAS_REPLICATE_LEGS !== "0";
+        // An assigned route on the replication side counts as different when the
+        // producer never named its own route (unknown ≠ same); relation() has
+        // already turned two named identical routes into wiring.
+        const routesDiffer = (a.route && b.route) ? !sameRoute(a.route, b.route) : true;
+        const attested = !headline.has(id) || rev.independent.has(id) || ((computingLeg(a) || computingLeg(b)) && routesDiffer);
         if (attested) {
           agreeingPair = true;
           if (a.anchor || b.anchor) anchoredAgree = true;
           reasons.push(`agree: ${a.source} ~ ${b.source}${a.anchor || b.anchor ? " (anchored)" : ""}`);
-        } else reasons.push(`agree but unattested (no INDEPENDENT line): ${a.source} ~ ${b.source}`);
+        } else reasons.push(`agree but unattested (no INDEPENDENT line${(a.kind === "replication" || b.kind === "replication") ? "; replication lacks a route/script or shares the producer's route" : ""}): ${a.source} ~ ${b.source}`);
       } else reasons.push(`undecidable (missing σ): ${a.source} vs ${b.source}`);
     }
     // Blind estimates (design §3.5/§3.6.1, v2 plan P0.1 2026-08-28). A blind

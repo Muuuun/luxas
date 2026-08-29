@@ -11,10 +11,10 @@
 import { Type } from "@earendil-works/pi-ai/compat";
 import type { Agent as AgentType } from "@earendil-works/pi-agent-core";
 import { spawn } from "node:child_process";
-import { spawnAgent, type SpawnAgentOptions } from "../agents/spawn.js";
+import { spawnAgent, resolveModel, type SpawnAgentOptions } from "../agents/spawn.js";
 import { listAgentDescriptions, getDefinition } from "../agents/registry.js";
 import { addAgent, removeAgent, loadRegistry, isAlive, markFailed, tryExtractResult, formatExitHint, parseConvJsonl } from "../active-agents.js";
-import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, realpathSync, unlinkSync, writeSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { join, dirname, sep as pathSep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { pidAlive } from "../utils.js";
@@ -709,6 +709,16 @@ export function createSpawnAgentTool(
         }
       }
 
+      // v3 D2: stamp the model that produced a replication so same-model-same-route is wiring.
+      if (params.agent === "replicator" && mergedTemplateVars.EXPERIMENT_ID) {
+        try {
+          const rp = join(projectDir, "data", "experiments", String(mergedTemplateVars.EXPERIMENT_ID), "replication", "results.json");
+          if (existsSync(rp)) {
+            const j = JSON.parse(readFileSync(rp, "utf-8"));
+            if (j && typeof j === "object" && !j.model) { j.model = String(resolveModel("opus", "replicator")?.id ?? "unknown"); writeFileSync(rp, JSON.stringify(j, null, 2) + "\n"); }
+          }
+        } catch { /* stamping is best-effort */ }
+      }
       return {
         content: [{ type: "text" as const, text: `${cosmetic.notice ? cosmetic.notice + "\n\n" : ""}[agent: ${result.agentId}]\n${result.output}${formatExitHint(result.exit, projectDir)}` }],
         details: { elapsed: result.elapsed, success: result.success, exit: slimExit(result.exit), agentId: result.agentId },
