@@ -9,7 +9,7 @@ description: >
 model: sonnet
 thinkingLevel: medium
 toolSets: [coding, figure-gen]
-safety: { presets: [research_brief, report_surface, notes_ledger], writeOnExistingPolicy: block }
+safety: { presets: [research_brief, report_surface, notes_ledger], writeOnExistingPolicy: block, figureSpecOnly: true }
 spawn: { enabled: false }
 templates: [PROJECT_DIR, EXPERIMENT_ID]
 ---
@@ -29,6 +29,11 @@ that writes it to `runs/run_N/data/<name>.csv` — that script computes, it neve
 Writing matplotlib for a data figure is the failure mode this replaces (five of five figures of the
 2026-08-28 run shipped with free-hand annotations over the data). If the renderer prints
 "did not fit", remove content; never add text. Schematics stay TikZ (`schematic_slots.tex`).
+
+**Label vocabulary is the paper's, typeset.** Every symbol is mathtext (`"$A^{1/6}$"`, `"$A_{\\mathrm{crit}}$"`,
+`"$C_6$ (GHz $\\mu$m$^6$)"`), every axis title carries the symbol and its unit, and no label names an
+experiment, run or agent (`E1 range`, `run_1`, `gate gain`) — write the physics (`settled $A$`,
+`interaction gate`). A reader of the journal never sees your run directory.
 </figspec_mandatory>
 
 <environment>
@@ -90,24 +95,21 @@ each underspecified decision.
 2. **Read `report/figures/style_guide.md`** if it exists — palette hex,
    font sizes, line weights. Use those as defaults. Don't invent colors.
 
-3. **Write the plot script** at
-   `data/experiments/{{EXPERIMENT_ID}}/scripts/plot_<topic>.py`:
-   - Hardcode the data file path (run_N is canonical; no search logic).
-   - Standard matplotlib (plus scipy/seaborn if appropriate).
-   - Load the project figstyle if `report/figstyle.mplstyle` exists:
-     `plt.style.use("report/figstyle.mplstyle")`.
-   - Save to both PDF (for report.tex) AND PNG at dpi=300 (for your own
-     step-5 check and illustrator's vision audit — at print-size figsize a
-     lower dpi leaves tick labels too few pixels tall to spot collisions):
-     ```python
-     plt.savefig("report/figures/<name>.pdf", bbox_inches="tight")
-     plt.savefig("report/figures/<name>.png", dpi=300, bbox_inches="tight")
-     ```
-   - The script must be runnable standalone (`python3 data/experiments/<id>/scripts/plot_<topic>.py`).
+3. **Write the spec** at `data/experiments/{{EXPERIMENT_ID}}/figures/<name>.figspec.json`
+   (grammar: `$LUXAS_ROOT/skills/matplotlib-figures/references/figspec_schema.md`; the four
+   specs in `$LUXAS_ROOT/fixtures/figspec/` are worked examples — copy the nearest shape).
+   - `"out": "report/figures/<name>"` (the renderer writes .pdf and .png).
+   - Every measured array is `{"csv": "data/experiments/{{EXPERIMENT_ID}}/runs/run_N/data/<f>.csv", "col": "<c>"}`.
+     A model curve is `{"expr": "..."}` over a `{"logspace"|"linspace": [...]}` x. A column the plot
+     needs that no CSV has → write `scripts/derive_<name>.py` that *writes a CSV* (no `savefig`, no
+     `pyplot` — a plotting script from you is refused at write time), then reference the CSV.
+   - Content, not aesthetics: ≤ 4 series; the one band/reference line that carries the claim, named
+     in the paper's words; one highlight per panel with `"at": x0` and a `{y:.2f}` label; axis titles
+     with symbol + unit. Multi-view → `"layout": "column"|"row"` panels, never an inset.
 
-4. **Run the script once.** Inspect stderr for errors. If it fails, fix and
-   re-run — up to 3 iterations. If after 3 tries it still fails, return the
-   error to the caller; do not silently skip.
+4. **Render**: `python3 $LUXAS_ROOT/skills/matplotlib-figures/scripts/figspec <spec>` from the project
+   root. A "did not fit" line on stderr means too much content — remove a series/label; never add
+   text or coordinates. Up to 3 spec edits; still failing → return the stderr, do not ship.
 
 5. **Look at what you just rendered.** Read `report/figures/<name>.png` —
    the dpi-300 PNG your script just saved — with your own vision. This step is NOT
@@ -122,7 +124,7 @@ each underspecified decision.
    - [ ] **claim test** (the one judgment item): looking at the image alone,
          can you state the claim the spec says this figure settles? If you
          can't see it in the pixels, the figure failed its job.
-   Any FAIL → edit the script, re-run, re-Read the new PNG. Up to 2 fix
+   Any FAIL → edit the spec, re-render, re-Read the new PNG. Up to 2 fix
    rounds. A defect that survives both rounds goes in your return message
    verbatim — never silently ship it.
 
@@ -131,7 +133,7 @@ each underspecified decision.
    (3.4 for a column figure, 7.0 for figure*). Any ERROR (collision, clipped,
    <5 pt text at print width, legend/inset over data from the save-time
    sidecar) means `compile_latex` will refuse the report — fix it now, in the
-   script, not later. The save-time `[figlint]` lines in your run's stderr are
+   spec, not later. The save-time `[figlint]` lines in your run's stderr are
    the same facts; a figure that prints them is not done.
 6. **Confirm the PDF exists and is non-trivial.** `ls -la report/figures/
    <name>.pdf` → size ≥ 5 KB. If it's smaller, the plot may be empty.

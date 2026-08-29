@@ -14,6 +14,22 @@ HEADROOM = 0.14           # fraction of y-range reserved at the top for band/ref
 
 def _num(v): return v is not None and np.isfinite(v)
 
+import re as _re
+def _tex(label):
+    """Typeset plain-string symbols: a token with ^ or _ outside $…$ becomes mathtext;
+    multi-letter sub/superscripts get \mathrm; ×/deg spellings normalised. Idempotent on real mathtext."""
+    if not label or "$" in label: return label
+    label = label.replace("um^", "μm^").replace("(um)", "(μm)")
+    def tok(m):
+        t = m.group(0)
+        t = _re.sub(r"([_^])\{?([A-Za-z]{2,})\}?", lambda k: f"{k.group(1)}{{\\mathrm{{{k.group(2)}}}}}", t)
+        t = _re.sub(r"([_^])([A-Za-z0-9])(?![A-Za-z0-9{])", r"\1{\2}", t)
+        return f"${t}$"
+    out = _re.sub(r"[A-Za-z0-9\\{}/.+\-]*[_^][A-Za-z0-9\\{}/.+\-]+", tok, label)
+    out = out.replace("×", r"$\times$").replace("(deg)", r"($^\circ$)")
+    return out
+
+
 _CSV = {}
 def _csv(path):
     if path not in _CSV:
@@ -112,7 +128,7 @@ def _bands(ax, panel):
         if b["axis"] == "x":
             ax.axvspan(b["from"], b["to"], color=LIGHT, alpha=0.28, lw=0, zorder=0)
             xm = np.sqrt(b["from"] * b["to"]) if ax.get_xscale() == "log" else 0.5 * (b["from"] + b["to"])
-            ax.text(xm, 0.97, b["label"], transform=transforms.blended_transform_factory(ax.transData, ax.transAxes),
+            ax.text(xm, 0.97, _tex(b["label"]), transform=transforms.blended_transform_factory(ax.transData, ax.transAxes),
                     ha="center", va="top", fontsize=7, color=GREY, zorder=5)
         else:
             ax.axhspan(b["from"], b["to"], color=LIGHT, alpha=0.28, lw=0, zorder=0)
@@ -123,7 +139,7 @@ def _reflines(ax, panel):
         if r["axis"] == "y":
             ax.axhline(r["value"], color=GREY, lw=0.7, ls=(0, (4, 3)), zorder=1)
             # label in the right margin, outside the data area
-            if r.get("label"): ax.text(1.01, r["value"], r["label"], transform=transforms.blended_transform_factory(ax.transAxes, ax.transData),
+            if r.get("label"): ax.text(1.01, r["value"], _tex(r["label"]), transform=transforms.blended_transform_factory(ax.transAxes, ax.transData),
                     ha="left", va="center", fontsize=7, color=GREY, clip_on=False)
         else:
             ax.axvline(r["value"], color=GREY, lw=0.7, ls=(0, (4, 3)), zorder=1)
@@ -141,14 +157,15 @@ def _series(ax, panel, colors):
             panel.setdefault("_late", []).append(("envelope", (x, ylo, yhi, s["label"], colors[0])))
             continue
         if role == "model":
-            ax.plot(x, y, color="black", lw=1.0, ls=(0, (5, 2.5)), zorder=2, label=s["label"])
-            ends.append((*_visible_end(ax, x, y), s["label"], "black")); continue
+            ax.plot(x, y, color="white", lw=2.2, ls=(0, (5, 2.5)), zorder=4)
+            ax.plot(x, y, color="black", lw=1.0, ls=(0, (5, 2.5)), zorder=4.1, label=s["label"])
+            ends.append((*_visible_end(ax, x, y), _tex(s["label"]), "black")); continue
         c = colors[ci % len(colors)]; ci += 1
         mk = "o" if len(x) <= MAX_MARKERS else None
         ax.plot(x, y, color=c, lw=1.4, marker=mk, ms=4, mec="white", mew=0.6, zorder=3, label=s["label"])
         if s.get("sigma") is not None:
             ax.errorbar(x, y, yerr=np.asarray(s["sigma"], float), fmt="none", ecolor=c, elinewidth=0.8, capsize=2, zorder=3)
-        ends.append((*_visible_end(ax, x, y), s["label"], c))
+        ends.append((*_visible_end(ax, x, y), _tex(s["label"]), c))
     return ends
 
 def _visible_end(ax, x, y):
@@ -177,7 +194,7 @@ def _direct_labels(ax, ends):
                     ha="left", va="center", fontsize=8, color=c, clip_on=False)
         else:
             anchor = ax.transData.transform((x, y))
-            t = place_text(ax, lab, anchor, [(6, 6), (6, -8), (-6, 6), (-6, -8), (10, 0), (0, 10), (0, -12)], fontsize=8, color=c)
+            t = place_text(ax, _tex(lab), anchor, [(6, 6), (6, -8), (-6, 6), (-6, -8), (10, 0), (0, 10), (0, -12)], fontsize=8, color=c)
             if t is None:
                 ax.text(1.01, y, lab, transform=transforms.blended_transform_factory(ax.transAxes, ax.transData), ha="left", va="center", fontsize=8, color=c, clip_on=False)
 
@@ -187,7 +204,7 @@ def _highlight(ax, panel):
     ax.plot(h["x"], h["y"], "o", ms=7, mfc="white", mec="black", mew=1.1, zorder=6)
     anchor = ax.transData.transform((h["x"], h["y"]))
     cands = [(14, 12), (-14, 12), (14, -14), (-14, -14), (24, 0), (-24, 0), (0, 22), (0, -24), (30, 18), (-30, 18), (30, -20), (-30, -20)]
-    t = place_text(ax, h["label"], anchor, cands, fontsize=8)
+    t = place_text(ax, _tex(h["label"]), anchor, cands, fontsize=8)
     if t is None:
         print("highlight label did not fit:", h["label"], file=sys.stderr); return
     tx, ty = t.get_position()
@@ -209,19 +226,19 @@ def render(spec, out):
         _lim(ax, p, ys)
         _bands(ax, p); _reflines(ax, p)
         ends = _series(ax, p, colors)
-        ax.set_xlabel(p.get("xlabel", "")); ax.set_ylabel(p.get("ylabel", ""))
+        ax.set_xlabel(_tex(p.get("xlabel", ""))); ax.set_ylabel(_tex(p.get("ylabel", "")))
         if n > 1: ax.text(-0.18 if layout == "row" else -0.16, 1.02, f"({p['label']})", transform=ax.transAxes, fontsize=10, fontweight="bold", va="bottom")
         _direct_labels(ax, ends)
         for kind, obj in p.get("_late", []):
             if kind == "xref":
                 r = obj; top = ax.transData.inverted().transform(ax.transAxes.transform((0, 0.985)))[1]
-                t = place_text(ax, r["label"], ax.transData.transform((r["value"], top)), [(3, 0), (-3, 0), (3, -11), (-3, -11), (3, -22), (-3, -22)], fontsize=7, color=GREY)
+                t = place_text(ax, _tex(r["label"]), ax.transData.transform((r["value"], top)), [(3, 0), (-3, 0), (3, -11), (-3, -11), (3, -22), (-3, -22)], fontsize=7, color=GREY)
                 if t is None: print("refline label did not fit:", r["label"], file=sys.stderr)
             elif kind == "yband":
                 b = obj; ym = 0.5 * (b["from"] + b["to"])
                 for xf in (0.03, 0.5, 0.8, 0.25, 0.65):
                     xa = ax.transData.inverted().transform(ax.transAxes.transform((xf, 0)))[0]
-                    t = place_text(ax, b["label"], ax.transData.transform((xa, ym)), [(0, 5), (0, -6), (0, 0)], fontsize=7, color=GREY)
+                    t = place_text(ax, _tex(b["label"]), ax.transData.transform((xa, ym)), [(0, 5), (0, -6), (0, 0)], fontsize=7, color=GREY)
                     if t: break
             else:
                 x, ylo, yhi, lab, c = obj; thick = (ax.transData.transform(np.c_[x, yhi]) - ax.transData.transform(np.c_[x, ylo]))[:, 1]

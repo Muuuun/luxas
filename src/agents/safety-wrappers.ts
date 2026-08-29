@@ -86,6 +86,8 @@ export type SafetyWrapper = (
 interface SafetyOptions {
   /** Project-relative paths that block edit/write entirely. Resolved at construction. */
   protectedFiles: string[];
+  /** Figures v3: refuse `.py` writes/edits that plot (savefig / pyplot) and bash that runs or writes one. */
+  figureSpecOnly?: boolean;
   /** "block" → reject write on existing file. "allow_as_read" → permit, count as read. */
   writeOnExistingPolicy: "block" | "allow_as_read";
   /**
@@ -346,6 +348,17 @@ function stripTruncationBanner(text: string): string {
  * closure). Feedback is appended, never blocking — the write has happened;
  * the point is immediacy, not another wall.
  */
+/** Figures v3: a `.py` that plots is not a legal artifact for a spec-only agent. */
+export const PLOTTING_RE = /\bsavefig\s*\(|matplotlib\.pyplot|from\s+matplotlib|import\s+matplotlib|plt\.(subplots|figure)\s*\(/;
+export function plottingScriptReason(relPath: string, body: string): string | undefined {
+  if (!/\.py$/.test(relPath) || !PLOTTING_RE.test(body)) return undefined;
+  return `Write of ${relPath} refused: it plots (savefig / pyplot). This agent makes data figures as ` +
+    `data/experiments/<EID>/figures/<name>.figspec.json rendered by ` +
+    `\`python3 $LUXAS_ROOT/skills/matplotlib-figures/scripts/figspec <spec>\` ` +
+    `(grammar: skills/matplotlib-figures/references/figspec_schema.md). A .py from you may only ` +
+    `derive arrays and write a CSV under runs/run_N/data/ — no matplotlib in it.`;
+}
+
 export function writeTimeValidation(projectDir: string, relPath: string, result: any): any {
   const isClaims = /(^|\/)report\/claims\.json$/.test(relPath);
   const isResults = /(^|\/)data\/experiments\/[^/]+\/runs\/[^/]+\/results\.json$/.test(relPath);
@@ -660,6 +673,11 @@ function wrapWrite(
           return blocked(`Write of ${p} is forbidden for this agent. ${reason}`);
         }
       }
+      if (opts.figureSpecOnly) {
+        const body = String(params.content ?? params.newText ?? params.new_string ?? "");
+        const why = plottingScriptReason(p, body);
+        if (why) return blocked(why);
+      }
 
       if (opts.writeOnExistingPolicy === "block") {
         const exists = (await safeMtime(abs)) !== null;
@@ -843,6 +861,7 @@ function wrapBash(
   allowedWriteAbs: string[] | null,
   blockedRootsAbs: string[] | null,
   blockedMentions: string[] = [],
+  figureSpecOnly = false,
 ): any {
   // `.agent/` is ALWAYS in the effective blocklist — studio-reserved,
   // not driven by frontmatter. Means we always wrap (no early return),
@@ -861,6 +880,11 @@ function wrapBash(
     ...tool,
     execute: async (id: string, params: any, signal?: any) => {
       const cmd: string = typeof params?.command === "string" ? params.command : "";
+      if (figureSpecOnly && (/\bsavefig\s*\(/.test(cmd) || /python3?\s+\S*plot_\w*\.py/.test(cmd))) {
+        return blocked(`bash command refused: it writes or runs a plotting script (savefig / plot_*.py). Data figures are ` +
+          `.figspec.json rendered by \`python3 $LUXAS_ROOT/skills/matplotlib-figures/scripts/figspec <spec>\`; ` +
+          `a .py from this agent may only derive arrays into a CSV.`);
+      }
       // Mention block (claims-first): a blind agent has no legitimate reason to
       // name the producer's scripts/runs/tests; any agent may not name the
       // harness-owned review files. Pure substring scan — over-matching is the
@@ -1001,7 +1025,7 @@ function createSafetyWrapper(opts: SafetyOptions): SafetyWrapper {
       if (tool.name === "read")  return wrapRead(tool, cache, projectDir, allowedReadAbs, hooks);
       if (tool.name === "edit")  return wrapEdit(tool, cache, projectDir, protectedAbs, allowedWriteAbs, forbiddenWritePatterns, hooks);
       if (tool.name === "write") return wrapWrite(tool, cache, projectDir, protectedAbs, allowedWriteAbs, opts, forbiddenWritePatterns, hooks);
-      if (tool.name === "bash")  return wrapBash(tool, projectDir, allowedWriteAbs, blockedBashAbs, mentions);
+      if (tool.name === "bash")  return wrapBash(tool, projectDir, allowedWriteAbs, blockedBashAbs, mentions, opts.figureSpecOnly === true);
       return tool;
     });
   };
@@ -1058,6 +1082,7 @@ export function buildSafetyWrapper(
     // Default "block" is fail-secure: forgetting the field in frontmatter
     // shouldn't silently relax write-overwrite on protected files.
     writeOnExistingPolicy: config.writeOnExistingPolicy ?? "block",
+    figureSpecOnly: config.figureSpecOnly,
   });
 }
 

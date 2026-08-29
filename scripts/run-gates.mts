@@ -90,6 +90,7 @@ const MANIFEST: Record<string, GateSpec> = {
 	smoke_finish_batch_and_speed_bump: { kind: "assert" },
 	smoke_figlint_pdf: { kind: "assert" },
 	smoke_figspec: { kind: "assert" },
+	smoke_figure_spec_only: { kind: "assert" },
 	smoke_figure_gate: { kind: "assert" },
 	smoke_pi_stop_settling: { kind: "assert" },
 	smoke_figplace: { kind: "assert" },
