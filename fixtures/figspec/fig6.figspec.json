@@ -1,0 +1,57 @@
+{
+ "out": "OUT/fig6",
+ "width": "single",
+ "panels": [
+  {
+   "type": "heatmap",
+   "label": "a",
+   "xlabel": "Interatomic spacing $R$ ($\\mu$m)",
+   "ylabel": "$\\Omega/2\\pi$ (MHz)",
+   "yscale": "log",
+   "zlabel": "Gate fidelity",
+   "zlim": [
+    0.9,
+    1.0
+   ],
+   "x": {
+    "csv": "fixtures/figspec/data/interaction_gate_fidelity.csv",
+    "col": "R_um"
+   },
+   "y": [
+    1.0,
+    2.0,
+    5.0,
+    10.0,
+    30.0,
+    60.0,
+    100.0,
+    160.0,
+    300.0,
+    500.0
+   ],
+   "z": {
+    "csv": "fixtures/figspec/data/interaction_gate_fidelity.csv",
+    "cols": [
+     "1",
+     "2",
+     "5",
+     "10",
+     "30",
+     "60",
+     "100",
+     "160",
+     "300",
+     "500"
+    ]
+   },
+   "contours": [
+    0.99
+   ],
+   "highlight": {
+    "x": 2.0,
+    "y": 160,
+    "label": "$F = 0.9967$"
+   }
+  }
+ ]
+}

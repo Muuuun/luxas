@@ -13,8 +13,8 @@ function check(name: string, ok: boolean, detail = "") {
   if (!ok) fails++;
 }
 const out = mkdtempSync(join(tmpdir(), "figspec-"));
-const widths: Record<string, number> = { fig2: 3.4, fig3: 3.4, fig4: 3.4, fig5: 7.0 };
-for (const f of ["fig2", "fig3", "fig4", "fig5"]) {
+const widths: Record<string, number> = { fig2: 3.4, fig3: 3.4, fig4: 3.4, fig5: 7.0, fig6: 3.4, fig7: 7.0, fig8: 3.4 };
+for (const f of ["fig2", "fig3", "fig4", "fig5", "fig6", "fig7", "fig8"]) {
   const spec = readFileSync(`fixtures/figspec/${f}.figspec.json`, "utf-8").replaceAll("OUT/", out + "/");
   const sp = join(out, `${f}.json`); writeFileSync(sp, spec);
   let err = "";

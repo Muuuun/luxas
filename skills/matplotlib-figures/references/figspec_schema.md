@@ -32,3 +32,10 @@ labels live in the margins; band labels in the reserved headroom; one highlight 
 no insets — a second view is a second panel; no boxes, no arrows crossing data.
 If a label cannot be placed the renderer says so on stderr — reduce content, do not add text.
 Schematics (TikZ) are not figspec: use `skills/figure/templates/schematic_slots.tex`.
+
+## Forms beyond y(x) (figures v3.1)
+
+- **Uncertainty**: `"sigma": REF` on a series draws ±1σ error bars (≤ 16 points) or a 1σ band (dense, or `"band": true`). REF may be `{"expr": "0.03*y"}` — `y` is the series' own y. The σ of a headline quantity comes from `results.json computed.quantities[].sigma`; a headline figure without it is incomplete.
+- **Heatmap + contour** (`"type": "heatmap"`): `"x": REF, "y": REF` (grid axes), `"z": {"csv": path, "cols": [...]}` (one column per y value, rows along x) or a 2-D list; `"contours": [0.99]` draws the level(s) that carry the claim; `"zlabel"`, `"zlim"`, `"cmap"` (default viridis); `"highlight": {"x": .., "y": .., "label": ..}`. Use it whenever the result is a function of two controls (F(R, Ω), not an envelope of curves).
+- **Polar** (`"type": "polar"`): series `x` in degrees, `y` the radius; `"zero": "N"` puts 0° at the top (quantization axis; θ then opens clockwise toward +x unless `"clockwise": false`), `"thetalim": [0, 90]`; reflines with `"axis": "theta"`. For anisotropies C₆(θ).
+- **Composite**: `"layout": "grid", "ncols": 2` with panels of mixed type — a Nature-style Fig. 1 is schematic (TikZ, separate) + polar + comparison in one grid.

@@ -43,7 +43,7 @@ def _csv(path):
         _CSV[path] = {h: np.array([num(r[i]) if i < len(r) else np.nan for r in body]) for i, h in enumerate(head)}
     return _CSV[path]
 
-def _arr(v, x=None):
+def _arr(v, x=None, y=None):
     """A data reference: a list; {"csv","col"}; {"csv","cols","reduce":"min|max|mean"}; {"expr": "..."} over x;
     {"logspace":[a,b,n]} / {"linspace":[a,b,n]}. The author never computes arrays in code."""
     if isinstance(v, (list, tuple)): return np.asarray(v, float)
@@ -52,7 +52,7 @@ def _arr(v, x=None):
             t = _csv(v["csv"])
             if "col" in v: return t[v["col"]]
             m = np.array([t[c] for c in v["cols"]]); return getattr(np, v.get("reduce", "min"))(m, axis=0)
-        if "expr" in v: return np.asarray(eval(v["expr"], {"np": np, "x": x, "log10": np.log10, "sqrt": np.sqrt}), float)
+        if "expr" in v: return np.asarray(eval(v["expr"], {"np": np, "x": x, "y": y, "log10": np.log10, "sqrt": np.sqrt, "abs": np.abs}), float)
         if "logspace" in v: a, b, n = v["logspace"]; return np.logspace(np.log10(a), np.log10(b), int(n))
         if "linspace" in v: a, b, n = v["linspace"]; return np.linspace(a, b, int(n))
     raise ValueError(f"bad data reference: {v!r}")
@@ -60,10 +60,17 @@ def _arr(v, x=None):
 def _resolve(spec):
     """Resolve every data reference in place; resolve 'at' lookups for highlights."""
     for p in spec["panels"]:
+        if p.get("type") == "heatmap":
+            p["x"] = _arr(p["x"]); p["y"] = _arr(p["y"])
+            z = p["z"]
+            if isinstance(z, dict) and "cols" in z:
+                t = _csv(z["csv"]); p["z"] = np.array([t[c] for c in z["cols"]]).T   # rows follow x, columns follow y
+            else: p["z"] = np.asarray(z, float)
+            p.setdefault("series", []); continue
         for s in p["series"]:
             s["x"] = _arr(s["x"]); s["y"] = _arr(s["y"], s["x"])
             for k in ("ylo", "yhi", "sigma"):
-                if k in s: s[k] = _arr(s[k], s["x"])
+                if k in s: s[k] = _arr(s[k], s["x"], s["y"])
             m = np.isfinite(s["x"]) & np.isfinite(s["y"])
             for k in ("x", "y", "ylo", "yhi", "sigma"):
                 if k in s: s[k] = s[k][m]
@@ -149,6 +156,7 @@ def _series(ax, panel, colors):
     ci = 0
     for s in panel["series"]:
         x = np.asarray(s["x"], float); y = np.asarray(s["y"], float)
+        if panel.get("type") == "polar": x = np.deg2rad(x)
         role = s.get("role", "data")
         if role == "envelope":
             ylo, yhi = np.asarray(s["ylo"], float), np.asarray(s["yhi"], float)
@@ -163,7 +171,11 @@ def _series(ax, panel, colors):
         mk = "o" if len(x) <= MAX_MARKERS else None
         ax.plot(x, y, color=c, lw=1.4, marker=mk, ms=4, mec="white", mew=0.6, zorder=3, label=s["label"])
         if s.get("sigma") is not None:
-            ax.errorbar(x, y, yerr=np.asarray(s["sigma"], float), fmt="none", ecolor=c, elinewidth=0.8, capsize=2, zorder=3)
+            sg = np.asarray(s["sigma"], float)
+            if s.get("band") or len(x) > MAX_MARKERS:
+                ax.fill_between(x, y - sg, y + sg, color=c, alpha=0.22, lw=0, zorder=2)   # 1σ band
+            else:
+                ax.errorbar(x, y, yerr=sg, fmt="none", ecolor=c, elinewidth=0.8, capsize=2, zorder=3)
         ends.append((*_visible_end(ax, x, y), _tex(s["label"]), c))
     return ends
 
@@ -209,20 +221,76 @@ def _highlight(ax, panel):
     tx, ty = t.get_position()
     ax.annotate("", xy=(h["x"], h["y"]), xytext=(tx, ty), arrowprops=dict(arrowstyle="-", color="black", lw=0.6, shrinkA=2, shrinkB=5), zorder=5)
 
+def _heatmap(ax, p, fig):
+    """z(x, y) as a perceptual map, contour at the levels that carry the claim, colourbar in the margin."""
+    x, y, z = p["x"], p["y"], p["z"]
+    if p.get("xscale") == "log": ax.set_xscale("log")
+    if p.get("yscale") == "log": ax.set_yscale("log")
+    vmin, vmax = p.get("zlim", [np.nanmin(z), np.nanmax(z)])
+    m = ax.pcolormesh(x, y, z.T, cmap=p.get("cmap", "viridis"), vmin=vmin, vmax=vmax, shading="nearest", rasterized=True)
+    cb = fig.colorbar(m, ax=ax, pad=0.02, fraction=0.05); cb.set_label(_tex(p.get("zlabel", "")), fontsize=8); cb.ax.tick_params(labelsize=7)
+    if p.get("contours"):
+        cs = ax.contour(x, y, z.T, levels=p["contours"], colors="white", linewidths=0.9)
+        ax.clabel(cs, fmt=lambda v: f"{v:g}", fontsize=7, colors="white", inline=True, inline_spacing=2)
+    if p.get("xlim"): ax.set_xlim(*p["xlim"])
+    if p.get("ylim"): ax.set_ylim(*p["ylim"])
+    for r in p.get("reflines", []):
+        (ax.axhline if r["axis"] == "y" else ax.axvline)(r["value"], color="white", lw=0.7, ls=(0, (4, 3)))
+
+def _polar(ax, p, colors):
+    """C(θ)-type panels: angle in degrees on the spec side; the renderer draws the physics conventions (0° up = quantization axis if `zero: "N"`)."""
+    zero = p.get("zero", "E")
+    # Physics convention: 0° at the top is the quantization axis and θ opens toward +x, i.e. clockwise.
+    clockwise = p.get("clockwise", zero == "N")
+    ax.set_theta_zero_location(zero); ax.set_theta_direction(-1 if clockwise else 1)
+    if p.get("thetalim"): ax.set_thetamin(p["thetalim"][0]); ax.set_thetamax(p["thetalim"][1])
+    ci = 0
+    for s in p["series"]:
+        th = np.deg2rad(np.asarray(s["x"], float)); r = np.asarray(s["y"], float)
+        c = colors[ci % len(colors)]; ci += 1
+        ax.plot(th, r, color=c, lw=1.4, marker="o" if len(th) <= MAX_MARKERS else None, ms=3.5, mec="white", mew=0.5, label=s["label"], zorder=3)
+        if s.get("fill"): ax.fill(th, r, color=c, alpha=0.15, lw=0)
+    for r_ in p.get("reflines", []):
+        if r_["axis"] == "theta":
+            ax.plot([np.deg2rad(r_["value"])] * 2, [0, ax.get_rmax()], color=GREY, lw=0.7, ls=(0, (4, 3)))
+            ax.text(np.deg2rad(r_["value"]), ax.get_rmax() * 1.08, _tex(r_["label"]), ha="center", va="center", fontsize=7, color=GREY)
+        else:
+            ax.plot(np.linspace(0, 2 * np.pi, 200), [r_["value"]] * 200, color=GREY, lw=0.7, ls=(0, (4, 3)))
+    ax.set_rlabel_position(p.get("rlabel_deg", 112)); ax.tick_params(labelsize=7); ax.grid(True, lw=0.3, alpha=0.5)
+    if p.get("ylabel"): ax.set_title(_tex(p["ylabel"]), fontsize=8, pad=8)
+    if len(p["series"]) > 1: ax.legend(loc="lower left", bbox_to_anchor=(1.0, 0.0), fontsize=7)
+
 def render(spec, out):
     plt.style.use(STYLE)
     colors = [c["color"] for c in plt.rcParams["axes.prop_cycle"]]
     panels = spec["panels"]; n = len(panels)
     layout = spec.get("layout", "row" if n > 1 else "single")
     w = W[spec.get("width", "single" if n == 1 or layout == "column" else "double")]
+    kinds = [p.get("type", "xy") for p in panels]
+    subplot_kw = [dict(projection="polar") if k == "polar" else {} for k in kinds]
     if layout == "column":
-        fig, axes = plt.subplots(n, 1, figsize=(w, 0.78 * w * n * 0.85), sharex=spec.get("sharex", True))
+        fig = plt.figure(figsize=(w, 0.78 * w * n * 0.85)); axes = [fig.add_subplot(n, 1, i + 1, **subplot_kw[i]) for i in range(n)]
+        if spec.get("sharex", True):
+            for a_ in axes[1:]:
+                if not subplot_kw[axes.index(a_)]: a_.sharex(axes[0])
+    elif layout == "grid":
+        nc = int(spec.get("ncols", 2)); nr = int(np.ceil(n / nc))
+        fig = plt.figure(figsize=(w, 0.78 * (w / nc) * nr)); axes = [fig.add_subplot(nr, nc, i + 1, **subplot_kw[i]) for i in range(n)]
     else:
-        fig, axes = plt.subplots(1, n, figsize=(w, 0.72 * w / n))
-    axes = np.atleast_1d(axes)
+        fig = plt.figure(figsize=(w, 0.72 * w / n)); axes = [fig.add_subplot(1, n, i + 1, **subplot_kw[i]) for i in range(n)]
+    axes = list(axes)
     # Pass 1 — geometry: limits, bands, lines, series, axis titles, panel letters.
     ends_by_panel = []
     for ax, p in zip(axes, panels):
+        if p.get("type") == "heatmap":
+            _heatmap(ax, p, fig); ends_by_panel.append([])
+            ax.set_xlabel(_tex(p.get("xlabel", ""))); ax.set_ylabel(_tex(p.get("ylabel", "")))
+            if n > 1: ax.text(-0.18 if layout != "column" else -0.16, 1.02, f"({p['label']})", transform=ax.transAxes, fontsize=10, fontweight="bold", va="bottom")
+            continue
+        if p.get("type") == "polar":
+            _polar(ax, p, colors); ends_by_panel.append([])
+            if n > 1: ax.text(-0.28, 1.08, f"({p['label']})", transform=ax.transAxes, fontsize=10, fontweight="bold", va="bottom")
+            continue
         ys = [s["y"] for s in p["series"] if s.get("role") != "envelope"] + [s["yhi"] for s in p["series"] if s.get("role") == "envelope"]
         _lim(ax, p, ys)
         _bands(ax, p); _reflines(ax, p)
@@ -235,6 +303,9 @@ def render(spec, out):
     fig.tight_layout(w_pad=2.2 if layout == "row" else 1.0)
     # Pass 2 — text, each placement measured against the final geometry.
     for ax, p, ends in zip(axes, panels, ends_by_panel):
+        if p.get("type") in ("heatmap", "polar"):
+            _highlight(ax, p) if p.get("type") == "heatmap" else None
+            continue
         _direct_labels(ax, ends)
         for kind, obj in p.get("_late", []):
             if kind == "xband":

@@ -10,6 +10,8 @@
 % The lint must print no ERROR before the figure is used.
 \documentclass[tikz,border=4pt]{standalone}
 \usepackage{amsmath,amssymb}
+\usepackage[T1]{fontenc}\usepackage{helvet}\renewcommand{\familydefault}{\sfdefault}
+\usepackage{sansmath}\sansmath   % one family with the data figures (Nature/PRL: no serif/sans mix)
 \usetikzlibrary{arrows.meta,calc,positioning,angles,quotes}
 \tikzset{
   every node/.style={font=\sffamily\small},

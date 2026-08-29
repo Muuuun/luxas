@@ -1,0 +1,91 @@
+{
+ "out": "OUT/fig7",
+ "width": "double",
+ "layout": "grid",
+ "ncols": 2,
+ "panels": [
+  {
+   "type": "polar",
+   "label": "a",
+   "zero": "N",
+   "clockwise": true,
+   "thetalim": [
+    0,
+    90
+   ],
+   "ylabel": "$C_6(\\theta)$ (GHz $\\mu$m$^6$)",
+   "series": [
+    {
+     "x": {
+      "csv": "fixtures/figspec/data/c6_angle_scan.csv",
+      "col": "angle_deg"
+     },
+     "y": {
+      "csv": "fixtures/figspec/data/c6_angle_scan.csv",
+      "col": "c6_diag_ghz_um6"
+     },
+     "label": "diagonalization"
+    },
+    {
+     "x": {
+      "csv": "fixtures/figspec/data/c6_angle_scan.csv",
+      "col": "angle_deg"
+     },
+     "y": {
+      "csv": "fixtures/figspec/data/c6_angle_scan.csv",
+      "col": "c6_second_order_ghz_um6"
+     },
+     "label": "second order"
+    }
+   ],
+   "reflines": [
+    {
+     "axis": "theta",
+     "value": 24.65,
+     "label": "$\\theta^*$"
+    }
+   ]
+  },
+  {
+   "label": "b",
+   "xlabel": "Gate length $R$ ($\\mu$m)",
+   "ylabel": "Packing-density gain",
+   "ylim": [
+    1.0,
+    2.4
+   ],
+   "xlim": [
+    1.4,
+    2.3
+   ],
+   "series": [
+    {
+     "x": {
+      "csv": "fixtures/figspec/data/gate_length_sweep.csv",
+      "col": "gate_length_um"
+     },
+     "y": {
+      "csv": "fixtures/figspec/data/gate_length_sweep.csv",
+      "col": "gain"
+     },
+     "sigma": {
+      "expr": "0.05*y"
+     },
+     "label": "interaction gate"
+    }
+   ],
+   "reflines": [
+    {
+     "axis": "y",
+     "value": 1.35,
+     "label": "strong-blockade cap"
+    }
+   ],
+   "highlight": {
+    "series": 0,
+    "at": 2.0,
+    "label": "{y:.2f}$\\times$"
+   }
+  }
+ ]
+}

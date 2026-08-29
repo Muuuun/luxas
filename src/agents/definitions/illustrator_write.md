@@ -30,6 +30,11 @@ Writing matplotlib for a data figure is the failure mode this replaces (five of 
 2026-08-28 run shipped with free-hand annotations over the data). If the renderer prints
 "did not fit", remove content; never add text. Schematics stay TikZ (`schematic_slots.tex`).
 
+**σ comes from the file, never from the brief.** When a brief says "sigma from results.json", read
+`computed.quantities[]` for that id and use its `sigma`; if the field is absent or null, draw no error bars
+and say so in your return — a σ typed from the brief is a fabricated uncertainty (live probe 2026-08-29:
+a planted "σ = 0.10" was drawn as error bars while the file said null).
+
 **Label vocabulary is the paper's, typeset.** Every symbol is mathtext (`"$A^{1/6}$"`, `"$A_{\\mathrm{crit}}$"`,
 `"$C_6$ (GHz $\\mu$m$^6$)"`), every axis title carries the symbol and its unit, and no label names an
 experiment, run or agent (`E1 range`, `run_1`, `gate gain`) — write the physics (`settled $A$`,

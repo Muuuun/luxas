@@ -1,0 +1,57 @@
+{
+ "out": "OUT/fig8",
+ "panels": [
+  {
+   "label": "a",
+   "xlabel": "Anisotropy $A$",
+   "ylabel": "Packing gain",
+   "xscale": "log",
+   "xlim": [
+    1,
+    1000
+   ],
+   "ylim": [
+    0.7,
+    2.6
+   ],
+   "series": [
+    {
+     "x": {
+      "csv": "fixtures/figspec/data/gain_vs_anisotropy.csv",
+      "col": "A"
+     },
+     "y": {
+      "csv": "fixtures/figspec/data/gain_vs_anisotropy.csv",
+      "col": "gain"
+     },
+     "sigma": {
+      "expr": "0.04*y"
+     },
+     "band": true,
+     "label": "computed"
+    },
+    {
+     "x": {
+      "logspace": [
+       1,
+       1000,
+       100
+      ]
+     },
+     "y": {
+      "expr": "x**(1/6)"
+     },
+     "role": "model",
+     "label": "$A^{1/6}$"
+    }
+   ],
+   "reflines": [
+    {
+     "axis": "y",
+     "value": 1.35,
+     "label": "strong blockade"
+    }
+   ]
+  }
+ ]
+}

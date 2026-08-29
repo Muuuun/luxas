@@ -364,6 +364,14 @@ The `illustrator_write` task spec must include (the agent renders data figures t
 - **Plot semantics** (type, axes, log-scale, annotations, what to highlight) — for schematics: components, their arrangement, and which TikZ template family fits (energy_levels / optical_setup / pulse_sequence / ...)
 - **EXPERIMENT_ID templateVar** — mandatory so the agent writes its script under the right experiment directory
 
+**Figure quality bar (2026-08-29, after the Nature read of the pp-vs-ss set).** Presentation is now mechanical (figspec + lint); what decides acceptance is content, and content is decided in *your brief*:
+- **The crux panel.** Every headline figure names the single panel a referee would demand — the computation the claim rests on, at the resolution that settles it (the C₆ zero from 20–28° at ≤ 0.5° from both methods with the C₅/C₈ floor, not the crossing as three points near zero). If that data does not exist, the brief says so and you spawn the sweep first; a figure of the wrong data is not a figure.
+- **Density.** A sweep is a curve: ≥ 20 points per axis for any headline sweep, or the brief states why fewer is exact (a discrete lattice angle set). Four points on an axis do not go in a paper.
+- **Uncertainty on the page.** Every headline quantity in a figure carries its σ from `results.json computed.quantities[].sigma` (`"sigma": REF` → bars/band). A figure without uncertainties is incomplete, whatever it looks like.
+- **The right form.** Two controls → a heatmap with the contour that carries the claim (F(R, Ω) with the 0.99 line), never an envelope of curves; an anisotropy → a polar panel; a comparison → one axis with both.
+- **Composite where the story is one.** Fig. 1 = schematic + the quantitative anisotropy + the comparison as one grid (`"layout": "grid"`), not three figures.
+Put these into the brief as explicit lines (crux: …, points: …, sigma from: …, form: …); the agent has no other source for them.
+
 One spawn per figure. Multiple figures for the same experiment can be parallel spawns in one turn.
 
 After all `illustrator_write` spawns return, spawn `illustrator` once (not per-figure) for a global style audit. It will align palettes / fonts / line weights across the set and flag render bugs.
