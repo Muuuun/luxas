@@ -120,6 +120,8 @@ export interface ClaimTable {
   frameHeadline: string[];
   /** Premises from notes/frame.md that entered no experiment as an input and are not declared quantities. */
   premisesUnused: string[];
+  /** v3 D4: frame headline ids that are disputed/conditional at this moment — the abstract must abstain on them ("we could not determine …"); `satisfied` = the sentence is present. */
+  abstain: { id: string; observable: string; sentence: string; satisfied: boolean }[];
   malformed: string[];
   /** Non-blocking notes (undeclared input keys, etc.). */
   notes: string[];
@@ -170,6 +172,24 @@ function leafAt(obj: any, dotted: string): unknown {
 }
 
 interface Parsed { quantities: QuantityDecl[]; verdicts: VerdictDecl[]; estimates: Estimate[]; malformed: string[]; anchors: { key: string; value: number }[] }
+
+/** The report's abstract text (empty when no report.tex / no abstract environment). */
+export function readAbstract(projectDir: string): string {
+  try {
+    const tex = readFileSync(join(projectDir, "report", "report.tex"), "utf-8");
+    const m = tex.match(/\\begin\{abstract\}([\s\S]*?)\\end\{abstract\}/);
+    return m ? m[1] : "";
+  } catch { return ""; }
+}
+/** An abstention sentence for a row: "could not determine" (or "remains undetermined") near the id or ≥ 4 consecutive words of its observable. */
+export function abstractAbstains(abstractText: string, id: string, observable: string): boolean {
+  const t = abstractText.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ");
+  if (!/could not determine|remains undetermined|cannot determine|were unable to determine/.test(t)) return false;
+  if (t.includes(id.toLowerCase().replace(/[^a-z0-9 ]+/g, " "))) return true;
+  const w = observable.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").split(/\s+/).filter((x) => x.length > 2);
+  for (let i = 0; i + 4 <= w.length; i++) if (t.includes(w.slice(i, i + 4).join(" "))) return true;
+  return false;
+}
 
 /** True when any job in .agent/jobs ran a file under data/experiments/<dir>/scripts (the producing computation exists). */
 export function experimentRanScripts(projectDir: string, expDirName: string): boolean {
@@ -767,7 +787,22 @@ export function buildClaimTable(projectDir: string): ClaimTable {
     }
   }
   const disclosedHeadlineCount = rows.filter((r) => r.headline && r.status === "disclosed").length;
+  // v3 D4: abstention is derived, never chosen. A frame headline id that is
+  // disputed/conditional must appear in the abstract as "we could not
+  // determine <observable> (…)": no number, the routes' values, the
+  // discriminator. With the sentence present the row no longer blocks the
+  // abstract and does not count toward the disclosure cap.
+  const abstractText = readAbstract(projectDir);
+  const frameIds = parseFrameHeadline(projectDir);
+  const abstain = rows.filter((r) => frameIds.includes(r.id) && (r.status === "disputed" || r.status === "conditional")).map((r) => {
+    const obs = r.observable ?? r.id;
+    const legs = r.estimates.filter((e) => e.kind === "own" || e.kind === "replication" || e.kind === "xval").slice(0, 3).map((e) => `${e.route ? e.route.split(/[,;(]/)[0].trim().slice(0, 40) : e.source.split(":")[0]} gives ${e.value}${e.sigma !== undefined ? ` ± ${e.sigma}` : ""}`);
+    const disc = rev.discriminators.find((d) => d.id === r.id)?.text.replace(/^DISCRIMINATOR:\s*\S+\s*[—–-]+\s*/, "").slice(0, 160);
+    const sentence = `we could not determine ${obs}${legs.length ? ` (${legs.join("; ")})` : ""}${disc ? `; the discriminating computation is: ${disc}` : ""}.`;
+    return { id: r.id, observable: obs, sentence, satisfied: abstractAbstains(abstractText, r.id, obs) };
+  });
   return {
+    abstain,
     rows, verdicts: vRows, headline: [...headline].sort(), headlineDeclared: [...headlineDeclared].sort(), frameHeadline: parseFrameHeadline(projectDir),
     premisesUnused: parseFramePremises(projectDir).map((p) => p.id).filter((pid) => !known.has(pid) && !decls.some((d) => pid in d.inputs)),
     malformed, notes, readsDrops, declared, decls, discriminators: rev.discriminators, disclosedHeadlineCount,
@@ -784,6 +819,11 @@ const LEGAL_MOVES = `Legal moves: run the discriminating computation (a comparab
 export function claimTableIssues(projectDir: string, table: ClaimTable = buildClaimTable(projectDir)): ClaimIssue[] {
   if (!table.declared) return [];
   const issues: ClaimIssue[] = [];
+  // v3 D4: a disputed/conditional frame headline id must be abstained on in the abstract.
+  for (const a of table.abstain) {
+    if (a.satisfied) continue;
+    issues.push({ blocking: true, text: `[abstain] ${a.id} is ${table.rows.find((r) => r.id === a.id)?.status} and is a frame headline quantity: the abstract must abstain on it in so many words — paste (no number for it anywhere in the abstract): "${a.sentence}" An abstention is derived from the table; it is neither a disclosure nor a claim, and with the sentence present the row no longer blocks the abstract.` });
+  }
   // v3 D1: an open reviewer finding must reach the ledger before finish.
   for (const f of openReviewFindings(projectDir).values()) {
     if (f.answered || f.quoted) continue;
@@ -851,9 +891,10 @@ export function renderClaimTable(table: ClaimTable, maxRows = 12): string {
   for (const m of table.malformed) lines.push(`- MALFORMED ${m}`);
   for (const n of table.notes.slice(0, 4)) lines.push(`- NOTE ${n}`);
   const hidden = table.rows.length - rows.length;
-  const bad = table.rows.filter((r) => r.headline && (r.status === "disputed" || r.status === "conditional"));
+  const satisfiedAbstain = new Set(table.abstain.filter((a) => a.satisfied).map((a) => a.id));
+  const bad = table.rows.filter((r) => r.headline && (r.status === "disputed" || r.status === "conditional") && !satisfiedAbstain.has(r.id));
   const frontier = table.discriminators.filter((d) => bad.some((r) => r.id === d.id)).slice(0, 3).map((d, i) => `frontier[${i + 1}]: ${d.text.slice(0, 200)}`);
   return `<claim_status>\n${lines.join("\n")}${hidden > 0 ? `\n(+ ${hidden} non-headline rows not shown)` : ""}` +
     (frontier.length ? `\n${frontier.join("\n")}` : "") +
-    `\nship: ${bad.length === 0 ? "no headline quantity disputed/conditional" : `${bad.length} headline quantit${bad.length === 1 ? "y" : "ies"} disputed/conditional → abstract blocked (${bad.map((r) => r.id).join(", ")})`}; discloses used: ${table.disclosedHeadlineCount}/1\n</claim_status>`;
+    `\nship: ${bad.length === 0 ? "no headline quantity disputed/conditional" : `${bad.length} headline quantit${bad.length === 1 ? "y" : "ies"} disputed/conditional → abstract blocked (${bad.map((r) => r.id).join(", ")})`}; discloses used: ${table.disclosedHeadlineCount}/1${table.abstain.length ? `; abstentions: ${table.abstain.map((a) => `${a.id}${a.satisfied ? " (in abstract)" : " (SENTENCE MISSING)"}`).join(", ")}` : ""}\n</claim_status>`;
 }
