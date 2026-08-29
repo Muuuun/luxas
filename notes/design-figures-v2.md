@@ -57,3 +57,11 @@ What the loop looks like now: brain brief → illustrator_write draws → save-t
 ## 6. Measurement
 
 Next run (the pp-vs-ss measurement run is live on P0 of claims-first; figures v2 lands mid-run and applies to its next compile): count `compile_latex` refusals by figure-lint, fix rounds per figure, figure-agent transcript MB (baseline 13.6 MB / 21 spawns for 5 figures), figure_auditor verdicts vs my own reading of the PNGs (the calibration that K2.5 failed), and — the only number that matters — whether a human looking at the shipped PDF finds a collision. Baseline: 5 of 5 figures had at least one.
+
+## 7. figures v3 — the spec route (2026-08-29)
+
+Operator verdict on the 2026-08-28 figures: "still not good, looks dirty and not polished". Re-read of the four plot scripts: every one *overrides* `figstyle.mplstyle` (own tab10 hex palette, own font sizes, own figsize, own tick direction), fig3 draws 200 points with markers, and each script places 4–8 free-hand annotations. Lint catches collisions, which are ~20 % of what is wrong; the rest is composition an author writing matplotlib gets wrong every time, blind or seeing.
+
+Experiment: the same four figures re-rendered from declarative specs through a fixed template (`skills/matplotlib-figures/scripts/figspec`, grammar in `references/figspec_schema.md`). The renderer owns style (the mplstyle is the only source), marker policy (≤ 16 points), an occupancy-aware placer (sampled lines, texts, reference lines, frame) used for every label it writes, direct series labels in the right margin, reference-line labels in the margins, band labels in reserved headroom, one highlight per panel whose number is looked up (`"at": x0`), no insets (a second view is a second panel), no in-axes legend, no boxes. Result after two placer iterations: 0 figlint-pdf errors at print width on all four, and to my eye publishable. Fixture `fixtures/figspec/` (the run's CSVs + specs), gate `smoke_figspec`.
+
+Contract change: `illustrator_write` writes a `.figspec.json`, never matplotlib, for data figures; derived arrays come from a `derive_*.py` that writes CSV and never plots; `illustrator` patches the spec, not the script. Schematics stay on the TikZ slot template. The figlint gate and `figure_auditor` remain as backstops for figure classes the spec cannot express.

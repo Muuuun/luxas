@@ -252,7 +252,11 @@ Steps:
        once; regenerating already-clean figures alongside fixed ones is
        free (same `python3` invocation).
    (d) Apply any brief-specific patches per figure (e.g. "fix legend
-       overlap in panel a of figure X"). **Any patch that moves a label or
+       overlap in panel a of figure X"). **If the figure has a
+       `<name>.figspec.json` next to its script (or under `figures/`), the
+       spec is the source: edit the spec (drop a series, change a limit,
+       move the highlight's `at`) and re-run `figspec`; never write
+       matplotlib around it.** Otherwise: **any patch that moves a label or
        callout is done with `figplace`, never by guessing coordinates**
        (figures v2 convergence experiment: blind placement needed four
        render rounds on one panel). Turn the auditor's FIXES into the

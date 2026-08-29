@@ -357,7 +357,7 @@ spawn_agent(agent="illustrator", task="audit report/figures/*.pdf")
    ↓ one final style-audit pass; polishes palette/typography consistency
 ```
 
-The `illustrator_write` task spec must include:
+The `illustrator_write` task spec must include (the agent renders data figures through `figspec` — a JSON spec, no matplotlib — so give it the *content* decisions, not aesthetics):
 - **Figure name** (stem; → `report/figures/<name>.pdf`)
 - **Claim the figure settles** (one sentence, mirrors the sentence in report.tex that references it)
 - **Data file path(s)** under `data/experiments/<EXPERIMENT_ID>/runs/run_N/data/` — or, for a schematic spec, the **grounding sources** instead (cite key + section for every mechanism/geometry to depict)

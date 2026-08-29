@@ -1,0 +1,65 @@
+# General-purpose default for projects without a specific publication venue
+# (surveys, BOM analyses, internal reports, exploratory work). Sans-serif,
+# medium font sizes, embedded TrueType fonts, cross-platform CJK fallback.
+# Override by copying a venue-specific style (physics-aps / nature-science /
+# chemistry-acs / cs-conferences) over report/figstyle.mplstyle.
+
+text.usetex          : False
+font.family          : sans-serif
+
+# CJK-aware fallback chain. First-matched-wins; system-specific fonts come
+# first so OS-native rendering is preferred. DejaVu Sans (no CJK) is the
+# last-resort to preserve Latin glyph quality on systems without any of
+# the CJK fonts.
+font.sans-serif      : Arial Unicode MS, Hiragino Sans GB, PingFang HK, Heiti TC, Noto Sans CJK SC, WenQuanYi Micro Hei, Microsoft YaHei, SimHei, Arial, Helvetica, DejaVu Sans
+
+font.size            : 9
+mathtext.fontset     : stixsans
+
+# Single-column width for the default twocolumn article scaffold (~3.4 in
+# column). Plot scripts design at print size — never at a large canvas that
+# \includegraphics later shrinks (fonts shrink with it).
+figure.figsize       : 3.5, 2.6
+figure.dpi           : 150
+savefig.dpi          : 200
+savefig.format       : pdf
+savefig.bbox         : tight
+savefig.pad_inches   : 0.05
+
+# Embed TrueType so PDF text layer round-trips (default Type-3 outlines
+# break pdftotext / search / accessibility / downstream LLM grep).
+pdf.fonttype         : 42
+ps.fonttype          : 42
+
+# Use hyphen-minus (U+002D) instead of Unicode minus (U+2212) so CJK
+# fallback chains that lack U+2212 don't render tofu on negative ticks.
+axes.unicode_minus   : False
+
+axes.labelsize       : 9
+axes.titlesize       : 10
+axes.linewidth       : 0.6
+axes.formatter.use_mathtext : True
+axes.spines.top      : False
+axes.spines.right    : False
+
+xtick.labelsize      : 8
+ytick.labelsize      : 8
+xtick.major.width    : 0.6
+ytick.major.width    : 0.6
+xtick.direction      : out
+ytick.direction      : out
+
+lines.linewidth      : 1.5
+lines.markersize     : 5
+
+legend.fontsize      : 8
+legend.frameon       : False
+legend.handlelength  : 1.5
+
+# Okabe-Ito, in the order mandated by skills/figure/style_guides/_default.md.
+# That guide (report/figures/style_guide.md after init_report) is the palette
+# ground truth — if you change one, change both.
+axes.prop_cycle      : cycler('color', ['0072B2', 'D55E00', '009E73', 'CC79A7', 'F0E442', '56B4E9', 'E69F00'])
+
+grid.linewidth       : 0.3
+grid.alpha           : 0.4

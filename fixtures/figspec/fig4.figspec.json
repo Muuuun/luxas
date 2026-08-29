@@ -1,0 +1,169 @@
+{
+ "out": "OUT/fig4",
+ "layout": "column",
+ "width": "single",
+ "panels": [
+  {
+   "label": "a",
+   "ylabel": "Gate fidelity",
+   "ylim": [
+    0.35,
+    1.0
+   ],
+   "xlim": [
+    0.9,
+    5.1
+   ],
+   "series": [
+    {
+     "x": {
+      "csv": "fixtures/figspec/data/interaction_gate_fidelity.csv",
+      "col": "R_um"
+     },
+     "y": {
+      "csv": "fixtures/figspec/data/interaction_gate_fidelity.csv",
+      "cols": [
+       "1",
+       "2",
+       "5",
+       "10",
+       "30",
+       "60",
+       "100",
+       "300",
+       "500"
+      ],
+      "reduce": "min"
+     },
+     "ylo": {
+      "csv": "fixtures/figspec/data/interaction_gate_fidelity.csv",
+      "cols": [
+       "1",
+       "2",
+       "5",
+       "10",
+       "30",
+       "60",
+       "100",
+       "300",
+       "500"
+      ],
+      "reduce": "min"
+     },
+     "yhi": {
+      "csv": "fixtures/figspec/data/interaction_gate_fidelity.csv",
+      "cols": [
+       "1",
+       "2",
+       "5",
+       "10",
+       "30",
+       "60",
+       "100",
+       "300",
+       "500"
+      ],
+      "reduce": "max"
+     },
+     "role": "envelope",
+     "label": "other $\\Omega$"
+    },
+    {
+     "x": {
+      "csv": "fixtures/figspec/data/interaction_gate_fidelity.csv",
+      "col": "R_um"
+     },
+     "y": {
+      "csv": "fixtures/figspec/data/interaction_gate_fidelity.csv",
+      "col": "160"
+     },
+     "label": "$\\Omega/2\\pi = 160$ MHz"
+    }
+   ],
+   "bands": [
+    {
+     "axis": "x",
+     "from": 1.0,
+     "to": 2.2,
+     "label": "viable"
+    },
+    {
+     "axis": "x",
+     "from": 2.5,
+     "to": 5.0,
+     "label": "sub-MHz"
+    }
+   ],
+   "reflines": [
+    {
+     "axis": "y",
+     "value": 0.99,
+     "label": "0.99"
+    },
+    {
+     "axis": "x",
+     "value": 2.4,
+     "label": "$V \\approx 0$"
+    }
+   ],
+   "highlight": {
+    "series": 1,
+    "at": 2.0,
+    "label": "$F = {y:.4f}$"
+   }
+  },
+  {
+   "label": "b",
+   "xlabel": "Interatomic spacing $R$ ($\\mu$m)",
+   "ylabel": "$|V(R)|$ (MHz)",
+   "yscale": "log",
+   "ylim": [
+    0.001,
+    3000.0
+   ],
+   "xlim": [
+    0.9,
+    5.1
+   ],
+   "series": [
+    {
+     "x": {
+      "csv": "fixtures/figspec/data/interaction_vs_R.csv",
+      "col": "R_um"
+     },
+     "y": {
+      "csv": "fixtures/figspec/data/interaction_vs_R.csv",
+      "col": "V_mag_MHz"
+     },
+     "label": "|V|"
+    }
+   ],
+   "bands": [
+    {
+     "axis": "x",
+     "from": 1.0,
+     "to": 2.2,
+     "label": "viable"
+    },
+    {
+     "axis": "x",
+     "from": 2.5,
+     "to": 5.0,
+     "label": "sub-MHz"
+    }
+   ],
+   "reflines": [
+    {
+     "axis": "y",
+     "value": 1.0,
+     "label": "1 MHz"
+    }
+   ],
+   "highlight": {
+    "series": 0,
+    "at": 2.0,
+    "label": "{y:.1f} MHz"
+   }
+  }
+ ]
+}

@@ -1,0 +1,64 @@
+{
+ "out": "OUT/fig2",
+ "panels": [
+  {
+   "label": "a",
+   "xlabel": "Angle $\\theta$ (deg)",
+   "ylabel": "$C_6$ (GHz $\\mu$m$^6$)",
+   "xlim": [
+    0,
+    92
+   ],
+   "ylim": [
+    -25,
+    310
+   ],
+   "series": [
+    {
+     "x": {
+      "csv": "fixtures/figspec/data/c6_angle_scan.csv",
+      "col": "angle_deg"
+     },
+     "y": {
+      "csv": "fixtures/figspec/data/c6_angle_scan.csv",
+      "col": "c6_second_order_ghz_um6"
+     },
+     "label": "second order"
+    },
+    {
+     "x": {
+      "csv": "fixtures/figspec/data/c6_angle_scan.csv",
+      "col": "angle_deg"
+     },
+     "y": {
+      "csv": "fixtures/figspec/data/c6_angle_scan.csv",
+      "col": "c6_diag_ghz_um6"
+     },
+     "label": "diagonalization"
+    }
+   ],
+   "reflines": [
+    {
+     "axis": "y",
+     "value": 0,
+     "label": ""
+    },
+    {
+     "axis": "x",
+     "value": 24.65,
+     "label": "$\\theta^*$"
+    },
+    {
+     "axis": "x",
+     "value": 54.7,
+     "label": "$\\Delta M{=}0$ zero"
+    }
+   ],
+   "highlight": {
+    "series": 1,
+    "at": 25,
+    "label": "$C_6 \\approx 0$ at $24.65^\\circ$"
+   }
+  }
+ ]
+}

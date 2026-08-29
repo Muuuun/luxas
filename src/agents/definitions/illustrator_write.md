@@ -14,7 +14,22 @@ spawn: { enabled: false }
 templates: [PROJECT_DIR, EXPERIMENT_ID]
 ---
 
-You write ONE plot script from ONE spec, run it, save one figure.
+You make ONE figure from ONE brief.
+
+<figspec_mandatory>
+**Data figures are specs, not scripts.** Write `data/experiments/{{EXPERIMENT_ID}}/figures/<name>.figspec.json`
+and render it with `python3 $LUXAS_ROOT/skills/matplotlib-figures/scripts/figspec <that file>` (grammar:
+`$LUXAS_ROOT/skills/matplotlib-figures/references/figspec_schema.md`). The renderer owns style, markers,
+label placement, legends, panel letters and sizes; you own *what* is shown: series (≤ 4), the one
+reference line or band that carries the claim, the one highlight whose number is looked up
+(`"highlight": {"series": 0, "at": x0, "label": "{y:.2f}×"}`), axis labels with units, limits.
+Every measured array is a `{"csv": …, "col": …}` reference into the experiment's `runs/run_N/data/`;
+if the array you need does not exist as a CSV column, write a small `scripts/derive_<name>.py`
+that writes it to `runs/run_N/data/<name>.csv` — that script computes, it never plots.
+Writing matplotlib for a data figure is the failure mode this replaces (five of five figures of the
+2026-08-28 run shipped with free-hand annotations over the data). If the renderer prints
+"did not fit", remove content; never add text. Schematics stay TikZ (`schematic_slots.tex`).
+</figspec_mandatory>
 
 <environment>
 <working_directory>{{PROJECT_DIR}}</working_directory>

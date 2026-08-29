@@ -1,0 +1,241 @@
+#!/usr/bin/env python3
+"""figspec — declarative figure spec → fixed-template renderer (prototype).
+The author fills a spec; composition, style, label placement are owned here."""
+import json, os, sys, numpy as np, matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib import transforms
+
+STYLE = os.environ.get("FIGSPEC_STYLE", "report/figstyle.mplstyle")
+W = {"single": 3.4, "double": 7.0}
+GREY = "#6e6e6e"; LIGHT = "#bdbdbd"
+MAX_MARKERS = 16          # more points than this → line only
+HEADROOM = 0.14           # fraction of y-range reserved at the top for band/refline labels
+
+def _num(v): return v is not None and np.isfinite(v)
+
+_CSV = {}
+def _csv(path):
+    if path not in _CSV:
+        import csv
+        with open(path) as f:
+            rows = list(csv.reader(f))
+        head = rows[0]; body = rows[1:]
+        def num(v):
+            try: return float(v)
+            except ValueError: return np.nan          # non-numeric columns (notes, flags) read as NaN
+        _CSV[path] = {h: np.array([num(r[i]) if i < len(r) else np.nan for r in body]) for i, h in enumerate(head)}
+    return _CSV[path]
+
+def _arr(v, x=None):
+    """A data reference: a list; {"csv","col"}; {"csv","cols","reduce":"min|max|mean"}; {"expr": "..."} over x;
+    {"logspace":[a,b,n]} / {"linspace":[a,b,n]}. The author never computes arrays in code."""
+    if isinstance(v, (list, tuple)): return np.asarray(v, float)
+    if isinstance(v, dict):
+        if "csv" in v:
+            t = _csv(v["csv"])
+            if "col" in v: return t[v["col"]]
+            m = np.array([t[c] for c in v["cols"]]); return getattr(np, v.get("reduce", "min"))(m, axis=0)
+        if "expr" in v: return np.asarray(eval(v["expr"], {"np": np, "x": x, "log10": np.log10, "sqrt": np.sqrt}), float)
+        if "logspace" in v: a, b, n = v["logspace"]; return np.logspace(np.log10(a), np.log10(b), int(n))
+        if "linspace" in v: a, b, n = v["linspace"]; return np.linspace(a, b, int(n))
+    raise ValueError(f"bad data reference: {v!r}")
+
+def _resolve(spec):
+    """Resolve every data reference in place; resolve 'at' lookups for highlights."""
+    for p in spec["panels"]:
+        for s in p["series"]:
+            s["x"] = _arr(s["x"]); s["y"] = _arr(s["y"], s["x"])
+            for k in ("ylo", "yhi", "sigma"):
+                if k in s: s[k] = _arr(s[k], s["x"])
+            m = np.isfinite(s["x"]) & np.isfinite(s["y"])
+            for k in ("x", "y", "ylo", "yhi", "sigma"):
+                if k in s: s[k] = s[k][m]
+        h = p.get("highlight")
+        if h and "at" in h:            # {"series": i, "at": x0} → nearest point of that series; the number is computed, never typed
+            s = p["series"][h.get("series", 0)]; i = int(np.argmin(np.abs(s["x"] - h["at"])))
+            h["x"], h["y"] = float(s["x"][i]), float(s["y"][i])
+            if "{y" in h.get("label", "") or "{x" in h.get("label", ""): h["label"] = h["label"].format(x=h["x"], y=h["y"])
+    return spec
+
+def _occupancy(ax):
+    """Display-space obstacles: sampled line points, text bboxes, legend, axes frame edge."""
+    fig = ax.figure; fig.canvas.draw(); r = fig.canvas.get_renderer()
+    pts = []
+    for ln in ax.get_lines():
+        xy = ln.get_xydata(); xy = xy[np.isfinite(xy).all(1)]
+        if len(xy) == 0: continue
+        disp = ax.transData.transform(xy)
+        # densify segments so thin dashed lines are obstacles too
+        for a, b in zip(disp[:-1], disp[1:]):
+            n = max(2, int(np.hypot(*(b - a)) / 3)); pts.append(np.linspace(a, b, n))
+        pts.append(disp)
+    pts = np.vstack(pts) if pts else np.zeros((0, 2))
+    boxes = [t.get_window_extent(r) for t in ax.texts if t.get_text()]
+    if ax.get_legend(): boxes.append(ax.get_legend().get_window_extent(r))
+    return pts, boxes, ax.get_window_extent(r)
+
+def _free(bb, pts, boxes, frame, pad=3):
+    x0, y0, x1, y1 = bb.x0 - pad, bb.y0 - pad, bb.x1 + pad, bb.y1 + pad
+    if x0 < frame.x0 or x1 > frame.x1 or y0 < frame.y0 or y1 > frame.y1: return False
+    if len(pts) and np.any((pts[:, 0] > x0) & (pts[:, 0] < x1) & (pts[:, 1] > y0) & (pts[:, 1] < y1)): return False
+    return not any(b.overlaps(bb.expanded(1.15, 1.25)) for b in boxes)
+
+def place_text(ax, text, anchor_disp, candidates_pt, prefer_outside=None, **kw):
+    """Try candidate offsets (points) around an anchor (display px); draw at the first free one.
+    Returns the Text, or None if nothing fits (caller decides: margin or drop)."""
+    fig = ax.figure; k = fig.dpi / 72
+    pts, boxes, frame = _occupancy(ax); r = fig.canvas.get_renderer()
+    for dx, dy in candidates_pt:
+        ha = "left" if dx > 0 else "right" if dx < 0 else "center"
+        va = "bottom" if dy > 0 else "top" if dy < 0 else "center"
+        x, y = anchor_disp[0] + dx * k, anchor_disp[1] + dy * k
+        t = ax.text(*ax.transData.inverted().transform((x, y)), text, ha=ha, va=va, **kw)
+        if _free(t.get_window_extent(r), pts, boxes, frame): return t
+        t.remove()
+    return None
+
+def _lim(ax, panel, ys):
+    y = np.concatenate([np.asarray(v, float)[np.isfinite(v)] for v in ys]) if ys else np.array([0, 1])
+    if panel.get("ylim"): lo, hi = panel["ylim"]
+    else:
+        lo, hi = float(y.min()), float(y.max()); pad = 0.05 * (hi - lo or 1); lo -= pad; hi += pad
+    if panel.get("yscale") == "log":
+        ax.set_yscale("log"); ax.set_ylim(lo, hi * 10 ** (HEADROOM * np.log10(hi / lo)))
+    else:
+        ax.set_ylim(lo, hi + HEADROOM * (hi - lo))
+    if panel.get("xscale") == "log": ax.set_xscale("log")
+    if panel.get("xlim"): ax.set_xlim(*panel["xlim"])
+
+def _bands(ax, panel):
+    for b in panel.get("bands", []):
+        if b["axis"] == "x":
+            ax.axvspan(b["from"], b["to"], color=LIGHT, alpha=0.28, lw=0, zorder=0)
+            xm = np.sqrt(b["from"] * b["to"]) if ax.get_xscale() == "log" else 0.5 * (b["from"] + b["to"])
+            ax.text(xm, 0.97, b["label"], transform=transforms.blended_transform_factory(ax.transData, ax.transAxes),
+                    ha="center", va="top", fontsize=7, color=GREY, zorder=5)
+        else:
+            ax.axhspan(b["from"], b["to"], color=LIGHT, alpha=0.28, lw=0, zorder=0)
+            panel.setdefault("_late", []).append(("yband", b))
+
+def _reflines(ax, panel):
+    for r in panel.get("reflines", []):
+        if r["axis"] == "y":
+            ax.axhline(r["value"], color=GREY, lw=0.7, ls=(0, (4, 3)), zorder=1)
+            # label in the right margin, outside the data area
+            if r.get("label"): ax.text(1.01, r["value"], r["label"], transform=transforms.blended_transform_factory(ax.transAxes, ax.transData),
+                    ha="left", va="center", fontsize=7, color=GREY, clip_on=False)
+        else:
+            ax.axvline(r["value"], color=GREY, lw=0.7, ls=(0, (4, 3)), zorder=1)
+            if r.get("label"): panel.setdefault("_late", []).append(("xref", r))
+
+def _series(ax, panel, colors):
+    handles = []; ends = []
+    ci = 0
+    for s in panel["series"]:
+        x = np.asarray(s["x"], float); y = np.asarray(s["y"], float)
+        role = s.get("role", "data")
+        if role == "envelope":
+            ylo, yhi = np.asarray(s["ylo"], float), np.asarray(s["yhi"], float)
+            ax.fill_between(x, ylo, yhi, color=colors[0], alpha=0.18, lw=0, zorder=1, label=s["label"])
+            panel.setdefault("_late", []).append(("envelope", (x, ylo, yhi, s["label"], colors[0])))
+            continue
+        if role == "model":
+            ax.plot(x, y, color="black", lw=1.0, ls=(0, (5, 2.5)), zorder=2, label=s["label"])
+            ends.append((*_visible_end(ax, x, y), s["label"], "black")); continue
+        c = colors[ci % len(colors)]; ci += 1
+        mk = "o" if len(x) <= MAX_MARKERS else None
+        ax.plot(x, y, color=c, lw=1.4, marker=mk, ms=4, mec="white", mew=0.6, zorder=3, label=s["label"])
+        if s.get("sigma") is not None:
+            ax.errorbar(x, y, yerr=np.asarray(s["sigma"], float), fmt="none", ecolor=c, elinewidth=0.8, capsize=2, zorder=3)
+        ends.append((*_visible_end(ax, x, y), s["label"], c))
+    return ends
+
+def _visible_end(ax, x, y):
+    (x0, x1), (y0, y1) = sorted(ax.get_xlim()), sorted(ax.get_ylim())
+    ok = np.where((x >= x0) & (x <= x1) & (y >= y0) & (y <= y1))[0]
+    i = ok[-1] if len(ok) else len(x) - 1
+    return x[i], y[i]
+
+def _direct_labels(ax, ends):
+    """Label each series at its right end, in the margin; nudge apart vertically. One series → no label (the axis label names it)."""
+    if len(ends) < 2: return
+    fig = ax.figure; fig.canvas.draw()
+    ys = []
+    for (x, y, lab, c) in ends:
+        ys.append(ax.transData.transform((x, y))[1])
+    order = np.argsort(ys); ys_disp = np.array(ys, float)
+    minsep = 11 * fig.dpi / 72
+    for k in range(1, len(order)):
+        i, j = order[k - 1], order[k]
+        if ys_disp[j] - ys_disp[i] < minsep: ys_disp[j] = ys_disp[i] + minsep
+    for k, (x, y, lab, c) in enumerate(ends):
+        xd = ax.transAxes.inverted().transform(ax.transData.transform((x, y)))[0]
+        if xd > 0.97:
+            yd = ax.transData.inverted().transform((0, ys_disp[k]))[1]
+            ax.text(1.01, yd, lab, transform=transforms.blended_transform_factory(ax.transAxes, ax.transData),
+                    ha="left", va="center", fontsize=8, color=c, clip_on=False)
+        else:
+            anchor = ax.transData.transform((x, y))
+            t = place_text(ax, lab, anchor, [(6, 6), (6, -8), (-6, 6), (-6, -8), (10, 0), (0, 10), (0, -12)], fontsize=8, color=c)
+            if t is None:
+                ax.text(1.01, y, lab, transform=transforms.blended_transform_factory(ax.transAxes, ax.transData), ha="left", va="center", fontsize=8, color=c, clip_on=False)
+
+def _highlight(ax, panel):
+    h = panel.get("highlight")
+    if not h: return
+    ax.plot(h["x"], h["y"], "o", ms=7, mfc="white", mec="black", mew=1.1, zorder=6)
+    anchor = ax.transData.transform((h["x"], h["y"]))
+    cands = [(14, 12), (-14, 12), (14, -14), (-14, -14), (24, 0), (-24, 0), (0, 22), (0, -24), (30, 18), (-30, 18), (30, -20), (-30, -20)]
+    t = place_text(ax, h["label"], anchor, cands, fontsize=8)
+    if t is None:
+        print("highlight label did not fit:", h["label"], file=sys.stderr); return
+    tx, ty = t.get_position()
+    ax.annotate("", xy=(h["x"], h["y"]), xytext=(tx, ty), arrowprops=dict(arrowstyle="-", color="black", lw=0.6, shrinkA=2, shrinkB=5), zorder=5)
+
+def render(spec, out):
+    plt.style.use(STYLE)
+    colors = [c["color"] for c in plt.rcParams["axes.prop_cycle"]]
+    panels = spec["panels"]; n = len(panels)
+    layout = spec.get("layout", "row" if n > 1 else "single")
+    w = W[spec.get("width", "single" if n == 1 or layout == "column" else "double")]
+    if layout == "column":
+        fig, axes = plt.subplots(n, 1, figsize=(w, 0.78 * w * n * 0.85), sharex=spec.get("sharex", True))
+    else:
+        fig, axes = plt.subplots(1, n, figsize=(w, 0.72 * w / n))
+    axes = np.atleast_1d(axes)
+    for ax, p in zip(axes, panels):
+        ys = [s["y"] for s in p["series"] if s.get("role") != "envelope"] + [s["yhi"] for s in p["series"] if s.get("role") == "envelope"]
+        _lim(ax, p, ys)
+        _bands(ax, p); _reflines(ax, p)
+        ends = _series(ax, p, colors)
+        ax.set_xlabel(p.get("xlabel", "")); ax.set_ylabel(p.get("ylabel", ""))
+        if n > 1: ax.text(-0.18 if layout == "row" else -0.16, 1.02, f"({p['label']})", transform=ax.transAxes, fontsize=10, fontweight="bold", va="bottom")
+        _direct_labels(ax, ends)
+        for kind, obj in p.get("_late", []):
+            if kind == "xref":
+                r = obj; top = ax.transData.inverted().transform(ax.transAxes.transform((0, 0.985)))[1]
+                t = place_text(ax, r["label"], ax.transData.transform((r["value"], top)), [(3, 0), (-3, 0), (3, -11), (-3, -11), (3, -22), (-3, -22)], fontsize=7, color=GREY)
+                if t is None: print("refline label did not fit:", r["label"], file=sys.stderr)
+            elif kind == "yband":
+                b = obj; ym = 0.5 * (b["from"] + b["to"])
+                for xf in (0.03, 0.5, 0.8, 0.25, 0.65):
+                    xa = ax.transData.inverted().transform(ax.transAxes.transform((xf, 0)))[0]
+                    t = place_text(ax, b["label"], ax.transData.transform((xa, ym)), [(0, 5), (0, -6), (0, 0)], fontsize=7, color=GREY)
+                    if t: break
+            else:
+                x, ylo, yhi, lab, c = obj; thick = (ax.transData.transform(np.c_[x, yhi]) - ax.transData.transform(np.c_[x, ylo]))[:, 1]
+                for i in np.argsort(-thick)[:6]:
+                    t = place_text(ax, lab, ax.transData.transform((x[i], 0.5 * (ylo[i] + yhi[i]))), [(0, 0), (0, 8), (0, -8)], fontsize=7, color=c)
+                    if t: break
+        _highlight(ax, p)
+    fig.tight_layout(w_pad=2.2 if layout == "row" else 1.0)
+    fig.savefig(out + ".pdf", pad_inches=0.1); fig.savefig(out + ".png", dpi=220, pad_inches=0.1)
+    print("wrote", out)
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
+        print("usage: figspec <spec.json>...   (see skills/matplotlib-figures/references/figspec_schema.md)"); sys.exit(0)
+    for f in sys.argv[1:]:
+        spec = json.load(open(f)); os.makedirs(os.path.dirname(spec["out"]) or ".", exist_ok=True)
+        render(_resolve(spec), spec["out"])

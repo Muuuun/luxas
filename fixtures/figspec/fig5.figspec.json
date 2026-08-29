@@ -1,0 +1,96 @@
+{
+ "out": "OUT/fig5",
+ "layout": "row",
+ "width": "double",
+ "panels": [
+  {
+   "label": "a",
+   "xlabel": "Gate length $R$ ($\\mu$m)",
+   "ylabel": "Packing-density gain",
+   "ylim": [
+    1.0,
+    2.4
+   ],
+   "xlim": [
+    1.4,
+    2.3
+   ],
+   "series": [
+    {
+     "x": {
+      "csv": "fixtures/figspec/data/gate_length_sweep.csv",
+      "col": "gate_length_um"
+     },
+     "y": {
+      "csv": "fixtures/figspec/data/gate_length_sweep.csv",
+      "col": "gain"
+     },
+     "label": "interaction gate"
+    }
+   ],
+   "reflines": [
+    {
+     "axis": "y",
+     "value": 1.35,
+     "label": "strong-blockade cap"
+    },
+    {
+     "axis": "y",
+     "value": 1.0,
+     "label": "SS"
+    }
+   ],
+   "highlight": {
+    "series": 0,
+    "at": 2.0,
+    "label": "{y:.2f}$\\times$"
+   }
+  },
+  {
+   "label": "b",
+   "xlabel": "Lattice orientation $\\phi$ (deg)",
+   "ylabel": "Packing-density gain",
+   "ylim": [
+    1.0,
+    2.8
+   ],
+   "xlim": [
+    -5,
+    65
+   ],
+   "series": [
+    {
+     "x": {
+      "csv": "fixtures/figspec/data/orientation_sweep.csv",
+      "col": "a2_angle_deg"
+     },
+     "y": {
+      "csv": "fixtures/figspec/data/orientation_sweep.csv",
+      "col": "gain"
+     },
+     "label": "gain"
+    }
+   ],
+   "bands": [
+    {
+     "axis": "y",
+     "from": 1.97,
+     "to": 1.99,
+     "label": "plateau"
+    }
+   ],
+   "reflines": [
+    {
+     "axis": "y",
+     "value": 1.35,
+     "label": "strong-blockade cap"
+    }
+   ],
+   "highlight": {
+    "series": 0,
+    "at": 30.0,
+    "label": "fragile, excluded"
+   }
+  }
+ ]
+}

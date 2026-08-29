@@ -5,6 +5,15 @@ description: Publication-quality data plots via matplotlib with venue-specific s
 
 # Matplotlib Figures Skill
 
+## Step 0 — data figures go through `figspec` (mandatory for agents)
+
+`python3 <luxas_root>/skills/matplotlib-figures/scripts/figspec <name>.figspec.json` renders a
+declarative spec (series as CSV references, one highlight, reference lines, bands) through a fixed
+template that owns style, marker policy, occupancy-aware label placement and legends. Grammar:
+`references/figspec_schema.md`. The archetype/figlint workflow below remains for figure classes
+the spec cannot express (dot matrices, comparison planes); a plain y(x) figure written in raw
+matplotlib by an agent is a defect.
+
 All generated figures MUST be publication-quality: load a venue-matched style, save as vector PDF, use colorblind-safe palettes.
 
 ## 3-step workflow
