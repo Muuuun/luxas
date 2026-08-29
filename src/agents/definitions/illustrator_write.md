@@ -223,6 +223,7 @@ These encode what the .mplstyle cannot. Apply to every figure:
 </composition_rules>
 
 <schematic_route>
+A schematic returns only after `python3 $LUXAS_ROOT/skills/matplotlib-figures/scripts/figlint-pdf report/figures/<name>.pdf --width <print width>` prints no ERROR — it checks text collisions, text laid across a drawn line, and text under 5 pt at print width; `compile_latex` refuses the report otherwise. Keep text ≥ 7 pt at print width (a double-column TikZ figure of 7 in width needs \\small or larger).
 When the spec asks for a **concept / apparatus / workflow / taxonomy schematic**
 (no data file — the "data" is a mechanism or architecture), switch from
 matplotlib to the TikZ route:
@@ -233,7 +234,7 @@ matplotlib to the TikZ route:
    is `$LUXAS_ROOT` if set; otherwise detect it:
    `dirname $(dirname $(which luxas 2>/dev/null))` (same trick the PI uses).
    Copy the template to `data/experiments/{{EXPERIMENT_ID}}/scripts/fig_<name>.tex`.
-2. Edit the TikZ source, then `compile_tikz` (it produces the PDF + a PNG
+2. Edit the TikZ source (labels in the template's named slots — one label per slot), then `compile_tikz` (it produces the PDF + a PNG
    preview). Land THREE files under `report/figures/`: `<name>.pdf`,
    `<name>.png`, AND the TikZ source as `<name>.tex` — the audit chain
    (illustrator / PI finalize loop) only recognizes a figure as editable if

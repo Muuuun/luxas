@@ -81,7 +81,7 @@ def _occupancy(ax):
     for ln in ax.get_lines():
         xy = ln.get_xydata(); xy = xy[np.isfinite(xy).all(1)]
         if len(xy) == 0: continue
-        disp = ax.transData.transform(xy)
+        disp = ln.get_transform().transform(xy)   # axvline/axhline use blended transforms — never assume transData
         # densify segments so thin dashed lines are obstacles too
         for a, b in zip(disp[:-1], disp[1:]):
             n = max(2, int(np.hypot(*(b - a)) / 3)); pts.append(np.linspace(a, b, n))
@@ -91,13 +91,13 @@ def _occupancy(ax):
     if ax.get_legend(): boxes.append(ax.get_legend().get_window_extent(r))
     return pts, boxes, ax.get_window_extent(r)
 
-def _free(bb, pts, boxes, frame, pad=3):
+def _free(bb, pts, boxes, frame, pad=5, allow_outside=False):
     x0, y0, x1, y1 = bb.x0 - pad, bb.y0 - pad, bb.x1 + pad, bb.y1 + pad
-    if x0 < frame.x0 or x1 > frame.x1 or y0 < frame.y0 or y1 > frame.y1: return False
+    if not allow_outside and (x0 < frame.x0 or x1 > frame.x1 or y0 < frame.y0 or y1 > frame.y1): return False
     if len(pts) and np.any((pts[:, 0] > x0) & (pts[:, 0] < x1) & (pts[:, 1] > y0) & (pts[:, 1] < y1)): return False
-    return not any(b.overlaps(bb.expanded(1.15, 1.25)) for b in boxes)
+    return not any(b.overlaps(bb.expanded(1.25, 1.4)) for b in boxes)
 
-def place_text(ax, text, anchor_disp, candidates_pt, prefer_outside=None, **kw):
+def place_text(ax, text, anchor_disp, candidates_pt, allow_outside=False, **kw):
     """Try candidate offsets (points) around an anchor (display px); draw at the first free one.
     Returns the Text, or None if nothing fits (caller decides: margin or drop)."""
     fig = ax.figure; k = fig.dpi / 72
@@ -107,7 +107,7 @@ def place_text(ax, text, anchor_disp, candidates_pt, prefer_outside=None, **kw):
         va = "bottom" if dy > 0 else "top" if dy < 0 else "center"
         x, y = anchor_disp[0] + dx * k, anchor_disp[1] + dy * k
         t = ax.text(*ax.transData.inverted().transform((x, y)), text, ha=ha, va=va, **kw)
-        if _free(t.get_window_extent(r), pts, boxes, frame): return t
+        if _free(t.get_window_extent(r), pts, boxes, frame, allow_outside=allow_outside): return t
         t.remove()
     return None
 
@@ -128,8 +128,7 @@ def _bands(ax, panel):
         if b["axis"] == "x":
             ax.axvspan(b["from"], b["to"], color=LIGHT, alpha=0.28, lw=0, zorder=0)
             xm = np.sqrt(b["from"] * b["to"]) if ax.get_xscale() == "log" else 0.5 * (b["from"] + b["to"])
-            ax.text(xm, 0.97, _tex(b["label"]), transform=transforms.blended_transform_factory(ax.transData, ax.transAxes),
-                    ha="center", va="top", fontsize=7, color=GREY, zorder=5)
+            panel.setdefault("_late", []).append(("xband", b))
         else:
             ax.axhspan(b["from"], b["to"], color=LIGHT, alpha=0.28, lw=0, zorder=0)
             panel.setdefault("_late", []).append(("yband", b))
@@ -221,18 +220,37 @@ def render(spec, out):
     else:
         fig, axes = plt.subplots(1, n, figsize=(w, 0.72 * w / n))
     axes = np.atleast_1d(axes)
+    # Pass 1 — geometry: limits, bands, lines, series, axis titles, panel letters.
+    ends_by_panel = []
     for ax, p in zip(axes, panels):
         ys = [s["y"] for s in p["series"] if s.get("role") != "envelope"] + [s["yhi"] for s in p["series"] if s.get("role") == "envelope"]
         _lim(ax, p, ys)
         _bands(ax, p); _reflines(ax, p)
-        ends = _series(ax, p, colors)
+        ends_by_panel.append(_series(ax, p, colors))
         ax.set_xlabel(_tex(p.get("xlabel", ""))); ax.set_ylabel(_tex(p.get("ylabel", "")))
         if n > 1: ax.text(-0.18 if layout == "row" else -0.16, 1.02, f"({p['label']})", transform=ax.transAxes, fontsize=10, fontweight="bold", va="bottom")
+    # Freeze the layout BEFORE any label is placed: tight_layout after placement
+    # resizes the axes and moves data-anchored texts relative to each other
+    # (fig2 2026-08-29: two line labels measured apart, rendered on top of each other).
+    fig.tight_layout(w_pad=2.2 if layout == "row" else 1.0)
+    # Pass 2 — text, each placement measured against the final geometry.
+    for ax, p, ends in zip(axes, panels, ends_by_panel):
         _direct_labels(ax, ends)
         for kind, obj in p.get("_late", []):
-            if kind == "xref":
+            if kind == "xband":
+                b = obj; xm = np.sqrt(b["from"] * b["to"]) if ax.get_xscale() == "log" else 0.5 * (b["from"] + b["to"])
+                top = ax.transData.inverted().transform(ax.transAxes.transform((0, 0.985)))[1]
+                t = place_text(ax, _tex(b["label"]), ax.transData.transform((xm, top)), [(0, 0), (0, -11), (8, 0), (-8, 0), (16, 0), (-16, 0), (0, -22)], fontsize=7, color=GREY)
+                if t is None:  # above the top spine, as journals do
+                    ymax = ax.transData.inverted().transform(ax.transAxes.transform((0, 1.0)))[1]
+                    t = place_text(ax, _tex(b["label"]), ax.transData.transform((xm, ymax)), [(0, 3), (10, 3), (-10, 3), (0, 14)], allow_outside=True, fontsize=7, color=GREY)
+                if t is None: print("band label did not fit:", b["label"], file=sys.stderr)
+            elif kind == "xref":
                 r = obj; top = ax.transData.inverted().transform(ax.transAxes.transform((0, 0.985)))[1]
                 t = place_text(ax, _tex(r["label"]), ax.transData.transform((r["value"], top)), [(3, 0), (-3, 0), (3, -11), (-3, -11), (3, -22), (-3, -22)], fontsize=7, color=GREY)
+                if t is None:
+                    ymax = ax.transData.inverted().transform(ax.transAxes.transform((0, 1.0)))[1]
+                    t = place_text(ax, _tex(r["label"]), ax.transData.transform((r["value"], ymax)), [(0, 3), (3, 3), (-3, 3), (0, 14)], allow_outside=True, fontsize=7, color=GREY)
                 if t is None: print("refline label did not fit:", r["label"], file=sys.stderr)
             elif kind == "yband":
                 b = obj; ym = 0.5 * (b["from"] + b["to"])
@@ -243,10 +261,9 @@ def render(spec, out):
             else:
                 x, ylo, yhi, lab, c = obj; thick = (ax.transData.transform(np.c_[x, yhi]) - ax.transData.transform(np.c_[x, ylo]))[:, 1]
                 for i in np.argsort(-thick)[:6]:
-                    t = place_text(ax, lab, ax.transData.transform((x[i], 0.5 * (ylo[i] + yhi[i]))), [(0, 0), (0, 8), (0, -8)], fontsize=7, color=c)
+                    t = place_text(ax, _tex(lab), ax.transData.transform((x[i], 0.5 * (ylo[i] + yhi[i]))), [(0, 0), (0, 8), (0, -8)], fontsize=7, color=c)
                     if t: break
         _highlight(ax, p)
-    fig.tight_layout(w_pad=2.2 if layout == "row" else 1.0)
     fig.savefig(out + ".pdf", pad_inches=0.1); fig.savefig(out + ".png", dpi=220, pad_inches=0.1)
     print("wrote", out)
 

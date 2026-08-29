@@ -14,7 +14,7 @@ checks what the reader will actually see at print size.
 Usage: figlint-pdf FILE.pdf [--width 3.4] [--min-pt 5] [--max-spans 40] [--json]
 Exit: 0 clean/warnings, 2 on any ERROR, 3 if the file cannot be read.
 """
-import argparse, json, sys
+import argparse, os, sys, json, sys
 
 
 def shrink(b, f=0.85):
@@ -57,7 +57,8 @@ def lint_pdf(path, width_in=None, min_pt=5.0, max_spans=40):
             x1 = max(sp["bbox"][2] for sp in spans); y1 = max(sp["bbox"][3] for sp in spans)
             text = "".join(sp["text"] for sp in spans)
             sizes = [(sp.get("size", 0.0), len(sp["text"].strip())) for sp in spans]
-            lines_out.append({"text": text, "bbox": (x0, y0, x1, y1), "sizes": sizes})
+            d_ = line.get("dir", (1, 0))
+            lines_out.append({"text": text, "bbox": (x0, y0, x1, y1), "sizes": sizes, "rotated": abs(d_[1]) > 0.1})
     # Merge fragments of one visual line: a font switch (mathtext Ω, μ, a bold
     # run) makes PyMuPDF emit separate "lines" on the same baseline that abut or
     # overlap — they are one label, not a collision (fig4 "…, Ω = 160 MHz").
@@ -124,6 +125,51 @@ def lint_pdf(path, width_in=None, min_pt=5.0, max_spans=40):
             errors.append(f'tiny text "{text[:40]}" renders at {pt:.1f} pt at {width_in:.2f} in print width (min {min_pt} pt)')
         if len(tiny) > 6:
             errors.append(f"tiny text: {len(tiny) - 6} more lines below {min_pt} pt")
+    # Text over a drawn line (TikZ dimension lines, arrows, curves): the text layer
+    # cannot see strokes, so sample every stroked path and count samples inside the
+    # CORE (35 % shrunk) of each text box — a leader line ends at the box edge and
+    # never reaches the core; a label laid across a line does (fig1 2026-08-29:
+    # "θ* = 24.65°" across the R = 2.0 μm dimension line passed the text-only lint).
+    try:
+        strokes = []
+        for d in page.get_drawings():
+            if d.get("color") is None or (d.get("width") or 0) <= 0:
+                continue  # fills (bands, discs) are backgrounds, not lines
+            for it in d.get("items", []):
+                kind = it[0]
+                if kind == "l":
+                    a_, b_ = it[1], it[2]; n = max(2, int(abs(complex(b_.x - a_.x, b_.y - a_.y)) / 2))
+                    strokes.append([(a_.x + (b_.x - a_.x) * t / n, a_.y + (b_.y - a_.y) * t / n) for t in range(n + 1)])
+                elif kind == "c":
+                    p0, p1, p2, p3 = it[1:5]
+                    strokes.append([(((1 - t) ** 3) * p0.x + 3 * ((1 - t) ** 2) * t * p1.x + 3 * (1 - t) * t * t * p2.x + t ** 3 * p3.x,
+                                     ((1 - t) ** 3) * p0.y + 3 * ((1 - t) ** 2) * t * p1.y + 3 * (1 - t) * t * t * p2.y + t ** 3 * p3.y) for t in [k / 12 for k in range(13)]])
+                elif kind == "re":
+                    r = it[1]; strokes.append([(r.x0, r.y0), (r.x1, r.y0), (r.x1, r.y1), (r.x0, r.y1)])
+        over = []
+        for ln in lines_out:
+            if is_ticklike(ln["text"]) or ln.get("rotated"):
+                continue  # rotated axis titles report unreliable boxes; they sit outside the axes anyway
+            x0, y0, x1, y1 = ln["bbox"]; w, h = x1 - x0, y1 - y0
+            if w <= 0 or h <= 0 or len(ln["text"].strip()) < 3:
+                continue
+            cx0, cy0, cx1, cy1 = x0 + 0.25 * w, y0 + 0.3 * h, x1 - 0.25 * w, y1 - 0.3 * h
+            hit = 0
+            for seg in strokes:
+                (sx0, sy0), (sx1, sy1) = seg[0], seg[-1]
+                if abs(complex(sx1 - sx0, sy1 - sy0)) < 6 and len(seg) < 6:
+                    continue  # tick marks and glyph-sized strokes
+                inside = sum(1 for (x, y) in seg if cx0 <= x <= cx1 and cy0 <= y <= cy1)
+                if inside >= 1:
+                    hit += 1
+                    if os.environ.get("FIGLINT_DEBUG"): print("  [debug]   path", [tuple(round(v, 1) for v in seg[0]), tuple(round(v, 1) for v in seg[-1])], "n", len(seg), file=sys.stderr)
+            if hit:
+                over.append(ln["text"])
+                if os.environ.get("FIGLINT_DEBUG"): print("  [debug] over-line", repr(ln["text"]), "bbox", [round(v, 1) for v in ln["bbox"]], "paths", hit, file=sys.stderr)
+        for t in over[:6]:
+            errors.append(f'text over line "{t[:40]}" — a drawn stroke crosses the label; move the label or the line')
+    except Exception as ex:  # drawing extraction is best-effort
+        warnings.append(f"stroke check skipped: {ex}")
     if len(lines_out) > max_spans:
         warnings.append(f"dense text: {len(lines_out)} text lines on one figure (> {max_spans}) — split panels or drop annotations")
     return errors, warnings, {"lines": len(lines_out), "spans": n_spans, "scale": scale, "page_w_in": crop.width / 72.0}
