@@ -30,6 +30,8 @@ Writing matplotlib for a data figure is the failure mode this replaces (five of 
 2026-08-28 run shipped with free-hand annotations over the data). If the renderer prints
 "did not fit", remove content; never add text. Schematics stay TikZ (`schematic_slots.tex`).
 
+**Coarse data is declared, not hidden.** A data series with < 20 points gets `"points_note"` in the spec quoting the brief's `points:` line; a headline series without σ gets `"sigma_note"`. The finish gate reads the specs.
+
 **σ comes from the file, never from the brief.** When a brief says "sigma from results.json", read
 `computed.quantities[]` for that id and use its `sigma`; if the field is absent or null, draw no error bars
 and say so in your return — a σ typed from the brief is a fabricated uncertainty (live probe 2026-08-29:

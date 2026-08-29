@@ -35,7 +35,7 @@ import { extractFrontmatterBlock, parseAuditFrontmatter } from "../utils.js";
 import { claimTableIssues } from "../claims-table.js";
 
 export interface IntegrityIssue {
-  kind: "number-provenance" | "experiment-citation" | "disclosure" | "results-schema" | "harness-vocab" | "outline" | "method-blocked" | "claim-status" | "selection-policy";
+  kind: "number-provenance" | "experiment-citation" | "disclosure" | "results-schema" | "harness-vocab" | "outline" | "method-blocked" | "claim-status" | "selection-policy" | "figure-data";
   blocking: boolean;
   text: string;
   /**
@@ -383,6 +383,45 @@ export function xvalVerdict(x: any): "corroborated" | "discrepant" | "identical"
     if (!smallInt) return "identical";
   }
   return Math.abs(a - b) <= tol * Math.max(Math.abs(a), Math.abs(b)) ? "corroborated" : "discrepant";
+}
+
+
+/**
+ * Figures v3.1: a shipped figure built on a coarse sweep or without σ on the page.
+ * Reads the .figspec.json files the illustrator wrote (data/experiments/<E>/figures/)
+ * and the CSVs they reference; non-blocking — the number a referee asks for is
+ * "how many points", and the answer must be in the brief or the spec.
+ */
+export function figureDataIssues(projectDir: string): IntegrityIssue[] {
+  const out: IntegrityIssue[] = [];
+  const expRoot = join(projectDir, "data", "experiments");
+  if (!existsSync(expRoot)) return out;
+  const rows = (csv: string): number => {
+    try { return Math.max(0, readFileSync(join(projectDir, csv), "utf-8").split(/\r?\n/).filter((l) => l.trim()).length - 1); } catch { return -1; }
+  };
+  for (const e of readdirSync(expRoot)) {
+    const fdir = join(expRoot, e, "figures");
+    if (!existsSync(fdir)) continue;
+    for (const f of readdirSync(fdir).filter((x) => x.endsWith(".figspec.json"))) {
+      let spec: any; try { spec = JSON.parse(readFileSync(join(fdir, f), "utf-8")); } catch { continue; }
+      const name = String(spec?.out ?? f).split("/").pop();
+      for (const p of spec?.panels ?? []) {
+        for (const s of p?.series ?? []) {
+          if (s?.role === "model" || s?.role === "envelope") continue;
+          const ref = s?.x && typeof s.x === "object" && s.x.csv ? s.x : (s?.y && typeof s.y === "object" && s.y.csv ? s.y : null);
+          if (!ref) continue;
+          const n = rows(String(ref.csv));
+          if (n >= 0 && n < 20 && !spec.points_note && !p.points_note && !s.points_note) {
+            out.push({ kind: "figure-data", blocking: false, text: `${name}: series "${s.label ?? "?"}" has ${n} points (${ref.csv}) — a headline sweep is ≥ 20 per axis; either re-spawn the experiment to densify the sweep or put the reason in the spec (\"points_note\") and the brief (points: …).` });
+          }
+          if (p?.highlight && s?.sigma === undefined && !spec.sigma_note && !p.sigma_note && !s.sigma_note) {
+            out.push({ kind: "figure-data", blocking: false, text: `${name}: highlighted series "${s.label ?? "?"}" shows no σ — a headline quantity on the page carries its uncertainty (\"sigma\": REF from results.json computed.quantities[].sigma) or the spec says why (\"sigma_note\").` });
+          }
+        }
+      }
+    }
+  }
+  return out;
 }
 
 export function reportIntegrityIssues(projectDir: string): IntegrityIssue[] {
@@ -1378,6 +1417,7 @@ export function reportIntegrityIssues(projectDir: string): IntegrityIssue[] {
     issues.push({ kind: "claim-status", blocking: false, text: `claim table could not be built: ${(err as Error).message.slice(0, 120)}` });
   }
 
+  try { issues.push(...figureDataIssues(projectDir)); } catch { /* advisory */ }
   return issues;
 }
 

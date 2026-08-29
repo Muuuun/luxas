@@ -370,7 +370,7 @@ The `illustrator_write` task spec must include (the agent renders data figures t
 - **Uncertainty on the page.** Every headline quantity in a figure carries its σ from `results.json computed.quantities[].sigma` (`"sigma": REF` → bars/band). A figure without uncertainties is incomplete, whatever it looks like.
 - **The right form.** Two controls → a heatmap with the contour that carries the claim (F(R, Ω) with the 0.99 line), never an envelope of curves; an anisotropy → a polar panel; a comparison → one axis with both.
 - **Composite where the story is one.** Fig. 1 = schematic + the quantitative anisotropy + the comparison as one grid (`"layout": "grid"`), not three figures.
-Put these into the brief as explicit lines (crux: …, points: …, sigma from: …, form: …); the agent has no other source for them.
+Put these into the brief as explicit lines (crux: …, points: …, sigma from: …, form: …); the agent has no other source for them. The `points:` and `sigma:` fields of the ledger's `Figure candidates:` line are your source; a candidate with `points < 20` on a headline sweep or `sigma: none` is a sweep to re-spawn (`experiment`, revise directive: "densify <file> to ≥ 20 points with σ"), not a figure to brief — the finish gate lists shipped figures built on coarse data (`figure-data` issues).
 
 One spawn per figure. Multiple figures for the same experiment can be parallel spawns in one turn.
 
