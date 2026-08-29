@@ -87,6 +87,15 @@ def lint_pdf(path, width_in=None, min_pt=5.0, max_spans=40):
             a, b = lines_out[i], lines_out[j]
             if is_ticklike(a["text"]) and is_ticklike(b["text"]):
                 continue
+            # A sub/superscript fragment (≤ 2 glyphs) sitting within another span's horizontal
+            # range is the same mathtext label split by a font switch (Linux DejaVu fallback
+            # emits C_6^{90°} as "C", "6", "6/C90°"), never a second label laid over it.
+            ta, tb = a["text"].strip(), b["text"].strip()
+            if (len(ta) <= 2 or len(tb) <= 2):
+                small, big = (a, b) if len(ta) <= 2 else (b, a)
+                sx0, _, sx1, _ = small["bbox"]; bx0, _, bx1, _ = big["bbox"]
+                if sx0 >= bx0 - 2 and sx1 <= bx1 + 2:
+                    continue
             sa, sb = shrink(a["bbox"], 0.8), shrink(b["bbox"], 0.8)
             if not overlaps(sa, sb):
                 continue
