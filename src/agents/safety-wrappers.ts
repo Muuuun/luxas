@@ -36,7 +36,7 @@ const HARNESS_REVIEW_WRITE_PATTERN = { pattern: /(^|\/)reviews\/experiment_revie
 import { expandTemplate, extractTextContent } from "../utils.js";
 import { reportIntegrityIssues } from "../tools/report-integrity.js";
 import { buildClaimRegistry, nearestKeys } from "../claims-registry.js";
-import { quantityDeclarationProblems } from "../claims-review.js";
+import { quantityDeclarationProblems, routeLintProblems } from "../claims-review.js";
 import type { SafetyConfig } from "./registry.js";
 import type { FileTouchRecord } from "../active-agents.js";
 import {
@@ -346,14 +346,14 @@ function stripTruncationBanner(text: string): string {
  * closure). Feedback is appended, never blocking — the write has happened;
  * the point is immediacy, not another wall.
  */
-function writeTimeValidation(projectDir: string, relPath: string, result: any): any {
+export function writeTimeValidation(projectDir: string, relPath: string, result: any): any {
   const isClaims = /(^|\/)report\/claims\.json$/.test(relPath);
   const isResults = /(^|\/)data\/experiments\/[^/]+\/runs\/[^/]+\/results\.json$/.test(relPath);
   if (!isClaims && !isResults) return result;
   let issues: { blocking: boolean; text: string }[] = [];
-  try {
-    issues = reportIntegrityIssues(projectDir);
-  } catch { return result; }
+  // A throwing integrity gate must not silence the write-time hints (v3 D5:
+  // the route lint was invisible on any project where the gate threw).
+  try { issues = reportIntegrityIssues(projectDir); } catch { issues = []; }
   const relevant = issues.filter((i) => i.blocking && (
     isClaims ? (/claims\.json/.test(i.text) || /wrong claim_key/.test(i.text))
              : /[Cc]ross-validation/.test(i.text)
@@ -363,6 +363,11 @@ function writeTimeValidation(projectDir: string, relPath: string, result: any): 
   // ever matches, grade caps at indicative, 5f hunts by value); this names
   // the invention itself, at the write, with the nearest legal spellings.
   const keyProblems: string[] = [];
+  // v3 D5: two names for one route are not two routes. Own guard — it must
+  // not depend on the registry build (which throws on a bare project).
+  if (isResults) {
+    try { keyProblems.push(...routeLintProblems(JSON.parse(readFileSync(resolve(projectDir, relPath), "utf-8"))?.computed ?? {})); } catch { /* advisory */ }
+  }
   try {
     const registry = buildClaimRegistry(projectDir);
     const known = new Set(registry.map((r) => r.key));

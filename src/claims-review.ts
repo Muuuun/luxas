@@ -343,3 +343,41 @@ export function cosmeticSpawnNotice(projectDir: string, agent: string): { notice
     (refuse ? `Refused (LUXAS_COSMETIC_WHILE_DISPUTED=0). Spawn "${agent}" once the ship line is clean.` : `Spawning "${agent}" anyway — the dollars are yours to spend; the ship line is not.`);
   return { notice, refuse };
 }
+
+// ── Route lint (v3 D5, 2026-08-29) ────────────────────────────────────────
+//
+// A cross-validation "control" whose method differs from the producer's only
+// by a library name or a filler word is the same computation recorded twice
+// (pp-vs-ss E2: gain_3d_n60 bit-identical; 297nm E6 re-summed the pipeline it
+// "validated"). Routes differ when they differ in FORMALISM or LIMITING
+// APPROXIMATION; two names for one route share their content tokens.
+const ROUTE_STOPWORDS = new Set(["arc", "pairinteraction", "numpy", "scipy", "qutip", "python", "script", "code", "library", "package",
+  "the", "a", "an", "of", "for", "with", "via", "using", "based", "from", "and", "or", "in", "on", "to", "at", "by", "same", "own",
+  "method", "approach", "calculation", "computation", "estimate", "value", "result", "v2", "v3", "new", "old", "rerun", "re-run", "again", "control"]);
+export function routeTokens(method: string): Set<string> {
+  return new Set(String(method ?? "").toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length >= 3 && !ROUTE_STOPWORDS.has(t)));
+}
+/** True when two method descriptions name the same route (no distinguishing content token on either side). */
+export function sameRoute(a: string, b: string): boolean {
+  const ta = routeTokens(a), tb = routeTokens(b);
+  if (ta.size === 0 || tb.size === 0) return a.trim().toLowerCase() === b.trim().toLowerCase();
+  const onlyA = [...ta].filter((t) => !tb.has(t)), onlyB = [...tb].filter((t) => !ta.has(t));
+  return onlyA.length === 0 && onlyB.length === 0;
+}
+/** Write-time problems for cross_validation / cross_validation_plan entries whose two methods are one route. */
+export function routeLintProblems(computed: any): string[] {
+  const out: string[] = [];
+  const xv = Array.isArray(computed?.cross_validation) ? computed.cross_validation : [];
+  for (const x of xv) {
+    const a = String(x?.method_a ?? ""), b = String(x?.method_b ?? "");
+    if (a && b && sameRoute(a, b)) out.push(`cross_validation ${String(x?.claim_key ?? "?")}: method_a "${a.slice(0, 50)}" and method_b "${b.slice(0, 50)}" name the same route — a second call of the same function (or the same formalism through another library) is not a control. Name a route that differs in formalism or limiting approximation (see <methods_registry> control pairs), or drop the entry.`);
+  }
+  const plan = Array.isArray(computed?.cross_validation_plan) ? computed.cross_validation_plan : [];
+  const producerRoutes = new Set<string>(xv.map((x: any) => String(x?.method_a ?? "")).filter(Boolean));
+  for (const pl of plan) {
+    const cm = String(pl?.control_method ?? "");
+    if (!cm) continue;
+    for (const pr of producerRoutes) if (sameRoute(cm, pr)) { out.push(`cross_validation_plan ${String(pl?.claim_key ?? "?")}: control_method "${cm.slice(0, 50)}" is the producer's own route ("${pr.slice(0, 40)}") — the plan must name an independent route.`); break; }
+  }
+  return out;
+}

@@ -100,5 +100,33 @@ function check(label: string, cond: boolean, detail = "") {
 	rmSync(d, { recursive: true, force: true });
 }
 
+// ── C: route lint on cross_validation at write time (v3 D5) ───────────────
+{
+	const { routeLintProblems, sameRoute } = await import("../src/claims-review.ts");
+	check("C: sameRoute — same formalism via two libraries", sameRoute("ARC perturbative C6", "pairinteraction perturbative C6"));
+	check("C: sameRoute — filler words do not distinguish", sameRoute("channel sum v2", "channel sum"));
+	check("C: sameRoute — different formalisms differ", !sameRoute("second-order perturbative channel sum", "full pair-Hamiltonian diagonalization, R^-6 fit"));
+	const probs = routeLintProblems({ cross_validation: [{ claim_key: "computed.gain", method_a: "ARC perturbative C6", method_b: "pairinteraction perturbative C6" }], cross_validation_plan: [{ claim_key: "computed.gain", control_method: "ARC perturbative C6 again" }] });
+	check("C: routeLintProblems flags the same-route pair and the self-route plan", probs.length === 2 && /name the same route/.test(probs[0]) && /producer's own route/.test(probs[1]), probs.join(" | "));
+	// end-to-end through the wrapped write tool, scaffolded like section B
+	const d = mkdtempSync(join(tmpdir(), "luxas-wtv-route-"));
+	mkdirSync(join(d, "report"), { recursive: true }); mkdirSync(join(d, "notes"), { recursive: true });
+	writeFileSync(join(d, "report", "report.tex"), "\\begin{document}x\\end{document}");
+	writeFileSync(join(d, "notes", "experiments.md"), "# Experiments\n");
+	mkdirSync(join(d, "data", "experiments", "E1_x", "runs", "run_1"), { recursive: true });
+	mkdirSync(join(d, "data", "experiments", "E1_x", "runs", "run_2"), { recursive: true });
+	const wrapper = buildSafetyWrapper({ allowedWriteRoots: ["data/"] })!;
+	const fakeWrite = { name: "write", async execute(_id: string, params: any) { writeFileSync(join(d, params.file_path), params.content); return { content: [{ type: "text", text: "written" }] }; } };
+	const [wrapped] = wrapper([fakeWrite], d);
+	const mk = (a: string, b: string) => JSON.stringify({ computed: { gain: 1.2, cross_validation: [{ claim_key: "computed.gain", method_a: a, method_b: b, value_a: 1.2, value_b: 1.25, tolerance_rel: 0.1 }] } });
+	const same = await wrapped.execute("r1", { file_path: "data/experiments/E1_x/runs/run_1/results.json", content: mk("ARC perturbative C6", "pairinteraction perturbative C6") });
+	const t1 = (same.content ?? []).map((c: any) => c.text ?? "").join("\n");
+	check("C: same route through two libraries is flagged at write time", /name the same route/.test(t1), t1.slice(0, 300));
+	const diff = await wrapped.execute("r2", { file_path: "data/experiments/E1_x/runs/run_2/results.json", content: mk("second-order perturbative channel sum", "full pair-Hamiltonian diagonalization, R^-6 fit") });
+	const t2 = (diff.content ?? []).map((c: any) => c.text ?? "").join("\n");
+	check("C: two formalisms are not flagged", !/name the same route/.test(t2), t2.slice(0, 300));
+	rmSync(d, { recursive: true, force: true });
+}
+
 console.log(failures === 0 ? "\nALL PASS — index context + write-time validation behave." : `\n${failures} check(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);
