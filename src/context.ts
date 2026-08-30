@@ -223,7 +223,7 @@ export { overflowBackstop } from "./compaction/overflow-backstop.js";
  */
 const MAX_DIRECTIVES = 6;
 const MAX_DIRECTIVE_BYTES = 3000;
-function collectActiveDirectives(
+export function collectActiveDirectives(
   projectDir: string,
   runtimeDirective: string | undefined,
 ): Array<{ source?: string; text: string }> {

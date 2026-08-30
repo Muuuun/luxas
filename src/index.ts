@@ -100,6 +100,15 @@ process.on("uncaughtException", (err) => {
 const args = process.argv.slice(2);
 const command = args[0] ?? "run";
 
+// `luxas monitor <project> --message "…" [--json] [--model X] [--by email]`
+// — one turn of the sidecar monitor agent (src/monitor-runner.ts). Handled
+// before the generic flag loop below because its --message value is free
+// text that the loop would mistake for a project path.
+if (command === "monitor") {
+  const { runMonitorTurn, parseMonitorArgs } = await import("./monitor-runner.js");
+  process.exit(await runMonitorTurn(parseMonitorArgs(args.slice(1))));
+}
+
 // Parse flags
 let projectDir = ".";
 let model = "opus";
@@ -257,7 +266,7 @@ if (command === "figures") {
 }
 
 console.error(`Unknown command: ${command}`);
-console.error("Usage: luxas <run|status|init|list|figures> [project-dir] [options]");
+console.error("Usage: luxas <run|status|init|list|stop|figures|monitor> [project-dir] [options]");
 console.error("  --model <id>      explicit model (legacy; e.g. deepseek-v4-pro)");
 console.error("  --profile <name>  preset: dual (DEFAULT — deepseek text + kimi vision) | claude");
 process.exit(1);

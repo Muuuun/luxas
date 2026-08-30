@@ -73,6 +73,7 @@ const MANIFEST: Record<string, GateSpec> = {
 	smoke_meta_registry: { kind: "assert" },
 	smoke_meta_spawn_wiring: { kind: "assert" },
 	smoke_meta_state: { kind: "assert" },
+	smoke_monitor: { kind: "assert" },
 	smoke_observations: { kind: "assert" },
 	smoke_premise_corrections: { kind: "assert" },
 	smoke_xval_dispute_gate: { kind: "assert" },
