@@ -29,6 +29,8 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { findOldTextLine, freshExcerptError } from "./edit-recovery.js";
 import { SAFETY_PRESETS } from "./safety-presets.js";
+import { fileURLToPath } from "node:url";
+import { dirname as _dirname } from "node:path";
 
 /** Files the harness writes and the claim table trusts — see src/claims-table.ts HARNESS_REVIEW_FILE_RE. */
 const HARNESS_REVIEW_PREFIX = "reviews/experiment_review_";
@@ -213,6 +215,18 @@ function getPathArg(params: any): string {
 
 function errorContent(text: string) {
   return { content: [{ type: "text" as const, text }] };
+}
+
+/** The Luxas checkout itself (src/, skills/, scripts/, fixtures/): agents run it, never edit it.
+ *  Ba run 2026-08-30: an illustrator_write patched skills/matplotlib-figures/scripts/figspec to add
+ *  the free-text annotations the renderer refuses. */
+const LUXAS_ROOT_ABS = (() => { try { return resolve(_dirname(fileURLToPath(import.meta.url)), "..", ".."); } catch { return ""; } })();
+export function luxasSelfWriteReason(absPath: string, projectDir: string): string | undefined {
+  if (!LUXAS_ROOT_ABS) return undefined;
+  const inRoot = absPath === LUXAS_ROOT_ABS || absPath.startsWith(LUXAS_ROOT_ABS + "/");
+  const inProject = absPath === resolve(projectDir) || absPath.startsWith(resolve(projectDir) + "/");
+  if (inRoot && !inProject) return `Write of ${absPath} refused: it is inside the Luxas installation (${LUXAS_ROOT_ABS}). Agents run Luxas's tools and skills; they never modify them. If a renderer or skill lacks something, say so in your return — the operator changes the tool.`;
+  return undefined;
 }
 
 function blocked(reason: string) {
@@ -496,6 +510,7 @@ function wrapEdit(
           `not by tools. Do not edit them.`
         );
       }
+      { const why = luxasSelfWriteReason(abs, projectDir); if (why) return blocked(why); }
       if (protectedAbs.has(abs)) {
         return blocked(
           `${p} is protected by this agent's safety configuration ` +
@@ -658,6 +673,7 @@ function wrapWrite(
           `not by tools. Do not write them.`
         );
       }
+      { const why = luxasSelfWriteReason(abs, projectDir); if (why) return blocked(why); }
       if (protectedAbs.has(abs)) {
         return blocked(
           `${p} is protected by this agent's safety configuration ` +
@@ -875,6 +891,7 @@ function wrapBash(
   // and even agents with no other blocklist still get .agent protection.
   const reservedAbs = resolve(projectDir, SYSTEM_RESERVED_DIR);
   const effectiveBlocked: string[] = [reservedAbs, ...(blockedRootsAbs ?? [])];
+  if (LUXAS_ROOT_ABS && !(resolve(projectDir) + "/").startsWith(LUXAS_ROOT_ABS + "/")) effectiveBlocked.push(LUXAS_ROOT_ABS);
   const hasAllowlist = allowedWriteAbs !== null && allowedWriteAbs.length > 0;
 
   const blockedRelPrefixes = effectiveBlocked.map((r) => {

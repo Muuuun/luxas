@@ -6,7 +6,8 @@
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { buildSafetyWrapper, plottingScriptReason } from "../src/agents/safety-wrappers.ts";
+import { buildSafetyWrapper, plottingScriptReason, luxasSelfWriteReason } from "../src/agents/safety-wrappers.ts";
+import { resolve as _resolve } from "node:path";
 
 let fails = 0;
 function check(name: string, ok: boolean, detail = "") {
@@ -40,5 +41,13 @@ const e3 = await run(b, { command: "python3 data/experiments/E1_x/scripts/plot_x
 check("bash: running a plot_*.py refused", /refused/.test(e3), e3.slice(0, 120));
 check("bash: rendering a spec allowed", (await run(b, { command: "python3 $LUXAS_ROOT/skills/matplotlib-figures/scripts/figspec data/experiments/E1_x/figures/x.figspec.json" })) === "");
 check("bash: derive script allowed", (await run(b, { command: "python3 data/experiments/E1_x/scripts/derive_x.py" })) === "");
+// Luxas self-write guard (any agent): the installation is read-only to agents.
+const root = _resolve(process.cwd());
+check("self-write: a skill script under LUXAS_ROOT is refused", !!luxasSelfWriteReason(root + "/skills/matplotlib-figures/scripts/figspec", dir));
+check("self-write: project files are fine", !luxasSelfWriteReason(dir + "/data/x.py", dir));
+const e4 = await run(w, { path: root + "/skills/matplotlib-figures/scripts/figspec", content: "print(1)" });
+check("write tool: LUXAS_ROOT path refused", /inside the Luxas installation/.test(e4), e4.slice(0, 100));
+const e5 = await run(b, { command: `cat > ${root}/skills/matplotlib-figures/scripts/figspec <<'EOF'\nx\nEOF` });
+check("bash: heredoc into LUXAS_ROOT refused", /BLOCKED/.test(e5), e5.slice(0, 100));
 if (fails) { console.log(`\n${fails} failure(s)`); process.exit(1); }
 console.log("\nall figure-spec-only checks passed");
