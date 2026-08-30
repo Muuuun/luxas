@@ -131,6 +131,17 @@ def _lim(ax, panel, ys):
         ax.set_ylim(lo, hi + HEADROOM * (hi - lo))
     if panel.get("xscale") == "log": ax.set_xscale("log")
     if panel.get("xlim"): ax.set_xlim(*panel["xlim"])
+    _plain_log_ticks(ax)
+
+def _plain_log_ticks(ax):
+    """A log axis spanning < 2.2 decades reads as numbers (40, 60, 100), not 4×10¹ — Ba run 2026-08-30."""
+    from matplotlib.ticker import ScalarFormatter, LogLocator, NullFormatter
+    for axis, lim in ((ax.xaxis, ax.get_xlim()), (ax.yaxis, ax.get_ylim())):
+        if axis.get_scale() != "log" or min(lim) <= 0: continue
+        if np.log10(max(lim) / min(lim)) < 2.2:
+            fmt = ScalarFormatter(); fmt.set_scientific(False)
+            axis.set_major_formatter(fmt); axis.set_minor_formatter(NullFormatter())
+            axis.set_major_locator(LogLocator(base=10, subs=(1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0), numticks=12))
 
 def _bands(ax, panel):
     for b in panel.get("bands", []):
@@ -236,6 +247,7 @@ def _heatmap(ax, p, fig):
         ax.clabel(cs, fmt=lambda v: f"{v:g}", fontsize=7, colors="white", inline=True, inline_spacing=2)
     if p.get("xlim"): ax.set_xlim(*p["xlim"])
     if p.get("ylim"): ax.set_ylim(*p["ylim"])
+    _plain_log_ticks(ax)
     for r in p.get("reflines", []):
         (ax.axhline if r["axis"] == "y" else ax.axvline)(r["value"], color="white", lw=0.7, ls=(0, (4, 3)))
 
