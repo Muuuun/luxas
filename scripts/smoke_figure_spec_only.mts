@@ -28,6 +28,8 @@ const derive = "import numpy as np, csv\nA = np.logspace(0, 3, 50)\nwith open('d
 check("unit: plotting script recognised", !!plottingScriptReason("data/experiments/E1_x/scripts/plot_x.py", plot));
 check("unit: derive script (no matplotlib) is fine", !plottingScriptReason("data/experiments/E1_x/scripts/derive_x.py", derive));
 check("unit: non-.py never matches", !plottingScriptReason("notes/x.md", plot));
+check("unit: pgfplots .tex is a data plot → refused", !!plottingScriptReason("data/experiments/E1_x/scripts/fig_x.tex", "\\documentclass{standalone}\\usepackage{pgfplots}\\begin{document}\\begin{axis}\\addplot table {a.csv};\\end{axis}\\end{document}"));
+check("unit: TikZ schematic .tex allowed", !plottingScriptReason("data/experiments/E1_x/scripts/fig_x.tex", "\\documentclass[tikz]{standalone}\\begin{document}\\begin{tikzpicture}\\node{a};\\end{tikzpicture}\\end{document}"));
 const e1 = await run(w, { path: "data/experiments/E1_x/scripts/plot_x.py", content: plot });
 check("write: plotting .py refused with the figspec hint", /refused: it plots/.test(e1) && /figspec/.test(e1), e1.slice(0, 120));
 check("write: derive .py allowed", (await run(w, { path: "data/experiments/E1_x/scripts/derive_x.py", content: derive })) === "");

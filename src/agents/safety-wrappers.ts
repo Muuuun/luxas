@@ -350,7 +350,14 @@ function stripTruncationBanner(text: string): string {
  */
 /** Figures v3: a `.py` that plots is not a legal artifact for a spec-only agent. */
 export const PLOTTING_RE = /\bsavefig\s*\(|matplotlib\.pyplot|from\s+matplotlib|import\s+matplotlib|plt\.(subplots|figure)\s*\(/;
+export const PGFPLOTS_RE = /\\begin\{axis\}|\\begin\{semilogyaxis\}|\\begin\{loglogaxis\}|\\usepackage\{pgfplots\}|\\addplot/;
 export function plottingScriptReason(relPath: string, body: string): string | undefined {
+  // Ba run 2026-08-30: with .py plotting refused, the hero figure was re-drawn as a
+  // pgfplots .tex — serif, tab10, off the spec route. A data plot is a data plot.
+  if (/\.tex$/.test(relPath) && PGFPLOTS_RE.test(body)) {
+    return `Write of ${relPath} refused: it is a pgfplots data plot. Data figures are .figspec.json rendered by ` +
+      `\`python3 $LUXAS_ROOT/skills/matplotlib-figures/scripts/figspec <spec>\`; TikZ is for schematics only (no \\begin{axis}).`;
+  }
   if (!/\.py$/.test(relPath) || !PLOTTING_RE.test(body)) return undefined;
   return `Write of ${relPath} refused: it plots (savefig / pyplot). This agent makes data figures as ` +
     `data/experiments/<EID>/figures/<name>.figspec.json rendered by ` +
@@ -880,7 +887,7 @@ function wrapBash(
     ...tool,
     execute: async (id: string, params: any, signal?: any) => {
       const cmd: string = typeof params?.command === "string" ? params.command : "";
-      if (figureSpecOnly && (/\bsavefig\s*\(/.test(cmd) || /python3?\s+\S*plot_\w*\.py/.test(cmd))) {
+      if (figureSpecOnly && (/\bsavefig\s*\(/.test(cmd) || /python3?\s+\S*plot_\w*\.py/.test(cmd) || /\\begin\{(semilogy|loglog)?axis\}/.test(cmd))) {
         return blocked(`bash command refused: it writes or runs a plotting script (savefig / plot_*.py). Data figures are ` +
           `.figspec.json rendered by \`python3 $LUXAS_ROOT/skills/matplotlib-figures/scripts/figspec <spec>\`; ` +
           `a .py from this agent may only derive arrays into a CSV.`);
