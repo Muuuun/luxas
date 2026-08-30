@@ -8,6 +8,7 @@ description: >
   (polish/audit) — this agent owns *creation* when no plot script exists yet.
 model: sonnet
 thinkingLevel: medium
+maxTurns: 70   # figures v3.1: a plateaued TikZ fix loop ran 19 lint rounds / 84 calls (Ba run 2026-08-30); the prompt's '≤3 fix rounds' is not a cap — this is
 toolSets: [coding, figure-gen]
 safety: { presets: [research_brief, report_surface, notes_ledger], writeOnExistingPolicy: block, figureSpecOnly: true }
 spawn: { enabled: false }
