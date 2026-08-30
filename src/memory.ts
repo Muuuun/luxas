@@ -69,12 +69,21 @@ function saveProjects(projects: ProjectEntry[]): void {
 export function registerProject(projectDir: string): ProjectEntry {
   const projects = loadProjects();
 
-  // Check if already registered
-  const existing = projects.find(p => p.path === projectDir);
-  if (existing) return existing;
-
   const research = readFileSafe(join(projectDir, "RESEARCH.md"));
   const name = deriveProjectTitle(research);
+
+  // Already registered: refresh the title — `luxas init` registers the
+  // template placeholder ("Describe your research goal here.") before the
+  // operator writes RESEARCH.md, and the studio card showed the placeholder
+  // for the whole run (ba-neutral-atom-qc, 2026-08-30).
+  const existing = projects.find(p => p.path === projectDir);
+  if (existing) {
+    if (name && name !== existing.name && !isThrowawayPath(projectDir)) {
+      existing.name = name;
+      saveProjects(projects);
+    }
+    return existing;
+  }
 
   const entry: ProjectEntry = {
     path: projectDir,
