@@ -180,9 +180,14 @@ def _series(ax, panel, colors):
             ax.plot(x, y, color="white", lw=2.2, ls=(0, (5, 2.5)), zorder=4)
             ax.plot(x, y, color="black", lw=1.0, ls=(0, (5, 2.5)), zorder=4.1, label=s["label"])
             ends.append((*_visible_end(ax, x, y), _tex(s["label"]), "black")); continue
-        c = colors[ci % len(colors)]; ci += 1
+        c = colors[ci % len(colors)]
+        # More series than palette entries: a colour may repeat only with a different line style
+        # (Ba run 2026-08-30: series 7 wrapped to the same blue as series 1 — indistinguishable).
+        ls_ = ["-", (0, (5, 2)), (0, (1, 1.5)), (0, (5, 1.5, 1, 1.5))][(ci // len(colors)) % 4]
+        if ci >= len(colors): print(f"series {ci + 1} exceeds the {len(colors)}-colour palette — drawn {ls_!r}; consider fewer series or a second panel", file=sys.stderr)
+        ci += 1
         mk = "o" if len(x) <= MAX_MARKERS else None
-        ax.plot(x, y, color=c, lw=1.4, marker=mk, ms=4, mec="white", mew=0.6, zorder=3, label=s["label"])
+        ax.plot(x, y, color=c, lw=1.4, ls=ls_, marker=mk, ms=4, mec="white", mew=0.6, zorder=3, label=s["label"])
         if s.get("sigma") is not None:
             sg = np.asarray(s["sigma"], float)
             if s.get("band") or len(x) > MAX_MARKERS:
