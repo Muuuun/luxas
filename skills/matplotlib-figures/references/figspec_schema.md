@@ -13,7 +13,7 @@ free spot), panel letters, sizes. No matplotlib is written by an agent for a dat
     "label": "a",  "xlabel": "...", "ylabel": "...",  "xscale": "log", "yscale": "log",
     "xlim": [lo, hi], "ylim": [lo, hi],
     "series": [ { "x": REF, "y": REF, "label": "computed", "role": "data" | "model" | "envelope",
-                  "sigma": REF, "ylo": REF, "yhi": REF } ],          // ≤ 4 data series
+                  "sigma": REF, "ylo": REF, "yhi": REF, "linestyle": "solid|dashed|dotted|dashdot" } ],   // ≤ 4 data series
     "bands":    [ { "axis": "x" | "y", "from": a, "to": b, "label": "viable" } ],
     "reflines": [ { "axis": "x" | "y", "value": v, "label": "strong blockade" } ],
     "highlight": { "series": 0, "at": 2.0, "label": "{y:.2f}×" }   // ONE per panel; the number is looked up, never typed
@@ -41,3 +41,5 @@ Schematics (TikZ) are not figspec: use `skills/figure/templates/schematic_slots.
 - **Composite**: `"layout": "grid", "ncols": 2` with panels of mixed type — a Nature-style Fig. 1 is schematic (TikZ, separate) + polar + comparison in one grid.
 
 Spec-level honesty fields: `"points_note": "…"` (why a sweep has < 20 points — e.g. a discrete lattice angle set) and `"sigma_note": "…"` (why a series shows no σ). Without them the finish gate lists the figure under `figure-data` (coarse sweep / no σ on the page).
+
+**The spec is the editable source.** A reviewer or PI asking for "a standalone plotting script on disk" is asking for the `.figspec.json` — it is the script. Per-series `linestyle`, `sigma`, `band`, `role`, bands, reflines and the single highlight are the knobs; a caption must describe what the spec draws (say "dashed" only if the series has `"linestyle": "dashed"`).

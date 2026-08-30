@@ -30,6 +30,10 @@ Experiments are organized per-experiment under data/experiments/<EXPERIMENT_ID>/
   data/experiments/<EXPERIMENT_ID>/runs/run_N/results.json    (one experiment = its own run_N stream; multiple experiments = multiple <EXPERIMENT_ID> dirs)
   data/experiments/<EXPERIMENT_ID>/runs/run_N/data/           (raw arrays / scans / NPZ / CSV for re-plotting)
 
+**Figure sources (figures v3, 2026-08-30).** A data figure's editable source is `data/experiments/<E>/figures/<name>.figspec.json` (rendered by `figspec`); a schematic's is its `.tex`. A missing `plot_*.py` is NOT a defect and must never be requested — `illustrator_write` cannot write matplotlib (refused at write time). Ask for spec changes instead: per-series `"linestyle": "dashed"`, `sigma`, labels, bands, reflines, one highlight; a caption may only promise what the spec draws.
+
+Source resolution order per figure: `data/experiments/*/figures/<name>.figspec.json` → `data/experiments/*/scripts/fig_<name>.tex` → legacy `plot_*.py`.
+
 To enumerate every plot script in the project:
   ls data/experiments/*/scripts/plot_*.py
 To resolve a single canonical figure to its source script:
