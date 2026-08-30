@@ -606,7 +606,9 @@ export function createSpawnAgentTool(
           let headlineIds = [...new Set(headlineDecls.map((d) => d.id))];
           const blindLines: string[] = [];
           if (MAX_REVIEW_ITERATIONS > 0 && process.env.LUXAS_BLIND_ESTIMATE !== "0") {
-            const { chosen, skipped } = selectBlindEstimateDecls(headlineDecls, parseFrameHeadline(projectDir), BLIND_ESTIMATE_CAP);
+            let settled = new Set<string>();
+            try { settled = new Set(buildClaimTable(projectDir).rows.filter((r) => r.status === "corroborated" || r.status === "converging").map((r) => r.id)); } catch { /* table malformed → estimate everything */ }
+            const { chosen, skipped } = selectBlindEstimateDecls(headlineDecls, parseFrameHeadline(projectDir), BLIND_ESTIMATE_CAP, settled);
             if (skipped.length) claimNotes.push(`[blind estimates capped at ${BLIND_ESTIMATE_CAP}/round (frame ids first); not estimated this round: ${skipped.join(", ")}]`);
             for (const decl of chosen) {
               try {

@@ -116,12 +116,17 @@ export function stampBlindInputs(line: string, inputs: Record<string, number>): 
  * N = 3 for a short ask). The skipped ids are returned so the harness can
  * say so in the review file instead of silently narrowing.
  */
-export function selectBlindEstimateDecls<T extends { id: string }>(decls: T[], frameIds: string[], cap = 3): { chosen: T[]; skipped: string[] } {
+export function selectBlindEstimateDecls<T extends { id: string }>(decls: T[], frameIds: string[], cap = 3, settled: Set<string> = new Set()): { chosen: T[]; skipped: string[] } {
   const seen = new Set<string>();
   const ordered: T[] = [];
-  for (const fid of frameIds) for (const d of decls) if (d.id === fid && !seen.has(d.id)) { seen.add(d.id); ordered.push(d); }
-  for (const d of decls) if (!seen.has(d.id)) { seen.add(d.id); ordered.push(d); }
-  return { chosen: ordered.slice(0, cap), skipped: ordered.slice(cap).map((d) => d.id) };
+  // A row the table already holds corroborated/converging (an anchored reference three
+  // tools agree on, or a re-declared settled value) gains nothing from a blind estimate —
+  // Ba run 2026-08-30: 26 min of replicator on Rb 78s C6 after ARC/pairinteraction agreed to 0.6 %.
+  const live = decls.filter((d) => !settled.has(d.id));
+  for (const fid of frameIds) for (const d of live) if (d.id === fid && !seen.has(d.id)) { seen.add(d.id); ordered.push(d); }
+  for (const d of live) if (!seen.has(d.id)) { seen.add(d.id); ordered.push(d); }
+  const skipped = [...ordered.slice(cap).map((d) => d.id), ...decls.filter((d) => settled.has(d.id)).map((d) => `${d.id} (already settled)`)];
+  return { chosen: ordered.slice(0, cap), skipped };
 }
 
 /** The task handed to a blind `replicator` in estimate mode — observable and input VALUES only (design §3.5). */
