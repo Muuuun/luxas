@@ -561,6 +561,7 @@ ${smartTruncate(method, 4000)}
     const rendered = renderClaimTable(table);
     if (rendered) {
       parts.push(rendered);
+      parts.push(`<pi_figure_sources>\nA data figure's editable source is data/experiments/<E>/figures/<name>.figspec.json (rendered by the figspec template); a schematic's is its .tex. A missing plot_*.py is NOT a defect and must not be requested — illustrator_write cannot write matplotlib (refused at write time). Ask for spec changes instead: per-series "linestyle": "dashed", sigma, labels, bands, reflines, one highlight; a caption may only promise what the spec draws. Never instruct "use direct matplotlib instead of figspec".\n</pi_figure_sources>`);
       parts.push(`<pi_claim_obligation>\nFor every DECLARED headline quantity (${table.headlineDeclared.join(", ") || "none declared"}), put YOUR OWN number on it before you judge: submit_verdict.estimates = [{quantity, value, sigma, route}] by a route the experiment did not use (a limit, a benchmark in a nearby regime rescaled, a napkin formula — run one read/grep-informed calculation, do not restate the producer's value). For any DISPUTED or CONDITIONAL headline row, also submit a discriminators[] line: "DISCRIMINATOR: <id> — if right: …; if wrong: …; computation: …" naming the computation that would settle it. If the brain proposed CLAIM-DISCLOSE for a quantity and the hedge is honest, countersign it via disclose_ok; otherwise do not. A "stop" without estimates for every declared headline quantity is recorded as "steer".\n</pi_claim_obligation>`);
     }
   } catch (err) {
