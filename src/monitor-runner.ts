@@ -243,6 +243,23 @@ export async function runMonitorTurn(args: MonitorArgs): Promise<number> {
     }
   });
 
+  // Interruption: the studio kills this process (SIGTERM) when the researcher
+  // sends a new message mid-reply. Flush whatever the agent has produced so
+  // far so the next turn's history shows the cut-off reply and the prompt's
+  // "you were interrupted" rule applies. Tool results still pending are
+  // dropped by cleanMessagesForModel on restore.
+  const flushAndExit = () => {
+    try {
+      const msgs = agent.state.messages;
+      for (let i = lastSaved; i < msgs.length; i++) session.appendMessage(msgs[i]);
+      lastSaved = msgs.length;
+    } catch { /* best effort */ }
+    emit({ type: "error", message: "interrupted" });
+    process.exit(130);
+  };
+  process.once("SIGTERM", flushAndExit);
+  process.once("SIGINT", flushAndExit);
+
   emit({ type: "start", agentId: "monitor", model: model.id, session: sessionFile });
 
   try {
