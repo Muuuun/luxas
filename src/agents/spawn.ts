@@ -18,6 +18,7 @@ import { resolveToolSets } from "./tool-sets.js";
 import { resolveContextBuilder } from "./context-builders.js";
 import { buildSafetyWrapper, type SafetyRuntimeHooks } from "./safety-wrappers.js";
 import { jobOwnerAls } from "../jobs/als.js";
+import { recordAgentOutcome } from "../agent-liveness.js";
 import { addAgent, removeAgent, classifyThrownStopReason, type SubAgentExit, type SubAgentStopReason, type FileTouchRecord } from "../active-agents.js";
 import { cleanMessagesForModel } from "../transform.js";
 import {
@@ -1035,6 +1036,12 @@ export async function spawnAgent(opts: SpawnAgentOptions): Promise<SpawnAgentRes
 
     const exit = collector.finalize();
     if (registered) try { removeAgent(agentDir, agentId); } catch { /* registry is best-effort */ }
+    // Liveness: a graceful stopReason="error" reaches HERE with success:true —
+    // the agent object exists, it just never produced anything because the
+    // provider answered 429/404. That is precisely how a dead verifier stayed
+    // invisible for a whole run, so the ledger keys on stopReason, not on the
+    // success flag. Consumers: agent-liveness.ts (finish gate, brain context).
+    recordAgentOutcome(opts.projectDir, opts.name, exit.stopReason !== "error", exit.errorMessage);
     return { output: output.slice(0, 50_000), elapsed: exit.elapsedMs, success: true, exit, agentId };
 
   } catch (err: any) {
@@ -1043,6 +1050,8 @@ export async function spawnAgent(opts: SpawnAgentOptions): Promise<SpawnAgentRes
     // agent.abort() → "killed") from real failures ("error").
     const exit = collector.finalize(classifyThrownStopReason(err));
     if (registered && agentId) try { removeAgent(join(opts.projectDir, ".agent"), agentId); } catch { /* registry is best-effort */ }
+    // "killed" is an operator abort, not a capability failure — don't count it.
+    if (exit.stopReason !== "killed") recordAgentOutcome(opts.projectDir, opts.name, false, exit.errorMessage ?? msg);
     // Surface auth errors clearly
     if (msg.includes("API key") || msg.includes("authentication") || msg.includes("401") || msg.includes("getApiKey")) {
       return {

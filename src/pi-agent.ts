@@ -25,7 +25,7 @@ import { spawnAgent } from "./agents/spawn.js";
 import { createSpawnToolFactory } from "./tools/spawn-agent.js";
 import { readFileSafe } from "./utils.js";
 import { buildClaimTable } from "./claims-table.js";
-import { formatPIEstimateLines, piEstimateRule, type PIEstimate, obligationScope } from "./claims-review.js";
+import { formatPIEstimateLines, piEstimateRule, type PIEstimate, obligationScope, FinishEscalation, writeNeedsOperator } from "./claims-review.js";
 
 // PI system prompt is now in agents/definitions/pi.md
 // Mode-specific blocks (survey/research/plan) are in agents/context-builders.ts
@@ -54,7 +54,7 @@ export interface PIMonitorOptions {
   fallbackInterval?: number;  // auto-trigger after N tool calls without review (default 50)
   onVerdict?: (verdict: PIVerdict, toolCallCount: number) => void;
   /** Restored from session JSONL for crash recovery. */
-  initialState?: { totalToolCalls: number; lastReviewAt: number; reviewCount: number };
+  initialState?: { totalToolCalls: number; lastReviewAt: number; reviewCount: number; piGateEscalation?: { last?: string | null; repeats?: number } };
   /**
    * Fix γ: when `luxas run --directive "..."` started this session, pass that
    * verbatim string here. PI prepends it to its state with explicit framing so
@@ -64,6 +64,13 @@ export interface PIMonitorOptions {
    * directive) and rubber-stamps brain's "Ready to finish" milestone.
    */
   userDirective?: string;
+  /**
+   * Called when the PI gate is judged unsatisfiable (same withheld-stop issue
+   * three reviews running) and the run has been handed to the operator.
+   * agent.ts wires this to the same loop-exit path as a successful finish(),
+   * so the process stops cleanly instead of spending to a cost cap.
+   */
+  onEscalate?: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -74,6 +81,32 @@ export function createPIReviewTool(opts: PIMonitorOptions) {
   let totalToolCalls = opts.initialState?.totalToolCalls ?? 0;
   let lastReviewAt = opts.initialState?.lastReviewAt ?? 0;
   let reviewCount = opts.initialState?.reviewCount ?? 0;
+  // The PI half of the repeat-gate deadman (2026-09-01). FinishEscalation is
+  // reused verbatim: same 3-strike threshold, same digit-masked key, so an id
+  // list that actually changes between reviews counts as progress and resets.
+  const piGateEscalation = new FinishEscalation(3);
+  piGateEscalation.restore(opts.initialState?.piGateEscalation);
+
+  /**
+   * The ONE place a verdict is judged for the livelock signature. Both review
+   * paths call it — the tool below and the scheduled fallback monitor — because
+   * an auto-triggered review produces exactly the same withheld stop, and a
+   * counter that only sees explicitly-requested reviews can be starved forever.
+   *
+   * A `placeholder` verdict (reviewer infra/credit failure, no structured
+   * response) is neither progress nor a repeat: it must not reset the counter,
+   * since reviewer infra failure is precisely the condition that co-occurs with
+   * the livelock this deadman exists to catch.
+   */
+  function noteVerdictForEscalation(verdict: PIVerdict): { withheld: string; path: string; count: number } | null {
+    if (verdict.placeholder) return null;
+    const withheld = verdict.issues.find((i) => /^PI stop verdict withheld/.test(i));
+    if (!withheld) { piGateEscalation.reset(); return null; }
+    if (!piGateEscalation.record(withheld)) return null;
+    const path = writeNeedsOperator(opts.projectDir, withheld, piGateEscalation.count, { gate: "pi" });
+    opts.onEscalate?.();
+    return { withheld, path, count: piGateEscalation.count };
+  }
 
   const tool = {
     name: "request_pi_review",
@@ -114,6 +147,17 @@ export function createPIReviewTool(opts: PIMonitorOptions) {
 
       opts.onVerdict?.(verdict, totalToolCalls);
 
+      const esc = noteVerdictForEscalation(verdict);
+      if (esc) {
+        return {
+          content: [{ type: "text" as const, text:
+            `**PI Verdict: ${verdict.verdict.toUpperCase()}** (escalated)\n\n` +
+            `The PI withheld its stop verdict with the same issue on ${esc.count} consecutive reviews, so this gate cannot be satisfied by more iteration — it is asking for evidence that cannot exist in the form demanded. Wrote ${esc.path.replace(opts.projectDir + "/", "")}; the run stops here with its artifacts as they stand and a person decides the next move.\n\n` +
+            `Withheld-stop issue (verbatim):\n${esc.withheld}` }],
+          details: { verdict: verdict.verdict, escalated: true },
+        };
+      }
+
       // Return verdict as tool result — agent sees it naturally
       const parts = [`**PI Verdict: ${verdict.verdict.toUpperCase()}**\n`, verdict.assessment];
       if (verdict.issues.length > 0) {
@@ -148,8 +192,10 @@ export function createPIReviewTool(opts: PIMonitorOptions) {
       lastReviewAt = totalToolCalls;
     },
     /** Snapshot PI state for session persistence. */
+    /** Called by setupPIFallbackMonitor so auto-triggered reviews count too. */
+    noteVerdictForEscalation,
     snapshotState() {
-      return { piToolCalls: totalToolCalls, piLastReviewAt: lastReviewAt, piReviewCount: reviewCount };
+      return { piToolCalls: totalToolCalls, piLastReviewAt: lastReviewAt, piReviewCount: reviewCount, piGateEscalation: piGateEscalation.getState() };
     },
   };
 }
@@ -188,6 +234,11 @@ export function setupPIFallbackMonitor(
         appendPIFeedback(feedbackPath, formatFeedback(verdict, toolCallCount));
 
         opts.onVerdict?.(verdict, toolCallCount);
+
+        // A scheduled review produces the same withheld-stop as a requested
+        // one, so it must feed the same deadman — otherwise a run that never
+        // calls request_pi_review can withhold forever uncounted.
+        if (piReview.noteVerdictForEscalation(verdict)) { isEvaluating = false; return; }
 
         // Auto-triggered: inject via steer since agent didn't ask
         const feedbackText = [
@@ -353,7 +404,7 @@ async function evaluateProgress(
     try {
       const table = buildClaimTable(opts.projectDir);
       if (table.declared) {
-        const rule = piEstimateRule(final.verdict, final.estimates, obligationScope(table), final.discriminators);
+        const rule = piEstimateRule(final.verdict, final.estimates, obligationScope(table), final.discriminators, table.frameNonScalar);
         if (rule.issue) final = { ...final, verdict: rule.verdict, issues: [...final.issues, rule.issue] };
       }
     } catch (err) {

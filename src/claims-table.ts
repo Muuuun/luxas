@@ -118,6 +118,10 @@ export interface ClaimTable {
   headlineDeclared: string[];
   /** Ids named in notes/frame.md (obligation scope puts these first — claims-review headlineDeclsFor). */
   frameHeadline: string[];
+  /** Frame ids tagged "(curve)"/"(non-scalar)"/"(qualitative)" — waived from the PI's scalar ESTIMATE obligation, never from DISCRIMINATOR (piEstimateRule). */
+  frameNonScalar: string[];
+  /** Bullets under "## Headline quantities" that carried no parseable id — surfaced by claimTableIssues so a dropped headline is never silent. */
+  frameHeadlineSkipped: string[];
   /** Premises from notes/frame.md that entered no experiment as an input and are not declared quantities. */
   premisesUnused: string[];
   /** v3 D4: frame headline ids that are disputed/conditional at this moment — the abstract must abstain on them ("we could not determine …"); `satisfied` = the sentence is present. */
@@ -413,20 +417,76 @@ export function parseReviewerLines(projectDir: string): ReviewerLines {
   return out;
 }
 
-/** Headline ids named in notes/frame.md under a "Headline quantities" heading. */
-export function parseFrameHeadline(projectDir: string): string[] {
+/**
+ * Frame headline bullets, parsed strictly (2026-09-01, Ba-run post-mortem).
+ *
+ * The old regex took the first bare word after the bullet, so the prose line
+ * "- Named (non-scalar) deliverables: `isotope_choice`, …" produced a headline
+ * quantity id literally called `Named`. No ESTIMATE can ever match it, so
+ * piEstimateRule downgraded EVERY PI stop verdict to steer for a whole run:
+ * 7 consecutive STEERs, two cost-cap kills, no finish() (ba-neutral-atom-qc,
+ * 2026-08-31). An id is now taken only from a bullet whose FIRST token is
+ * back-ticked or a bare snake_case token (legacy frames wrote them bare);
+ * "Named" is neither.
+ *
+ * `nonScalar` collects ids the frame itself tags "(curve)" / "(non-scalar)" /
+ * "(qualitative)": a curve or a recommendation cannot carry one value ± σ, so
+ * the PI's ESTIMATE obligation is waived for them — the DISCRIMINATOR
+ * obligation is NOT (piEstimateRule). `skipped` keeps bullets that carried no
+ * id, so an omission is visible (claimTableIssues) instead of silent.
+ */
+export interface FrameHeadline { ids: string[]; nonScalar: string[]; skipped: string[] }
+
+/**
+ * The waiver tag must be a STANDALONE classifier inside a parenthetical —
+ * "(curve)", "(crux; curve)", "(non-scalar)" — never a word occurring in
+ * prose. Substring matching silently waived any headline whose description
+ * mentioned a fit: "- `tau300` — lifetime from an exponential fit (decay
+ * curve at 300 K)" would have excused the PI from ever putting its own number
+ * on tau300, which is the opposite of what this gate is for. Splitting each
+ * parenthetical on ; and , and demanding a whole segment be the tag word is
+ * what separates an annotation from a sentence.
+ */
+const FRAME_PARENTHETICAL_RE = /\(([^)]*)\)/g;
+const FRAME_NON_SCALAR_TAG = /^(?:curve(?:-valued)?|non-?scalar|qualitative|categorical|recommendation)s?$/i;
+
+function frameTagsNonScalar(line: string): boolean {
+  for (const m of line.matchAll(FRAME_PARENTHETICAL_RE)) {
+    for (const seg of m[1].split(/[;,]/)) if (FRAME_NON_SCALAR_TAG.test(seg.trim())) return true;
+  }
+  return false;
+}
+
+export function parseFrameHeadlineDetailed(projectDir: string): FrameHeadline {
+  const out: FrameHeadline = { ids: [], nonScalar: [], skipped: [] };
   let text = "";
-  try { text = readFileSync(join(projectDir, "notes", "frame.md"), "utf-8"); } catch { return []; }
+  try { text = readFileSync(join(projectDir, "notes", "frame.md"), "utf-8"); } catch { return out; }
   // No `m` flag: with it, `$` matches every line end and the lazy body stops at
   // the first blank line.
   const m = text.match(/(?:^|\n)##+[ \t]*Headline quantities[^\n]*\n([\s\S]*?)(?=\n##|$)/i);
-  if (!m) return [];
-  const ids: string[] = [];
+  if (!m) return out;
   for (const line of m[1].split("\n")) {
-    const mm = line.match(/^\s*[-*]\s*`?([A-Za-z0-9_]+)`?/);
-    if (mm) ids.push(mm[1]);
+    // `\s*` not `\s+` after the marker: "-`id`" is tight but legal, and the
+    // old guard dropped it before it could even be recorded as skipped.
+    // Horizontal rules ("---") are not bullets and must not become "skipped".
+    if (!/^\s*[-*]\s*\S/.test(line) || /^\s*([-*])\1{2,}\s*$/.test(line)) continue;
+    const mm = line.match(/^\s*[-*]\s*`([A-Za-z0-9_]+)`/)
+      // Legacy bare ids. Two shapes, because pre-2026-09 frames wrote both:
+      // multi-token (`fidelity_40MHz`), and single-token followed by the
+      // "— observable" dash, which is what distinguishes an id from the first
+      // word of a prose bullet ("Named (non-scalar) deliverables: …").
+      ?? line.match(/^\s*[-*]\s*([A-Za-z0-9]+_[A-Za-z0-9_]*)(?![A-Za-z0-9_])/)
+      ?? line.match(/^\s*[-*]\s*([A-Za-z][A-Za-z0-9]*)\s+[—–-]\s+\S/);
+    if (!mm) { out.skipped.push(line.trim().slice(0, 160)); continue; }
+    out.ids.push(mm[1]);
+    if (frameTagsNonScalar(line)) out.nonScalar.push(mm[1]);
   }
-  return ids;
+  return out;
+}
+
+/** Headline ids named in notes/frame.md under a "Headline quantities" heading. */
+export function parseFrameHeadline(projectDir: string): string[] {
+  return parseFrameHeadlineDetailed(projectDir).ids;
 }
 
 /** `## Premises` lines in notes/frame.md: `- \`id\` = value — text` (v2, 2026-08-29). */
@@ -793,7 +853,8 @@ export function buildClaimTable(projectDir: string): ClaimTable {
   // discriminator. With the sentence present the row no longer blocks the
   // abstract and does not count toward the disclosure cap.
   const abstractText = readAbstract(projectDir);
-  const frameIds = parseFrameHeadline(projectDir);
+  const frameParsed = parseFrameHeadlineDetailed(projectDir);
+  const frameIds = frameParsed.ids;
   const abstain = rows.filter((r) => frameIds.includes(r.id) && (r.status === "disputed" || r.status === "conditional")).map((r) => {
     const obs = r.observable ?? r.id;
     const legs = r.estimates.filter((e) => e.kind === "own" || e.kind === "replication" || e.kind === "xval").slice(0, 3).map((e) => `${e.route ? e.route.split(/[,;(]/)[0].trim().slice(0, 40) : e.source.split(":")[0]} gives ${e.value}${e.sigma !== undefined ? ` ± ${e.sigma}` : ""}`);
@@ -803,7 +864,8 @@ export function buildClaimTable(projectDir: string): ClaimTable {
   });
   return {
     abstain,
-    rows, verdicts: vRows, headline: [...headline].sort(), headlineDeclared: [...headlineDeclared].sort(), frameHeadline: parseFrameHeadline(projectDir),
+    rows, verdicts: vRows, headline: [...headline].sort(), headlineDeclared: [...headlineDeclared].sort(), frameHeadline: frameParsed.ids,
+    frameNonScalar: frameParsed.nonScalar, frameHeadlineSkipped: frameParsed.skipped,
     premisesUnused: parseFramePremises(projectDir).map((p) => p.id).filter((pid) => !known.has(pid) && !decls.some((d) => pid in d.inputs)),
     malformed, notes, readsDrops, declared, decls, discriminators: rev.discriminators, disclosedHeadlineCount,
   };
@@ -832,6 +894,11 @@ export function claimTableIssues(projectDir: string, table: ClaimTable = buildCl
   if (table.malformed.length > 0) issues.push({ blocking: true, text: `Malformed quantity declarations:\n  - ${table.malformed.join("\n  - ")}` });
   for (const d of table.readsDrops) issues.push({ blocking: true, text: `Verdict reads-diff: ${d}. Name the replacement in verdicts[].replaces (it must be a quantity this verdict reads) or restore the read.` });
   // Premises that never entered the evidence (non-blocking; v2 2026-08-29).
+  // Consumer for parseFrameHeadlineDetailed().skipped: a headline bullet that
+  // carried no parseable id used to become a phantom obligation id (the
+  // `Named` livelock); now it is dropped, and saying so here is what keeps the
+  // drop from being silent in the other direction.
+  if (table.frameHeadlineSkipped.length > 0) issues.push({ blocking: false, text: `notes/frame.md "## Headline quantities" has ${table.frameHeadlineSkipped.length} bullet(s) with no parseable quantity id, so they carry no obligation: ${table.frameHeadlineSkipped.map((s) => `"${s}"`).join("; ")}. If one of those names a real headline number, rewrite it as \`- \\\`the_id\\\` — observable\`; if it is prose (a non-scalar deliverable, a note), leave it — it is correctly ignored.` });
   if (table.premisesUnused.length > 0) issues.push({ blocking: false, text: `Premise(s) from notes/frame.md entered no experiment: ${table.premisesUnused.join(", ")}. A premise is not free — declare it as an \`inputs\` value under that id in the experiments that rely on it, or make it a headline quantity whose cost is computed (e.g. flat-top beam → residual Rabi inhomogeneity → fidelity loss). A referee will ask.` });
   if (table.disclosedHeadlineCount > 1) issues.push({ blocking: true, text: `${table.disclosedHeadlineCount} headline quantities are DISCLOSED disputes. A report resting on more than one disclosed dispute is a review request, not a report — escalate to the operator (notes/escalations/needs-operator.md) instead of shipping.` });
   let claims: any[] = [];

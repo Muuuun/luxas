@@ -13,6 +13,10 @@ import { buildClaimTable } from "./claims-table.js";
 import type { ReminderRegistry } from "./reminders.js";
 import type { ExtensionBus } from "./extensions.js";
 
+/** Fraction of --max-cost at which the brain is told to wrap up (fix 4, 2026-09-01). */
+export const SOFT_CAP_FRACTION = 0.9;
+
+
 export interface ResearchOptions {
   maxCostUsd?: number;       // Cost limit in USD. On exceed, process exits.
   projectDir: string;
@@ -161,6 +165,9 @@ export function buildResearchHooks(opts: ResearchOptions) {
         );
         process.exit(1);
       }
+      // Soft cap: see buildBudgetStatus() in context.ts. It is computed there
+      // from usage.log + run_config.json rather than written here, so it is
+      // always current and can never go stale across a resume.
     }
 
     // 4. Rate limiting for API tools

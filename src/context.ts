@@ -6,7 +6,7 @@
  * notes compaction trigger, completion hints, and bus event bridging.
  */
 
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { readFileSafe, smartTruncate, parseFollowUps } from "./utils.js";
 import { listExperimentDirs, xvalVerdict } from "./tools/report-integrity.js";
 import { buildClaimTable, renderClaimTable } from "./claims-table.js";
@@ -22,6 +22,52 @@ import type { TokenTap } from "./compaction/token-tap.js";
 import type { Model } from "@earendil-works/pi-ai/compat";
 import type { ExtensionBus } from "./extensions.js";
 import type { ReminderRegistry } from "./reminders.js";
+import { livenessContextBlock } from "./agent-liveness.js";
+import { SOFT_CAP_FRACTION } from "./hooks.js";
+import { readUsageTotals } from "./usage-log.js";
+
+/**
+ * Wrap-up notice at SOFT_CAP_FRACTION of the run's cost cap.
+ *
+ * The hard cap is a SIGKILL mid-tool-call, so a run that spends its last
+ * dollars polishing dies holding a finished report it never filed —
+ * ba-neutral-atom-qc did exactly that twice on 2026-08-31 ($150.30/$150 and
+ * $160.28/$160), both times inside a PI review.
+ *
+ * Two things this deliberately is NOT:
+ *  - It is NOT written into notes/directives/. That channel is wrapped in
+ *    `<user_directive priority="highest">` whose preamble says "until you have
+ *    addressed EACH clause … in report.tex or in a new experiment, do not call
+ *    finish()" — the exact opposite of "stop working and finish", and the two
+ *    clauses a budget notice can never discharge that way.
+ *  - It is NOT persisted. A file written at 90% of a $150 cap survives into a
+ *    resume with `--max-cost 300` and screams wrap-up from turn 1. Recomputing
+ *    from usage.log + run_config.json each turn makes staleness impossible.
+ *
+ * Cache equality: the text carries the CAP and a fixed threshold, never live
+ * spend, so it is byte-identical on every turn it appears (see the L3 rule
+ * against turn-varying content).
+ */
+export function buildBudgetStatus(projectDir: string): string {
+  let maxCost = 0;
+  try {
+    const cfg = JSON.parse(readFileSync(join(projectDir, ".agent", "run_config.json"), "utf-8"));
+    maxCost = Number(cfg?.maxCost);
+  } catch { return ""; }
+  if (!Number.isFinite(maxCost) || maxCost <= 0) return "";
+  let spent = 0;
+  try { spent = readUsageTotals(join(projectDir, ".agent", "usage.log")).cost; } catch { return ""; }
+  if (!(spent >= maxCost * SOFT_CAP_FRACTION)) return "";
+  return [
+    `<budget_status priority="high">`,
+    `Spend has passed ${Math.round(SOFT_CAP_FRACTION * 100)}% of this run's $${maxCost} cost cap. The cap is not a warning: it SIGKILLs this process mid-tool-call, and anything not written to disk is lost. Spend what is left on landing, not on polish.`,
+    `1. Open no new work — no new experiments, no new literature, no further figure-polish rounds.`,
+    `2. Write down anything held only in this conversation (notes/experiments.md, notes/memory.md), so a resume starts informed.`,
+    `3. Compile once, then finish() — DISCLOSING what is unresolved (disputed quantities, cosmetic figure defects, deferred computations). A disclosed limitation is a finished report; an undisclosed one is the only real failure.`,
+    `4. If a gate blocks finish() and you cannot clear it within what is left, do not iterate against it — say so plainly and let the escalation hand the run to a person.`,
+    `</budget_status>`,
+  ].join("\n");
+}
 
 // ── Research-specific summarizer prompts ─────────────
 // (Moved from old compaction.ts — these customize the ContextPacker's
@@ -446,6 +492,18 @@ function buildResearchSnapshot(opts: ContextTransformerOptions): string {
   // a corrected premise INVALIDATES part of it. Same untruncated tier.
   const premises = buildPremiseCorrections(projectDir);
   if (premises) parts.push(premises);
+
+  // Budget status: computed, never persisted, so it cannot go stale.
+  const budget = buildBudgetStatus(projectDir);
+  if (budget) parts.push(budget);
+
+  // Dead capabilities (2026-09-01): an agent type spawned ≥3 times with zero
+  // successes is offline, not flaky. Injected ABOVE the claim blocks because
+  // it changes how every one of them should be read — on ba-neutral-atom-qc
+  // the blind-test author was dead for the entire run and the brain, seeing
+  // only per-spawn errors, kept granting itself one-off disclosure waivers.
+  const deadCaps = livenessContextBlock(projectDir);
+  if (deadCaps) parts.push(deadCaps);
 
   // Open cross-method disputes (claims-first design §3.7 prior check,
   // 2026-08-26): the two-line block that must be shown to change dispatch

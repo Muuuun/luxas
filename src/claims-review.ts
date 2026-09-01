@@ -276,16 +276,30 @@ export function reviewerObligationBlock(headlineIds: string[], blindLines: strin
 
 export interface PIEstimate { quantity: string; value: number; sigma?: number; route: string }
 
-/** Design §3.5 for the PI: `stop` requires an estimate per headline quantity; otherwise it becomes `steer`. */
-export function piEstimateRule(verdict: "continue" | "steer" | "stop", estimates: PIEstimate[] | undefined, headlineIds: string[], discriminators?: string[]): { verdict: "continue" | "steer" | "stop"; issue?: string } {
+/**
+ * Design §3.5 for the PI: `stop` requires an estimate per headline quantity;
+ * otherwise it becomes `steer`.
+ *
+ * `nonScalarIds` (frame-tagged "(curve)"/"(non-scalar)"/"(qualitative)") are
+ * waived from the ESTIMATE half only. A lifetime-vs-n curve or an "isotope
+ * choice" recommendation has no single value ± σ, so demanding one made the
+ * gate unsatisfiable rather than strict (ba-neutral-atom-qc, 2026-08-31: three
+ * curve ids plus the phantom `Named` held a finished report for 7 reviews).
+ * The DISCRIMINATOR obligation below still applies to every headline id,
+ * curve-valued included — "if right the exponent is 3, if wrong 5" is exactly
+ * the referee question a curve deserves.
+ */
+export function piEstimateRule(verdict: "continue" | "steer" | "stop", estimates: PIEstimate[] | undefined, headlineIds: string[], discriminators?: string[], nonScalarIds?: string[]): { verdict: "continue" | "steer" | "stop"; issue?: string } {
   if (verdict !== "stop" || headlineIds.length === 0) return { verdict };
+  const waived = new Set(nonScalarIds ?? []);
   const have = new Set((estimates ?? []).map((e) => e.quantity));
-  const missing = headlineIds.filter((id) => !have.has(id));
+  const missing = headlineIds.filter((id) => !have.has(id) && !waived.has(id));
   if (missing.length > 0) {
     return {
       verdict: "steer",
       issue: `PI stop verdict withheld: no independent estimate recorded for headline quantit${missing.length === 1 ? "y" : "ies"} ${missing.join(", ")}. ` +
-        `A PI that has not put its own number on the headline has not reviewed it — supply estimates (value ± sigma via a route the experiment did not use) in the next review.`,
+        `A PI that has not put its own number on the headline has not reviewed it — supply estimates (value ± sigma via a route the experiment did not use) in the next review. ` +
+        `If one of these is not a scalar (a curve, a ranking, a recommendation), it cannot take a value ± sigma: tag it in notes/frame.md as \`- \\\`the_id\\\` — observable (curve)\` and it is waived here, but it still needs a DISCRIMINATOR.`,
     };
   }
   // Referee pass (2026-08-29, path-to-publishable experiment 3): the three
@@ -328,18 +342,35 @@ export class FinishEscalation {
   }
   reset(): void { this.last = null; this.repeats = 0; }
   get count(): number { return this.repeats; }
+  /** Survive a resume: the ba-neutral-atom-qc livelock accumulated 7 identical
+   *  withholdings across two cost-cap kills, so a counter that resets on every
+   *  restart gives the deadman two fresh strikes each time. */
+  getState(): { last: string | null; repeats: number } { return { last: this.last, repeats: this.repeats }; }
+  restore(state: { last?: string | null; repeats?: number } | undefined): void {
+    if (!state) return;
+    this.last = state.last ?? null;
+    this.repeats = Number.isFinite(state.repeats) ? Number(state.repeats) : 0;
+  }
 }
 
-export function writeNeedsOperator(projectDir: string, blockText: string, finishCalls: number): string {
+export function writeNeedsOperator(projectDir: string, blockText: string, calls: number, opts?: { gate?: "finish" | "pi" }): string {
   // notes/escalations/, NOT notes/directives/ — that directory is read back
   // as the USER's highest-priority directive (audit 2026-08-26).
   const dir = join(projectDir, "notes", "escalations");
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   const path = join(dir, "needs-operator.md");
+  const narrative = opts?.gate === "pi"
+    // 2026-09-01: the PI path had no deadman. On ba-neutral-atom-qc a frame
+    // parsing bug made the PI's stop gate unsatisfiable, so the PI returned
+    // the SAME withheld-stop issue seven times while the brain politely
+    // waited for a verdict that could not exist — two cost-cap kills, no
+    // finish(). The escalation existed; it was wired only to finish().
+    ? `The PI withheld its stop verdict with the SAME issue on ${calls} consecutive reviews. The brain cannot finish without a stop, and the PI cannot give one, so this gate is unsatisfiable as posed rather than merely unmet — usually a headline quantity that can never receive the evidence the gate demands (a curve or a recommendation asked for one value ± σ, or a phantom id parsed out of prose in notes/frame.md).`
+    : `finish() was blocked by the SAME gate on three consecutive calls (${calls} finish calls total). The brain is iterating without reducing the issue; this is the livelock signature (297nm run: 4 finish calls, 15 consecutive plan.md reads, 3 operator interventions).`;
   writeFileSync(path, [
     `# needs-operator`,
     ``,
-    `finish() was blocked by the SAME gate on three consecutive calls (${finishCalls} finish calls total). The brain is iterating without reducing the issue; this is the livelock signature (297nm run: 4 finish calls, 15 consecutive plan.md reads, 3 operator interventions).`,
+    narrative,
     `The run exited cleanly with its artifacts as they stand. A person decides the next move.`,
     ``,
     `## Blocking gate (verbatim)`,

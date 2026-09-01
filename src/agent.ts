@@ -27,6 +27,7 @@ import { buildContextTransformer, buildSemiStaticSystemLayer } from "./context.j
 import { buildResearchHooks } from "./hooks.js";
 import { ReminderRegistry, builtinProviders } from "./reminders.js";
 import { createPIReviewTool, setupPIFallbackMonitor } from "./pi-agent.js";
+import { markRunStart } from "./agent-liveness.js";
 import { getApiKey } from "./auth.js";
 import { convertToLlm } from "./messages.js";                    // #7: custom message types
 import { cleanMessagesForModel } from "./transform.js";           // #6: cross-model compatibility
@@ -245,6 +246,11 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
   // back on resume (2026-08-28: it did, on every resume, and deadlocked finish).
   hooks.setPIStopped(parseLatestPIVerdict(projectDir)?.verdict === "stop");
 
+  // Opens this run's liveness window (agent-liveness.ts): the ledger is
+  // append-only across runs for forensics, but "is my verifier offline" is a
+  // question about the CURRENT run.
+  markRunStart(projectDir);
+
   // Layer 2: Tools (research tools + PI review tool)
   let finishCallback: (() => void) | undefined;
   // Set only when the brain finish tool's gated success path fires onFinish
@@ -269,6 +275,7 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
       totalToolCalls: savedState.piToolCalls,
       lastReviewAt: savedState.piLastReviewAt,
       reviewCount: savedState.piReviewCount,
+      piGateEscalation: savedState.piGateEscalation,
     } : undefined,
     // Fix γ: pass the runtime --directive into PI's state so PI can verify
     // brain's claimed milestones against the directive's actual asks.
@@ -278,6 +285,15 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
       else if (!verdict.placeholder) hooks.setPIStopped(false);
       opts.onPIVerdict?.(verdict, toolCallCount);
     },
+    // An unsatisfiable PI gate stops the run rather than letting it spend to
+    // the cost cap (ba-neutral-atom-qc died that way twice on 2026-08-31).
+    // It deliberately does NOT set finishSucceeded: unlike the finish-path
+    // escalation, nothing here has passed the report/PDF/ledger gates, and the
+    // trigger can be PI-side format non-compliance (a stop that never carries
+    // its DISCRIMINATOR lines). Claiming "✓ Done" for that would put a
+    // completion in last_exit.json and the project registry for a run that may
+    // have no compiled report at all.
+    onEscalate: () => { finishCallback?.(); },
   };
 
   const piReview = opts.piFallbackInterval !== 0

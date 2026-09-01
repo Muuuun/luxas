@@ -16,6 +16,7 @@ import { createSpawnAgentTool, getActiveBackgroundAgents } from "./spawn-agent.j
 import { buildSafetyWrapper } from "../agents/safety-wrappers.js";
 import { getDefinition } from "../agents/registry.js";
 import { FinishEscalation, writeNeedsOperator } from "../claims-review.js";
+import { livenessFinishIssues } from "../agent-liveness.js";
 import { buildClaimTable } from "../claims-table.js";
 import { loadRegistry, removeAgent, isAlive, markFailed, formatExitHint } from "../active-agents.js";
 
@@ -1222,6 +1223,18 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
       // collected artifacts from different projects collide on the same
       // basename. Keep report/report.* as the internal contract (gates, studio,
       // registry all key on it) and add <title>.{tex,pdf} copies for humans.
+      // Liveness gate (2026-09-01): a mandatory verifier that was spawned
+      // repeatedly and never once succeeded means the run's independent check
+      // never ran. Placed last among the gates because it is a statement about
+      // the whole run rather than about one artifact, and it must not be
+      // clearable by the per-experiment "accept-with-disclosure" waiver that
+      // masked it 13 times on ba-neutral-atom-qc. Three identical blocks here
+      // escalate to the operator through the FinishEscalation wrapper below.
+      {
+        const dead = livenessFinishIssues(projectDir);
+        if (dead.length > 0) return { content: [{ type: "text" as const, text: dead.join("\n\n") }] };
+      }
+
       // Best-effort — naming must never block a genuine finish.
       try {
         const texP = join(projectDir, "report/report.tex");

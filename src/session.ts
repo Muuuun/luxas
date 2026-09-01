@@ -76,6 +76,8 @@ export interface StateEntry extends EntryBase {
   piToolCalls: number;
   piLastReviewAt: number;
   piReviewCount: number;
+  /** PI repeat-gate deadman, so the counter is not handed fresh strikes by a resume. */
+  piGateEscalation?: { last?: string | null; repeats?: number };
 }
 
 export type SessionEntry = DecisionEntry | ActionEntry | CompactionEntry | BranchSummaryEntry | MessageEntry | StateEntry;
