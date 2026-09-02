@@ -84,19 +84,19 @@ luxas list                      # all projects Luxas has ever touched
 
 ```bash
 luxas run ~/research/x                          # default — every agent uses its declared frontmatter model (full Claude)
-luxas run ~/research/x --profile dual           # canonical preset: deepseek-v4-pro for text + k2p5 (Moonshot Kimi) for vision
+luxas run ~/research/x --profile dual           # canonical preset: deepseek-v4-pro for text + deepseek-v4-flash-vision-exp for vision
 luxas run ~/research/x --model deepseek-v4-pro  # same family-wide redirect as --profile dual but no vision override (figures break)
 luxas run ~/research/x --model opus             # brain-only override (sub-agents follow their own .md)
 ```
 
-`--profile dual` and any `--model deepseek-*` redirect every agent that declared `haiku/sonnet/opus` to the deepseek model via `applyProfile()` in `src/agents/spawn.ts`. Provider-specific picks (`gpt-5.2` for the `math` agent, `o3` for reasoning) bypass — those are deliberate. Vision-required agents (`illustrator` / `illustrator_write` / `typesetter`) need a separate vision profile because DeepSeek is text-only; `--profile dual` sets it for you (`k2p5` → Moonshot Kimi).
+`--profile dual` and any `--model deepseek-*` redirect every agent that declared `haiku/sonnet/opus` to the deepseek model via `applyProfile()` in `src/agents/spawn.ts`. Provider-specific picks (`gpt-5.2` for the `math` agent, `o3` for reasoning) bypass — those are deliberate. Vision-required agents (`illustrator` / `illustrator_write` / `typesetter`) need a separate vision profile because the DeepSeek *text* models cannot see; `--profile dual` sets it for you (`deepseek-v4-flash-vision-exp`, DeepSeek's multimodal model, so both halves share one provider and one key).
 
 Anecdotal cost per full run (check `<project>/.agent/usage.log` for real numbers):
 
 | Profile | $/run | Notes |
 |---|---|---|
 | Default (full Claude) | $20–80 | Best content quality; only profile with Anthropic prompt caching |
-| `--profile dual` (DeepSeek text + Kimi vision) | $2–10 | Loses ephemeral `cache_control`; figures via Kimi |
+| `--profile dual` (DeepSeek text + DeepSeek vision) | $2–10 | Loses ephemeral `cache_control`; figures via DeepSeek's multimodal model |
 
 ---
 
@@ -153,7 +153,7 @@ Luxas is **research-domain-specific** with a compiled-PDF-with-real-citations as
 | Control flow | file-based + hook-enforced gates | scripted pipeline | declarative graph you build | role-based crew | LLM-driven (fragile) | one chat session |
 | Crash-recoverable | ✓ stateless harness, replays from `log.jsonl` | ✗ | ✓ via checkpointer (SQLite/Postgres) | ✗ | ✗ | ✗ |
 | Detached sub-agents | ✓ Node processes + heartbeat + orphan recovery | ✗ | ✗ in-process | ✗ in-process | ✗ | ✗ |
-| Multi-model native | Claude + DeepSeek + Kimi + OpenAI o3 via one env var | OpenAI / Anthropic | DIY plumbing | DIY plumbing | OpenAI-focused | Anthropic-only |
+| Multi-model native | Claude + DeepSeek + GLM + OpenAI o3 via one env var | OpenAI / Anthropic | DIY plumbing | DIY plumbing | OpenAI-focused | Anthropic-only |
 | Output artifact | compiled LaTeX PDF with `\resultref` number-provenance | LaTeX paper from ML experiments | whatever you wire | whatever you wire | text + files | text + code |
 | Literature survey | ✓ OpenAlex/arXiv/CrossRef/paywall browser | ✗ (uses cached refs) | ✗ | ✗ | ✗ | ✗ |
 | Adversarial self-review | content + figure-internal + PDF-layout, three layers | reviewer agent (single layer) | none built-in | none built-in | none | none |
@@ -191,7 +191,7 @@ Each `.md` is YAML frontmatter + system prompt body. Key fields:
 
 ```yaml
 name: tool_impl
-model: sonnet                                  # opus|sonnet|haiku|gpt-5.2|deepseek-v4-pro|deepseek-v4-flash|k2p5|inherit
+model: sonnet                                  # opus|sonnet|haiku|gpt-5.2|deepseek-v4-pro|deepseek-v4-flash|deepseek-v4-flash-vision-exp|inherit
 thinkingLevel: medium                          # off|low|medium|high
 toolSets: [coding]                             # named tool-set factories
 templates: [PROJECT_DIR, EXPERIMENT_ID, TOOL_NAME]
@@ -263,7 +263,7 @@ The `finish` tool is the only clean exit; anything else is a crash and the harne
 ## FAQ
 
 **How much does it cost per run?**
-Anecdotally $20–80 on the default full-Claude profile and $2–10 on `--profile dual` (DeepSeek text + Kimi vision). Topic depth and reviewer iteration count dominate the spread. Every run's actual token usage lands in `<project>/.agent/usage.log`; check there for real numbers. See the cost table in [Switching Models](#switching-models).
+Anecdotally $20–80 on the default full-Claude profile and $2–10 on `--profile dual` (DeepSeek text + DeepSeek vision). Topic depth and reviewer iteration count dominate the spread. Every run's actual token usage lands in `<project>/.agent/usage.log`; check there for real numbers. See the cost table in [Switching Models](#switching-models).
 
 **How is this different from a single long Claude Code session?**
 Claude Code is one agent in one chat. Luxas is a brain spawning 13 sub-agent types (see [Agents](#agents)) as detached processes, with file-based state, deterministic finish gates, and crash-recovery. Full side-by-side in [Comparison](#comparison).
@@ -305,7 +305,7 @@ If you use Luxas to produce reports for publication or for a study about agentic
   year         = {2026},
   url          = {https://github.com/Muuuun/luxas},
   note         = {File-backed multi-agent system on pi-mono;
-                  Claude/DeepSeek/Kimi/OpenAI multi-model harness}
+                  Claude/DeepSeek/GLM/OpenAI multi-model harness}
 }
 ```
 

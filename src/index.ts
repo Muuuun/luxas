@@ -188,13 +188,14 @@ if (command === "run") {
   // only claude"). Claude-only runs put every producer on opus/sonnet tiers —
   // ~4x the cost — and die entirely when the Anthropic balance runs out (the
   // 297nm run, 2026-08-24: $6 in, 400 credit-balance-too-low, checkpoint
-  // stranded). Dual keeps producers on deepseek + vision on kimi; the PI
+  // stranded). Dual keeps producers on deepseek text + vision on deepseek's
+  // multimodal model (one provider since 2026-09-02); the PI
   // reviewers keep their declared Anthropic tier by design (interpretation-
   // fidelity study). Opt out explicitly with --profile claude. A bare
   // `--model deepseek-*` launch keeps its legacy no-vision-split semantics.
   if (!profile && !model.startsWith("deepseek-")) {
     profile = "dual";
-    console.error(`◈ No profile specified — defaulting to --profile dual (deepseek text + kimi vision). Pass --profile claude to force Anthropic-only.`);
+    console.error(`◈ No profile specified — defaulting to --profile dual (deepseek text + deepseek vision). Pass --profile claude to force Anthropic-only.`);
   }
   try {
     mkdirSync(join(projectDir, ".agent"), { recursive: true });
@@ -211,13 +212,16 @@ if (model.startsWith("deepseek-")) {
   process.env.LUXAS_MODEL_PROFILE = model;
 }
 
-// Profile presets. `dual` = deepseek-v4-pro for text agents + Kimi K2.5
-// for vision-required agents (illustrator/illustrator_write/typesetter).
-// Routes around deepseek's text-only limitation that produces visually
-// unverified figures and PDF layouts.
+// Profile presets. `dual` = deepseek-v4-pro for text agents +
+// deepseek-v4-flash-vision-exp for vision-required agents
+// (illustrator/illustrator_write/typesetter). Routes around the TEXT models'
+// blindness, which otherwise produces visually unverified figures and PDF
+// layouts. Both halves are the same provider and key since 2026-09-02, so a
+// dual run no longer dies when a second provider drops the model (Kimi K2.5
+// 404'd mid-run on 2026-08-31 and took every figure fixer with it).
 if (profile === "dual") {
   process.env.LUXAS_MODEL_PROFILE = "deepseek-v4-pro";
-  process.env.LUXAS_VISION_MODEL_PROFILE = "k2p5";
+  process.env.LUXAS_VISION_MODEL_PROFILE = "deepseek-v4-flash-vision-exp";
 } else if (profile === "claude") {
   // No env override — every agent uses its declared frontmatter model.
 } else if (profile) {
@@ -268,7 +272,7 @@ if (command === "figures") {
 console.error(`Unknown command: ${command}`);
 console.error("Usage: luxas <run|status|init|list|stop|figures|monitor> [project-dir] [options]");
 console.error("  --model <id>      explicit model (legacy; e.g. deepseek-v4-pro)");
-console.error("  --profile <name>  preset: dual (DEFAULT — deepseek text + kimi vision) | claude");
+console.error("  --profile <name>  preset: dual (DEFAULT — deepseek text + deepseek vision) | claude");
 process.exit(1);
 
 // ─── Commands ────────────────────────────────────────────

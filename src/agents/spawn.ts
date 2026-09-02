@@ -125,8 +125,47 @@ const MODEL_MAP: Record<string, [string, string] | InlineModel> = {
     compat: { ...DEEPSEEK_COMPAT },
     thinkingLevelMap: { ...DEEPSEEK_THINKING },
   },
-  // Kimi vision model — used for illustrator/illustrator_write/typesetter
-  // when running in --profile dual mode (deepseek text + kimi vision).
+  // DeepSeek's multimodal model — the vision half of --profile dual since
+  // 2026-09-02 (announcement: api-docs.deepseek.com/news/news260821).
+  // Same endpoint, key and wire format as the text producers, so a dual run
+  // now needs ONE provider instead of two; that is the point of the switch.
+  // Kimi K2.5 (below) started returning 404 mid-run on 2026-08-31 and every
+  // illustrator/illustrator_write/typesetter spawn died on turn 1 for the rest
+  // of the Ba run while the reviewer kept spawning audits nobody could act on
+  // (notes/figure-pipeline-review-2026-09-02.md §3.6).
+  //
+  // Live-probed 2026-09-02 against the real endpoint:
+  //  - image + tools + thinking + tool_choice="auto" → tool_calls, 5 s. This is
+  //    the production shape, reached because `reasoning: true` makes
+  //    pickRequireToolChoice return "auto".
+  //  - the SAME call with tool_choice="required" → 400 "Thinking mode does not
+  //    support this tool_choice". Never set reasoning:false here, or the
+  //    silent-exit guard will force "required" and every turn 400s.
+  //  - reasoning eats the output budget before content appears (a tall
+  //    schematic spent 9179 of 9500 completion tokens on reasoning), so
+  //    maxTokens must stay large — same lesson K2.5 taught.
+  //  - an image bills as ~384 input tokens (doc: "up to 384 tokens each").
+  "deepseek-v4-flash-vision-exp": {
+    id: "deepseek-v4-flash-vision-exp",
+    name: "DeepSeek-V4-Flash-Vision (exp)",
+    api: "openai-completions",
+    provider: "deepseek",
+    baseUrl: "https://api.deepseek.com/v1",
+    reasoning: true,
+    input: ["text", "image"],
+    // Documented PEAK rates (same tier as v4-flash) so the cost cap never
+    // under-counts; image tokens bill as input.
+    cost: { input: 0.44, output: 1.32, cacheRead: 0.014, cacheWrite: 0 },
+    contextWindow: 1048576,
+    maxTokens: 393216,
+    compat: { ...DEEPSEEK_COMPAT },
+    thinkingLevelMap: { ...DEEPSEEK_THINKING },
+  },
+  // Kimi vision model — the vision half of --profile dual until 2026-09-02,
+  // kept as an opt-in escape hatch (LUXAS_VISION_MODEL_PROFILE=k2p5) only.
+  // WARNING: this id returned `404 Not found the model kimi-k2.5 or Permission
+  // denied` on the production account from 2026-08-31 08:07 UTC. Re-verify
+  // against /v1/models before selecting it.
   // Endpoint is the Moonshot CN OpenAI-compat API; key is KIMI_API_KEY.
   // Cheapest vision-capable Kimi (¥0.7/4.0/21 per M, 2026-06 pricing); the
   // previous moonshot-v1-32k-vision-preview (32k ctx / 4k out) could not hold
@@ -182,8 +221,10 @@ const ANTHROPIC_TIERS = new Set(["haiku", "sonnet", "opus"]);
 
 // Agents that need image inputs (figure rendering, page-layout audit).
 // In dual-mode (LUXAS_VISION_MODEL_PROFILE set), these route to the vision
-// model regardless of the family-level text profile, because deepseek-* is
-// text-only and silently produces unverified figures otherwise.
+// model regardless of the family-level text profile, because the deepseek
+// TEXT models are text-only and silently produce unverified figures otherwise.
+// Since 2026-09-02 the destination is deepseek's own multimodal model, so the
+// split is now within one provider rather than across two.
 const VISION_REQUIRED_AGENTS = new Set([
   "illustrator",
   "illustrator_write",
