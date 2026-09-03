@@ -329,6 +329,25 @@ the reader rather than the lint.
   orphan-mechanism failure this repo keeps re-learning. The signal to watch is the pytest pass/fail pattern
   in `data/experiments/*/tests/`, not the model's prose: a weaker blind-test author shows up as tests that
   pass a trivial stub, not as worse-sounding output.
+
+  **One data point, taken after the switch** (14 turns, 213 s, $0.18). A live `tool_review` on glm-5.3 was
+  given only a description of a `blockade_radius(c6, omega)` tool — closed form `R_b = (C6/Ω)^(1/6)` — and
+  wrote a 41-test suite. It was then run against five implementations, pytest arbitrating:
+
+  | Implementation | Required | Result |
+  |---|---|---|
+  | correct closed form | pass | **41 passed** |
+  | stub returning `0.0` | fail | failed |
+  | raw ratio, no sixth root | fail | failed |
+  | swap-symmetric `max/min` | fail | failed |
+  | correct maths, no `ValueError` contract | fail | failed |
+
+  It satisfied the contract in `CLAUDE.md` without being told: expected values recomputed from inputs
+  (exact sixth powers — 64→2, 729→3, 15625→5 — verifiable by hand, never the tool's own output), explicit
+  adversarial cases naming the lazy implementations they defeat, scaling and monotonicity laws, and the
+  error contract including `-0.0`. It stayed blind: no read or write outside `tests/`. That is one tool, not
+  a benchmark, and it says nothing about 5.3 *versus* 5.2 — but it rules out the failure mode that would
+  have made the switch immediately harmful.
 - **GLM was a live production hazard while the account was dry (2026-09-03).** Asked to add GLM's vision
   model to the comparison: the account returns `1113 余额不足或无可用资源包` (insufficient balance) for
   `glm-5.2`, `glm-5.3`, `glm-5.3-flash` and for every vision id (`glm-4.5v`, `glm-4.6v`), 3/3 on retry, so it
