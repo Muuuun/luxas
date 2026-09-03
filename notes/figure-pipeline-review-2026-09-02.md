@@ -221,6 +221,18 @@ Conclusions that change how this should be read:
 - **An apparent 1-in-9 empty-output failure was my benchmark's fault**, not the model's: a 16 000-token cap
   truncated it mid-reasoning. Re-probed at the production cap (393 216) the same prompt terminated cleanly
   4/4 at 5–8 k tokens and ~$0.01. The large `maxTokens` in the model entry is load-bearing; do not lower it.
+- **GLM cannot be benchmarked and is a live production hazard (2026-09-03).** Asked to add GLM's vision
+  model to the comparison: the account returns `1113 余额不足或无可用资源包` (insufficient balance) for
+  `glm-5.2`, `glm-5.3`, `glm-5.3-flash` and for every vision id (`glm-4.5v`, `glm-4.6v`), 3/3 on retry, so it
+  is not transient. Only `glm-4.7` answers, and it rejects image content at the API
+  (`1210 messages.content.type 参数非法，取值范围 ['text']`) — as do glm-5.2 and glm-5.3, which are text-only
+  models, not multimodal. So there is no GLM vision number to report until the account is funded.
+  **The hazard**: `glm-5.2` is the UNCONDITIONAL route for `tool_review` in every profile
+  (`GLM_REVIEWER_AGENTS` in `src/agents/spawn.ts`), and `tool_review` is the blind-test author that makes the
+  impl/review split real. With the account dry, every `tool_review` spawn fails exactly as Kimi did in §3.6.
+  The preflight check in `src/index.ts` resolves only the *brain's* provider and only tests key presence, not
+  credit, so a run starts clean and dies at the first experiment. This is the same failure class the vision
+  switch just removed, still armed on a different agent.
 - **Neither model caught the convention error** (wavy arrows used for laser drives) or the
   Rydberg/ionization baseline collision. Both miss the same class — domain conventions — which is the
   argument for §4.5: you cannot audit your way to a correct level diagram.
