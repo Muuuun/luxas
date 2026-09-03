@@ -84,12 +84,12 @@ luxas list                      # all projects Luxas has ever touched
 
 ```bash
 luxas run ~/research/x                          # default — every agent uses its declared frontmatter model (full Claude)
-luxas run ~/research/x --profile dual           # canonical preset: deepseek-v4-pro for text + deepseek-v4-flash-vision-exp for vision
+luxas run ~/research/x --profile dual           # canonical preset: deepseek-v4-pro text + glm-5.3-flash vision (auditor stays on Claude)
 luxas run ~/research/x --model deepseek-v4-pro  # same family-wide redirect as --profile dual but no vision override (figures break)
 luxas run ~/research/x --model opus             # brain-only override (sub-agents follow their own .md)
 ```
 
-`--profile dual` and any `--model deepseek-*` redirect every agent that declared `haiku/sonnet/opus` to the deepseek model via `applyProfile()` in `src/agents/spawn.ts`. Provider-specific picks (`gpt-5.2` for the `math` agent, `o3` for reasoning) bypass — those are deliberate. Vision-required agents (`illustrator` / `illustrator_write` / `typesetter`) need a separate vision profile because the DeepSeek *text* models cannot see; `--profile dual` sets it for you (`deepseek-v4-flash-vision-exp`, DeepSeek's multimodal model, so both halves share one provider and one key). `figure_auditor` is routed separately again, to `glm-5.3-flash` — it is the ship/no-ship eye, it benchmarked best and cheapest of four models on real figures, and GLM keeps it a family away from the agents whose work it audits. `--profile claude` leaves all of them on their Anthropic tiers.
+`--profile dual` and any `--model deepseek-*` redirect every agent that declared `haiku/sonnet/opus` to the deepseek model via `applyProfile()` in `src/agents/spawn.ts`. Provider-specific picks (`gpt-5.2` for the `math` agent, `o3` for reasoning) bypass — those are deliberate. Vision-required agents (`illustrator` / `illustrator_write` / `typesetter`) need a separate vision profile because the DeepSeek *text* models cannot see; `--profile dual` sets it to `glm-5.3-flash`, which drew the best figure of three models tested at a twentieth of Sonnet's cost. `figure_auditor` is deliberately left on its Anthropic tier: it is the ship/no-ship eye, and an auditor running the same model that drew the figure is not an independent one. `--profile claude` leaves all of them on Anthropic.
 
 Anecdotal cost per full run (check `<project>/.agent/usage.log` for real numbers):
 

@@ -60,7 +60,7 @@ check("typesetter (sonnet) → deepseek-v4-pro (NO vision split)",
 // ── 3. --profile dual (text=deepseek, vision=deepseek multimodal) ──
 console.log("\n3. --profile dual (deepseek text + deepseek vision)");
 process.env.LUXAS_MODEL_PROFILE = "deepseek-v4-pro";
-process.env.LUXAS_VISION_MODEL_PROFILE = "deepseek-v4-flash-vision-exp";
+process.env.LUXAS_VISION_MODEL_PROFILE = "glm-5.3-flash";
 check("brain (sonnet) → deepseek-v4-pro",
   modelId(resolveModel("sonnet", "brain")) === "deepseek-v4-pro");
 check("experiment (sonnet) → deepseek-v4-pro",
@@ -76,37 +76,34 @@ check("reviewer (sonnet) → claude-sonnet-4-6 (PI keeps Anthropic tier)",
 // must land on a model that actually accepts images.
 for (const agent of ["illustrator", "illustrator_write", "typesetter"]) {
   const m = resolveModel("sonnet", agent);
-  check(`${agent} (sonnet) → deepseek-v4-flash-vision-exp`,
-    modelId(m) === "deepseek-v4-flash-vision-exp", `got ${modelId(m)}`);
+  check(`${agent} (sonnet) → glm-5.3-flash`,
+    modelId(m) === "glm-5.3-flash", `got ${modelId(m)}`);
   check(`${agent} model accepts image input`, acceptsImages(m));
-  // Live-probed 2026-09-02: thinking mode + tool_choice="required" is a hard
-  // 400 on this model. `reasoning: true` is what makes the silent-exit guard
-  // send "auto" instead, so it is a wire-level requirement, not a style flag.
-  check(`${agent} → tool_choice "auto" (thinking mode rejects "required")`,
+  // Reasoning models get tool_choice "auto". This is a hard requirement on the
+  // deepseek vision entry (thinking + "required" is a 400 there) and harmless
+  // on GLM, which accepts both — keep it asserted so a swap back is safe.
+  check(`${agent} → tool_choice "auto"`,
     pickRequireToolChoice(m) === "auto", `got ${pickRequireToolChoice(m)}`);
 }
 // The text producers must stay blind — that is why the split exists at all.
 check("brain's text model does NOT accept images (the reason for the split)",
   !acceptsImages(resolveModel("sonnet", "brain")));
 
-// figure_auditor is the ship/no-ship eye and is routed separately from the
-// drawing agents: `--profile dual` sends it to glm-5.3-flash (2026-09-03), a
-// third model family away from the deepseek agents whose figures it audits.
-process.env.LUXAS_VISION_AUDIT_MODEL_PROFILE = "glm-5.3-flash";
+// figure_auditor is the ship/no-ship eye. `--profile dual` leaves its override
+// unset on purpose so it keeps the Anthropic tier: the drawing agents are GLM,
+// and an auditor on the drawing model is not an independent eye. The text
+// profile must NEVER reach it either — that downgrade is what let a cheap model
+// "pass" five broken figures (figures v2, 2026-08-28).
+delete process.env.LUXAS_VISION_AUDIT_MODEL_PROFILE;
 {
   const fa = resolveModel("sonnet", "figure_auditor");
-  check("figure_auditor → glm-5.3-flash under dual",
-    modelId(fa) === "glm-5.3-flash", `got ${modelId(fa)}`);
+  check("figure_auditor keeps its Anthropic tier under dual",
+    modelId(fa) === "claude-sonnet-4-6", `got ${modelId(fa)}`);
   check("figure_auditor's model accepts image input", acceptsImages(fa));
-  check("figure_auditor is a different family from the agents it audits",
-    (fa as any)?.provider !== (resolveModel("sonnet", "illustrator_write") as any)?.provider);
+  check("figure_auditor is NOT the model that drew the figure",
+    (fa as any)?.provider !== (resolveModel("sonnet", "illustrator_write") as any)?.provider,
+    "producer and auditor share a provider — independent review is lost");
 }
-// The text profile must NEVER reach figure_auditor — that downgrade is what let
-// a cheap model "pass" five broken figures (figures v2, 2026-08-28).
-delete process.env.LUXAS_VISION_AUDIT_MODEL_PROFILE;
-check("figure_auditor falls back to its Anthropic tier when the audit var is unset",
-  modelId(resolveModel("sonnet", "figure_auditor")) === "claude-sonnet-4-6",
-  `got ${modelId(resolveModel("sonnet", "figure_auditor"))}`);
 
 // Kimi K2.5 remains selectable as an escape hatch (it 404'd on the production
 // account 2026-08-31; re-verify against /v1/models before using it).

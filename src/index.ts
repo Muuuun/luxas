@@ -221,16 +221,22 @@ if (model.startsWith("deepseek-")) {
 // 404'd mid-run on 2026-08-31 and took every figure fixer with it).
 if (profile === "dual") {
   process.env.LUXAS_MODEL_PROFILE = "deepseek-v4-pro";
-  process.env.LUXAS_VISION_MODEL_PROFILE = "deepseek-v4-flash-vision-exp";
-  // figure_auditor is the ship/no-ship eye, so it is set separately from the
-  // drawing agents and never by the text profile. GLM-5.3-Flash measured best
-  // AND cheapest of four models on the real Ba figures (2026-09-03): it alone
-  // caught the ionization line struck through the Rydberg label, at $0.003 an
-  // audit against sonnet's $0.011. It also keeps the auditor off the *producer's*
-  // family — the drawing agents are deepseek — which is the same independence
-  // rule PI_REVIEWER_AGENTS enforces. Set only here: `--profile claude` keeps
-  // the frontmatter's Anthropic tier so an Anthropic-only run stays Anthropic-only.
-  process.env.LUXAS_VISION_AUDIT_MODEL_PROFILE = "glm-5.3-flash";
+  // The drawing agents run on GLM-5.3-Flash (2026-09-03). On the figure-creation
+  // task it needed 14 turns and $0.043 against deepseek's 36/$0.21 and sonnet's
+  // 48/$2.18, and produced the best figure of the three: the only one to annotate
+  // both claims on the page, and the only one to handle the corrupted eps_total
+  // columns honestly, by drawing a "gate fails" line at eps = 1 instead of
+  // plotting an impossible infidelity of 1e4 (sonnet) or silently dropping the
+  // columns (deepseek). See notes/figure-pipeline-review-2026-09-02.md §4.7b.
+  process.env.LUXAS_VISION_MODEL_PROFILE = "glm-5.3-flash";
+  // figure_auditor is deliberately NOT set here, so it falls back to the
+  // Anthropic tier in its frontmatter. GLM audits better and cheaper than
+  // sonnet in isolation, but the auditor must not be the same model as the
+  // agent that drew the figure — the same independence rule PI_REVIEWER_AGENTS
+  // encodes. The blind spot is demonstrably shared: GLM omitted the 4 K / 300 K
+  // panel labels when drawing, and did not flag missing temperature labels when
+  // auditing. Override with LUXAS_VISION_AUDIT_MODEL_PROFILE only onto a family
+  // that is NOT the one drawing the figures.
 } else if (profile === "claude") {
   // No env override — every agent uses its declared frontmatter model.
 } else if (profile) {

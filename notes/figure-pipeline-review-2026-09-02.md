@@ -294,9 +294,17 @@ DeepSeek dodged by switching columns and Sonnet plotted to ε = 10⁴ unexamined
 `gate fails` reference line at ε = 1, marking the physical boundary rather than hiding or ignoring the
 problem. Its remaining defect is the one all three share: neither panel is labelled 4 K or 300 K.
 
-This is evidence that the drawing agents should probably follow the auditor to `glm-5.3-flash` (5× cheaper
-than deepseek, 50× cheaper than sonnet, fewest turns, best output), but it is n=1 and that routing has not
-been changed.
+**Routing as it now stands (2026-09-03).** The drawing agents — `illustrator`, `illustrator_write`,
+`typesetter` — run on `glm-5.3-flash`. `figure_auditor` was moved there first and then moved back to its
+Anthropic tier, because with GLM drawing the figures an auditor on GLM is not an independent eye. That is
+not a theoretical worry here: GLM omitted the 4 K / 300 K panel labels when it drew the figure, and did not
+flag missing temperature labels when it audited one. Same model, same blind spot. The rule is the one
+`PI_REVIEWER_AGENTS` already encodes for the PI, and `smoke_dual_profile` now asserts it directly —
+`figure_auditor`'s provider must differ from `illustrator_write`'s.
+
+The cost of that choice is small: the auditor runs a handful of times per run at $0.011 an audit against
+GLM's $0.003, and Sonnet is 10× faster per audit, which matters because the auditor is on the critical path
+to shipping while the drawing agents are not.
 
 - **GLM was a live production hazard while the account was dry (2026-09-03).** Asked to add GLM's vision
   model to the comparison: the account returns `1113 余额不足或无可用资源包` (insufficient balance) for

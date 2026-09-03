@@ -300,10 +300,12 @@ function applyProfile(modelKey: string, agentName?: string): string {
   // figure_auditor (figures v2, 2026-08-28) keeps a vision model that can
   // actually see — the cheap vision profile "passed" five broken figures.
   // Override only via LUXAS_VISION_AUDIT_MODEL_PROFILE; never the text profile.
-  // `--profile dual` sets that var to glm-5.3-flash (2026-09-03): benchmarked
-  // best and cheapest of four on the real Ba figures, and a third family away
-  // from the deepseek drawing agents it audits. The frontmatter tier is the
-  // fallback, so `--profile claude` still audits on Claude.
+  // `--profile dual` deliberately leaves this unset so the auditor keeps its
+  // Anthropic tier: since 2026-09-03 the drawing agents are glm-5.3-flash, and
+  // an auditor on the drawing model is not an independent eye. GLM scored best
+  // of four auditing in isolation, but it shares the producer's blind spots
+  // (it omitted 4 K / 300 K panel labels when drawing, and did not flag their
+  // absence when auditing). Point this var at a family that is not drawing.
   if (agentName === "figure_auditor") return process.env.LUXAS_VISION_AUDIT_MODEL_PROFILE || modelKey;
   if (agentName && VISION_REQUIRED_AGENTS.has(agentName)) {
     const visionProfile = process.env.LUXAS_VISION_MODEL_PROFILE;

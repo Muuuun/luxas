@@ -100,6 +100,12 @@ function hit(nums: number[], target: number, rtol: number): boolean {
 function runChecks(checks: Check[], projectDir: string): CheckResult[] {
   const nums = harvestNumbers(projectDir);
   const text = reportText(projectDir);
+  // No report surface => nothing can pass. Without this a killed run scores a
+  // free point on every `trap` check, because an absent report trivially fails
+  // to contain the trap pattern — a crashed arm would outscore a sloppy one.
+  if (!text.trim()) {
+    return checks.map((c) => ({ kind: c.kind, label: c.label, pass: false, detail: "no report.tex — check not evaluable" }));
+  }
   return checks.map((c): CheckResult => {
     if (c.kind === "value") {
       const rtol = c.rtol ?? 0.1;
