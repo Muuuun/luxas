@@ -185,9 +185,45 @@ should say), brain approves or edits, then rendering starts. The 08-30 hero brie
   `smoke_dual_profile.mts`: the entry must accept image input, and it must declare `reasoning: true`, because
   thinking mode plus `tool_choice: "required"` is a hard 400 and the silent-exit guard sends "required" for
   any model that is not marked as reasoning. Kimi stays selectable via `LUXAS_VISION_MODEL_PROFILE=k2p5`
-  with its 404 recorded in the entry comment. Quality note: on the two-panel data plot the model's audit
-  matched an independent human read; on the page-tall schematic it invented details (called the wavy arrows
-  solid), so `figure_auditor` deliberately stays on Claude.
+  with its 404 recorded in the entry comment.
+
+### 4.7a Measured: what the vision switch actually buys (2026-09-03)
+The 09-02 entry above shipped on n=1 per figure, which was not enough to claim anything about quality. A
+controlled benchmark since then: the three real Ba figures, one fixed auditor prompt, three repeats per
+model, scored against the defect list in §2 that was established by independent reading.
+
+| | DeepSeek-V4-Flash-Vision | Sonnet-4-6 | Kimi K2.5 |
+|---|---|---|---|
+| Runs completed | 9/9 | 9/9 | **0/9 — 404 on every call** |
+| Real defects found per audit | 5.4 | 5.6 | n/a |
+| False or garbled claims (total) | 3 in 9 | 8 in 9 | n/a |
+| Latency, mean / worst | 67 s / 138 s | 12 s / 13 s | n/a |
+| Cost per audit, mean | $0.0104 | $0.0113 | n/a |
+| Output tokens per audit | 7 700 | 420 | n/a |
+
+Conclusions that change how this should be read:
+
+- **Kimi's 404 is not a droplet-credential problem.** It fails identically with the local key, 9/9. The
+  switch was necessary, not merely tidy.
+- **Quality is a tie, not an upgrade.** Both models find five to six real defects per audit. DeepSeek was
+  the only one to catch the log x-axis carrying a single tick label (2/3 runs) and the energy axis with no
+  ticks or scale (3/3); Sonnet was the only one to catch the stacked Cs/Sr markers, and was steadier on the
+  frontier figure. Sonnet also produced more false claims, including a state (`³D₀`) that does not exist in
+  the diagram.
+- **Cost is parity, not a saving.** The sticker price is 7× cheaper on input and 11× on output, but reasoning
+  tokens eat all of it: 7 700 output tokens per audit against Sonnet's 420. Any claim that this switch makes
+  figures cheaper is wrong.
+- **Latency is 5× worse** and that compounds over a multi-turn agent.
+- **The earlier "invents detail on tall schematics" claim does not replicate.** It came from a single sample
+  where the model called the wavy arrows solid. Across 3 fresh runs on the same figure that error did not
+  recur, and DeepSeek scored *higher* than Sonnet on the level diagram (6.0 vs 5.7 real defects). The
+  honest reason to keep `figure_auditor` on Claude is latency and consistency, not accuracy.
+- **An apparent 1-in-9 empty-output failure was my benchmark's fault**, not the model's: a 16 000-token cap
+  truncated it mid-reasoning. Re-probed at the production cap (393 216) the same prompt terminated cleanly
+  4/4 at 5–8 k tokens and ~$0.01. The large `maxTokens` in the model entry is load-bearing; do not lower it.
+- **Neither model caught the convention error** (wavy arrows used for laser drives) or the
+  Rydberg/ionization baseline collision. Both miss the same class — domain conventions — which is the
+  argument for §4.5: you cannot audit your way to a correct level diagram.
 - A spawn that returns `stopReason=error` with 401/403/404 marks that agent type unavailable for the rest of
   the run; the reviewer/PI figure loop then skips figure fixes and stops spawning audits. Reading the 404 is
   not enough — the trace shows it was read and ignored. **Still open**: the provider consolidation removes
