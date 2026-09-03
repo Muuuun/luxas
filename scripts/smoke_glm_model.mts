@@ -17,6 +17,7 @@ function check(name: string, ok: boolean, detail = "") {
 }
 
 const flash: any = resolveModel("glm-5.3-flash");
+const g53: any = resolveModel("glm-5.3");
 const g52: any = resolveModel("glm-5.2");
 
 check("glm-5.3-flash resolves to itself", flash?.id === "glm-5.3-flash", String(flash?.id));
@@ -39,17 +40,48 @@ check("glm-5.3-flash is a reasoning model → tool_choice \"auto\"",
   flash.reasoning === true && pickRequireToolChoice(flash) === "auto");
 check("both GLM entries share the bigmodel endpoint",
   flash.baseUrl === g52.baseUrl && flash.provider === "glm" && g52.provider === "glm");
+// glm-5.3 runs tool_review since 2026-09-04. Live-probed the same day: tool
+// calling works with tool_choice "auto" and "required", max_tokens ceiling is
+// 131072 (the API names the range), context OK at 900,015 prompt tokens.
+check("glm-5.3 resolves to itself", g53?.id === "glm-5.3", String(g53?.id));
+check("glm-5.3 is text-only — it rejects image content at the API",
+  Array.isArray(g53.input) && !g53.input.includes("image"));
+check("glm-5.3 max output within the API ceiling of 131072",
+  g53.maxTokens > 0 && g53.maxTokens <= 131072, String(g53.maxTokens));
+check("glm-5.3 context window ≥ 900k (probed OK at 900,015 prompt tokens)",
+  g53.contextWindow >= 900_000, String(g53.contextWindow));
+check("glm-5.3 priced per docs.z.ai ($1.40 / $4.40 / $0.26 cached)",
+  g53.cost.input === 1.40 && g53.cost.output === 4.40 && g53.cost.cacheRead === 0.26,
+  `${g53.cost.input}/${g53.cost.output}/${g53.cost.cacheRead}`);
+check("glm-5.3 costs MORE than the glm-5.2 it replaced (cap bites sooner)",
+  g53.cost.input > g52.cost.input && g53.cost.output > g52.cost.output);
+
 // tool_review is pinned to GLM in EVERY profile — a third prior, independent of
 // both the deepseek producer and the Anthropic PI. Guard that it stays text-tier
 // and does not silently inherit a vision profile.
+delete process.env.LUXAS_TOOL_REVIEW_MODEL;
 process.env.LUXAS_MODEL_PROFILE = "deepseek-v4-pro";
-process.env.LUXAS_VISION_MODEL_PROFILE = "deepseek-v4-flash-vision-exp";
-check("tool_review still routes to GLM under --profile dual",
-  (resolveModel("opus", "tool_review") as any)?.provider === "glm");
+process.env.LUXAS_VISION_MODEL_PROFILE = "glm-5.3-flash";
+{
+  const tr: any = resolveModel("opus", "tool_review");
+  check("tool_review → glm-5.3 under --profile dual", tr?.id === "glm-5.3", String(tr?.id));
+  check("tool_review's model is text-only (it writes pytest, never sees a figure)",
+    Array.isArray(tr.input) && !tr.input.includes("image"));
+  // The blind-test author must not share a family with the code's author.
+  check("tool_review is a different family from tool_impl",
+    tr?.provider !== (resolveModel("opus", "tool_impl") as any)?.provider);
+}
 delete process.env.LUXAS_MODEL_PROFILE;
 delete process.env.LUXAS_VISION_MODEL_PROFILE;
-check("tool_review routes to GLM with no profile set at all",
-  (resolveModel("opus", "tool_review") as any)?.provider === "glm");
+check("tool_review → glm-5.3 with no profile set at all",
+  (resolveModel("opus", "tool_review") as any)?.id === "glm-5.3");
+// The move to 5.3 was not backed by a blind-test benchmark, so the rollback
+// must actually work — a documented escape hatch that no code reads is the
+// orphan-mechanism failure this repo keeps re-learning.
+process.env.LUXAS_TOOL_REVIEW_MODEL = "glm-5.2";
+check("LUXAS_TOOL_REVIEW_MODEL=glm-5.2 rolls tool_review back",
+  (resolveModel("opus", "tool_review") as any)?.id === "glm-5.2");
+delete process.env.LUXAS_TOOL_REVIEW_MODEL;
 
 if (fails) { console.log(`\n${fails} FAILED`); process.exit(1); }
 console.log("\nALL PASS — GLM entries: vision only on 5.3-flash, ceilings honest, tool_review pinned.");

@@ -222,7 +222,41 @@ const MODEL_MAP: Record<string, [string, string] | InlineModel> = {
     maxTokens: 131072,
     compat: { supportsDeveloperRole: false },
   },
-  // GLM-5.2 (Zhipu / bigmodel) — runs the non-PI reviewer agents
+  // GLM-5.3 (Zhipu / bigmodel) — the flagship that runs tool_review since
+  // 2026-09-04, replacing glm-5.2. Text-only: it rejects image content
+  // (`1210 … 取值范围 ['text']`), which is correct for this role — tool_review
+  // reads a tool description and writes pytest, it never looks at a figure.
+  //
+  // This move was made on the user's instruction, not on measured evidence:
+  // no blind-test-authoring benchmark was run comparing it to 5.2. What IS
+  // verified (live, 2026-09-04): the id resolves, tool calling works with
+  // tool_choice "auto" and "required", reasoning_content is returned, and the
+  // max_tokens ceiling is 131072 (the API names the range on error).
+  // It is also ~26% DEARER than 5.2 ($1.40/$4.40 vs $1.11/$3.89 per M), so the
+  // cost cap will bite marginally sooner on experiment-heavy runs.
+  //
+  // Unlike glm-5.2 and glm-5.3-flash, glm-5.3 *accepts* role:"developer"
+  // rather than rejecting it with `1214 角色信息不正确`. supportsDeveloperRole
+  // is nevertheless kept false so every model on this provider behaves
+  // identically and the known-good system-role path is used.
+  "glm-5.3": {
+    id: "glm-5.3",
+    name: "GLM-5.3",
+    api: "openai-completions",
+    provider: "glm",
+    baseUrl: "https://open.bigmodel.cn/api/paas/v4",
+    reasoning: true,
+    input: ["text"],
+    // docs.z.ai/guides/overview/pricing, 2026-09-04: $1.40 in / $0.26 cached /
+    // $4.40 out per M. No promotional discount on this tier.
+    cost: { input: 1.40, output: 4.40, cacheRead: 0.26, cacheWrite: 0 },
+    contextWindow: 1048576,
+    maxTokens: 131072,
+    compat: { supportsDeveloperRole: false },
+  },
+  // GLM-5.2 (Zhipu / bigmodel) — ran tool_review until 2026-09-04, kept as the
+  // rollback target (LUXAS_TOOL_REVIEW_MODEL=glm-5.2). Still live on the
+  // account. Formerly documented as running "the non-PI reviewer agents"
   // (experiment_reviewer, tool_review). OpenAI-compat endpoint; key is the
   // "glm" slot in ~/.sisyphus/auth.json (getApiKey("glm")). A reasoning model
   // — like kimi it rejects role:"developer", so supportsDeveloperRole:false.
@@ -286,12 +320,16 @@ const PI_REVIEWER_AGENTS = new Set([
   // (deepseek: 100% hard-error on search-failure interpretation, n=20).
   "ledger_writer",
 ]);
-//  tool_review stays on GLM-5.2 — a third prior, independent of BOTH the
+//  tool_review stays on GLM — a third prior, independent of BOTH the
 //  deepseek producer AND the Anthropic PI, routed there UNCONDITIONALLY
 //  (every profile). It authors BLIND TESTS whose arbiter is pytest, not its
 //  own judgment, so GLM's weak epistemic-interpretation dimension is not
 //  exposed in this role; its family diversity is what makes the impl/review
 //  split real (same-family impl+test passed the same wrong constants).
+//  The tier moved 5.2 → 5.3 on 2026-09-04 by user instruction. No blind-test
+//  benchmark was run to justify it, so LUXAS_TOOL_REVIEW_MODEL exists as the
+//  one-env-var rollback (=glm-5.2) if test quality regresses. Watch for it in
+//  the pytest pass/fail pattern, not in the model's prose.
 const GLM_REVIEWER_AGENTS = new Set([
   "tool_review",
 ]);
@@ -311,9 +349,9 @@ function applyProfile(modelKey: string, agentName?: string): string {
     const visionProfile = process.env.LUXAS_VISION_MODEL_PROFILE;
     if (visionProfile) return visionProfile;
   }
-  // Non-PI reviewers always run on GLM-5.2 (independent prior); PI keeps its
+  // Non-PI reviewers always run on GLM (independent prior); PI keeps its
   // declared Anthropic tier. Both checked before the producer-profile downgrade.
-  if (agentName && GLM_REVIEWER_AGENTS.has(agentName)) return "glm-5.2";
+  if (agentName && GLM_REVIEWER_AGENTS.has(agentName)) return process.env.LUXAS_TOOL_REVIEW_MODEL || "glm-5.3";
   if (agentName && PI_REVIEWER_AGENTS.has(agentName)) return modelKey;
   const profile = process.env.LUXAS_MODEL_PROFILE;
   if (!profile) return modelKey;

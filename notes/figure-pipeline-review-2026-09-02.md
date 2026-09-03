@@ -319,6 +319,16 @@ but stays 8× *below* Yb at n = 100 (2.82e-4 vs 2.25e-3), so a caption naming al
 comparison set is wrong. That is a claim-level catch, the class §4.3 argues the gate must cover, produced by
 the reader rather than the lint.
 
+- **`tool_review` moved glm-5.2 → glm-5.3 (2026-09-04, user instruction).** Recorded plainly: this was NOT
+  backed by a blind-test-authoring benchmark. What is verified live is only that the model works — id
+  resolves, tool calling with `tool_choice` "auto" and "required", reasoning_content returned, max_tokens
+  ceiling 131072, context OK at 900,015 prompt tokens, pricing $1.40/$4.40/$0.26 from docs.z.ai. It is ~26%
+  **dearer** than 5.2, so the cost cap bites marginally sooner on experiment-heavy runs. Because the move is
+  unevidenced, `LUXAS_TOOL_REVIEW_MODEL=glm-5.2` is a one-variable rollback that `applyProfile` actually
+  reads and `smoke_glm_model` actually exercises — a documented escape hatch nothing reads is the
+  orphan-mechanism failure this repo keeps re-learning. The signal to watch is the pytest pass/fail pattern
+  in `data/experiments/*/tests/`, not the model's prose: a weaker blind-test author shows up as tests that
+  pass a trivial stub, not as worse-sounding output.
 - **GLM was a live production hazard while the account was dry (2026-09-03).** Asked to add GLM's vision
   model to the comparison: the account returns `1113 余额不足或无可用资源包` (insufficient balance) for
   `glm-5.2`, `glm-5.3`, `glm-5.3-flash` and for every vision id (`glm-4.5v`, `glm-4.6v`), 3/3 on retry, so it
