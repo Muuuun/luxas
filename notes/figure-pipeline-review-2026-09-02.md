@@ -306,6 +306,19 @@ The cost of that choice is small: the auditor runs a handful of times per run at
 GLM's $0.003, and Sonnet is 10× faster per audit, which matters because the auditor is on the critical path
 to shipping while the drawing agents are not.
 
+**The pairing was then exercised end to end** (20 tool calls, 6.5 min): Sonnet auditing the figure GLM had
+actually drawn. Its first FIX is the exact defect GLM was blind to in both roles —
+
+> **Add temperature subtitles to both panels.** Neither panel carries a temperature label. The only way to
+> tell them apart is the file names in the figspec.
+
+GLM omitted those labels when drawing and did not flag their absence when auditing; the cross-family auditor
+named it as the top fix. The independence argument is now empirical, not theoretical. Sonnet also checked the
+caption against the pixels numerically and found it overclaims: barium at 20 mW inverts above Rb, Cs and Sr
+but stays 8× *below* Yb at n = 100 (2.82e-4 vs 2.25e-3), so a caption naming all four species as the
+comparison set is wrong. That is a claim-level catch, the class §4.3 argues the gate must cover, produced by
+the reader rather than the lint.
+
 - **GLM was a live production hazard while the account was dry (2026-09-03).** Asked to add GLM's vision
   model to the comparison: the account returns `1113 余额不足或无可用资源包` (insufficient balance) for
   `glm-5.2`, `glm-5.3`, `glm-5.3-flash` and for every vision id (`glm-4.5v`, `glm-4.6v`), 3/3 on retry, so it
