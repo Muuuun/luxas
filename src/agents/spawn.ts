@@ -189,6 +189,39 @@ const MODEL_MAP: Record<string, [string, string] | InlineModel> = {
     // were live-verified accepted 2026-06; re-verify on pi-ai bumps.
     compat: { supportsDeveloperRole: false },
   },
+  // GLM-5.3-Flash (Zhipu / bigmodel) — the ONLY GLM model that accepts images.
+  // glm-5.3, glm-5.2, glm-5.1 and glm-4.7 are text-only and reject image content
+  // outright (`1210 messages.content.type 参数非法，取值范围 ['text']`); the older
+  // vision ids glm-4.5v / glm-4.6v work but audit worse (see below). The catalog
+  // endpoint does not list the *v ids at all — probe, don't trust /models.
+  //
+  // Live-probed 2026-09-03 against the real endpoint:
+  //  - image + tools works with tool_choice "auto" AND "required" (unlike the
+  //    deepseek vision entry, which 400s on "required"); reasoning_content is
+  //    returned, so `reasoning: true` is honest and yields "auto" anyway.
+  //  - rejects role:"developer" (`1214 角色信息不正确`) — same as glm-5.2.
+  //  - max_tokens ceiling is exactly 131072 (the API names the range on error).
+  //  - benchmarked best of four models on the figure-audit task: it alone caught
+  //    the ionization line striking through the Rydberg label and the ambiguous
+  //    wavelength-to-arrow assignment. Cheapest too, at ~$0.003/audit against
+  //    sonnet's $0.011. Its cost is latency: ~116 s mean, 187 s worst, vs
+  //    sonnet's 12 s. See notes/figure-pipeline-review-2026-09-02.md §4.7b.
+  //  - prices are FULL list ($0.15 / $0.50 / $0.03 cache-read per M). A 50%
+  //    launch promotion runs to 2026-09-09; quoting the promo rate would make
+  //    the cost cap under-count the moment it expires.
+  "glm-5.3-flash": {
+    id: "glm-5.3-flash",
+    name: "GLM-5.3-Flash (vision)",
+    api: "openai-completions",
+    provider: "glm",
+    baseUrl: "https://open.bigmodel.cn/api/paas/v4",
+    reasoning: true,
+    input: ["text", "image"],
+    cost: { input: 0.15, output: 0.50, cacheRead: 0.03, cacheWrite: 0 },
+    contextWindow: 1048576,
+    maxTokens: 131072,
+    compat: { supportsDeveloperRole: false },
+  },
   // GLM-5.2 (Zhipu / bigmodel) — runs the non-PI reviewer agents
   // (experiment_reviewer, tool_review). OpenAI-compat endpoint; key is the
   // "glm" slot in ~/.sisyphus/auth.json (getApiKey("glm")). A reasoning model

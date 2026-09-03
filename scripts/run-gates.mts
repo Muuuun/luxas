@@ -89,6 +89,7 @@ const MANIFEST: Record<string, GateSpec> = {
 	smoke_claims_dispatch: { kind: "assert" },
 	smoke_cost_cap: { kind: "assert" },
 	smoke_deepseek_model: { kind: "assert" },
+	smoke_glm_model: { kind: "assert" },
 	smoke_stop_run: { kind: "assert" },
 	smoke_claim_table_ppss: { kind: "assert" },
 	smoke_abstention: { kind: "assert" },
