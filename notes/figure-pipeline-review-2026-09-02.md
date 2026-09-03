@@ -221,6 +221,35 @@ Conclusions that change how this should be read:
 - **An apparent 1-in-9 empty-output failure was my benchmark's fault**, not the model's: a 16 000-token cap
   truncated it mid-reasoning. Re-probed at the production cap (393 216) the same prompt terminated cleanly
   4/4 at 5–8 k tokens and ~$0.01. The large `maxTokens` in the model entry is load-bearing; do not lower it.
+- **Multi-turn figure creation, same brief, one run each (2026-09-03).** The audit task above is not what
+  these agents mostly do; `illustrator_write` gets 70 turns to *create* a figure. Identical brief and data
+  (the real E6 frontier CSVs), one run per model:
+
+  | | DeepSeek vision | Sonnet-4-6 |
+  |---|---|---|
+  | Turns | 36 | 48 |
+  | Wall clock | 11.9 min | 23.0 min |
+  | Cost | $0.21 | $2.18 |
+  | Self-reported | visual check passed | visual check passed (2 fix rounds) |
+
+  DeepSeek is **10× cheaper and 2× faster in wall clock** here, despite being 5× slower per call, because it
+  used fewer turns. Both produced a figure with far better mechanics than anything the Ba run shipped: no
+  legend, direct end labels, no dead zone, nothing clipped. Both also failed, differently, and **both passed
+  their own visual check**:
+  - DeepSeek noticed that the `*_eps_total` reference columns are dominated by an invalid blockade term
+    spanning ~12 decades and switched to the decay-limited columns. Every plotted value is physical. But the
+    inversion the brief asked for is not visible (the Ba 20 mW curve lies on top of Rb/Cs, indistinguishable),
+    neither panel is labelled 4 K or 300 K, and it renamed the x-axis "Register size $n$" — `n` is the
+    principal quantum number.
+  - Sonnet showed the inversion with an explicit marker and named the axis correctly, but plotted the raw
+    `*_eps_total` columns unexamined, so its y-axis reads **gate infidelity up to 10⁴** — an infidelity above
+    1 is impossible — and it labelled the species `¹³⁸Ba⁺`, an ion, in a neutral-atom paper, in every label.
+
+  The scientific error is Sonnet's and it is the worse one; a referee rejects ε = 10⁴ on sight. The lesson is
+  not that one model wins: it is that **the step-5 "look at your own PNG and state the claim" self-check
+  caught neither failure**, because neither failure is a composition defect. This is direct evidence for §4.3
+  (the gate must test claim delivery and physical plausibility, e.g. an infidelity axis exceeding 1) and
+  against relying on the author's own eye as the last line.
 - **GLM cannot be benchmarked and is a live production hazard (2026-09-03).** Asked to add GLM's vision
   model to the comparison: the account returns `1113 余额不足或无可用资源包` (insufficient balance) for
   `glm-5.2`, `glm-5.3`, `glm-5.3-flash` and for every vision id (`glm-4.5v`, `glm-4.6v`), 3/3 on retry, so it
