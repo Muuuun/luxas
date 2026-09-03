@@ -222,6 +222,15 @@ if (model.startsWith("deepseek-")) {
 if (profile === "dual") {
   process.env.LUXAS_MODEL_PROFILE = "deepseek-v4-pro";
   process.env.LUXAS_VISION_MODEL_PROFILE = "deepseek-v4-flash-vision-exp";
+  // figure_auditor is the ship/no-ship eye, so it is set separately from the
+  // drawing agents and never by the text profile. GLM-5.3-Flash measured best
+  // AND cheapest of four models on the real Ba figures (2026-09-03): it alone
+  // caught the ionization line struck through the Rydberg label, at $0.003 an
+  // audit against sonnet's $0.011. It also keeps the auditor off the *producer's*
+  // family — the drawing agents are deepseek — which is the same independence
+  // rule PI_REVIEWER_AGENTS enforces. Set only here: `--profile claude` keeps
+  // the frontmatter's Anthropic tier so an Anthropic-only run stays Anthropic-only.
+  process.env.LUXAS_VISION_AUDIT_MODEL_PROFILE = "glm-5.3-flash";
 } else if (profile === "claude") {
   // No env override — every agent uses its declared frontmatter model.
 } else if (profile) {

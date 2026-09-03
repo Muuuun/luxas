@@ -23,6 +23,10 @@ function check(label: string, cond: boolean, detail?: string) {
   else { failures++; console.log(`  ✗ ${label}${detail ? ` — ${detail}` : ""}`); }
 }
 
+function acceptsImages(m: any): boolean {
+  return Array.isArray(m?.input) && m.input.includes("image");
+}
+
 function modelId(m: any): string {
   return m?.id ?? m?.model?.id ?? "<unknown>";
 }
@@ -37,6 +41,10 @@ check("illustrator (sonnet) → claude-sonnet-4-6",
   modelId(resolveModel("sonnet", "illustrator")).includes("sonnet"));
 check("typesetter (sonnet) → claude-sonnet-4-6",
   modelId(resolveModel("sonnet", "typesetter")).includes("sonnet"));
+// --profile claude means Anthropic-only, including the figure auditor.
+delete process.env.LUXAS_VISION_AUDIT_MODEL_PROFILE;
+check("figure_auditor (sonnet) → claude-sonnet-4-6 (Anthropic-only run)",
+  modelId(resolveModel("sonnet", "figure_auditor")).includes("sonnet"));
 
 // ── 2. Legacy --model deepseek-v4-pro (no vision profile) ────────
 console.log("\n2. legacy --model deepseek-v4-pro (no vision split)");
@@ -66,9 +74,6 @@ check("reviewer (sonnet) → claude-sonnet-4-6 (PI keeps Anthropic tier)",
   modelId(resolveModel("sonnet", "reviewer")) === "claude-sonnet-4-6");
 // The invariant is the capability, not the vendor: a vision-required agent
 // must land on a model that actually accepts images.
-function acceptsImages(m: any): boolean {
-  return Array.isArray(m?.input) && m.input.includes("image");
-}
 for (const agent of ["illustrator", "illustrator_write", "typesetter"]) {
   const m = resolveModel("sonnet", agent);
   check(`${agent} (sonnet) → deepseek-v4-flash-vision-exp`,
@@ -83,6 +88,25 @@ for (const agent of ["illustrator", "illustrator_write", "typesetter"]) {
 // The text producers must stay blind — that is why the split exists at all.
 check("brain's text model does NOT accept images (the reason for the split)",
   !acceptsImages(resolveModel("sonnet", "brain")));
+
+// figure_auditor is the ship/no-ship eye and is routed separately from the
+// drawing agents: `--profile dual` sends it to glm-5.3-flash (2026-09-03), a
+// third model family away from the deepseek agents whose figures it audits.
+process.env.LUXAS_VISION_AUDIT_MODEL_PROFILE = "glm-5.3-flash";
+{
+  const fa = resolveModel("sonnet", "figure_auditor");
+  check("figure_auditor → glm-5.3-flash under dual",
+    modelId(fa) === "glm-5.3-flash", `got ${modelId(fa)}`);
+  check("figure_auditor's model accepts image input", acceptsImages(fa));
+  check("figure_auditor is a different family from the agents it audits",
+    (fa as any)?.provider !== (resolveModel("sonnet", "illustrator_write") as any)?.provider);
+}
+// The text profile must NEVER reach figure_auditor — that downgrade is what let
+// a cheap model "pass" five broken figures (figures v2, 2026-08-28).
+delete process.env.LUXAS_VISION_AUDIT_MODEL_PROFILE;
+check("figure_auditor falls back to its Anthropic tier when the audit var is unset",
+  modelId(resolveModel("sonnet", "figure_auditor")) === "claude-sonnet-4-6",
+  `got ${modelId(resolveModel("sonnet", "figure_auditor"))}`);
 
 // Kimi K2.5 remains selectable as an escape hatch (it 404'd on the production
 // account 2026-08-31; re-verify against /v1/models before using it).

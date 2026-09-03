@@ -250,7 +250,55 @@ Conclusions that change how this should be read:
   caught neither failure**, because neither failure is a composition defect. This is direct evidence for §4.3
   (the gate must test claim delivery and physical plausibility, e.g. an infidelity axis exceeding 1) and
   against relying on the author's own eye as the last line.
-- **GLM cannot be benchmarked and is a live production hazard (2026-09-03).** Asked to add GLM's vision
+### 4.7b GLM re-measured after the account was funded, and `figure_auditor` moved (2026-09-03)
+Credit restored, so GLM could finally be probed. `glm-5.3-flash` **has vision**; `glm-5.3`, `glm-5.2`,
+`glm-5.1` and `glm-4.7` reject image content outright (`1210 … 取值范围 ['text']`). The older `glm-4.5v` /
+`glm-4.6v` work but audit worse, and neither appears in `/models` — the catalog cannot be trusted to
+enumerate vision support.
+
+Audit task, same three figures, same prompt, 3 repeats:
+
+| Model | Latency mean / worst | Cost per audit | Real defects per audit |
+|---|---|---|---|
+| glm-5.3-flash | 116 s / 187 s | **$0.0029** | **7–8** |
+| glm-4.5v | 35 s / 53 s | $0.0066 | 5–6 |
+| deepseek-vision | 67 s / 138 s | $0.0104 | 5.4 |
+| sonnet-4-6 | 12 s / 13 s | $0.0113 | 5.6 |
+
+`glm-5.3-flash` is simultaneously cheapest and sharpest. It alone found the dashed ionization line struck
+through the `6sng ¹G₄` label (D5) and the wavelength labels sitting equidistant between the two arrows they
+annotate (D6) — neither appeared in six deepseek/sonnet runs on that figure. **`figure_auditor` now routes
+there under `--profile dual`** (`LUXAS_VISION_AUDIT_MODEL_PROFILE`, set in `src/index.ts`; `--profile claude`
+keeps the Anthropic tier). It also puts the auditor a family away from the deepseek agents it audits, the
+same independence rule `PI_REVIEWER_AGENTS` enforces.
+
+A live `figure_auditor` spawn on it (17 tool calls, 170 s) immediately produced something eight Sonnet audits
+in the Ba run never did: it caught a **vacuously passing lint**. `figlint-pdf` exited 0 with no output because
+PyMuPDF had opened a PNG as an image document with no text layer, so every collision check silently did
+nothing — and the auditor wrote "this is not a verified clean" instead of copying `lint: clean`. It also
+scoped the CLAIM verdict per species and found the caption's "inverts" does not hold for Yb. That is §3.5
+(the gate is the lint) being caught by the reader rather than shipped.
+
+**Creation task** (same brief as §4.7a, one run each) — glm was added for completeness:
+
+| | glm-5.3-flash | DeepSeek vision | Sonnet-4-6 |
+|---|---|---|---|
+| Turns | **14** | 36 | 48 |
+| Wall clock | 12.8 min | 11.9 min | 23.0 min |
+| Cost | **$0.043** | $0.21 | $2.18 |
+
+GLM produced the best figure of the three: correct axis names, direct labels, no legend, no dead zone, and
+**both** claims annotated on the page ("below all four references", "above Rb, Cs, Sr") — the only one of the
+three to deliver the inversion the brief asked for. Faced with the same corrupted `*_eps_total` columns that
+DeepSeek dodged by switching columns and Sonnet plotted to ε = 10⁴ unexamined, it drew an explicit
+`gate fails` reference line at ε = 1, marking the physical boundary rather than hiding or ignoring the
+problem. Its remaining defect is the one all three share: neither panel is labelled 4 K or 300 K.
+
+This is evidence that the drawing agents should probably follow the auditor to `glm-5.3-flash` (5× cheaper
+than deepseek, 50× cheaper than sonnet, fewest turns, best output), but it is n=1 and that routing has not
+been changed.
+
+- **GLM was a live production hazard while the account was dry (2026-09-03).** Asked to add GLM's vision
   model to the comparison: the account returns `1113 余额不足或无可用资源包` (insufficient balance) for
   `glm-5.2`, `glm-5.3`, `glm-5.3-flash` and for every vision id (`glm-4.5v`, `glm-4.6v`), 3/3 on retry, so it
   is not transient. Only `glm-4.7` answers, and it rejects image content at the API

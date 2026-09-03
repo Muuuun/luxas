@@ -89,7 +89,7 @@ luxas run ~/research/x --model deepseek-v4-pro  # same family-wide redirect as -
 luxas run ~/research/x --model opus             # brain-only override (sub-agents follow their own .md)
 ```
 
-`--profile dual` and any `--model deepseek-*` redirect every agent that declared `haiku/sonnet/opus` to the deepseek model via `applyProfile()` in `src/agents/spawn.ts`. Provider-specific picks (`gpt-5.2` for the `math` agent, `o3` for reasoning) bypass — those are deliberate. Vision-required agents (`illustrator` / `illustrator_write` / `typesetter`) need a separate vision profile because the DeepSeek *text* models cannot see; `--profile dual` sets it for you (`deepseek-v4-flash-vision-exp`, DeepSeek's multimodal model, so both halves share one provider and one key).
+`--profile dual` and any `--model deepseek-*` redirect every agent that declared `haiku/sonnet/opus` to the deepseek model via `applyProfile()` in `src/agents/spawn.ts`. Provider-specific picks (`gpt-5.2` for the `math` agent, `o3` for reasoning) bypass — those are deliberate. Vision-required agents (`illustrator` / `illustrator_write` / `typesetter`) need a separate vision profile because the DeepSeek *text* models cannot see; `--profile dual` sets it for you (`deepseek-v4-flash-vision-exp`, DeepSeek's multimodal model, so both halves share one provider and one key). `figure_auditor` is routed separately again, to `glm-5.3-flash` — it is the ship/no-ship eye, it benchmarked best and cheapest of four models on real figures, and GLM keeps it a family away from the agents whose work it audits. `--profile claude` leaves all of them on their Anthropic tiers.
 
 Anecdotal cost per full run (check `<project>/.agent/usage.log` for real numbers):
 
