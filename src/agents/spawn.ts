@@ -99,7 +99,24 @@ const MODEL_MAP: Record<string, [string, string] | InlineModel> = {
   // current guidance is to use the bare `claude-haiku-4-5`.
   haiku: ["anthropic", "claude-haiku-4-5-20251001"],
   sonnet: ["anthropic", "claude-sonnet-5"],
-  opus: ["anthropic", "claude-opus-5"],
+  // opus stays on 4.6. claude-opus-5 was pinned here for ~2 h on 2026-09-04 and
+  // REVERTED the same day: it refuses ordinary neutral-atom physics review with
+  // `stop_reason: "refusal"`, `category: "cyber"` and zero output tokens.
+  // Measured on the real E6 adjudication prompt from the Ba trace
+  // (notes/figure-pipeline-review-2026-09-02.md §4.7a):
+  //     claude-opus-5     header → refusal/cyber,  full task → refusal/cyber
+  //     claude-opus-4-6   header → end_turn,       full task → end_turn
+  //     claude-sonnet-5   header → end_turn,       full task → end_turn
+  //     claude-sonnet-4-6 header → end_turn,       full task → end_turn
+  // The trigger is the framing prose ("you are reviewing a computational physics
+  // result… decide whether the claim should ship"), not the CSV — the data alone
+  // and a generic Rydberg question both pass. This tier feeds reviewer /
+  // experiment_reviewer / ledger_writer, whose entire job is that shape of task,
+  // and Luxas has NO refusal handling: a refusal returns empty content, so the
+  // PI layer would silently produce nothing and burn its turn budget.
+  // Re-pin to opus-5 only together with the server-side `fallbacks` parameter
+  // (platform.claude.com/docs/en/build-with-claude/refusals-and-fallback).
+  opus: ["anthropic", "claude-opus-4-6"],
   // OpenAI (standard API — requires OPENAI_API_KEY sk-...)
   o3: ["openai", "o3"],
   "o3-mini": ["openai", "o3-mini"],
