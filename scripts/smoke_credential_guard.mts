@@ -140,4 +140,28 @@ try {
   try { rmSync(tmp, { recursive: true, force: true }); } catch {}
 }
 
+// 6. The two OpenAI surfaces must never share a credential (2026-09-04).
+//    api.openai.com takes an `sk-` platform key; chatgpt.com/backend-api takes a
+//    ChatGPT OAuth JWT, and each backend rejects the other's token. Before the
+//    split both providers resolved through one function that read
+//    ~/.codex/auth.json's flat keys first, so storing a platform key there would
+//    have silently handed it to the Codex backend and broken the `math` agent.
+//    Env-driven so the gate is hermetic and never touches a real secret.
+{
+  console.log("\n6. openai vs openai-codex credential separation");
+  const { getApiKey } = await import("../src/auth.ts");
+  const savedEnv = process.env.OPENAI_API_KEY;
+  process.env.OPENAI_API_KEY = "sk-test-platform-key-not-a-real-secret";
+  const platform = await getApiKey("openai");
+  const codex = await getApiKey("openai-codex");
+  check("openai resolves the platform key from env",
+    platform === "sk-test-platform-key-not-a-real-secret");
+  check("openai-codex NEVER receives the platform key",
+    codex !== "sk-test-platform-key-not-a-real-secret");
+  check("openai-codex yields an OAuth token or nothing, never an sk- key",
+    codex === undefined || !codex.startsWith("sk-"));
+  if (savedEnv === undefined) delete process.env.OPENAI_API_KEY;
+  else process.env.OPENAI_API_KEY = savedEnv;
+}
+
 summary();

@@ -20,27 +20,54 @@ export async function resolveAnthropicKey(): Promise<string | undefined> {
   return readJsonKey(join(homedir(), ".sisyphus", "auth.json"), ["anthropic", "ANTHROPIC_API_KEY"]);
 }
 
-export async function resolveOpenAIKey(): Promise<string | undefined> {
+/**
+ * The two OpenAI surfaces need DIFFERENT credentials and must never be crossed
+ * (2026-09-04):
+ *
+ *   provider "openai"        → api.openai.com          → platform key, `sk-…`
+ *   provider "openai-codex"  → chatgpt.com/backend-api → ChatGPT OAuth JWT
+ *
+ * They are not interchangeable, and each backend rejects the other's token:
+ * the Codex OAuth token on api.openai.com returns
+ * `403 Missing scopes: api.responses.write`, and an `sk-` key sent to the Codex
+ * backend is not a valid ChatGPT session. Before the split, both providers
+ * resolved through one function that read `~/.codex/auth.json`'s FLAT keys
+ * first — so dropping a platform key into that file would have silently handed
+ * it to the Codex backend and broken the `math` agent (gpt-5.6-terra), which is
+ * the only openai-codex consumer.
+ *
+ * Platform key lookup order: env → ~/.sisyphus/auth.json (alongside the other
+ * Luxas keys, and the only file the studio-spawned brain can rely on) →
+ * ~/.codex/auth.json's OPENAI_API_KEY field, which the Codex CLI writes only in
+ * api-key auth mode.
+ */
+export async function resolveOpenAIPlatformKey(): Promise<string | undefined> {
   if (process.env.OPENAI_API_KEY) return process.env.OPENAI_API_KEY;
+  const fromSisyphus = readJsonKey(join(homedir(), ".sisyphus", "auth.json"), ["openai", "OPENAI_API_KEY"]);
+  if (fromSisyphus) return fromSisyphus;
+  const codexApiKey = readJsonKey(join(homedir(), ".codex", "auth.json"), ["OPENAI_API_KEY", "apiKey", "api_key"]);
+  if (codexApiKey) return codexApiKey;
+  return undefined;
+}
 
+/** ChatGPT OAuth token for the Codex backend. Never returns a platform key. */
+export async function resolveCodexKey(): Promise<string | undefined> {
   const home = homedir();
   const codexPaths = [
     join(home, ".codex", "auth.json"),
     join(home, ".codex", "config.json"),
     join(home, ".config", "codex", "auth.json"),
   ];
-
   for (const p of codexPaths) {
-    // Check flat keys first
-    const key = readJsonKey(p, ["apiKey", "api_key", "token", "key", "OPENAI_API_KEY"]);
-    if (key) return key;
-
-    // Check Codex OAuth nested tokens — with auto-refresh
     const token = await resolveCodexOAuthToken(p);
     if (token) return token;
   }
-
   return undefined;
+}
+
+/** @deprecated Ambiguous across the two surfaces — call the specific resolver. */
+export async function resolveOpenAIKey(): Promise<string | undefined> {
+  return (await resolveOpenAIPlatformKey()) ?? (await resolveCodexKey());
 }
 
 /**
@@ -165,7 +192,8 @@ export async function resolveGLMKey(): Promise<string | undefined> {
 
 export async function getApiKey(provider: string): Promise<string | undefined> {
   if (provider === "anthropic") return resolveAnthropicKey();
-  if (provider === "openai" || provider === "openai-codex") return resolveOpenAIKey();
+  if (provider === "openai") return resolveOpenAIPlatformKey();
+  if (provider === "openai-codex") return resolveCodexKey();
   if (provider === "deepseek") return resolveDeepSeekKey();
   if (provider === "kimi-coding") return resolveKimiKey();
   if (provider === "glm") return resolveGLMKey();
