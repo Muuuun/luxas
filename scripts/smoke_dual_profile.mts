@@ -35,15 +35,15 @@ function modelId(m: any): string {
 console.log("1. claude mode (no env profile)");
 delete process.env.LUXAS_MODEL_PROFILE;
 delete process.env.LUXAS_VISION_MODEL_PROFILE;
-check("brain (sonnet) → claude-sonnet-4-6",
+check("brain (sonnet) → claude-sonnet-5",
   modelId(resolveModel("sonnet", "brain")).includes("sonnet"));
-check("illustrator (sonnet) → claude-sonnet-4-6",
+check("illustrator (sonnet) → claude-sonnet-5",
   modelId(resolveModel("sonnet", "illustrator")).includes("sonnet"));
-check("typesetter (sonnet) → claude-sonnet-4-6",
+check("typesetter (sonnet) → claude-sonnet-5",
   modelId(resolveModel("sonnet", "typesetter")).includes("sonnet"));
 // --profile claude means Anthropic-only, including the figure auditor.
 delete process.env.LUXAS_VISION_AUDIT_MODEL_PROFILE;
-check("figure_auditor (sonnet) → claude-sonnet-4-6 (Anthropic-only run)",
+check("figure_auditor (sonnet) → claude-sonnet-5 (Anthropic-only run)",
   modelId(resolveModel("sonnet", "figure_auditor")).includes("sonnet"));
 
 // ── 2. Legacy --model deepseek-v4-pro (no vision profile) ────────
@@ -70,8 +70,8 @@ check("reader (haiku) → deepseek-v4-pro",
 // PI reviewers are exempt from the producer-profile downgrade and keep their
 // declared Anthropic tier (PI_REVIEWER_AGENTS in spawn.ts): an independent
 // prior is the point, so the reviewer must not run on the producer's model.
-check("reviewer (sonnet) → claude-sonnet-4-6 (PI keeps Anthropic tier)",
-  modelId(resolveModel("sonnet", "reviewer")) === "claude-sonnet-4-6");
+check("reviewer (sonnet) → claude-sonnet-5 (PI keeps Anthropic tier)",
+  modelId(resolveModel("sonnet", "reviewer")) === "claude-sonnet-5");
 // The invariant is the capability, not the vendor: a vision-required agent
 // must land on a model that actually accepts images.
 for (const agent of ["illustrator", "illustrator_write", "typesetter"]) {
@@ -98,7 +98,7 @@ delete process.env.LUXAS_VISION_AUDIT_MODEL_PROFILE;
 {
   const fa = resolveModel("sonnet", "figure_auditor");
   check("figure_auditor keeps its Anthropic tier under dual",
-    modelId(fa) === "claude-sonnet-4-6", `got ${modelId(fa)}`);
+    modelId(fa) === "claude-sonnet-5", `got ${modelId(fa)}`);
   check("figure_auditor's model accepts image input", acceptsImages(fa));
   check("figure_auditor is NOT the model that drew the figure",
     (fa as any)?.provider !== (resolveModel("sonnet", "illustrator_write") as any)?.provider,

@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import { createCompactionTransform, getContextWindow } from "../compaction/create-transform.js";
 import type { TokenTap } from "../compaction/token-tap.js";
 import { extractTextContent } from "../utils.js";
-import { getDefinition, resolvePrompt, type AgentDefinition } from "./registry.js";
+import { getDefinition, loadAgentDefinitions, resolvePrompt, type AgentDefinition } from "./registry.js";
 import { resolveToolSets } from "./tool-sets.js";
 import { resolveContextBuilder } from "./context-builders.js";
 import { buildSafetyWrapper, type SafetyRuntimeHooks } from "./safety-wrappers.js";
@@ -82,10 +82,24 @@ const DEEPSEEK_COMPAT = {
 const DEEPSEEK_THINKING: Record<string, string | null> = { minimal: null, low: null, medium: null, high: "high", max: "max" };
 
 const MODEL_MAP: Record<string, [string, string] | InlineModel> = {
-  // Anthropic
+  // Anthropic. Bumped to the 5 tier 2026-09-04; the previous pins
+  // (sonnet-4-6 / opus-4-6) had stood untouched since 2026-03-31 and predated
+  // both models. Live-probed the same day with `tool_choice: {type: "any"}` +
+  // adaptive thinking — the exact shape pickRequireToolChoice sends — and both
+  // returned clean tool_use. pi-ai's bundled catalog already carries correct
+  // pricing for them, so cost accounting needed no new entry.
+  //   sonnet 4-6 → 5 : $3/$15 → $2/$10 per M, and a tokenizer that billed 552
+  //                    input tokens where 4-6 billed 652 on an identical prompt.
+  //   opus   4-6 → 5 : same $5/$25, 484 tokens where 4-6 billed 652.
+  // NOT claude-fable-5-1: it rejects forced tool choice outright
+  // (`tool_choice: type "tool" and "any" are not supported for this model`),
+  // and that is the mechanism of the silent-exit guard. Adopting it means
+  // reworking pickRequireToolChoice to "auto" + a prompt instruction first.
+  // The haiku pin keeps its date suffix only because pi-ai's catalog lists it;
+  // current guidance is to use the bare `claude-haiku-4-5`.
   haiku: ["anthropic", "claude-haiku-4-5-20251001"],
-  sonnet: ["anthropic", "claude-sonnet-4-6"],
-  opus: ["anthropic", "claude-opus-4-6"],
+  sonnet: ["anthropic", "claude-sonnet-5"],
+  opus: ["anthropic", "claude-opus-5"],
   // OpenAI (standard API — requires OPENAI_API_KEY sk-...)
   o3: ["openai", "o3"],
   "o3-mini": ["openai", "o3-mini"],
@@ -427,6 +441,33 @@ export function resolveModel(modelKey: string, agentName?: string) {
 //   - everything else      → "required" (OpenAI chat-completions spec since
 //                                        Jun 2024; deepseek-chat + openai-
 //                                        codex share that wire format)
+/**
+ * Every distinct model this run will actually reach, with the agents that reach
+ * it — the input to the freshness/liveness check (src/model-check.ts).
+ *
+ * Resolution goes through applyProfile, so this reflects the LIVE routing under
+ * whatever profile env is set, not the frontmatter tiers. That is the point: a
+ * model nothing routes to cannot break a run, and the Ba run died on exactly
+ * the model the frontmatter did not name (kimi, reached only via the vision
+ * profile override).
+ */
+export function listRoutedModels(): { provider: string; id: string; usedBy: string[] }[] {
+  const byId = new Map<string, { provider: string; id: string; usedBy: string[] }>();
+  let defs: Map<string, AgentDefinition>;
+  try { defs = loadAgentDefinitions(); } catch { return []; }
+  for (const [name, def] of defs) {
+    let m: any;
+    try { m = resolveModel(def.model, name); } catch { continue; }
+    const id = String(m?.id ?? m?.model?.id ?? "");
+    const provider = String(m?.provider ?? "anthropic");
+    if (!id) continue;
+    const row = byId.get(id) ?? { provider, id, usedBy: [] };
+    row.usedBy.push(name);
+    byId.set(id, row);
+  }
+  return [...byId.values()].sort((a, b) => a.provider.localeCompare(b.provider) || a.id.localeCompare(b.id));
+}
+
 export function pickRequireToolChoice(model: any): "any" | "required" | "auto" {
   if (model?.provider === "anthropic") return "any";
   if (model?.reasoning) return "auto";

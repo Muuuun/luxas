@@ -244,6 +244,65 @@ if (profile === "dual") {
   process.exit(1);
 }
 
+/**
+ * Compare every model this run will actually route to against its provider's
+ * live catalog. Returns findings; the caller decides how loud to be.
+ * Providers that cannot be reached are reported, never fatal — a flaky network
+ * at launch must not block a run.
+ */
+async function checkRoutedModels() {
+  const { listRoutedModels } = await import("./agents/spawn.js");
+  const { getApiKey } = await import("./auth.js");
+  const { listModels, compareCatalog } = await import("./model-check.js");
+  const routed = listRoutedModels();
+  const byProvider = new Map<string, { id: string; usedBy: string[] }[]>();
+  for (const r of routed) {
+    if (!byProvider.has(r.provider)) byProvider.set(r.provider, []);
+    byProvider.get(r.provider)!.push({ id: r.id, usedBy: r.usedBy });
+  }
+  const findings: import("./model-check.js").Finding[] = [];
+  await Promise.all([...byProvider.entries()].map(async ([provider, pinned]) => {
+    const key = await getApiKey(provider);
+    if (!key) { findings.push({ kind: "unreachable", provider: provider as any, detail: "no API key" }); return; }
+    const listed = await listModels(provider as any, key);
+    if (listed === null) { findings.push({ kind: "unreachable", provider: provider as any, detail: "catalog request failed" }); return; }
+    findings.push(...compareCatalog(provider as any, pinned, listed));
+  }));
+  return findings;
+}
+
+if (command === "models") {
+  // Report what an actual run would route to: `luxas run` defaults to dual,
+  // so a bare `luxas models` must too, or it audits a routing nobody uses.
+  if (!profile) profile = "dual";
+  if (profile === "dual") {
+    process.env.LUXAS_MODEL_PROFILE = "deepseek-v4-pro";
+    process.env.LUXAS_VISION_MODEL_PROFILE = "glm-5.3-flash";
+    delete process.env.LUXAS_VISION_AUDIT_MODEL_PROFILE;
+  }
+  const { formatFindings } = await import("./model-check.js");
+  console.error(`◈ profile: ${profile}`);
+  const { listRoutedModels } = await import("./agents/spawn.js");
+  console.log("Models this profile routes to:\n");
+  for (const r of listRoutedModels()) {
+    console.log(`  ${r.provider.padEnd(13)} ${r.id.padEnd(32)} ${r.usedBy.join(", ")}`);
+  }
+  console.log("\nChecking each provider's catalog...\n");
+  const findings = await checkRoutedModels();
+  const providers = [...new Set(listRoutedModels().map((r) => r.provider))];
+  for (const p of providers) {
+    const mine = findings.filter((f) => f.provider === p);
+    const bad = mine.filter((f) => f.kind !== "unreachable");
+    const unreachable = mine.find((f) => f.kind === "unreachable");
+    if (unreachable) console.log(`  ? ${p.padEnd(13)} not checked (${(unreachable as any).detail})`);
+    else if (!bad.length) console.log(`  ✓ ${p.padEnd(13)} all pinned models listed, nothing newer`);
+    else console.log(`  ! ${p.padEnd(13)} ${bad.length} finding(s)`);
+  }
+  const actionable = findings.filter((f) => f.kind !== "unreachable");
+  if (actionable.length) console.log("\n" + formatFindings(actionable));
+  process.exit(findings.some((f) => f.kind === "dead") ? 1 : 0);
+}
+
 if (command === "status") {
   showStatus(projectDir);
   process.exit(0);
@@ -285,9 +344,10 @@ if (command === "figures") {
 }
 
 console.error(`Unknown command: ${command}`);
-console.error("Usage: luxas <run|status|init|list|stop|figures|monitor> [project-dir] [options]");
+console.error("Usage: luxas <run|status|init|list|stop|figures|monitor|models> [project-dir] [options]");
 console.error("  --model <id>      explicit model (legacy; e.g. deepseek-v4-pro)");
-console.error("  --profile <name>  preset: dual (DEFAULT — deepseek text + deepseek vision) | claude");
+console.error("  --profile <name>  preset: dual (DEFAULT — deepseek text + glm vision) | claude");
+console.error("  models            list the models this profile routes to, and check each provider for dead or newer ones");
 process.exit(1);
 
 // ─── Commands ────────────────────────────────────────────
@@ -324,6 +384,37 @@ async function run(dir: string, modelName: string, userDirective?: string, maxCo
       console.error(`  add a key to ~/.sisyphus/auth.json:`);
       console.error(`    { "${provider === "kimi-coding" ? "kimi" : provider}": "sk-..." }`);
       process.exit(1);
+    }
+  }
+
+  // Model liveness + freshness, before any spend. The key check above proves a
+  // credential EXISTS; it does not prove the model still does. Kimi K2.5 passed
+  // that check every time while 404ing on every call, and the Ba run burned
+  // hours of reviewer and PI turns on figure fixes nobody could apply
+  // (notes/figure-pipeline-review-2026-09-02.md §3.6).
+  //
+  // A dead model is fatal: the run WILL fail on it, so failing now beats
+  // failing eight hours in. A newer sibling is advisory. A provider we cannot
+  // reach is neither — a flaky network at launch must not block research.
+  // Skip with LUXAS_SKIP_MODEL_CHECK=1.
+  if (process.env.LUXAS_SKIP_MODEL_CHECK !== "1") {
+    try {
+      const findings = await checkRoutedModels();
+      const dead = findings.filter((f) => f.kind === "dead") as any[];
+      const newer = findings.filter((f) => f.kind === "newer") as any[];
+      for (const n of newer) {
+        console.error(`◈ newer model available: ${n.pinned} → ${n.candidate} (${n.provider}), used by ${n.usedBy.join(", ")}. Run \`luxas models\` for the full report.`);
+      }
+      if (dead.length) {
+        console.error(`✗ ${dead.length} pinned model(s) no longer exist at their provider — this run would die on them:`);
+        for (const d of dead) {
+          console.error(`    ${d.pinned} (${d.provider}) — used by ${d.usedBy.join(", ")}`);
+        }
+        console.error(`  Fix the pin in src/agents/spawn.ts, or re-point the profile. Override with LUXAS_SKIP_MODEL_CHECK=1.`);
+        process.exit(1);
+      }
+    } catch (e: any) {
+      console.error(`◈ model check skipped: ${e?.message ?? e}`);
     }
   }
 
