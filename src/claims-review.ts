@@ -119,7 +119,7 @@ export function stampBlindInputs(line: string, inputs: Record<string, number>): 
 export function selectBlindEstimateDecls<T extends { id: string }>(decls: T[], frameIds: string[], cap = 3, settled: Set<string> = new Set()): { chosen: T[]; skipped: string[] } {
   const seen = new Set<string>();
   const ordered: T[] = [];
-  // A row the table already holds corroborated/converging (an anchored reference three
+  // A row the table already holds converging (an anchored reference three
   // tools agree on, or a re-declared settled value) gains nothing from a blind estimate —
   // Ba run 2026-08-30: 26 min of replicator on Rb 78s C6 after ARC/pairinteraction agreed to 0.6 %.
   const live = decls.filter((d) => !settled.has(d.id));
@@ -425,7 +425,7 @@ export function quantityDeclarationProblems(projectDir: string, experimentId: st
     problems.push(`${e}: ${declaredHeadline.length} quantities are marked headline:true; the reviewer/blind-estimate obligation covers only the frame's ids plus ${OBLIGATION_CAP_PER_EXPERIMENT} by load — this round: ${kept.join(", ")}. Every declaration stays in the table; if the number the abstract will quote is not among those, mark fewer as headline or name it in notes/frame.md.`);
   }
   for (const d of table.decls.filter((d) => d.experiment === e && (d.headline || table.headlineDeclared.includes(d.id)))) {
-    if (d.uncertainty === undefined) problems.push(`${e}: headline quantity "${d.id}" has no \`uncertainty\` — without σ it can never be corroborated (caps at indicative).`);
+    if (d.uncertainty === undefined) problems.push(`${e}: headline quantity "${d.id}" has no \`uncertainty\` — without σ it can never reach converging (caps at indicative).`);
     if (!d.observable) problems.push(`${e}: headline quantity "${d.id}" has no \`observable\` sentence — the reviewer's discriminator and the contradiction auditor read it.`);
   }
   return problems;

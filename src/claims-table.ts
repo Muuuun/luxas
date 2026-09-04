@@ -97,7 +97,19 @@ export interface Estimate {
   job?: string;
 }
 
-export type ClaimStatus = "corroborated" | "converging" | "indicative" | "conditional" | "disputed" | "disclosed";
+// `corroborated` was removed 2026-09-04. It sat above `converging` and required
+// an anchor, whose reviewer route (ANCHOR-OK) was marked OPTIONAL in
+// experiment_reviewer.md and consequently emitted for 1 of 49 headline ids.
+// Measured across every claims-first project (probe-claims, pp-vs-ss, ba-neutral
+// atom): 75 rows, 0 corroborated. No code ever branched on it either — the gates
+// read `disputed`/`conditional` — so it was an unreachable rung that nothing
+// consumed, shown to brain each turn as a goalpost it could not reach.
+// `converging` (agreeing pair + σ) is now the top status. Anchors still appear
+// in `reasons` as "(anchored)"; they no longer change status.
+// NOTE: report/claims.json has its OWN unrelated `corroborated` grade, computed
+// by xvalVerdict from computed.cross_validation. That one is live — do not
+// conflate them.
+export type ClaimStatus = "converging" | "indicative" | "conditional" | "disputed" | "disclosed";
 
 export interface ClaimRow {
   id: string;
@@ -670,7 +682,7 @@ export function buildClaimTable(projectDir: string): ClaimTable {
     const es = estimates.filter((e) => e.quantity === id);
     const reasons: string[] = [];
     const propagate: string[] = [];
-    let disputed = false, agreeingPair = false, anchoredAgree = false;
+    let disputed = false, agreeingPair = false;
     let anchorExfil: string | null = null;
     // Supersession (claims v2 P1, 2026-08-29): a producer estimate is RETIRED
     // when at least two LATER experiments re-measured the id, agree with each
@@ -720,7 +732,6 @@ export function buildClaimTable(projectDir: string): ClaimTable {
         const attested = !headline.has(id) || rev.independent.has(id) || ((computingLeg(a) || computingLeg(b)) && routesDiffer);
         if (attested) {
           agreeingPair = true;
-          if (a.anchor || b.anchor) anchoredAgree = true;
           reasons.push(`agree: ${a.source} ~ ${b.source}${a.anchor || b.anchor ? " (anchored)" : ""}`);
         } else reasons.push(`agree but unattested (no INDEPENDENT line${(a.kind === "replication" || b.kind === "replication") ? "; replication lacks a route/script or shares the producer's route" : ""}): ${a.source} ~ ${b.source}`);
       } else reasons.push(`undecidable (missing σ): ${a.source} vs ${b.source}`);
@@ -776,18 +787,17 @@ export function buildClaimTable(projectDir: string): ClaimTable {
       if (d.uncertaintySource && d.uncertainty !== undefined) reasons.push(`σ ${d.uncertainty} (${d.uncertaintySource.slice(0, 60)})`);
       if (d.limitCheck) {
         const passes = d.limitCheck.expected === 0 ? Math.abs(d.limitCheck.observed) <= (d.uncertainty ?? 1e-9) : relDiff(d.limitCheck.expected, d.limitCheck.observed) <= 0.1;
-        if (rev.anchorOk.has(id) && passes) { anchoredAgree = anchoredAgree || agreeingPair; reasons.push(`limit anchored (ANCHOR-OK): ${d.limitCheck.limit}`); }
+        if (rev.anchorOk.has(id) && passes) { reasons.push(`limit anchored (ANCHOR-OK): ${d.limitCheck.limit}`); }
         else if (!rev.anchorOk.has(id)) reasons.push(`limit_check present but not attested (ANCHOR-OK missing)${d.limitCheck.expected === 0 ? " — zero-expected limit is wiring" : ""}`);
       }
     }
     const anyOwnSigma = (declsById.get(id) ?? []).some((d) => d.uncertainty !== undefined);
     let status: ClaimStatus;
     if (disputed) status = disclosures.has(id) && rev.discloseOk.has(id) ? "disclosed" : "disputed";
-    else if (agreeingPair && anchoredAgree && anyOwnSigma) status = "corroborated";
     else if (agreeingPair && anyOwnSigma) status = "converging";
     else status = "indicative";
     if (!anyOwnSigma && agreeingPair) reasons.push("no σ on own estimate: capped at indicative");
-    if (anchorExfil) { if (status === "corroborated" || status === "converging") status = "indicative"; reasons.push(anchorExfil); }
+    if (anchorExfil) { if (status === "converging") status = "indicative"; reasons.push(anchorExfil); }
     intrinsic.set(id, { status, reasons: [...new Set(reasons)], propagate });
   }
   for (const [id, intr] of intrinsic) for (const up of intr.propagate) {
@@ -804,7 +814,7 @@ export function buildClaimTable(projectDir: string): ClaimTable {
     for (const d of declsById.get(id) ?? []) {
       const f = openFindings.get(d.experiment);
       if (f && !f.answered) {
-        if (cur.status === "corroborated" || cur.status === "converging") cur.status = "indicative";
+        if (cur.status === "converging") cur.status = "indicative";
         const line = `reviewer finding open (${f.experiment} round ${f.round}): "${f.sentence.slice(0, 120)}" — answer it with finding_answered: <locator> in the ledger`;
         if (!cur.reasons.includes(line)) cur.reasons.push(line);
         break;
@@ -814,7 +824,7 @@ export function buildClaimTable(projectDir: string): ClaimTable {
   // Conditional via disputed/disclosed/conditional inputs — fixed point.
   // (Design §3.4 also lists `indicative` inputs; not applied — it would make
   // nearly every quantity conditional. Recorded deviation.)
-  const RANK: Record<ClaimStatus, number> = { corroborated: 5, converging: 4, indicative: 3, conditional: 2, disclosed: 1, disputed: 0 };
+  const RANK: Record<ClaimStatus, number> = { converging: 4, indicative: 3, conditional: 2, disclosed: 1, disputed: 0 };
   const inputsOf = (id: string) => [...new Set((declsById.get(id) ?? []).flatMap((d) => Object.keys(d.inputs)).filter((k) => known.has(k)))];
   let changed = true;
   while (changed) {
@@ -833,7 +843,7 @@ export function buildClaimTable(projectDir: string): ClaimTable {
   }));
   const vRows = [...verdictById.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([vid, vs]) => {
     const reads = [...new Set(vs.flatMap((v) => v.reads))];
-    let status: ClaimStatus = "corroborated";
+    let status: ClaimStatus = "converging";
     for (const r of reads) { const s = intrinsic.get(r)?.status ?? "indicative"; if (RANK[s] < RANK[status]) status = s; }
     if (status === "disputed" || status === "disclosed") status = "conditional";
     return { id: vid, status, reads, experiments: vs.map((v) => v.experiment) };

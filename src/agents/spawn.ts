@@ -62,6 +62,12 @@ type InlineModel = {
   compat?: Record<string, unknown>;
   /** pi-ai thinking-level → provider reasoning_effort (null = send none). */
   thinkingLevelMap?: Record<string, string | null>;
+  /**
+   * The model 400s on forced tool choice (`tool_choice` "any"/"tool"). Luxas
+   * sends a forced choice every turn as its silent-exit guard, so such a model
+   * must get "auto" instead or every single turn fails. See pickRequireToolChoice.
+   */
+  noForcedToolChoice?: boolean;
 };
 
 // DeepSeek V4 (docs 2026-08: api-docs.deepseek.com/quick_start/pricing).
@@ -82,6 +88,38 @@ const DEEPSEEK_COMPAT = {
 const DEEPSEEK_THINKING: Record<string, string | null> = { minimal: null, low: null, medium: null, high: "high", max: "max" };
 
 const MODEL_MAP: Record<string, [string, string] | InlineModel> = {
+  // Claude Fable 5.1 — selectable, NOT wired into any profile (2026-09-04).
+  // pi-ai's catalog has claude-fable-5 but not 5.1, and asking getModel for the
+  // 5.1 id returns a hollow object with an undefined id, so it needs a real
+  // entry here.
+  //
+  // Two things had to be true before it could run in this harness at all:
+  //  1. `noForcedToolChoice` — it 400s on the forced tool choice Luxas sends
+  //     every turn. That is the structural blocker, fixed in pickRequireToolChoice.
+  //  2. Refusals. It declines a cluster of neutral-atom physics REVIEW prompts
+  //     with `stop_reason: "refusal"`, `category: "cyber"`, zero output — the
+  //     same content opus-4-6 and sonnet-5 answer normally. Measured: 4 of 5
+  //     representative Luxas tasks passed (blind-test authoring, derivation,
+  //     report prose, experiment design); the review-shaped one refused, while
+  //     the same shape about chemistry passed. The documented remedy works —
+  //     `anthropic-beta: server-side-fallback-2026-07-01` + `fallbacks:"default"`
+  //     rescued the refused prompt, served by claude-opus-4-8 — but it needs a
+  //     beta header pi-ai's anthropic path does not expose today. Until that is
+  //     wired, a refusal arrives as an EMPTY assistant turn with no explanation.
+  //     Do not route the reviewer layer here.
+  "claude-fable-5-1": {
+    id: "claude-fable-5-1",
+    name: "Claude Fable 5.1",
+    api: "anthropic-messages",
+    provider: "anthropic",
+    baseUrl: "https://api.anthropic.com",
+    reasoning: true,
+    input: ["text", "image"],
+    cost: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
+    contextWindow: 1000000,
+    maxTokens: 128000,
+    noForcedToolChoice: true,
+  },
   // Anthropic. Bumped to the 5 tier 2026-09-04; the previous pins
   // (sonnet-4-6 / opus-4-6) had stood untouched since 2026-03-31 and predated
   // both models. Live-probed the same day with `tool_choice: {type: "any"}` +
@@ -486,6 +524,16 @@ export function listRoutedModels(): { provider: string; id: string; usedBy: stri
 }
 
 export function pickRequireToolChoice(model: any): "any" | "required" | "auto" {
+  // Claude Fable/Mythos 5.1 reject forced tool choice outright:
+  //   400 `tool_choice: type "tool" and "any" are not supported for this model.`
+  // Luxas sends a forced choice on EVERY turn (the silent-exit guard), so
+  // without this branch every turn on those models is a hard 400. They are
+  // reasoning models that reliably call tools under "auto"; the guard's job is
+  // then carried by the prompt instruction plus the maxTurns cap.
+  // Verified live 2026-09-04. The id test is the safety net for tuple-form
+  // models, which carry no inline flag.
+  if (model?.noForcedToolChoice === true) return "auto";
+  if (/\b(fable|mythos)\b/.test(String(model?.id ?? "").replace(/-/g, " "))) return "auto";
   if (model?.provider === "anthropic") return "any";
   if (model?.reasoning) return "auto";
   return "required";

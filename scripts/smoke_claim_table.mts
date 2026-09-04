@@ -47,7 +47,7 @@ check("zero-expected limit_check without ANCHOR-OK is called out as wiring", lea
 const shift = t.rows.find((r: any) => r.id === "blockade_shift_4um_GHz");
 check("blockade_shift: full diag vs perturbative disagree (missing σ, 5.6×)", shift.reasons.some((x: string) => /disagree:/.test(x)), shift.reasons.join(" | "));
 const rabi = t.rows.find((r: any) => r.id === "rabi_38P_khz");
-check("rabi_38P: corroborated via an anchored literature estimate with σ", rabi.reasons.some((x: string) => /\(anchored\)/.test(x)));
+check("rabi_38P: anchored literature estimate with σ is recorded in reasons (status no longer keys off it — corroborated removed 2026-09-04)", rabi.reasons.some((x: string) => /\(anchored\)/.test(x)));
 const f10 = t.rows.find((r: any) => r.id === "fidelity_10MHz");
 check("E3 and E4 fidelity_10MHz are wiring (identical value)", f10.reasons.some((x: string) => /^wiring:/.test(x)), f10.reasons.join(" | "));
 

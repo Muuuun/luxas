@@ -607,7 +607,11 @@ export function createSpawnAgentTool(
           const blindLines: string[] = [];
           if (MAX_REVIEW_ITERATIONS > 0 && process.env.LUXAS_BLIND_ESTIMATE !== "0") {
             let settled = new Set<string>();
-            try { settled = new Set(buildClaimTable(projectDir).rows.filter((r) => r.status === "corroborated" || r.status === "converging").map((r) => r.id)); } catch { /* table malformed → estimate everything */ }
+            // `corroborated` dropped from this union 2026-09-04 with the status
+            // itself. It was always OR'd with `converging`, and every row that
+            // could reach corroborated already satisfied converging's condition
+            // (agreeing pair + σ), so the settled set is unchanged.
+            try { settled = new Set(buildClaimTable(projectDir).rows.filter((r) => r.status === "converging").map((r) => r.id)); } catch { /* table malformed → estimate everything */ }
             const { chosen, skipped } = selectBlindEstimateDecls(headlineDecls, parseFrameHeadline(projectDir), BLIND_ESTIMATE_CAP, settled);
             if (skipped.length) claimNotes.push(`[blind estimates capped at ${BLIND_ESTIMATE_CAP}/round (frame ids first); not estimated this round: ${skipped.join(", ")}]`);
             for (const decl of chosen) {

@@ -1,8 +1,8 @@
 {
  "rows": {
   "n_at_297nm": "indicative",
-  "rabi_38P_khz": "corroborated",
-  "d2_reduced_a0": "corroborated",
+  "rabi_38P_khz": "converging",
+  "d2_reduced_a0": "converging",
   "rydberg_lifetime_75P_us": "indicative",
   "c6_75_ghz_um6": "converging",
   "blockade_shift_4um_GHz": "disputed",
