@@ -348,6 +348,26 @@ the reader rather than the lint.
   error contract including `-0.0`. It stayed blind: no read or write outside `tests/`. That is one tool, not
   a benchmark, and it says nothing about 5.3 *versus* 5.2 — but it rules out the failure mode that would
   have made the switch immediately harmful.
+- **Fable 5.1 vs GLM-5.3, head to head (2026-09-04).** They look alike only on a saturated task.
+
+  | Task | claude-fable-5-1 | glm-5.3 |
+  |---|---|---|
+  | Blind-test authoring (pytest arbitrates) | 66 tests, kills 4/4 stubs, 34 turns, $0.36 | 41 tests, kills 4/4 stubs, 14 turns, $0.18 |
+  | E6 physics-review adjudication | **refuses** (`cyber`, 0 tokens) | both discriminators, plus two extras, $0.015 |
+
+  The first row separates nothing because both models hit the ceiling — killing
+  four lazy implementations is not a hard bar. The second row is the one that
+  discriminates, and there they are opposites: GLM produced the best answer any
+  model gave on that prompt, catching that the `_eps_total` columns stay above 1
+  up to n ≈ 90, that Yb never crosses barium at *any* n, and that Yb's total ≈
+  its decay term so the failure is real rather than a blockade-leakage artifact
+  — an argument neither gpt-5.6-sol nor anyone else made. It also flagged that
+  the first file states no drive power, so "equal 20 mW" is unverifiable from
+  the data. Fable produced nothing at all.
+
+  So: not similar. On the task this workload actually needs, GLM does it well
+  for ~1.5 cents and Fable declines. Caveat: GLM is verbose — one of two runs
+  hit the 6000-token cap mid-answer.
 - **GLM was a live production hazard while the account was dry (2026-09-03).** Asked to add GLM's vision
   model to the comparison: the account returns `1113 余额不足或无可用资源包` (insufficient balance) for
   `glm-5.2`, `glm-5.3`, `glm-5.3-flash` and for every vision id (`glm-4.5v`, `glm-4.6v`), 3/3 on retry, so it
