@@ -228,15 +228,25 @@ if (profile === "dual") {
   // columns honestly, by drawing a "gate fails" line at eps = 1 instead of
   // plotting an impossible infidelity of 1e4 (sonnet) or silently dropping the
   // columns (deepseek). See notes/figure-pipeline-review-2026-09-02.md §4.7b.
-  process.env.LUXAS_VISION_MODEL_PROFILE = "glm-5.3-flash";
-  // figure_auditor is deliberately NOT set here, so it falls back to the
-  // Anthropic tier in its frontmatter. GLM audits better and cheaper than
-  // sonnet in isolation, but the auditor must not be the same model as the
-  // agent that drew the figure — the same independence rule PI_REVIEWER_AGENTS
-  // encodes. The blind spot is demonstrably shared: GLM omitted the 4 K / 300 K
-  // panel labels when drawing, and did not flag missing temperature labels when
-  // auditing. Override with LUXAS_VISION_AUDIT_MODEL_PROFILE only onto a family
-  // that is NOT the one drawing the figures.
+  // Drawing agents on deepseek's multimodal model. They were on glm-5.3-flash
+  // (fewer turns, better figure, ~5x cheaper: $0.043 vs $0.21 per figure) until
+  // 2026-09-04, when figure_auditor was moved TO glm-5.3-flash by request. Both
+  // roles on one model is not an independent check, and the blind spot is
+  // demonstrably shared — GLM omitted the 4 K / 300 K panel labels when drawing
+  // and did not flag their absence when auditing, while a cross-family auditor
+  // named it as its top fix. The auditor is the ship/no-ship gate, so it keeps
+  // the better model and the drawers take the cost.
+  process.env.LUXAS_VISION_MODEL_PROFILE = "deepseek-v4-flash-vision-exp";
+  // figure_auditor on glm-5.3-flash (2026-09-04, by request): best AND cheapest
+  // of four models benchmarked on the real Ba figures — it alone caught the
+  // ionization line struck through the Rydberg label — and on its first live
+  // spawn it caught a VACUOUSLY passing lint that eight sonnet audits had
+  // copied as "clean". Costs latency: ~116 s mean vs sonnet's 12 s.
+  // It must stay a DIFFERENT family from the drawing agents above — the same
+  // independence rule PI_REVIEWER_AGENTS encodes, and smoke_dual_profile
+  // asserts it. Swapping either side onto the other's model silently turns the
+  // ship/no-ship gate into a self-check.
+  process.env.LUXAS_VISION_AUDIT_MODEL_PROFILE = "glm-5.3-flash";
 } else if (profile === "claude") {
   // No env override — every agent uses its declared frontmatter model.
 } else if (profile) {
@@ -277,8 +287,8 @@ if (command === "models") {
   if (!profile) profile = "dual";
   if (profile === "dual") {
     process.env.LUXAS_MODEL_PROFILE = "deepseek-v4-pro";
-    process.env.LUXAS_VISION_MODEL_PROFILE = "glm-5.3-flash";
-    delete process.env.LUXAS_VISION_AUDIT_MODEL_PROFILE;
+    process.env.LUXAS_VISION_MODEL_PROFILE = "deepseek-v4-flash-vision-exp";
+    process.env.LUXAS_VISION_AUDIT_MODEL_PROFILE = "glm-5.3-flash";
   }
   const { formatFindings } = await import("./model-check.js");
   console.error(`◈ profile: ${profile}`);

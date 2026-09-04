@@ -60,7 +60,8 @@ check("typesetter (sonnet) → deepseek-v4-pro (NO vision split)",
 // ── 3. --profile dual (text=deepseek, vision=deepseek multimodal) ──
 console.log("\n3. --profile dual (deepseek text + deepseek vision)");
 process.env.LUXAS_MODEL_PROFILE = "deepseek-v4-pro";
-process.env.LUXAS_VISION_MODEL_PROFILE = "glm-5.3-flash";
+process.env.LUXAS_VISION_MODEL_PROFILE = "deepseek-v4-flash-vision-exp";
+process.env.LUXAS_VISION_AUDIT_MODEL_PROFILE = "glm-5.3-flash";
 check("brain (sonnet) → deepseek-v4-pro",
   modelId(resolveModel("sonnet", "brain")) === "deepseek-v4-pro");
 check("experiment (sonnet) → deepseek-v4-pro",
@@ -76,8 +77,8 @@ check("reviewer (sonnet) → claude-sonnet-5 (PI keeps Anthropic tier)",
 // must land on a model that actually accepts images.
 for (const agent of ["illustrator", "illustrator_write", "typesetter"]) {
   const m = resolveModel("sonnet", agent);
-  check(`${agent} (sonnet) → glm-5.3-flash`,
-    modelId(m) === "glm-5.3-flash", `got ${modelId(m)}`);
+  check(`${agent} (sonnet) → deepseek-v4-flash-vision-exp`,
+    modelId(m) === "deepseek-v4-flash-vision-exp", `got ${modelId(m)}`);
   check(`${agent} model accepts image input`, acceptsImages(m));
   // Reasoning models get tool_choice "auto". This is a hard requirement on the
   // deepseek vision entry (thinking + "required" is a 400 there) and harmless
@@ -94,11 +95,10 @@ check("brain's text model does NOT accept images (the reason for the split)",
 // and an auditor on the drawing model is not an independent eye. The text
 // profile must NEVER reach it either — that downgrade is what let a cheap model
 // "pass" five broken figures (figures v2, 2026-08-28).
-delete process.env.LUXAS_VISION_AUDIT_MODEL_PROFILE;
 {
   const fa = resolveModel("sonnet", "figure_auditor");
-  check("figure_auditor keeps its Anthropic tier under dual",
-    modelId(fa) === "claude-sonnet-5", `got ${modelId(fa)}`);
+  check("figure_auditor → glm-5.3-flash under dual",
+    modelId(fa) === "glm-5.3-flash", `got ${modelId(fa)}`);
   check("figure_auditor's model accepts image input", acceptsImages(fa));
   check("figure_auditor is NOT the model that drew the figure",
     (fa as any)?.provider !== (resolveModel("sonnet", "illustrator_write") as any)?.provider,
