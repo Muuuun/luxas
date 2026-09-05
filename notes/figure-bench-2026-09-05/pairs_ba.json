@@ -1,0 +1,8 @@
+[
+ {"name":"frontier: shipped(A) vs v4.1 rerender(B)", "kind":"data", "a":"/private/tmp/claude-501/-Users-muqiao-Documents-Sisyphus/0a8ead95-e504-4208-a72b-eb611753ca56/scratchpad/ba/gate_infidelity_frontier.png", "b":"/private/tmp/claude-501/-Users-muqiao-Documents-Sisyphus/0a8ead95-e504-4208-a72b-eb611753ca56/scratchpad/badata/out/gate_infidelity_frontier.png",
+  "claim":"At 2 W two-photon drive barium's decay-limited two-qubit gate infidelity sits below the Rb/Cs/Sr/Yb references across 40 <= n <= 100 at both 4 K and 300 K; at equal 20 mW power the barium ceiling rises into the reference band."},
+ {"name":"lifetime: shipped(A) vs v4.1 rerender(B)", "kind":"data", "a":"/private/tmp/claude-501/-Users-muqiao-Documents-Sisyphus/0a8ead95-e504-4208-a72b-eb611753ca56/scratchpad/ba/ba_lifetime_vs_n.png", "b":"/private/tmp/claude-501/-Users-muqiao-Documents-Sisyphus/0a8ead95-e504-4208-a72b-eb611753ca56/scratchpad/badata/out/ba_lifetime_vs_n.png",
+  "claim":"The Ba 1G4 Rydberg lifetime grows as a power of n, exceeds the Rb nS and Sr 3S1 reference lifetimes at 300 K, and stays far below the 7.1 ms value quoted by Shi2025."},
+ {"name":"level diagram: hand TikZ(A) vs levelspec(B)", "kind":"schematic", "a":"/private/tmp/claude-501/-Users-muqiao-Documents-Sisyphus/0a8ead95-e504-4208-a72b-eb611753ca56/scratchpad/ba/ba_level_diagram.png", "b":"/private/tmp/claude-501/-Users-muqiao-Documents-Sisyphus/0a8ead95-e504-4208-a72b-eb611753ca56/scratchpad/lv/ba_levels.png",
+  "claim":"Barium level scheme: 1S0 ground, 1D2 E2 qubit at 877.6 nm, 3D shelving manifold, 553.7 nm cooling to 1P1, 791.3 nm intercombination to 3P1, two-photon Rydberg path 1D2 -> 1F3 (648.5 nm) -> 6sng 1G4 (657.9 nm) below the ionization limit; 1P1 decays to the ground state."}
+]

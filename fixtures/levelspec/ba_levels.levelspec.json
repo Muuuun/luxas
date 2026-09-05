@@ -1,0 +1,119 @@
+{
+  "out": "OUT/ba_levels",
+  "width": "single",
+  "unit": "cm$^{-1}$",
+  "levels": [
+    {
+      "id": "1S0",
+      "label": "$6s^2\\,{}^1S_0$",
+      "energy": 0,
+      "column": 0,
+      "tag": "ground"
+    },
+    {
+      "id": "3D1",
+      "label": "$6s5d\\,{}^3D_{1,2,3}$",
+      "energy": 9034,
+      "column": 0,
+      "group": "shelving",
+      "tag": "shelving"
+    },
+    {
+      "id": "3D2",
+      "label": "",
+      "energy": 9216,
+      "column": 0,
+      "group": "shelving"
+    },
+    {
+      "id": "3D3",
+      "label": "",
+      "energy": 9597,
+      "column": 0,
+      "group": "shelving"
+    },
+    {
+      "id": "1D2",
+      "label": "$6s5d\\,{}^1D_2$",
+      "energy": 11395,
+      "column": 0,
+      "group": "qubit",
+      "tag": "qubit"
+    },
+    {
+      "id": "3P1",
+      "label": "$6s6p\\,{}^3P_1$",
+      "energy": 12637,
+      "column": 1,
+      "group": "intercomb"
+    },
+    {
+      "id": "1P1",
+      "label": "$6s6p\\,{}^1P_1$",
+      "energy": 18060,
+      "column": 1,
+      "group": "cooling"
+    },
+    {
+      "id": "1F3",
+      "label": "$5d6p\\,{}^1F_3^{o}$",
+      "energy": 24088,
+      "column": 2,
+      "group": "rydberg"
+    },
+    {
+      "id": "1G4",
+      "label": "$6sng\\,{}^1G_4$",
+      "energy": 41966,
+      "column": 2,
+      "group": "rydberg"
+    }
+  ],
+  "limit": {
+    "label": "ionization limit",
+    "energy": 42035,
+    "column": 2
+  },
+  "transitions": [
+    {
+      "from": "1S0",
+      "to": "1D2",
+      "kind": "qubit",
+      "label": "877.6 nm",
+      "group": "qubit"
+    },
+    {
+      "from": "1S0",
+      "to": "1P1",
+      "kind": "drive",
+      "label": "553.7 nm",
+      "group": "cooling"
+    },
+    {
+      "from": "1S0",
+      "to": "3P1",
+      "kind": "drive",
+      "label": "791.3 nm",
+      "group": "intercomb"
+    },
+    {
+      "from": "1D2",
+      "to": "1F3",
+      "kind": "drive",
+      "label": "648.5 nm",
+      "group": "rydberg"
+    },
+    {
+      "from": "1F3",
+      "to": "1G4",
+      "kind": "drive",
+      "label": "657.9 nm",
+      "group": "rydberg"
+    },
+    {
+      "from": "1P1",
+      "to": "1S0",
+      "kind": "decay"
+    }
+  ]
+}

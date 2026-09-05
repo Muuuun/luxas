@@ -10,6 +10,9 @@ checks what the reader will actually see at print size.
                     a span renders below --min-pt (default 5 pt)
   WARN  dense text  more than --max-spans text spans on one page (default 40):
                     a figure that needs that many labels is two figures
+  ERROR dead zone   ≥ 15 % of the height (or 20 % of the width) is an empty
+                    interior band — a legend pushed off the axes (figures v4)
+  ERROR page-tall   at --width the figure prints > 6.5 in tall (WARN > 5.5)
 
 Usage: figlint-pdf FILE.pdf [--width 3.4] [--min-pt 5] [--max-spans 40] [--json]
 Exit: 0 clean/warnings, 2 on any ERROR, 3 if the file cannot be read.
@@ -210,6 +213,42 @@ def lint_pdf(path, width_in=None, min_pt=5.0, max_spans=40):
             errors.append(f'text over line "{t[:40]}" — a drawn stroke crosses the label; move the label or the line')
     except Exception as ex:  # drawing extraction is best-effort
         warnings.append(f"stroke check skipped: {ex}")
+    # ── composition (figures v4, 2026-09-05) ──────────────────────────────
+    # What a human sees in two seconds and the text-layer rules cannot: a dead
+    # zone (the Ba run pushed the legend 1.2 in below the axes to clear three
+    # collisions — lint-clean, unreadable), a figure that prints a page tall
+    # (energy-true level diagram, 1:1.46), the same label drawn twice.
+    try:
+        pix = page.get_pixmap(dpi=36, colorspace="gray", alpha=False)
+        import array as _array
+        buf = memoryview(pix.samples); Wpx, Hpx = pix.width, pix.height
+        rows_ink = [any(buf[r * Wpx + c] < 235 for c in range(Wpx)) for r in range(Hpx)]
+        cols_ink = [any(buf[r * Wpx + c] < 235 for r in range(Hpx)) for c in range(Wpx)]
+        def longest_interior_gap(ink):
+            n = len(ink); a = next((i for i in range(n) if ink[i]), None); b = next((i for i in range(n - 1, -1, -1) if ink[i]), None)
+            if a is None or b is None or b <= a: return 0, 0, 0
+            best = (0, 0, 0); run = 0; start = a
+            for i in range(a, b + 1):
+                if not ink[i]:
+                    if run == 0: start = i
+                    run += 1
+                    if run > best[0]: best = (run, start, i)
+                else: run = 0
+            return best
+        gr, r0, r1 = longest_interior_gap(rows_ink); gc, c0, c1 = longest_interior_gap(cols_ink)
+        if Hpx and gr / Hpx >= 0.15:
+            errors.append(f"dead zone: {gr / Hpx:.0%} of the figure height is empty (rows {r0 / Hpx:.0%}–{r1 / Hpx:.0%} from the top) — a legend or label pushed away from the axes; label series directly and let the axes fill the canvas")
+        if Wpx and gc / Wpx >= 0.20:
+            errors.append(f"dead zone: {gc / Wpx:.0%} of the figure width is empty (columns {c0 / Wpx:.0%}–{c1 / Wpx:.0%} from the left) — content is split across the canvas with nothing between")
+    except Exception as ex:
+        warnings.append(f"dead-zone check skipped: {ex}")
+    if width_in:
+        aspect = crop.height / crop.width if crop.width else 0
+        print_h = width_in * aspect
+        if print_h > 6.5:
+            errors.append(f"prints {print_h:.1f} in tall at {width_in:.2f} in wide (aspect {aspect:.2f}) — a whole-page float; compress the vertical axis (level diagram: levelspec), stack fewer panels, or use a row layout")
+        elif print_h > 5.5:
+            warnings.append(f"prints {print_h:.1f} in tall at {width_in:.2f} in wide (aspect {aspect:.2f}) — most of a page; consider a row layout")
     if len(lines_out) > max_spans:
         warnings.append(f"dense text: {len(lines_out)} text lines on one figure (> {max_spans}) — split panels or drop annotations")
     return errors, warnings, {"lines": len(lines_out), "spans": n_spans, "scale": scale, "page_w_in": crop.width / 72.0}

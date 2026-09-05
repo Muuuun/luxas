@@ -1,0 +1,200 @@
+[
+ {
+  "judge": "glm-5.3-flash",
+  "pair": "frontier: shipped(A) vs v4.1 rerender(B)",
+  "swap": false,
+  "error": "400: {\"code\":\"1210\",\"message\":\"该模型始终思考，不支持关闭思考；请使用 low、high 或 max。\"}",
+  "cost": 0
+ },
+ {
+  "judge": "glm-5.3-flash",
+  "pair": "frontier: shipped(A) vs v4.1 rerender(B)",
+  "swap": true,
+  "error": "400: {\"code\":\"1210\",\"message\":\"该模型始终思考，不支持关闭思考；请使用 low、high 或 max。\"}",
+  "cost": 0
+ },
+ {
+  "judge": "sonnet",
+  "pair": "frontier: shipped(A) vs v4.1 rerender(B)",
+  "swap": false,
+  "a": {
+   "claim": 1,
+   "condition": 1,
+   "physical": 1,
+   "legible": 1,
+   "focus": 0,
+   "space": 0,
+   "convention": 1
+  },
+  "b": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 2,
+   "space": 2,
+   "convention": 2
+  },
+  "winner": "b",
+  "reason": "Fig2 cleanly shows Ba 2W below reference band and Sr, with 20mW rising into band; direct labels, compact, no legend, no dead space. Fig1 mismatches power condition (20mW vs 2W) and has excess empty space.",
+  "cost": 0.013634
+ },
+ {
+  "judge": "sonnet",
+  "pair": "frontier: shipped(A) vs v4.1 rerender(B)",
+  "swap": true,
+  "a": {
+   "claim": 1,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 1,
+   "space": 0,
+   "convention": 1
+  },
+  "b": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 2,
+   "space": 2,
+   "convention": 2
+  },
+  "winner": "b",
+  "reason": "Fig1 directly shows Ba below band at 2W and inside band at 20mW with clean direct labels; Fig2 mixes 2W and 20mW across separate panels, confusing claim, plus huge dead space and legend box.",
+  "cost": 0.013554
+ },
+ {
+  "judge": "glm-5.3-flash",
+  "pair": "lifetime: shipped(A) vs v4.1 rerender(B)",
+  "swap": false,
+  "error": "400: {\"code\":\"1210\",\"message\":\"该模型始终思考，不支持关闭思考；请使用 low、high 或 max。\"}",
+  "cost": 0
+ },
+ {
+  "judge": "glm-5.3-flash",
+  "pair": "lifetime: shipped(A) vs v4.1 rerender(B)",
+  "swap": true,
+  "error": "400: {\"code\":\"1210\",\"message\":\"该模型始终思考，不支持关闭思考；请使用 low、high 或 max。\"}",
+  "cost": 0
+ },
+ {
+  "judge": "sonnet",
+  "pair": "lifetime: shipped(A) vs v4.1 rerender(B)",
+  "swap": false,
+  "a": {
+   "claim": 1,
+   "condition": 2,
+   "physical": 2,
+   "legible": 1,
+   "focus": 1,
+   "space": 0,
+   "convention": 1
+  },
+  "b": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 2,
+   "space": 2,
+   "convention": 2
+  },
+  "winner": "b",
+  "reason": "Fig2 is compact, directly labeled, no legend box, no dead space; Fig1 has huge empty area, legend box, and mislabeled duplicate dotted/eff series.",
+  "cost": 0.011769
+ },
+ {
+  "judge": "sonnet",
+  "pair": "lifetime: shipped(A) vs v4.1 rerender(B)",
+  "swap": true,
+  "a": {
+   "claim": 1,
+   "condition": 2,
+   "physical": 2,
+   "legible": 1,
+   "focus": 1,
+   "space": 0,
+   "convention": 1
+  },
+  "b": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 2,
+   "space": 1,
+   "convention": 2
+  },
+  "winner": "b",
+  "reason": "Fig1 directly labels all curves, compact and clear; Fig2 has confusing duplicate legend entries, huge dead space below panels, and unclear line-color mapping.",
+  "cost": 0.011758999999999999
+ },
+ {
+  "judge": "glm-5.3-flash",
+  "pair": "level diagram: hand TikZ(A) vs levelspec(B)",
+  "swap": false,
+  "error": "400: {\"code\":\"1210\",\"message\":\"该模型始终思考，不支持关闭思考；请使用 low、high 或 max。\"}",
+  "cost": 0
+ },
+ {
+  "judge": "glm-5.3-flash",
+  "pair": "level diagram: hand TikZ(A) vs levelspec(B)",
+  "swap": true,
+  "error": "400: {\"code\":\"1210\",\"message\":\"该模型始终思考，不支持关闭思考；请使用 low、high 或 max。\"}",
+  "cost": 0
+ },
+ {
+  "judge": "sonnet",
+  "pair": "level diagram: hand TikZ(A) vs levelspec(B)",
+  "swap": false,
+  "a": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 1,
+   "legible": 1,
+   "focus": 1,
+   "space": 1,
+   "convention": 1
+  },
+  "b": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 2,
+   "space": 2,
+   "convention": 1
+  },
+  "winner": "b",
+  "reason": "Fig2 is cleaner, better spaced, no legend box, direct labels; Fig1 has overlapping labels, dead space, legend box, and confusing wavy line for coherent 877.6nm drive.",
+  "cost": 0.014626499999999999
+ },
+ {
+  "judge": "sonnet",
+  "pair": "level diagram: hand TikZ(A) vs levelspec(B)",
+  "swap": true,
+  "a": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 1,
+   "legible": 1,
+   "focus": 1,
+   "space": 1,
+   "convention": 1
+  },
+  "b": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 1,
+   "legible": 2,
+   "focus": 2,
+   "space": 2,
+   "convention": 1
+  },
+  "winner": "b",
+  "reason": "Fig1 is more compact, legible, and avoids redundant legend box; Fig2 uses wavy arrows for coherent drives (wrong convention) and has excessive dead space with tall aspect.",
+  "cost": 0.0145965
+ }
+]

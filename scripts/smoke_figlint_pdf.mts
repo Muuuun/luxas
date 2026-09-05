@@ -42,6 +42,13 @@ fig.savefig("${dir}/overdata.pdf", bbox_inches="tight"); plt.close(fig)
 fig, ax = plt.subplots(figsize=(3.4, 2.4)); ax.plot(x, np.sin(x))
 ax.annotate("Best: F = 0.9967 at R = 2.0 um, $\\Omega$ = 160 MHz", xy=(1, -0.9), fontsize=8)
 fig.savefig("${dir}/mathtext.pdf", bbox_inches="tight"); plt.close(fig)
+# figures v4: a legend pushed 1 in below the axes (the Ba run's dead zone) — lint-clean before, unreadable
+fig, ax = plt.subplots(figsize=(3.4, 2.4)); ax.plot(x, np.sin(x), label="one"); ax.plot(x, np.cos(x), label="two")
+ax.set_xlabel("x (s)"); ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.75), ncol=2)
+fig.savefig("${dir}/deadzone.pdf", bbox_inches="tight"); plt.close(fig)
+# figures v4: a page-tall figure (energy-true level diagram, 1:1.46 at 0.74\\textwidth filled a page)
+fig, ax = plt.subplots(figsize=(3.4, 5.5)); ax.plot(x, np.sin(x)); ax.set_xlabel("x (s)"); ax.set_ylabel("y (V)")
+fig.savefig("${dir}/tall.pdf", bbox_inches="tight"); plt.close(fig)
 `;
 writeFileSync(join(dir, "make.py"), py);
 const hook = "skills/matplotlib-figures/lint_hook";
@@ -65,6 +72,12 @@ check("bad PDF: dense-text warning", bj.warnings.some((w: string) => /dense text
 check("print-width scaling: 2 pt text is fine at 2× width", (() => { const j = JSON.parse(lint("bad.pdf", ["--width", "12"]).stdout); return !j.errors.some((e: string) => /tiny/.test(e)); })());
 const mt = JSON.parse(lint("mathtext.pdf", ["--width", "3.4"]).stdout || "{}");
 check("mathtext font-switch fragments of one annotation are not a collision", (mt.errors ?? []).filter((e: string) => /collision/.test(e)).length === 0, JSON.stringify(mt.errors));
+const dz = JSON.parse(lint("deadzone.pdf", ["--width", "3.4"]).stdout || "{}");
+check("dead zone: a legend pushed off the axes is an ERROR", (dz.errors ?? []).some((e: string) => /dead zone: \d+% of the figure height is empty/.test(e)), JSON.stringify(dz.errors));
+check("dead zone: a clean figure has none", !(JSON.parse(clean.stdout).errors ?? []).some((e: string) => /dead zone/.test(e)));
+const tall = JSON.parse(lint("tall.pdf", ["--width", "5.2"]).stdout || "{}");
+check("page-tall: prints > 6.5 in at 5.2 in wide is an ERROR", (tall.errors ?? []).some((e: string) => /prints \d+\.\d in tall .* whole-page float/.test(e)), JSON.stringify(tall.errors));
+check("page-tall: the same PDF at 3.4 in is only a WARN", !(JSON.parse(lint("tall.pdf", ["--width", "3.4"]).stdout).errors ?? []).some((e: string) => /prints/.test(e)));
 const missing = spawnSync("python3", ["skills/matplotlib-figures/scripts/figlint-pdf", join(dir, "nope.pdf"), "--json"], { encoding: "utf-8" });
 check("unreadable file: exit 3 with JSON", missing.status === 3 && /unreadable/.test(missing.stdout));
 if (fails) { console.log(`\n${fails} FAILED`); process.exit(1); }

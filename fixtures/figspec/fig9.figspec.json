@@ -1,0 +1,27 @@
+{
+  "out": "OUT/fig9",
+  "width": "double",
+  "layout": "row",
+  "panels": [
+    {
+      "label": "a", "tag": "T = 4 K",
+      "xlabel": "Anisotropy $A$", "ylabel": "Packing gain", "xscale": "log", "xlim": [1, 1000], "ylim": [0.7, 2.6],
+      "series": [
+        { "x": {"csv": "fixtures/figspec/data/gain_vs_anisotropy.csv", "col": "A"}, "y": {"csv": "fixtures/figspec/data/gain_vs_anisotropy.csv", "col": "gain"}, "label": "Ba, 2 W", "group": "Ba", "markers": false },
+        { "x": {"csv": "fixtures/figspec/data/gain_vs_anisotropy.csv", "col": "A"}, "y": {"expr": "0.9*x**(1/6)"}, "label": "Ba, 20 mW", "group": "Ba", "markers": false },
+        { "x": {"logspace": [1, 1000, 60]}, "y": {"expr": "0.8*x**(1/8)"}, "label": "Sr", "role": "reference" },
+        { "x": {"logspace": [1, 1000, 60]}, "ylo": {"expr": "0.7*x**(1/8)"}, "yhi": {"expr": "0.95*x**(1/7)"}, "label": "Rb, Cs, Yb", "role": "envelope" }
+      ],
+      "reflines": [ { "axis": "y", "value": 1.35, "label": "strong blockade" } ]
+    },
+    {
+      "label": "b", "tag": "T = 300 K",
+      "xlabel": "Principal quantum number $n$", "ylabel": "$\\tau$ ($\\mu$s)", "xscale": "log", "yscale": "log", "xlim": [35, 90], "ylim": [20, 700],
+      "series": [
+        { "x": {"csv": "fixtures/figspec/data/reference_points.csv", "col": "n", "where": {"atom": "Rb", "l": 0}}, "y": {"csv": "fixtures/figspec/data/reference_points.csv", "col": "tau_us", "where": {"atom": "Rb", "l": 0}}, "label": "Rb $nS$", "role": "reference" },
+        { "x": [60], "y": [121.6], "label": "Sr $^3S_1$", "role": "reference" },
+        { "x": {"linspace": [40, 80, 30]}, "y": {"expr": "0.04*x**2.3"}, "label": "Ba $^1G_4$", "group": "Ba" }
+      ]
+    }
+  ]
+}

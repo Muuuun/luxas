@@ -1,23 +1,257 @@
 #!/usr/bin/env python3
-"""figspec — declarative figure spec → fixed-template renderer (prototype).
-The author fills a spec; composition, style, label placement are owned here."""
-import json, os, sys, numpy as np, matplotlib
+"""figspec — declarative figure spec → fixed-template renderer.
+
+The author fills a spec; composition, style, label placement are owned here.
+
+figures v4 (2026-09-05): the grammar is STRICT. An unknown key is an error that
+names the nearest valid key — the Ba run (2026-08-30) wrote `style`, `legend`,
+`title`, `annotations` into specs, the renderer ignored them silently, the
+auditor reported "every curve is solid", and the brain concluded the renderer
+was broken and ordered raw matplotlib. Silence is what created that bypass.
+
+What a spec can now say that it could not before: a per-panel condition `tag`
+("T = 4 K"), a `where` row filter on CSV references, a colour `group` so one
+species is one hue and its variants are line styles, a `reference` role that
+draws grey, markers on/off per series. What the renderer now refuses: a label it
+could not place (exit 2 + sidecar error the compile gate reads), more than five
+series on one axes, a figure that prints taller than 6.5 in.
+
+Exit codes: 0 rendered clean; 2 spec error or composition error (the figure may
+still be written so the author can look at it, but it is NOT done); the same
+findings land in `<out>.pdf.figlint.json` (md5-keyed) which `compile_latex` reads.
+"""
+import difflib, hashlib, json, os, re as _re, sys
+import numpy as np, matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib import transforms
 
 STYLE = os.environ.get("FIGSPEC_STYLE", "report/figstyle.mplstyle")
-W = {"single": 3.4, "double": 7.0}
+W = {"single": 3.4, "1.5": 4.72, "double": 7.0}   # Nature: 89 mm, 120 mm, 183 mm
+# Nature methodology (Points of View / Points of Significance, Wong & Krzywinski 2010–13), figures v4.1:
+SEQUENTIAL_CMAPS = {"viridis", "cividis", "inferno", "magma", "plasma", "Greys", "Blues", "Greens", "Oranges", "Purples", "Reds",
+                    "YlGnBu", "YlOrRd", "BuPu", "GnBu", "PuBu", "OrRd", "PuRd", "BuGn"}
+DIVERGING_CMAPS = {"RdBu_r", "RdBu", "coolwarm", "PuOr", "PuOr_r", "BrBG", "BrBG_r", "PiYG", "PiYG_r", "RdYlBu_r", "seismic", "bwr"}
+BANNED_CMAPS = {"jet", "rainbow", "gist_rainbow", "hsv", "turbo", "nipy_spectral", "gist_ncar", "prism", "Spectral", "Spectral_r", "gnuplot", "gnuplot2"}
+SIGMA_KINDS = {"sd": "s.d.", "sem": "s.e.m.", "ci95": "95% CI", "ci68": "68% CI", "range": "range"}
+MIN_CONTRAST = 4.5         # WCAG AA, Nature research figure guide: text contrast > 4.5
+PT = {"label": 8, "small": 7, "panel": 10}   # set per style in render(): Nature caps text at 7 pt, panel letters 8 pt bold
+LAST_FIG = None            # the last rendered Figure — read by the gate's probes
 GREY = "#6e6e6e"; LIGHT = "#bdbdbd"
 MAX_MARKERS = 16          # more points than this → line only
 HEADROOM = 0.14           # fraction of y-range reserved at the top for band/refline labels
+MAX_SERIES = 5            # foreground (data) series per axes above this → error (Ba run: 7 per panel, unreadable)
+WARN_SERIES = 4
+MAX_REFERENCES = 4        # subordinate grey references per axes (thin, end-labelled) — the claim may name them individually;
+                          # they do not count against the foreground budget (v4.2, 2026-09-05: an envelope hid the
+                          # comparisons a claim named and referees preferred the cluttered old figure 7:1)
+MAX_HIGHLIGHTS = 2        # claim callouts per panel: the claim's words at the x where the relation holds
+PANEL_H = 2.45            # in, height of one stacked panel (was 0.78·w·n·0.85 → 7 × 9.3 in for a double column)
+MAX_PRINT_H = 6.5         # in, taller than this takes the whole page
+LINESTYLES = {"solid": "-", "dashed": (0, (5, 2)), "dotted": (0, (1, 1.5)), "dashdot": (0, (5, 1.5, 1, 1.5))}
+LS_ALIAS = {"-": "solid", "--": "dashed", ":": "dotted", "-.": "dashdot"}
+
+
+class SpecError(Exception):
+    pass
+
+
+# ── schema ───────────────────────────────────────────────────────────────────
+# Every key an author may write, per object. Anything else is an error that
+# names the nearest valid key. Keys that used to be silently ignored get a
+# targeted message (REDIRECT) because they came from matplotlib vocabulary.
+KEYS = {
+    "spec": {"out", "width", "layout", "sharex", "sharey", "ncols", "panels", "points_note", "sigma_note"},
+    "panel": {"label", "type", "xlabel", "ylabel", "zlabel", "xscale", "yscale", "xlim", "ylim", "zlim", "tag",
+              "series", "bands", "reflines", "highlight", "points_note", "sigma_note",
+              "x", "y", "z", "cmap", "contours", "diverging", "center", "zero", "clockwise", "thetalim", "rlabel_deg"},
+    "series": {"x", "y", "label", "role", "sigma", "sigma_kind", "ylo", "yhi", "linestyle", "band", "group", "markers", "fill",
+               "points_note", "sigma_note"},
+    "band": {"axis", "from", "to", "label"},
+    "refline": {"axis", "value", "label"},
+    "highlight": {"series", "at", "label", "x", "y"},
+    "ref": {"csv", "col", "cols", "reduce", "where", "expr", "logspace", "linspace"},
+}
+REDIRECT = {
+    "title": "tag (a short condition label drawn inside the panel: \"T = 4 K\"; a figure has no title — parameters go in the caption)",
+    "annotations": "highlight (one per panel, number looked up with \"at\") or tag (one condition label per panel); free text is not placed",
+    "annotation": "highlight or tag",
+    "legend": "nothing — series are labelled directly at their right end; there is no legend",
+    "style": "linestyle (solid|dashed|dotted|dashdot) and group (one hue per group, variants by line style); colour is never chosen per series",
+    "color": "group (a hue per physical group, assigned by the renderer from the mplstyle palette)",
+    "colour": "group",
+    "linewidth": "nothing — line weight is owned by the mplstyle",
+    "marker": "markers (true|false)",
+    "xlabel_fontsize": "nothing — font sizes are owned by the mplstyle",
+    "fontsize": "nothing — font sizes are owned by the mplstyle",
+    "inset": "a second panel (\"layout\": \"row\"|\"column\") — insets are never drawn",
+    "text": "tag or highlight",
+    "name": "label",
+    "ls": "linestyle",
+    "lw": "nothing — line weight is owned by the mplstyle",
+    "alpha": "nothing",
+    "grid": "nothing — grids are owned by the mplstyle",
+    "vlines": "reflines (\"axis\": \"x\")", "hlines": "reflines (\"axis\": \"y\")", "axvline": "reflines", "axhline": "reflines",
+    "axvspan": "bands", "axhspan": "bands", "span": "bands", "shade": "bands",
+    "errorbar": "sigma", "yerr": "sigma", "err": "sigma", "error": "sigma", "std": "sigma (with sigma_kind: sd)",
+    "colormap": "cmap", "colorbar": "zlabel", "vmin": "zlim", "vmax": "zlim",
+    "logx": "xscale: \"log\"", "logy": "yscale: \"log\"", "xlog": "xscale: \"log\"", "ylog": "yscale: \"log\"",
+    "subplots": "panels", "axes": "panels", "panel": "panels",
+    "data": "x / y references ({\"csv\": …, \"col\": …})", "file": "csv", "path": "csv", "column": "col",
+    "filter": "where ({\"col\": value, …} on a csv reference)", "query": "where", "rows": "where",
+}
+ROLES = {"data", "model", "envelope", "reference"}
+LAYOUTS = {"row", "column", "grid", "single"}
+TYPES = {"xy", "heatmap", "polar"}
+
+
+def _check_keys(obj, kind, path):
+    if not isinstance(obj, dict):
+        raise SpecError(f"{path}: expected an object, got {type(obj).__name__}")
+    for k in obj:
+        if k in KEYS[kind]:
+            continue
+        if k in REDIRECT:
+            raise SpecError(f"{path}.{k}: not a figspec key — use {REDIRECT[k]}")
+        near = difflib.get_close_matches(k, sorted(KEYS[kind]), n=1, cutoff=0.6)
+        hint = f"did you mean \"{near[0]}\"?" if near else f"valid keys here: {', '.join(sorted(KEYS[kind]))}"
+        raise SpecError(f"{path}.{k}: unknown key — {hint}")
+
+
+def _check_ref(v, path):
+    if isinstance(v, (list, tuple)):
+        if not all(isinstance(t, (int, float)) for t in v):
+            raise SpecError(f"{path}: a literal array must be numeric")
+        return
+    if isinstance(v, dict):
+        _check_keys(v, "ref", path)
+        if "csv" in v:
+            if not (("col" in v) ^ ("cols" in v)):
+                raise SpecError(f"{path}: a csv reference needs exactly one of col / cols")
+            if "where" in v and not isinstance(v["where"], dict):
+                raise SpecError(f"{path}.where: expected {{\"column\": value, …}}")
+            if not os.path.exists(v["csv"]):
+                raise SpecError(f"{path}.csv: file not found: {v['csv']}")
+            return
+        if "expr" in v or "logspace" in v or "linspace" in v:
+            return
+        raise SpecError(f"{path}: a data reference is {{\"csv\",\"col\"}}, {{\"expr\"}}, {{\"logspace\"|\"linspace\": [a, b, n]}} or a literal list")
+    raise SpecError(f"{path}: bad data reference {v!r}")
+
+
+def validate(spec):
+    """Reject anything the renderer would not draw exactly as written."""
+    _check_keys(spec, "spec", "spec")
+    if "out" not in spec or not isinstance(spec["out"], str):
+        raise SpecError("spec.out: required — the output stem (writes .pdf and .png)")
+    if spec.get("width", "single") not in W:
+        raise SpecError(f"spec.width: {spec.get('width')!r} — single (89 mm) | 1.5 (120 mm) | double (183 mm)")
+    if spec.get("layout", "row") not in LAYOUTS:
+        raise SpecError(f"spec.layout: {spec.get('layout')!r} — row | column | grid")
+    panels = spec.get("panels")
+    if not isinstance(panels, list) or not panels:
+        raise SpecError("spec.panels: required, a non-empty list")
+    for i, p in enumerate(panels):
+        pp = f"panels[{i}]"
+        _check_keys(p, "panel", pp)
+        kind = p.get("type", "xy")
+        if kind not in TYPES:
+            raise SpecError(f"{pp}.type: {kind!r} — xy | heatmap | polar")
+        if len(panels) > 1 and not p.get("label"):
+            raise SpecError(f"{pp}.label: a multi-panel figure names its panels (\"a\", \"b\", …)")
+        for ax_ in ("xscale", "yscale"):
+            if p.get(ax_) not in (None, "linear", "log"):
+                raise SpecError(f"{pp}.{ax_}: {p[ax_]!r} — linear | log")
+        for lim in ("xlim", "ylim", "zlim"):
+            if lim in p and (not isinstance(p[lim], list) or len(p[lim]) != 2):
+                raise SpecError(f"{pp}.{lim}: [lo, hi]")
+        if "tag" in p and not isinstance(p["tag"], str):
+            raise SpecError(f"{pp}.tag: a short string (\"T = 4 K\")")
+        if p.get("highlight") is not None and not isinstance(p["highlight"], list): p["highlight"] = [p["highlight"]]
+        if kind == "heatmap":
+            for k in ("x", "y", "z"):
+                if k not in p:
+                    raise SpecError(f"{pp}.{k}: a heatmap needs x, y and z")
+            cm = p.get("cmap")
+            if cm in BANNED_CMAPS:
+                raise SpecError(f"{pp}.cmap: {cm!r} is banned — a rainbow map has no perceptual order (Wong 2010); use a sequential map ({', '.join(sorted(SEQUENTIAL_CMAPS)[:6])}, …) or \"diverging\": true for a signed quantity")
+            if p.get("diverging"):
+                if cm is not None and cm not in DIVERGING_CMAPS:
+                    raise SpecError(f"{pp}.cmap: {cm!r} is not a diverging map — with diverging: true use one of {', '.join(sorted(DIVERGING_CMAPS))} (default RdBu_r, centred on `center`, default 0)")
+            elif cm is not None and cm not in SEQUENTIAL_CMAPS:
+                if cm in DIVERGING_CMAPS:
+                    raise SpecError(f"{pp}.cmap: {cm!r} is a diverging map — say \"diverging\": true (and \"center\" if zero is not the meaningful value) so the map is centred; a diverging map on an unsigned quantity misleads")
+                raise SpecError(f"{pp}.cmap: {cm!r} — sequential: {', '.join(sorted(SEQUENTIAL_CMAPS))}")
+            continue
+        series = p.get("series")
+        if not isinstance(series, list):
+            raise SpecError(f"{pp}.series: required, a list")
+        n_data = 0; n_ref = 0
+        for j, s in enumerate(series):
+            sp = f"{pp}.series[{j}]"
+            _check_keys(s, "series", sp)
+            role = s.get("role", "data")
+            if role not in ROLES:
+                raise SpecError(f"{sp}.role: {role!r} — data | model | envelope | reference")
+            if role == "data": n_data += 1
+            if role == "reference": n_ref += 1
+            for k in ("x", "y"):
+                if k not in s and not (role == "envelope" and k == "y"):
+                    raise SpecError(f"{sp}.{k}: required")
+                if k in s:
+                    _check_ref(s[k], f"{sp}.{k}")
+            for k in ("sigma", "ylo", "yhi"):
+                if k in s:
+                    _check_ref(s[k], f"{sp}.{k}")
+            if role == "envelope" and ("ylo" not in s or "yhi" not in s):
+                raise SpecError(f"{sp}: an envelope needs ylo and yhi")
+            if "linestyle" in s:
+                ls_ = LS_ALIAS.get(s["linestyle"], s["linestyle"])
+                if ls_ not in LINESTYLES:
+                    raise SpecError(f"{sp}.linestyle: {s['linestyle']!r} — solid | dashed | dotted | dashdot")
+                s["linestyle"] = ls_
+            if "label" not in s and len(series) > 1:
+                raise SpecError(f"{sp}.label: every series of a multi-series panel is labelled")
+            if "sigma" in s:
+                if s.get("sigma_kind") not in SIGMA_KINDS:
+                    raise SpecError(f"{sp}.sigma_kind: required with sigma — sd | sem | ci95 | ci68 | range (the caption must say what the bars are; Krzywinski & Altman 2013)")
+            elif "sigma_kind" in s:
+                raise SpecError(f"{sp}.sigma_kind: given without sigma")
+        if n_data > MAX_SERIES:
+            raise SpecError(f"{pp}: {n_data} foreground series on one axes (max {MAX_SERIES}) — split the panel; literature / other-species curves are role: reference (grey, subordinate, up to {MAX_REFERENCES}), not foreground")
+        if n_ref > MAX_REFERENCES:
+            raise SpecError(f"{pp}: {n_ref} reference series on one axes (max {MAX_REFERENCES}) — keep the ones the claim names, fold the rest into one envelope (role: envelope)")
+        for j, b in enumerate(p.get("bands", [])):
+            _check_keys(b, "band", f"{pp}.bands[{j}]")
+            if b.get("axis") not in ("x", "y"):
+                raise SpecError(f"{pp}.bands[{j}].axis: x | y")
+        for j, r in enumerate(p.get("reflines", [])):
+            _check_keys(r, "refline", f"{pp}.reflines[{j}]")
+            if r.get("axis") not in ("x", "y", "theta"):
+                raise SpecError(f"{pp}.reflines[{j}].axis: x | y (| theta on a polar panel)")
+        if p.get("highlight"):
+            hs = p["highlight"]
+            if len(hs) > MAX_HIGHLIGHTS:
+                raise SpecError(f"{pp}.highlight: {len(hs)} callouts (max {MAX_HIGHLIGHTS} per panel) — one per relation the claim states")
+            for k, h in enumerate(hs):
+                hp = f"{pp}.highlight[{k}]" if len(hs) > 1 else f"{pp}.highlight"
+                _check_keys(h, "highlight", hp)
+                if "at" not in h and not ("x" in h and "y" in h):
+                    raise SpecError(f"{hp}: needs \"at\": x0 (the point is looked up on the series) — a typed y is never drawn on an xy panel")
+                if "label" not in h:
+                    raise SpecError(f"{hp}.label: required — the claim's words at that point (\"above Rb, Cs, Sr\") or a looked-up number (\"{{y:.2f}}×\")")
+                if len(str(h["label"])) > 40:
+                    raise SpecError(f"{hp}.label: {len(str(h['label']))} characters — a callout is ≤ 5 words; the caption carries the sentence")
+            p["highlight"] = hs
+    return spec
+
 
 def _num(v): return v is not None and np.isfinite(v)
 
-import re as _re
+
 def _tex(label):
     """Typeset plain-string symbols: a token with ^ or _ outside $…$ becomes mathtext;
-    multi-letter sub/superscripts get \mathrm; ×/deg spellings normalised. Idempotent on real mathtext."""
+    multi-letter sub/superscripts get \\mathrm; ×/deg spellings normalised. Idempotent on real mathtext."""
     if not label or "$" in label: return label
     label = label.replace("um^", "μm^").replace("(um)", "(μm)")
     def tok(m):
@@ -32,30 +266,55 @@ def _tex(label):
 
 _CSV = {}
 def _csv(path):
+    """Numeric view + raw string view of a CSV, cached. Non-numeric cells are NaN in the numeric view."""
     if path not in _CSV:
         import csv
         with open(path) as f:
             rows = list(csv.reader(f))
-        head = rows[0]; body = rows[1:]
+        head = rows[0]; body = [r for r in rows[1:] if any(c.strip() for c in r)]
         def num(v):
             try: return float(v)
-            except ValueError: return np.nan          # non-numeric columns (notes, flags) read as NaN
-        _CSV[path] = {h: np.array([num(r[i]) if i < len(r) else np.nan for r in body]) for i, h in enumerate(head)}
+            except ValueError: return np.nan
+        raw = {h: [r[i].strip() if i < len(r) else "" for r in body] for i, h in enumerate(head)}
+        _CSV[path] = ({h: np.array([num(v) for v in raw[h]]) for h in head}, raw)
     return _CSV[path]
 
+
+def _mask(raw, where, path):
+    n = len(next(iter(raw.values()))) if raw else 0
+    m = np.ones(n, bool)
+    for col, val in where.items():
+        if col not in raw:
+            raise SpecError(f"where: column {col!r} not in {path} (columns: {', '.join(raw)})")
+        cells = raw[col]
+        def eq(c):
+            if str(c) == str(val): return True
+            try: return float(c) == float(val)
+            except (TypeError, ValueError): return False
+        m &= np.array([eq(c) for c in cells], bool)
+    if not m.any():
+        raise SpecError(f"where {where!r} selects no rows of {path}")
+    return m
+
+
 def _arr(v, x=None, y=None):
-    """A data reference: a list; {"csv","col"}; {"csv","cols","reduce":"min|max|mean"}; {"expr": "..."} over x;
+    """A data reference: a list; {"csv","col"[,"where"]}; {"csv","cols","reduce":"min|max|mean"}; {"expr": "..."} over x;
     {"logspace":[a,b,n]} / {"linspace":[a,b,n]}. The author never computes arrays in code."""
     if isinstance(v, (list, tuple)): return np.asarray(v, float)
     if isinstance(v, dict):
         if "csv" in v:
-            t = _csv(v["csv"])
-            if "col" in v: return t[v["col"]]
-            m = np.array([t[c] for c in v["cols"]]); return getattr(np, v.get("reduce", "min"))(m, axis=0)
-        if "expr" in v: return np.asarray(eval(v["expr"], {"np": np, "x": x, "y": y, "log10": np.log10, "sqrt": np.sqrt, "abs": np.abs}), float)
+            t, raw = _csv(v["csv"])
+            m = _mask(raw, v["where"], v["csv"]) if v.get("where") else None
+            def col(c):
+                if c not in t: raise SpecError(f"column {c!r} not in {v['csv']} (columns: {', '.join(t)})")
+                return t[c] if m is None else t[c][m]
+            if "col" in v: return col(v["col"])
+            mm = np.array([col(c) for c in v["cols"]]); return getattr(np, v.get("reduce", "min"))(mm, axis=0)
+        if "expr" in v: return np.asarray(eval(v["expr"], {"np": np, "x": x, "y": y, "log10": np.log10, "sqrt": np.sqrt, "abs": np.abs, "exp": np.exp, "log": np.log}), float)
         if "logspace" in v: a, b, n = v["logspace"]; return np.logspace(np.log10(a), np.log10(b), int(n))
         if "linspace" in v: a, b, n = v["linspace"]; return np.linspace(a, b, int(n))
-    raise ValueError(f"bad data reference: {v!r}")
+    raise SpecError(f"bad data reference: {v!r}")
+
 
 def _resolve(spec):
     """Resolve every data reference in place; resolve 'at' lookups for highlights."""
@@ -64,22 +323,67 @@ def _resolve(spec):
             p["x"] = _arr(p["x"]); p["y"] = _arr(p["y"])
             z = p["z"]
             if isinstance(z, dict) and "cols" in z:
-                t = _csv(z["csv"]); p["z"] = np.array([t[c] for c in z["cols"]]).T   # rows follow x, columns follow y
+                t, _ = _csv(z["csv"]); p["z"] = np.array([t[c] for c in z["cols"]]).T   # rows follow x, columns follow y
             else: p["z"] = np.asarray(z, float)
             p.setdefault("series", []); continue
         for s in p["series"]:
-            s["x"] = _arr(s["x"]); s["y"] = _arr(s["y"], s["x"])
+            s["_computed"] = isinstance(s["x"], dict) and ("expr" in s["x"] or "logspace" in s["x"] or "linspace" in s["x"]) or \
+                             isinstance(s.get("y"), dict) and "expr" in s["y"]
+            s["x"] = _arr(s["x"])
+            if "y" in s: s["y"] = _arr(s["y"], s["x"])
             for k in ("ylo", "yhi", "sigma"):
-                if k in s: s[k] = _arr(s[k], s["x"], s["y"])
-            m = np.isfinite(s["x"]) & np.isfinite(s["y"])
+                if k in s: s[k] = _arr(s[k], s["x"], s.get("y"))
+            ref = s["y"] if "y" in s else s["yhi"]
+            if len(ref) != len(s["x"]):
+                raise SpecError(f"series {s.get('label')!r}: x has {len(s['x'])} points, y has {len(ref)} — same csv row set? (a where filter applies per reference)")
+            m = np.isfinite(s["x"]) & np.isfinite(ref)
             for k in ("x", "y", "ylo", "yhi", "sigma"):
                 if k in s: s[k] = s[k][m]
-        h = p.get("highlight")
-        if h and "at" in h:            # {"series": i, "at": x0} → nearest point of that series; the number is computed, never typed
-            s = p["series"][h.get("series", 0)]; i = int(np.argmin(np.abs(s["x"] - h["at"])))
-            h["x"], h["y"] = float(s["x"][i]), float(s["y"][i])
-            if "{y" in h.get("label", "") or "{x" in h.get("label", ""): h["label"] = h["label"].format(x=h["x"], y=h["y"])
+        for h in (p.get("highlight") or []):
+            if "at" in h:            # {"series": i, "at": x0} → nearest point of that series; the number is computed, never typed
+                s = p["series"][h.get("series", 0)]; i = int(np.argmin(np.abs(s["x"] - h["at"])))
+                h["x"], h["y"] = float(s["x"][i]), float(s["y"][i])
+                if "{y" in h.get("label", "") or "{x" in h.get("label", ""): h["label"] = _sci(h["label"].format(x=h["x"], y=h["y"]))
     return spec
+
+
+def _sci(label):
+    """A formatted number in e-notation ("1.05e-05") is typeset as $1.05\\times10^{-5}$ — no reader should meet
+    Python's exponent syntax on a figure."""
+    def fix(m):
+        mant, exp = m.group(1), int(m.group(2))
+        return f"${mant}\\times10^{{{exp}}}$"
+    inner = _re.sub(r"(?<![\w$])(\d+(?:\.\d+)?)e([+-]?\d+)(?![\w])", fix, label)
+    return inner.replace("$$", "")
+
+
+# ── colour: text contrast and red–green confusability ────────────────────────
+def _rgb(c): return np.array(matplotlib.colors.to_rgb(c), float)
+def _lin(v): return np.where(v <= 0.03928, v / 12.92, ((v + 0.055) / 1.055) ** 2.4)
+def _lum(rgb): return float(np.dot(_lin(rgb), [0.2126, 0.7152, 0.0722]))
+def _contrast(c, bg="white"):
+    a, b = _lum(_rgb(c)), _lum(_rgb(bg))
+    return (max(a, b) + 0.05) / (min(a, b) + 0.05)
+def _text_color(c):
+    """A label set in its series colour must still read as text: WCAG AA contrast ≥ 4.5 on white
+    (Okabe-Ito yellow is 1.4). Darken along the same hue until it passes."""
+    rgb = _rgb(c)
+    for _ in range(40):
+        if _contrast(rgb) >= MIN_CONTRAST: break
+        rgb = rgb * 0.92
+    return matplotlib.colors.to_hex(rgb)
+_DEUTAN = np.array([[0.367322, 0.860646, -0.227968], [0.280085, 0.672501, 0.047413], [-0.011820, 0.042940, 0.968881]])
+def _deutan(c): return np.clip(_DEUTAN @ _lin(_rgb(c)), 0, 1)
+def _confusable(c1, c2):
+    """Two hues a deuteranope cannot separate (Machado et al. 2009 simulation, distance in linear RGB)."""
+    return float(np.linalg.norm(_deutan(c1) - _deutan(c2))) < 0.18
+
+
+# ── findings (composition) ───────────────────────────────────────────────────
+FINDINGS = {"errors": [], "warnings": [], "caption": []}
+def _err(msg): FINDINGS["errors"].append(msg); print("figspec ERROR:", msg, file=sys.stderr)
+def _warn(msg): FINDINGS["warnings"].append(msg); print("figspec warn:", msg, file=sys.stderr)
+
 
 def _occupancy(ax):
     """Display-space obstacles: sampled line points, text bboxes, legend, axes frame edge."""
@@ -89,7 +393,6 @@ def _occupancy(ax):
         xy = ln.get_xydata(); xy = xy[np.isfinite(xy).all(1)]
         if len(xy) == 0: continue
         disp = ln.get_transform().transform(xy)   # axvline/axhline use blended transforms — never assume transData
-        # densify segments so thin dashed lines are obstacles too
         for a, b in zip(disp[:-1], disp[1:]):
             n = max(2, int(np.hypot(*(b - a)) / 3)); pts.append(np.linspace(a, b, n))
         pts.append(disp)
@@ -100,11 +403,13 @@ def _occupancy(ax):
     if ax.get_legend(): boxes.append(ax.get_legend().get_window_extent(r))
     return pts, boxes, ax.get_window_extent(r)
 
+
 def _free(bb, pts, boxes, frame, pad=5, allow_outside=False):
     x0, y0, x1, y1 = bb.x0 - pad, bb.y0 - pad, bb.x1 + pad, bb.y1 + pad
     if not allow_outside and (x0 < frame.x0 or x1 > frame.x1 or y0 < frame.y0 or y1 > frame.y1): return False
     if len(pts) and np.any((pts[:, 0] > x0) & (pts[:, 0] < x1) & (pts[:, 1] > y0) & (pts[:, 1] < y1)): return False
     return not any(b.overlaps(bb.expanded(1.25, 1.4)) for b in boxes)
+
 
 def place_text(ax, text, anchor_disp, candidates_pt, allow_outside=False, **kw):
     """Try candidate offsets (points) around an anchor (display px); draw at the first free one.
@@ -120,6 +425,7 @@ def place_text(ax, text, anchor_disp, candidates_pt, allow_outside=False, **kw):
         t.remove()
     return None
 
+
 def _lim(ax, panel, ys):
     y = np.concatenate([np.asarray(v, float)[np.isfinite(v)] for v in ys]) if ys else np.array([0, 1])
     if panel.get("ylim"): lo, hi = panel["ylim"]
@@ -133,6 +439,7 @@ def _lim(ax, panel, ys):
     if panel.get("xlim"): ax.set_xlim(*panel["xlim"])
     _plain_log_ticks(ax)
 
+
 def _plain_log_ticks(ax):
     """A log axis spanning < 2.2 decades reads as numbers (40, 60, 100), not 4×10¹ — Ba run 2026-08-30."""
     from matplotlib.ticker import ScalarFormatter, LogLocator, NullFormatter
@@ -143,61 +450,126 @@ def _plain_log_ticks(ax):
             axis.set_major_formatter(fmt); axis.set_minor_formatter(NullFormatter())
             axis.set_major_locator(LogLocator(base=10, subs=(1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0), numticks=12))
 
+
+def _clip_check(ax, panel):
+    """A series mostly outside the authored limits is a series the reader cannot see (Ba run: five of seven
+    curves entered the frame at n ≈ 75 with their top cut at 1e-2)."""
+    (x0, x1), (y0, y1) = sorted(ax.get_xlim()), sorted(ax.get_ylim())
+    for s in panel["series"]:
+        if s.get("role") == "envelope" or "y" not in s: continue
+        x, y = s["x"], s["y"]
+        if len(x) == 0: continue
+        inside = (x >= x0) & (x <= x1) & (y >= y0) & (y <= y1)
+        frac = 1 - inside.mean()
+        lab = s.get("label", "?")
+        if frac >= 0.5: _err(f"panel {panel.get('label', 'a')}: series \"{lab}\" has {frac:.0%} of its points outside the limits — widen ylim/xlim or drop the series")
+        elif frac >= 0.2: _warn(f"panel {panel.get('label', 'a')}: series \"{lab}\" has {frac:.0%} of its points clipped by the limits")
+    if panel.get("ylim") or panel.get("xlim"):
+        # The frame must hold the data AND the reference the claim compares it with (a refline, a band).
+        ys = np.concatenate([s["y"] for s in panel["series"] if "y" in s and len(s["y"])] +
+                            [np.array([r["value"]], float) for r in panel.get("reflines", []) if r.get("axis") == "y"] +
+                            [np.array([b["from"], b["to"]], float) for b in panel.get("bands", []) if b.get("axis") == "y"] or [np.array([y0, y1])])
+        xs = np.concatenate([s["x"] for s in panel["series"] if len(s["x"])] +
+                            [np.array([r["value"]], float) for r in panel.get("reflines", []) if r.get("axis") == "x"] +
+                            [np.array([b["from"], b["to"]], float) for b in panel.get("bands", []) if b.get("axis") == "x"] or [np.array([x0, x1])])
+        def span(v, lo, hi, log):
+            v = v[np.isfinite(v)]
+            if log:
+                v = v[v > 0]
+                if len(v) == 0 or lo <= 0: return 1.0
+                return (np.log10(v.max()) - np.log10(v.min())) / max(np.log10(hi) - np.log10(lo), 1e-9)
+            return (v.max() - v.min()) / max(hi - lo, 1e-9)
+        fy = span(ys, y0, y1, ax.get_yscale() == "log"); fx = span(xs, x0, x1, ax.get_xscale() == "log")
+        if min(fx, fy) < 0.35: _warn(f"panel {panel.get('label', 'a')}: data fills {fx:.0%} of x and {fy:.0%} of y — tighten the limits so the data occupies the frame")
+
+
 def _bands(ax, panel):
     for b in panel.get("bands", []):
         if b["axis"] == "x":
             ax.axvspan(b["from"], b["to"], color=LIGHT, alpha=0.28, lw=0, zorder=0)
-            xm = np.sqrt(b["from"] * b["to"]) if ax.get_xscale() == "log" else 0.5 * (b["from"] + b["to"])
             panel.setdefault("_late", []).append(("xband", b))
         else:
             ax.axhspan(b["from"], b["to"], color=LIGHT, alpha=0.28, lw=0, zorder=0)
             panel.setdefault("_late", []).append(("yband", b))
 
+
 def _reflines(ax, panel):
     for r in panel.get("reflines", []):
         if r["axis"] == "y":
             ax.axhline(r["value"], color=GREY, lw=0.7, ls=(0, (4, 3)), zorder=1)
-            # label in the right margin, outside the data area
             if r.get("label"): ax.text(1.01, r["value"], _tex(r["label"]), transform=transforms.blended_transform_factory(ax.transAxes, ax.transData),
-                    ha="left", va="center", fontsize=7, color=GREY, clip_on=False)
+                    ha="left", va="center", fontsize=PT["small"], color=GREY, clip_on=False)
         else:
             ax.axvline(r["value"], color=GREY, lw=0.7, ls=(0, (4, 3)), zorder=1)
             if r.get("label"): panel.setdefault("_late", []).append(("xref", r))
 
-def _series(ax, panel, colors):
-    handles = []; ends = []
-    ci = 0
+
+def _series(ax, panel, colors, groups):
+    """Draw the series. Colour: by `group` (one hue per group, first-appearance order across the figure, variants
+    by line style within the group), else by series index; `reference` role is grey. Markers only for sparse
+    measured data, never for a computed curve."""
+    ends = []
+    ci = 0; ls_by_group = {}; drawn = []
     for s in panel["series"]:
-        x = np.asarray(s["x"], float); y = np.asarray(s["y"], float)
+        x = np.asarray(s["x"], float); y = np.asarray(s.get("y", []), float)
         if panel.get("type") == "polar": x = np.deg2rad(x)
         role = s.get("role", "data")
         if role == "envelope":
             ylo, yhi = np.asarray(s["ylo"], float), np.asarray(s["yhi"], float)
-            ax.fill_between(x, ylo, yhi, color=colors[0], alpha=0.18, lw=0, zorder=1, label=s["label"])
-            panel.setdefault("_late", []).append(("envelope", (x, ylo, yhi, s["label"], colors[0])))
+            c = colors[groups[s["group"]] % len(colors)] if s.get("group") in groups else colors[0]
+            ax.fill_between(x, ylo, yhi, color=c, alpha=0.18, lw=0, zorder=1, label=s.get("label", ""))
+            panel.setdefault("_late", []).append(("envelope", (x, ylo, yhi, s.get("label", ""), c)))
             continue
         if role == "model":
             ax.plot(x, y, color="white", lw=2.2, ls=(0, (5, 2.5)), zorder=4)
-            ax.plot(x, y, color="black", lw=1.0, ls=(0, (5, 2.5)), zorder=4.1, label=s["label"])
-            ends.append((*_visible_end(ax, x, y), _tex(s["label"]), "black")); continue
-        c = colors[ci % len(colors)]
-        # More series than palette entries: a colour may repeat only with a different line style
-        # (Ba run 2026-08-30: series 7 wrapped to the same blue as series 1 — indistinguishable).
-        ls_ = ["-", (0, (5, 2)), (0, (1, 1.5)), (0, (5, 1.5, 1, 1.5))][(ci // len(colors)) % 4]
-        # Author-requested style for a data series (a caption may promise "dashed = ceiling")
-        ls_ = {"solid": "-", "dashed": (0, (5, 2)), "dotted": (0, (1, 1.5)), "dashdot": (0, (5, 1.5, 1, 1.5))}.get(s.get("linestyle"), ls_)
-        if ci >= len(colors): print(f"series {ci + 1} exceeds the {len(colors)}-colour palette — drawn {ls_!r}; consider fewer series or a second panel", file=sys.stderr)
-        ci += 1
-        mk = "o" if len(x) <= MAX_MARKERS else None
-        ax.plot(x, y, color=c, lw=1.4, ls=ls_, marker=mk, ms=4, mec="white", mew=0.6, zorder=3, label=s["label"])
+            ax.plot(x, y, color="black", lw=1.0, ls=(0, (5, 2.5)), zorder=4.1, label=s.get("label", ""))
+            ends.append((*_visible_end(ax, x, y), _tex(s.get("label", "")), "black", None)); continue
+        if role == "reference":
+            c = GREY; lw = 0.9; z = 2
+            k = ls_by_group.get("__ref__", 0); ls_by_group["__ref__"] = k + 1
+            ls_ = list(LINESTYLES.values())[k % 4]
+        elif s.get("group") in groups:
+            c = colors[groups[s["group"]] % len(colors)]; lw = 1.4; z = 3
+            k = ls_by_group.get(s["group"], 0); ls_by_group[s["group"]] = k + 1
+            ls_ = list(LINESTYLES.values())[k % 4]
+        else:
+            c = colors[ci % len(colors)]; lw = 1.4; z = 3
+            # More series than palette entries: a colour may repeat only with a different line style
+            ls_ = list(LINESTYLES.values())[(ci // len(colors)) % 4]
+            if ci >= len(colors): _warn(f"series {ci + 1} exceeds the {len(colors)}-colour palette — drawn {ls_!r}; consider fewer series or a second panel")
+            ci += 1
+        if s.get("linestyle"): ls_ = LINESTYLES[s["linestyle"]]
+        # Red–green pairs (tab10 red/green, any confusable hues) must differ by line style as well as hue
+        # (Wong, Color blindness, Nat. Methods 2011): the renderer adds the style and says so.
+        for pc, pls, plab in drawn:
+            if matplotlib.colors.to_hex(pc) == matplotlib.colors.to_hex(c): continue   # same colour on purpose (grey references): line styles already differ
+            if pls == ls_ and _confusable(c, pc):
+                used = {l for _, l, _ in drawn}
+                ls_ = next((l for l in LINESTYLES.values() if l not in used and l != pls), LINESTYLES["dotted"])
+                _warn(f"panel {panel.get('label', 'a')}: \"{s.get('label', '?')}\" and \"{plab}\" are the same to a red–green colour-blind reader — drawn with a different line style; better: a palette without red beside green (report/figstyle.mplstyle)")
+                break
+        drawn.append((c, ls_, s.get("label", "?")))
+        want_mk = s.get("markers")
+        if want_mk is None: want_mk = len(x) <= MAX_MARKERS and not s.get("_computed")
+        mk = "o" if want_mk else None
+        # Marker hierarchy (Krzywinski & Wong, Plotting symbols 2013; Nature physics practice): primary data
+        # filled, references / literature points open circles.
+        mstyle = dict(mfc="white", mec=c, mew=0.9) if role == "reference" else dict(mec="white", mew=0.6)
+        if len(x) == 1:   # a single point: marker only, larger, so it reads as a datum
+            ax.plot(x, y, marker="o", ls="none", ms=5.5, color=c, zorder=z + 0.5, label=s.get("label", ""), **mstyle)
+        else:
+            ax.plot(x, y, color=c, lw=lw, ls=ls_, marker=mk, ms=4, zorder=z, label=s.get("label", ""), **mstyle)
         if s.get("sigma") is not None:
-            sg = np.asarray(s["sigma"], float)
+            sg = np.asarray(s["sigma"], float); kind = SIGMA_KINDS[s["sigma_kind"]]
             if s.get("band") or len(x) > MAX_MARKERS:
-                ax.fill_between(x, y - sg, y + sg, color=c, alpha=0.22, lw=0, zorder=2)   # 1σ band
+                ax.fill_between(x, y - sg, y + sg, color=c, alpha=0.22, lw=0, zorder=2)
+                FINDINGS["caption"].append(f"shaded band, {'±1 ' if s['sigma_kind'] in ('sd', 'sem') else ''}{kind} ({s.get('label', '')})")
             else:
-                ax.errorbar(x, y, yerr=sg, fmt="none", ecolor=c, elinewidth=0.8, capsize=2, zorder=3)
-        ends.append((*_visible_end(ax, x, y), _tex(s["label"]), c))
+                ax.errorbar(x, y, yerr=sg, fmt="none", ecolor=c, elinewidth=0.8, capsize=2, zorder=z)
+                FINDINGS["caption"].append(f"error bars, {'±1 ' if s['sigma_kind'] in ('sd', 'sem') else ''}{kind} ({s.get('label', '')})")
+        ends.append((*_visible_end(ax, x, y), _tex(s.get("label", "")), c, s.get("group")))
     return ends
+
 
 def _visible_end(ax, x, y):
     (x0, x1), (y0, y1) = sorted(ax.get_xlim()), sorted(ax.get_ylim())
@@ -205,63 +577,113 @@ def _visible_end(ax, x, y):
     i = ok[-1] if len(ok) else len(x) - 1
     return x[i], y[i]
 
-def _direct_labels(ax, ends):
-    """Label each series at its right end, in the margin; nudge apart vertically. One series → no label (the axis label names it)."""
+
+def _direct_labels(ax, ends, panel):
+    """Label each series at its right end, in the margin, nudged apart vertically; one series → no label (the
+    axis title names it). Members of one `group` whose labels repeat the group word ("Ba, 2 W", "Ba, 20 mW")
+    are set as a header "Ba" over the short variants (Wong, Simplify to clarify 2011: pull the repeated word
+    into a header). Label colour is the series colour darkened to WCAG contrast."""
+    ends = [e for e in ends if e[2]]
     if len(ends) < 2: return
     fig = ax.figure; fig.canvas.draw()
-    ys = []
-    for (x, y, lab, c) in ends:
-        ys.append(ax.transData.transform((x, y))[1])
-    order = np.argsort(ys); ys_disp = np.array(ys, float)
-    minsep = 11 * fig.dpi / 72
-    for k in range(1, len(order)):
-        i, j = order[k - 1], order[k]
-        if ys_disp[j] - ys_disp[i] < minsep: ys_disp[j] = ys_disp[i] + minsep
-    for k, (x, y, lab, c) in enumerate(ends):
+    items = []
+    for (x, y, lab, c, g) in ends:
         xd = ax.transAxes.inverted().transform(ax.transData.transform((x, y)))[0]
-        if xd > 0.97:
-            yd = ax.transData.inverted().transform((0, ys_disp[k]))[1]
-            ax.text(1.01, yd, lab, transform=transforms.blended_transform_factory(ax.transAxes, ax.transData),
-                    ha="left", va="center", fontsize=8, color=c, clip_on=False)
-        else:
-            anchor = ax.transData.transform((x, y))
-            t = place_text(ax, _tex(lab), anchor, [(6, 6), (6, -8), (-6, 6), (-6, -8), (10, 0), (0, 10), (0, -12)], fontsize=8, color=c)
-            if t is None:
-                ax.text(1.01, y, lab, transform=transforms.blended_transform_factory(ax.transAxes, ax.transData), ha="left", va="center", fontsize=8, color=c, clip_on=False)
+        items.append({"x": x, "y": y, "lab": lab, "c": c, "g": g, "margin": xd > 0.97, "header": False})
+    # group headers among margin labels
+    by_g = {}
+    for it in items:
+        if it["margin"] and it["g"]: by_g.setdefault(it["g"], []).append(it)
+    for g, its in by_g.items():
+        if len(its) < 2: continue
+        for pref in (f"{_tex(g)}, ", f"{_tex(g)} ", f"{g}, ", f"{g} "):
+            if all(it["lab"].startswith(pref) for it in its):
+                for it in its: it["lab"] = it["lab"][len(pref):]
+                top = max(its, key=lambda it: it["y"])
+                items.append({"x": top["x"], "y": top["y"], "lab": _tex(g), "c": top["c"], "g": g, "margin": True, "header": True})
+                break
+    margin = [it for it in items if it["margin"]]
+    minsep = 11 * fig.dpi / 72
+    for it in margin:
+        it["yd"] = ax.transData.transform((it["x"], it["y"]))[1] + (minsep if it["header"] else 0)
+    margin.sort(key=lambda it: it["yd"])
+    for k in range(1, len(margin)):
+        if margin[k]["yd"] - margin[k - 1]["yd"] < minsep: margin[k]["yd"] = margin[k - 1]["yd"] + minsep
+    for it in margin:
+        yd = ax.transData.inverted().transform((0, it["yd"]))[1]
+        ax.text(1.01, yd, it["lab"], transform=transforms.blended_transform_factory(ax.transAxes, ax.transData),
+                ha="left", va="center", fontsize=PT["label"], color=_text_color(it["c"]), clip_on=False)
+    for it in items:
+        if it["margin"]: continue
+        anchor = ax.transData.transform((it["x"], it["y"]))
+        t = place_text(ax, _tex(it["lab"]), anchor, [(6, 6), (6, -8), (-6, 6), (-6, -8), (10, 0), (0, 10), (0, -12)], fontsize=PT["label"], color=_text_color(it["c"]))
+        if t is None:
+            ax.text(1.01, it["y"], it["lab"], transform=transforms.blended_transform_factory(ax.transAxes, ax.transData), ha="left", va="center", fontsize=PT["label"], color=_text_color(it["c"]), clip_on=False)
+
+
+def _tag(ax, panel):
+    """The panel's condition ("T = 4 K", "P = 20 mW"): inside the frame at a free corner, else above the top spine,
+    right-aligned, the way journals set a panel condition. Never dropped — a panel without its condition is the
+    defect every model in the 2026-09-03 benchmark shipped."""
+    tag = panel.get("tag")
+    if not tag: return
+    fig = ax.figure; fig.canvas.draw()
+    # (dx, dy) signs choose ha/va inside place_text: +dx → left-aligned, -dy → top-aligned.
+    for xf, yf, cands in ((0.02, 0.97, [(2, -2), (2, -12)]), (0.98, 0.97, [(-2, -2), (-2, -12)]),
+                          (0.02, 0.04, [(2, 2), (2, 12)]), (0.98, 0.04, [(-2, 2), (-2, 12)])):
+        anchor = ax.transAxes.transform((xf, yf))
+        t = place_text(ax, _tex(tag), anchor, cands, fontsize=PT["label"], color="black")
+        if t is not None: return
+    ax.text(1.0, 1.02, _tex(tag), transform=ax.transAxes, ha="right", va="bottom", fontsize=PT["label"], color="black", clip_on=False)
+
 
 def _highlight(ax, panel):
-    h = panel.get("highlight")
-    if not h: return
+    for h in (panel.get("highlight") or []):
+        _one_highlight(ax, panel, h)
+
+
+def _one_highlight(ax, panel, h):
     ax.plot(h["x"], h["y"], "o", ms=7, mfc="white", mec="black", mew=1.1, zorder=6)
     anchor = ax.transData.transform((h["x"], h["y"]))
-    cands = [(14, 12), (-14, 12), (14, -14), (-14, -14), (24, 0), (-24, 0), (0, 22), (0, -24), (30, 18), (-30, 18), (30, -20), (-30, -20)]
-    t = place_text(ax, _tex(h["label"]), anchor, cands, fontsize=8)
+    cands = [(14, 12), (-14, 12), (14, -14), (-14, -14), (24, 0), (-24, 0), (0, 22), (0, -24), (30, 18), (-30, 18), (30, -20), (-30, -20),
+             (40, 26), (-40, 26), (40, -28), (-40, -28)]
+    t = place_text(ax, _tex(h["label"]), anchor, cands, fontsize=PT["label"])
     if t is None:
-        print("highlight label did not fit:", h["label"], file=sys.stderr); return
+        _err(f"panel {panel.get('label', 'a')}: highlight label did not fit: {h['label']!r} — shorten the label (the caption carries the sentence), or move the highlight, or remove a series/label near x = {h['x']:.3g}"); return
     tx, ty = t.get_position()
     ax.annotate("", xy=(h["x"], h["y"]), xytext=(tx, ty), arrowprops=dict(arrowstyle="-", color="black", lw=0.6, shrinkA=2, shrinkB=5), zorder=5)
+
 
 def _heatmap(ax, p, fig):
     """z(x, y) as a perceptual map, contour at the levels that carry the claim, colourbar in the margin."""
     x, y, z = p["x"], p["y"], p["z"]
     if p.get("xscale") == "log": ax.set_xscale("log")
     if p.get("yscale") == "log": ax.set_yscale("log")
-    vmin, vmax = p.get("zlim", [np.nanmin(z), np.nanmax(z)])
-    m = ax.pcolormesh(x, y, z.T, cmap=p.get("cmap", "viridis"), vmin=vmin, vmax=vmax, shading="nearest", rasterized=True)
-    cb = fig.colorbar(m, ax=ax, pad=0.02, fraction=0.05); cb.set_label(_tex(p.get("zlabel", "")), fontsize=8); cb.ax.tick_params(labelsize=7)
+    if p.get("diverging"):
+        # A diverging map only for a signed quantity, symmetric about its meaningful zero (Gehlenborg & Wong 2012).
+        c0 = float(p.get("center", 0.0))
+        if p.get("zlim"): vmin, vmax = p["zlim"]
+        else:
+            half = float(np.nanmax(np.abs(z - c0))); vmin, vmax = c0 - half, c0 + half
+        cmap = p.get("cmap", "RdBu_r")
+    else:
+        vmin, vmax = p.get("zlim", [np.nanmin(z), np.nanmax(z)]); cmap = p.get("cmap", "viridis")
+    m = ax.pcolormesh(x, y, z.T, cmap=cmap, vmin=vmin, vmax=vmax, shading="nearest", rasterized=True)
+    cb = fig.colorbar(m, ax=ax, pad=0.02, fraction=0.05); cb.set_label(_tex(p.get("zlabel", "")), fontsize=PT["label"]); cb.ax.tick_params(labelsize=PT["small"])
     if p.get("contours"):
         cs = ax.contour(x, y, z.T, levels=p["contours"], colors="white", linewidths=0.9)
-        ax.clabel(cs, fmt=lambda v: f"{v:g}", fontsize=7, colors="white", inline=True, inline_spacing=2)
+        ax.clabel(cs, fmt=lambda v: f"{v:g}", fontsize=PT["small"], colors="white", inline=True, inline_spacing=2)
     if p.get("xlim"): ax.set_xlim(*p["xlim"])
     if p.get("ylim"): ax.set_ylim(*p["ylim"])
     _plain_log_ticks(ax)
     for r in p.get("reflines", []):
         (ax.axhline if r["axis"] == "y" else ax.axvline)(r["value"], color="white", lw=0.7, ls=(0, (4, 3)))
+    if len(x) * len(y) <= 144: _warn(f"panel {p.get('label', 'a')}: heatmap grid is {len(x)}×{len(y)} — coarse cells read as a table; ≥ 20 per axis for a headline map")
+
 
 def _polar(ax, p, colors):
     """C(θ)-type panels: angle in degrees on the spec side; the renderer draws the physics conventions (0° up = quantization axis if `zero: "N"`)."""
     zero = p.get("zero", "E")
-    # Physics convention: 0° at the top is the quantization axis and θ opens toward +x, i.e. clockwise.
     clockwise = p.get("clockwise", zero == "N")
     ax.set_theta_zero_location(zero); ax.set_theta_direction(-1 if clockwise else 1)
     if p.get("thetalim"): ax.set_thetamin(p["thetalim"][0]); ax.set_thetamax(p["thetalim"][1])
@@ -269,7 +691,7 @@ def _polar(ax, p, colors):
     for s in p["series"]:
         th = np.deg2rad(np.asarray(s["x"], float)); r = np.asarray(s["y"], float)
         c = colors[ci % len(colors)]; ci += 1
-        ax.plot(th, r, color=c, lw=1.4, marker="o" if len(th) <= MAX_MARKERS else None, ms=3.5, mec="white", mew=0.5, label=s["label"], zorder=3)
+        ax.plot(th, r, color=c, lw=1.4, marker="o" if len(th) <= MAX_MARKERS else None, ms=3.5, mec="white", mew=0.5, label=s.get("label", ""), zorder=3)
         if s.get("fill"): ax.fill(th, r, color=c, alpha=0.15, lw=0)
     for r_ in p.get("reflines", []):
         if r_["axis"] == "theta":
@@ -277,47 +699,102 @@ def _polar(ax, p, colors):
             p.setdefault("_late", []).append(("polarref", r_))
         else:
             ax.plot(np.linspace(0, 2 * np.pi, 200), [r_["value"]] * 200, color=GREY, lw=0.7, ls=(0, (4, 3)))
-    ax.set_rlabel_position(p.get("rlabel_deg", 112)); ax.tick_params(labelsize=7); ax.grid(True, lw=0.3, alpha=0.5)
-    if p.get("ylabel"): ax.set_title(_tex(p["ylabel"]), fontsize=8, pad=8)
-    if len(p["series"]) > 1: ax.legend(loc="lower left", bbox_to_anchor=(1.0, 0.0), fontsize=7)
+    ax.set_rlabel_position(p.get("rlabel_deg", 112)); ax.tick_params(labelsize=PT["small"]); ax.grid(True, lw=0.3, alpha=0.5)
+    if p.get("ylabel"): ax.set_title(_tex(p["ylabel"]), fontsize=PT["label"], pad=8)
+    if len(p["series"]) > 1: ax.legend(loc="lower left", bbox_to_anchor=(1.0, 0.0), fontsize=PT["small"])
+
+
+def _groups(spec):
+    """Colour groups in first-appearance order across the whole figure, so "Ba" is the same hue in every panel."""
+    g = {}
+    for p in spec["panels"]:
+        for s in p.get("series", []):
+            if s.get("group") and s["group"] not in g: g[s["group"]] = len(g)
+    return g
+
+
+def _figsize(spec, n, layout):
+    w = W[spec.get("width", "single" if n == 1 or layout == "column" else "double")]
+    if layout == "column":
+        h = PANEL_H * n if n <= 2 else min(PANEL_H * n, 6.0)
+    elif layout == "grid":
+        nc = int(spec.get("ncols", 2)); nr = int(np.ceil(n / nc)); h = 0.78 * (w / nc) * nr
+    else:
+        h = 0.72 * w / n
+    return w, h
+
 
 def render(spec, out):
+    global LAST_FIG
     plt.style.use(STYLE)
+    base = float(plt.rcParams["font.size"])
+    # Nature: text 5–7 pt, panel letters 8 pt bold. Other venues keep their larger sizes.
+    PT["label"], PT["small"], PT["panel"] = min(8, base), min(7, base), min(10, base + 1)
     colors = [c["color"] for c in plt.rcParams["axes.prop_cycle"]]
     panels = spec["panels"]; n = len(panels)
     layout = spec.get("layout", "row" if n > 1 else "single")
-    w = W[spec.get("width", "single" if n == 1 or layout == "column" else "double")]
+    w, h = _figsize(spec, n, layout)
     kinds = [p.get("type", "xy") for p in panels]
     subplot_kw = [dict(projection="polar") if k == "polar" else {} for k in kinds]
+    fig = plt.figure(figsize=(w, h))
     if layout == "column":
-        fig = plt.figure(figsize=(w, 0.78 * w * n * 0.85)); axes = [fig.add_subplot(n, 1, i + 1, **subplot_kw[i]) for i in range(n)]
+        axes = [fig.add_subplot(n, 1, i + 1, **subplot_kw[i]) for i in range(n)]
         if spec.get("sharex", True):
-            for a_ in axes[1:]:
-                if not subplot_kw[axes.index(a_)]: a_.sharex(axes[0])
+            for i, a_ in enumerate(axes[1:], 1):
+                if not subplot_kw[i]: a_.sharex(axes[0])
     elif layout == "grid":
         nc = int(spec.get("ncols", 2)); nr = int(np.ceil(n / nc))
-        fig = plt.figure(figsize=(w, 0.78 * (w / nc) * nr)); axes = [fig.add_subplot(nr, nc, i + 1, **subplot_kw[i]) for i in range(n)]
+        axes = [fig.add_subplot(nr, nc, i + 1, **subplot_kw[i]) for i in range(n)]
     else:
-        fig = plt.figure(figsize=(w, 0.72 * w / n)); axes = [fig.add_subplot(1, n, i + 1, **subplot_kw[i]) for i in range(n)]
+        axes = [fig.add_subplot(1, n, i + 1, **subplot_kw[i]) for i in range(n)]
     axes = list(axes)
+    xy = [p.get("type", "xy") == "xy" for p in panels]
+    # Shared y across a row (Axes, ticks and grids, Krzywinski 2013: fixed scales across panels so the reader
+    # compares by position) — automatic when every panel plots the same quantity, `"sharey": false` opts out.
+    share_y = spec.get("sharey")
+    if share_y is None:
+        share_y = layout in ("row", "grid") and n > 1 and all(xy) and len({(p.get("ylabel", ""), p.get("yscale", "linear")) for p in panels}) == 1
+    if share_y and all(xy):
+        for a_ in axes[1:]: a_.sharey(axes[0])
+    groups = _groups(spec)
     # Pass 1 — geometry: limits, bands, lines, series, axis titles, panel letters.
     ends_by_panel = []
     for ax, p in zip(axes, panels):
         if p.get("type") == "heatmap":
             _heatmap(ax, p, fig); ends_by_panel.append([])
             ax.set_xlabel(_tex(p.get("xlabel", ""))); ax.set_ylabel(_tex(p.get("ylabel", "")))
-            if n > 1: ax.text(-0.18 if layout != "column" else -0.16, 1.02, f"({p['label']})", transform=ax.transAxes, fontsize=10, fontweight="bold", va="bottom")
+            if n > 1: ax.text(-0.18 if layout != "column" else -0.16, 1.02, f"({p['label']})", transform=ax.transAxes, fontsize=PT["panel"], fontweight="bold", va="bottom")
             continue
         if p.get("type") == "polar":
             _polar(ax, p, colors); ends_by_panel.append([])
-            if n > 1: ax.text(-0.28, 1.08, f"({p['label']})", transform=ax.transAxes, fontsize=10, fontweight="bold", va="bottom")
+            if n > 1: ax.text(-0.28, 1.08, f"({p['label']})", transform=ax.transAxes, fontsize=PT["panel"], fontweight="bold", va="bottom")
             continue
+        n_data = sum(1 for s in p["series"] if s.get("role", "data") == "data")
+        if n_data > WARN_SERIES: _warn(f"panel {p.get('label', 'a')}: {n_data} foreground series on one axes — a reader separates four; make the rest references or a second panel")
         ys = [s["y"] for s in p["series"] if s.get("role") != "envelope"] + [s["yhi"] for s in p["series"] if s.get("role") == "envelope"]
         _lim(ax, p, ys)
         _bands(ax, p); _reflines(ax, p)
-        ends_by_panel.append(_series(ax, p, colors))
+        ends_by_panel.append(_series(ax, p, colors, groups))
+        _clip_check(ax, p)
         ax.set_xlabel(_tex(p.get("xlabel", ""))); ax.set_ylabel(_tex(p.get("ylabel", "")))
-        if n > 1: ax.text(-0.18 if layout == "row" else -0.16, 1.02, f"({p['label']})", transform=ax.transAxes, fontsize=10, fontweight="bold", va="bottom")
+        if n > 1: ax.text(-0.18 if layout == "row" else -0.16, 1.02, f"({p['label']})", transform=ax.transAxes, fontsize=PT["panel"], fontweight="bold", va="bottom")
+    # Tick hygiene: one set of tick labels per shared axis, one axis title, no offset multipliers
+    # (a 1e-7 in the corner is a unit the axis title should carry).
+    if share_y and all(xy):
+        lo = min(min(a_.get_ylim()) for a_ in axes); hi = max(max(a_.get_ylim()) for a_ in axes)
+        axes[0].set_ylim(lo, hi)
+        for a_ in axes[1:]:
+            if layout == "row" or (layout == "grid" and axes.index(a_) % int(spec.get("ncols", 2)) != 0):
+                a_.tick_params(labelleft=False); a_.set_ylabel("")
+    if layout == "column" and spec.get("sharex", True) and all(xy):
+        xl = next((a_.get_xlabel() for a_ in axes if a_.get_xlabel()), "")
+        for a_ in axes[:-1]: a_.tick_params(labelbottom=False); a_.set_xlabel("")
+        if xl and not axes[-1].get_xlabel(): axes[-1].set_xlabel(xl)
+    for a_ in axes:
+        for axis_name in ("x", "y"):
+            try:
+                if getattr(a_, f"get_{axis_name}scale")() == "linear": a_.ticklabel_format(axis=axis_name, useOffset=False)
+            except (AttributeError, ValueError): pass
     # Freeze the layout BEFORE any label is placed: tight_layout after placement
     # resizes the axes and moves data-anchored texts relative to each other
     # (fig2 2026-08-29: two line labels measured apart, rendered on top of each other).
@@ -326,47 +803,100 @@ def render(spec, out):
     for ax, p, ends in zip(axes, panels, ends_by_panel):
         if p.get("type") in ("heatmap", "polar"):
             if p.get("type") == "heatmap": _highlight(ax, p)
+            if p.get("tag"): ax.set_title(_tex(p["tag"]), loc="right", fontsize=PT["label"], pad=3)
             for kind, r_ in p.get("_late", []):
                 if kind != "polarref": continue
                 anchor = ax.transData.transform((np.deg2rad(r_["value"]), ax.get_rmax() * 1.16))
-                t = place_text(ax, _tex(r_["label"]), anchor, [(0, 0), (0, 9), (0, -9), (9, 0), (-9, 0), (0, 18), (9, 9), (-9, 9)], allow_outside=True, fontsize=7, color=GREY)
-                if t is None: print("polar refline label did not fit:", r_["label"], file=sys.stderr)
+                t = place_text(ax, _tex(r_["label"]), anchor, [(0, 0), (0, 9), (0, -9), (9, 0), (-9, 0), (0, 18), (9, 9), (-9, 9)], allow_outside=True, fontsize=PT["small"], color=GREY)
+                if t is None: _err(f"polar refline label did not fit: {r_['label']!r}")
             continue
-        _direct_labels(ax, ends)
+        # Envelope labels first (inside the band where it is thickest); one that does not fit joins the
+        # direct labels in the right margin instead of being dropped (fig9 2026-09-05).
+        for kind, obj in p.get("_late", []):
+            if kind != "envelope": continue
+            x, ylo, yhi, lab, c = obj
+            if not lab: continue
+            thick = (ax.transData.transform(np.c_[x, yhi]) - ax.transData.transform(np.c_[x, ylo]))[:, 1]
+            t = None
+            for i in np.argsort(-thick)[:6]:
+                t = place_text(ax, _tex(lab), ax.transData.transform((x[i], 0.5 * (ylo[i] + yhi[i]))), [(0, 0), (0, 8), (0, -8)], fontsize=PT["small"], color=_text_color(c))
+                if t: break
+            if t is None:
+                (x0_, x1_), (y0_, y1_) = sorted(ax.get_xlim()), sorted(ax.get_ylim())
+                ok = np.where((x >= x0_) & (x <= x1_))[0]; i = ok[-1] if len(ok) else len(x) - 1
+                ends.append((x[i], float(np.clip(0.5 * (ylo[i] + yhi[i]), y0_, y1_)), _tex(lab), c, None))
+        _direct_labels(ax, ends, p)
         for kind, obj in p.get("_late", []):
             if kind == "xband":
                 b = obj; xm = np.sqrt(b["from"] * b["to"]) if ax.get_xscale() == "log" else 0.5 * (b["from"] + b["to"])
                 top = ax.transData.inverted().transform(ax.transAxes.transform((0, 0.985)))[1]
-                t = place_text(ax, _tex(b["label"]), ax.transData.transform((xm, top)), [(0, 0), (0, -11), (8, 0), (-8, 0), (16, 0), (-16, 0), (0, -22)], fontsize=7, color=GREY)
+                t = place_text(ax, _tex(b["label"]), ax.transData.transform((xm, top)), [(0, 0), (0, -11), (8, 0), (-8, 0), (16, 0), (-16, 0), (0, -22)], fontsize=PT["small"], color=GREY)
                 if t is None:  # above the top spine, as journals do
                     ymax = ax.transData.inverted().transform(ax.transAxes.transform((0, 1.0)))[1]
-                    t = place_text(ax, _tex(b["label"]), ax.transData.transform((xm, ymax)), [(0, 3), (10, 3), (-10, 3), (0, 14)], allow_outside=True, fontsize=7, color=GREY)
-                if t is None: print("band label did not fit:", b["label"], file=sys.stderr)
+                    t = place_text(ax, _tex(b["label"]), ax.transData.transform((xm, ymax)), [(0, 3), (10, 3), (-10, 3), (0, 14)], allow_outside=True, fontsize=PT["small"], color=GREY)
+                if t is None and b.get("label"): _err(f"band label did not fit: {b['label']!r} — fewer labels near x = {xm:.3g}")
             elif kind == "xref":
                 r = obj; top = ax.transData.inverted().transform(ax.transAxes.transform((0, 0.985)))[1]
-                t = place_text(ax, _tex(r["label"]), ax.transData.transform((r["value"], top)), [(3, 0), (-3, 0), (3, -11), (-3, -11), (3, -22), (-3, -22)], fontsize=7, color=GREY)
+                t = place_text(ax, _tex(r["label"]), ax.transData.transform((r["value"], top)), [(3, 0), (-3, 0), (3, -11), (-3, -11), (3, -22), (-3, -22)], fontsize=PT["small"], color=GREY)
                 if t is None:
                     ymax = ax.transData.inverted().transform(ax.transAxes.transform((0, 1.0)))[1]
-                    t = place_text(ax, _tex(r["label"]), ax.transData.transform((r["value"], ymax)), [(0, 3), (3, 3), (-3, 3), (0, 14)], allow_outside=True, fontsize=7, color=GREY)
-                if t is None: print("refline label did not fit:", r["label"], file=sys.stderr)
+                    t = place_text(ax, _tex(r["label"]), ax.transData.transform((r["value"], ymax)), [(0, 3), (3, 3), (-3, 3), (0, 14)], allow_outside=True, fontsize=PT["small"], color=GREY)
+                if t is None and r.get("label"): _err(f"refline label did not fit: {r['label']!r}")
             elif kind == "yband":
-                b = obj; ym = 0.5 * (b["from"] + b["to"])
+                b = obj; ym = 0.5 * (b["from"] + b["to"]); t = None
                 for xf in (0.03, 0.5, 0.8, 0.25, 0.65):
                     xa = ax.transData.inverted().transform(ax.transAxes.transform((xf, 0)))[0]
-                    t = place_text(ax, _tex(b["label"]), ax.transData.transform((xa, ym)), [(0, 5), (0, -6), (0, 0)], fontsize=7, color=GREY)
+                    t = place_text(ax, _tex(b["label"]), ax.transData.transform((xa, ym)), [(0, 5), (0, -6), (0, 0)], fontsize=PT["small"], color=GREY)
                     if t: break
-            else:
-                x, ylo, yhi, lab, c = obj; thick = (ax.transData.transform(np.c_[x, yhi]) - ax.transData.transform(np.c_[x, ylo]))[:, 1]
-                for i in np.argsort(-thick)[:6]:
-                    t = place_text(ax, _tex(lab), ax.transData.transform((x[i], 0.5 * (ylo[i] + yhi[i]))), [(0, 0), (0, 8), (0, -8)], fontsize=7, color=c)
-                    if t: break
+                if t is None and b.get("label"): _err(f"band label did not fit: {b['label']!r}")
         _highlight(ax, p)
+        _tag(ax, p)
     fig.savefig(out + ".pdf", pad_inches=0.1); fig.savefig(out + ".png", dpi=220, pad_inches=0.1)
-    print("wrote", out)
+    # Print-size model: the PDF's own page box is what \includegraphics scales.
+    import fitz
+    doc = fitz.open(out + ".pdf"); pw, ph = doc[0].rect.width / 72, doc[0].rect.height / 72; doc.close()
+    aspect = ph / pw
+    print_h = aspect * w          # the figure is designed at its print width; \includegraphics uses that width
+    if print_h > MAX_PRINT_H: _err(f"figure prints {print_h:.1f} in tall at its column width (aspect {aspect:.2f}) — it takes the whole page; fewer stacked panels or a row layout")
+    LAST_FIG = fig
+    print("wrote", out, f"(include at width={w:.2f}in)")
+    if FINDINGS["caption"]: print("caption must state:", "; ".join(dict.fromkeys(FINDINGS["caption"])))
+    return out
+
+
+def _sidecar(out):
+    """`compile_latex` reads <pdf>.figlint.json when its md5 matches the PDF: the renderer's own composition
+    findings become compile-time errors, the same channel the PDF-layer lint uses."""
+    pdf = out + ".pdf"
+    if not os.path.exists(pdf): return
+    md5 = hashlib.md5(open(pdf, "rb").read()).hexdigest()
+    side = {"md5": md5, "source": "figspec", "errors": list(FINDINGS["errors"]), "warnings": list(FINDINGS["warnings"]),
+            "caption": list(dict.fromkeys(FINDINGS["caption"]))}
+    for ext in (".pdf", ".png"):
+        with open(out + ext + ".figlint.json", "w") as f: json.dump(side, f, indent=1)
+
+
+def main(argv):
+    if len(argv) < 2 or argv[1] in ("-h", "--help"):
+        print("usage: figspec <spec.json>...   (see skills/matplotlib-figures/references/figspec_schema.md)"); return 0
+    rc = 0
+    for f in argv[1:]:
+        FINDINGS["errors"].clear(); FINDINGS["warnings"].clear(); FINDINGS["caption"].clear()
+        try:
+            spec = json.load(open(f))
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"figspec ERROR: {f}: {e}", file=sys.stderr); rc = 2; continue
+        try:
+            validate(spec)
+            os.makedirs(os.path.dirname(spec["out"]) or ".", exist_ok=True)
+            out = render(_resolve(spec), spec["out"])
+        except SpecError as e:
+            print(f"figspec ERROR: {f}: {e}", file=sys.stderr); print("figspec: nothing rendered — fix the spec (grammar: skills/matplotlib-figures/references/figspec_schema.md)", file=sys.stderr); rc = 2; continue
+        _sidecar(out)
+        if FINDINGS["errors"]:
+            print(f"figspec: {len(FINDINGS['errors'])} composition error(s) — the figure is written for you to look at, but it is NOT done: compile_latex will refuse it until they are fixed in the spec", file=sys.stderr); rc = 2
+    return rc
+
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
-        print("usage: figspec <spec.json>...   (see skills/matplotlib-figures/references/figspec_schema.md)"); sys.exit(0)
-    for f in sys.argv[1:]:
-        spec = json.load(open(f)); os.makedirs(os.path.dirname(spec["out"]) or ".", exist_ok=True)
-        render(_resolve(spec), spec["out"])
+    sys.exit(main(sys.argv))

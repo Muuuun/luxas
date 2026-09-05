@@ -103,6 +103,7 @@ const MANIFEST: Record<string, GateSpec> = {
 	smoke_figure_gate: { kind: "assert" },
 	smoke_pi_stop_settling: { kind: "assert" },
 	smoke_figplace: { kind: "assert" },
+	smoke_levelspec: { kind: "assert", timeoutMs: 180_000 },
 	smoke_schematic_template: { kind: "assert" },
 	smoke_revise_binding: { kind: "assert" },
 	smoke_replicate_legs: { kind: "assert" },

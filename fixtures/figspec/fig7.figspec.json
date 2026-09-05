@@ -68,7 +68,7 @@
       "csv": "fixtures/figspec/data/gate_length_sweep.csv",
       "col": "gain"
      },
-     "sigma": {
+     "sigma_kind": "sd", "sigma": {
       "expr": "0.05*y"
      },
      "label": "interaction gate"

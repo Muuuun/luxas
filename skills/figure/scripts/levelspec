@@ -1,0 +1,257 @@
+#!/usr/bin/env python3
+"""levelspec — an energy-level diagram is data, not hand-placed TikZ.
+
+  levelspec <name>.levelspec.json      → <out>.tex, <out>.pdf, <out>.png, lint at print width
+
+The author lists levels (label, energy, column) and transitions (from, to, kind);
+the generator owns everything the Ba run's five audit rounds nudged by hand:
+a compressed energy axis (sqrt-compressed gaps with a floor, break marks where
+the compression is large — the Rydberg gap no longer makes a page-tall figure),
+column layout, label slots, arrow slots, colours by group, straight arrows for
+coherent drives and wavy arrows for decays (the convention the hand-drawn
+diagram inverted), the wavelength set inline on its own arrow, no key box.
+
+Exit 0: written and figlint-pdf clean at the print width. Exit 2: spec error,
+compile failure, or lint errors (listed) — the figure is not done.
+"""
+import difflib, json, math, os, re as _re, shutil, subprocess, sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+FIGLINT = os.path.join(HERE, "..", "..", "matplotlib-figures", "scripts", "figlint-pdf")
+PALETTE = ["0072B2", "D55E00", "009E73", "CC79A7", "E69F00", "56B4E9", "882255"]   # Okabe-Ito order, no yellow
+KINDS = {"drive", "qubit", "decay", "dashed"}
+KEYS = {
+    "spec": {"out", "width", "unit", "columns", "levels", "transitions", "limit", "height_in"},
+    "level": {"id", "label", "energy", "column", "group", "tag"},
+    "transition": {"from", "to", "kind", "label", "group"},
+    "limit": {"label", "energy", "column"},
+}
+REDIRECT = {"wavelength": "label", "color": "group", "colour": "group", "type": "kind", "style": "kind", "key": "nothing — there is no key box; a level's group colours it and its tag names it",
+            "legend": "nothing — no legend; use tag on a level", "y": "energy", "x": "column", "name": "label", "arrows": "transitions", "states": "levels"}
+W_IN = {"single": 3.4, "double": 7.0}
+
+
+class SpecError(Exception):
+    pass
+
+
+def _keys(obj, kind, path):
+    if not isinstance(obj, dict): raise SpecError(f"{path}: expected an object")
+    for k in obj:
+        if k in KEYS[kind]: continue
+        if k in REDIRECT: raise SpecError(f"{path}.{k}: not a levelspec key — use {REDIRECT[k]}")
+        near = difflib.get_close_matches(k, sorted(KEYS[kind]), n=1, cutoff=0.6)
+        raise SpecError(f"{path}.{k}: unknown key — " + (f"did you mean \"{near[0]}\"?" if near else f"valid: {', '.join(sorted(KEYS[kind]))}"))
+
+
+def validate(spec):
+    _keys(spec, "spec", "spec")
+    if not isinstance(spec.get("out"), str): raise SpecError("spec.out: required (output stem)")
+    if spec.get("width", "single") not in W_IN: raise SpecError("spec.width: single | double")
+    levels = spec.get("levels")
+    if not isinstance(levels, list) or len(levels) < 2: raise SpecError("spec.levels: at least two levels")
+    ids = set()
+    for i, l in enumerate(levels):
+        p = f"levels[{i}]"; _keys(l, "level", p)
+        for k in ("id", "label", "energy"):
+            if k not in l: raise SpecError(f"{p}.{k}: required")
+        if not isinstance(l["energy"], (int, float)): raise SpecError(f"{p}.energy: a number (same unit for every level)")
+        if l["id"] in ids: raise SpecError(f"{p}.id: duplicate id {l['id']!r}")
+        ids.add(l["id"]); l.setdefault("column", 0)
+        if not isinstance(l["column"], int) or l["column"] < 0: raise SpecError(f"{p}.column: a non-negative integer (0 = leftmost)")
+    for i, t in enumerate(spec.get("transitions", [])):
+        p = f"transitions[{i}]"; _keys(t, "transition", p)
+        for k in ("from", "to"):
+            if t.get(k) not in ids: raise SpecError(f"{p}.{k}: {t.get(k)!r} is not a level id")
+        t.setdefault("kind", "drive")
+        if t["kind"] not in KINDS: raise SpecError(f"{p}.kind: {t['kind']!r} — drive (straight) | qubit (double-headed) | decay (wavy) | dashed")
+        if t["from"] == t["to"]: raise SpecError(f"{p}: from and to are the same level")
+    if spec.get("limit"):
+        _keys(spec["limit"], "limit", "limit")
+        if "energy" not in spec["limit"]: raise SpecError("limit.energy: required")
+        spec["limit"].setdefault("label", "ionization limit")
+    if spec.get("columns") is not None and not isinstance(spec["columns"], list): raise SpecError("spec.columns: a list of column headings")
+    return spec
+
+
+def compress(energies, H, gmin_by_energy, gmin_default):
+    """Map sorted distinct energies to y (cm) in [0, H]: gaps ∝ sqrt(ΔE) (compresses the Rydberg gap), floored at
+    a per-gap minimum so labels never touch (0.25 cm between unlabeled manifold members, gmin between labeled
+    levels), then scaled to H. Returns (y_by_energy, break_gap_indices, ys) — a break is drawn where the gap is
+    compressed > 3× relative to linear."""
+    es = sorted(set(energies)); n = len(es)
+    if n == 1: return {es[0]: H / 2}, set(), [H / 2]
+    span = es[-1] - es[0] or 1.0
+    de = [es[i + 1] - es[i] for i in range(n - 1)]
+    gmins = [max(gmin_by_energy.get(es[i], 0.25), gmin_by_energy.get(es[i + 1], 0.25)) if (es[i] in gmin_by_energy or es[i + 1] in gmin_by_energy) else 0.25 for i in range(n - 1)]
+    gaps = [max(gm, math.sqrt(max(d, 0) / span) * H) for gm, d in zip(gmins, de)]
+    total = sum(gaps)
+    if total > H:  # shrink the free gaps (those above their floor) to fit
+        fixed = sum(g for g, gm in zip(gaps, gmins) if g <= gm + 1e-9); free = total - fixed
+        target = max(H - fixed, 0)
+        gaps = [g if g <= gm + 1e-9 else g * (target / free if free > 0 else 1) for g, gm in zip(gaps, gmins)]
+    else:
+        gaps = [g * (H / total) for g in gaps]
+    ys = [0.0]
+    for g in gaps: ys.append(ys[-1] + g)
+    scale = sum(gaps)
+    breaks = {i for i, (d, g) in enumerate(zip(de, gaps)) if g > 0 and (d / span * scale) / g > 3.0}
+    return {e: y for e, y in zip(es, ys)}, breaks, ys
+
+
+def text_cm(s, pt=8):
+    """Rough width of a label in cm: strip TeX control, count glyphs (sub/superscripts count 0.6)."""
+    t = s.replace("\\,", "").replace("\;", "").replace("\\!", "")
+    t = _re.sub(r"\\[A-Za-z]+", "x", t)
+    n = 0.0; small = False
+    for ch in t:
+        if ch in "${}": continue
+        if ch in "^_": small = True; continue
+        n += 0.6 if small else 1.0
+        if ch in " ,": small = False
+    return 0.155 * n * pt / 8 + 0.1
+
+
+def build(spec):
+    width_req = spec.get("width", "single")
+    levels = spec["levels"]; trans = spec.get("transitions", []); limit = spec.get("limit")
+    ncol = max(l["column"] for l in levels) + 1
+    if limit and limit.get("column") is not None: ncol = max(ncol, limit["column"] + 1)
+    # Geometry from content: each column = [label zone][level line]; labels sit LEFT of the line (anchor east,
+    # tag in grey italic before the term symbol), so the zone right of a line is free for arrows to leave.
+    line = 0.9
+    def full_label(l): return (f"{{\\scriptsize\\itshape\\color{{dec}} {l['tag']}}}\; " if l.get("tag") else "") + l["label"]
+    zone = [0.3] * ncol
+    for l in levels:
+        if l["label"] or l.get("tag"): zone[l["column"]] = max(zone[l["column"]], text_cm(full_label(l)) + 0.15)
+    axis_w = 0.75
+    right_pad = max(0.3, text_cm(limit["label"], 7) if limit else 0.3)
+    xs = [axis_w]                       # x of each column's line start
+    for c in range(ncol): xs.append(xs[-1] + zone[c] + line + 0.35)
+    W_cm = xs[-1] - 0.35 + right_pad
+    width = width_req
+    if W_cm > W_IN[width] * 2.54:
+        if width == "single" and W_cm <= W_IN["double"] * 2.54: width = "double"
+        else: raise SpecError(f"diagram needs {W_cm / 2.54:.1f} in of width for {ncol} columns of labels — fewer columns, shorter labels, or drop tags")
+    H_cm = float(spec.get("height_in", 3.0 if width == "single" else 3.4)) * 2.54
+    fs = r"\footnotesize"
+    groups = {}
+    for l in levels:
+        if l.get("group") and l["group"] not in groups: groups[l["group"]] = len(groups)
+    for t in trans:
+        if t.get("group") and t["group"] not in groups: groups[t["group"]] = len(groups)
+    energies = [l["energy"] for l in levels] + ([limit["energy"]] if limit else [])
+    labeled = {l["energy"]: 0.55 for l in levels if l["label"] or l.get("tag")}
+    if limit: labeled[limit["energy"]] = 0.45
+    ymap, breaks, ys_sorted = compress(energies, H_cm, labeled, 0.55)
+    by_id = {l["id"]: l for l in levels}
+    def X(c): return xs[c] + zone[c]
+    def Y(e): return ymap[e]
+    out = []; A = out.append
+    A(r"\documentclass[tikz,border=3pt]{standalone}")
+    A(r"\usepackage{amsmath,amssymb}")
+    A(r"\usepackage[T1]{fontenc}\usepackage{helvet}\renewcommand{\familydefault}{\sfdefault}")
+    A(r"\usepackage{sansmath}\sansmath")
+    A(r"\usetikzlibrary{arrows.meta,decorations.pathmorphing,calc}")
+    for g, i in groups.items(): A(f"\\definecolor{{g{i}}}{{HTML}}{{{PALETTE[i % len(PALETTE)]}}}")
+    A(r"\definecolor{lvl}{HTML}{222222}\definecolor{dec}{HTML}{8a8a8a}")
+    A(r"\begin{document}")
+    A(r"\begin{tikzpicture}[x=1cm,y=1cm, font=" + fs + ", >={Stealth[length=4pt]},")
+    A(r"  level/.style={line width=1.4pt}, drive/.style={line width=0.9pt,->}, qubit/.style={line width=0.9pt,<->},")
+    A(r"  dashedtr/.style={line width=0.8pt,->,densely dashed},")
+    A(r"  decay/.style={line width=0.6pt,->,decorate,decoration={snake,amplitude=0.7pt,segment length=3pt,post length=3pt}},")
+    A(r"  wl/.style={fill=white,inner sep=1pt,font=\scriptsize}]")
+    # energy axis with break marks (positions are compressed, so no ticks — the breaks say so)
+    xa = axis_w - 0.45
+    A(f"  \\draw[->,line width=0.6pt,dec] ({xa:.2f},-0.2) -- ({xa:.2f},{H_cm + 0.3:.2f});")
+    unit = spec.get("unit")
+    A(f"  \\node[rotate=90,anchor=south,text=dec,font=\\scriptsize] at ({xa - 0.02:.2f},{H_cm / 2:.2f}) {{Energy{(' (' + unit + ')') if unit else ''}}};")
+    for i in sorted(breaks):
+        yb = 0.5 * (ys_sorted[i] + ys_sorted[i + 1])
+        A(f"  \\fill[white] ({xa - 0.12:.2f},{yb - 0.08:.2f}) rectangle ({xa + 0.12:.2f},{yb + 0.08:.2f});")
+        A(f"  \\draw[dec,line width=0.6pt] ({xa - 0.14:.2f},{yb - 0.12:.2f}) -- ({xa + 0.14:.2f},{yb - 0.02:.2f}) ({xa - 0.14:.2f},{yb + 0.02:.2f}) -- ({xa + 0.14:.2f},{yb + 0.12:.2f});")
+    for c, head in enumerate(spec.get("columns") or []):
+        if c >= ncol: break
+        top = max([Y(l["energy"]) for l in levels if l["column"] == c] + ([Y(limit["energy"])] if limit and limit.get("column", ncol - 1) == c else [0]))
+        A(f"  \\node[anchor=south,text=dec,font=\\scriptsize] at ({X(c) + line / 2:.2f},{top + 0.3:.2f}) {{{head}}};")
+    for l in levels:
+        c = l["column"]; x0 = X(c); y = Y(l["energy"])
+        col = f"g{groups[l['group']]}" if l.get("group") in groups else "lvl"
+        A(f"  \\draw[level,{col}] ({x0:.2f},{y:.2f}) -- ({x0 + line:.2f},{y:.2f});")
+        if l["label"] or l.get("tag"):
+            A(f"  \\node[anchor=east,inner sep=1pt,text={col}] at ({x0 - 0.08:.2f},{y:.2f}) {{{full_label(l)}}};")
+    if limit:
+        c = limit.get("column", ncol - 1); x0 = X(c); y = Y(limit["energy"])
+        A(f"  \\draw[dec,densely dashed,line width=0.6pt] ({x0 - 0.15:.2f},{y:.2f}) -- ({x0 + line + 0.15:.2f},{y:.2f});")
+        A(f"  \\node[anchor=west,inner sep=1pt,text=dec,font=\\scriptsize] at ({x0 + line + 0.2:.2f},{y:.2f}) {{{limit['label']}}};")
+    # transitions: same column → vertical in slots along the line, wavelength inline (rotated);
+    # cross column → from the source line's right end to the target line's middle, wavelength sloped inline.
+    slot_used = {}; fan = {}
+    for t in trans:
+        a, b = by_id[t["from"]], by_id[t["to"]]
+        ya, yb = Y(a["energy"]), Y(b["energy"])
+        style = {"drive": "drive", "qubit": "qubit", "decay": "decay", "dashed": "dashedtr"}[t["kind"]]
+        col = f"g{groups[t['group']]}" if t.get("group") in groups else ("dec" if t["kind"] == "decay" else "lvl")
+        # arrows fanning out of one level stagger their inline labels along the arrow so they never stack
+        k = fan.get(t["from"], 0); fan[t["from"]] = k + 1
+        pos = [0.5, 0.32, 0.68, 0.2, 0.8][k % 5]
+        lab = f" node[wl,pos={pos},{{ROT}},text={col}] {{{t['label']}}}" if t.get("label") else ""
+        if a["column"] == b["column"]:
+            c = a["column"]; kk = slot_used.get(c, 0); slot_used[c] = kk + 1
+            x = X(c) + 0.22 + (kk % 2) * 0.45
+            sgn = 1 if yb > ya else -1
+            A(f"  \\draw[{style},{col}] ({x:.2f},{ya + 0.06 * sgn:.2f}) -- ({x:.2f},{yb - 0.06 * sgn:.2f}){lab.replace('{ROT}', 'rotate=90')};")
+        elif abs(a["column"] - b["column"]) == 1:
+            up = yb > ya
+            xa_ = X(a["column"]) + line - 0.04; xb_ = X(b["column"]) + line / 2
+            A(f"  \\draw[{style},{col}] ({xa_:.2f},{ya:.2f}) -- ({xb_:.2f},{yb - 0.07 if up else yb + 0.07:.2f}){lab.replace('{ROT}', 'sloped')};")
+        else:
+            # a skip over a column: elbow — horizontal from the source's line end, vertical into the target's
+            # middle — so the run never crosses the skipped column's labels (they sit left of its line)
+            up = yb > ya
+            xa_ = X(a["column"]) + line - 0.04 if b["column"] > a["column"] else X(a["column"]) + 0.04
+            xb_ = X(b["column"]) + line / 2
+            A(f"  \\draw[{style},{col}] ({xa_:.2f},{ya:.2f}) -- ({xb_:.2f},{ya:.2f}) -- ({xb_:.2f},{yb - 0.07 if up else yb + 0.07:.2f}){lab.replace('{ROT}', 'rotate=90').replace(f'pos={pos}', f'pos={0.5 + pos / 2:.2f}')};")
+    A(r"\end{tikzpicture}")
+    A(r"\end{document}")
+    return "\n".join(out) + "\n", round(W_cm / 2.54, 2), width
+
+
+def _cid(s):
+    return "".join(ch for ch in s if ch.isalnum())
+
+
+def main(argv):
+    if len(argv) < 2 or argv[1] in ("-h", "--help"):
+        print(__doc__); return 0
+    rc = 0
+    for f in argv[1:]:
+        try:
+            spec = validate(json.load(open(f)))
+            tex, width_in, width = build(spec)
+        except (OSError, json.JSONDecodeError, SpecError) as e:
+            print(f"levelspec ERROR: {f}: {e}", file=sys.stderr); rc = 2; continue
+        out = spec["out"]; os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
+        with open(out + ".tex", "w") as fh: fh.write(tex)
+        outdir = os.path.dirname(os.path.abspath(out)) or "."
+        r = subprocess.run(["pdflatex", "-interaction=nonstopmode", "-halt-on-error", "-output-directory", outdir, out + ".tex"],
+                           capture_output=True, text=True)
+        for ext in (".aux", ".log"):
+            try: os.remove(out + ext)
+            except OSError: pass
+        if r.returncode != 0 or not os.path.exists(out + ".pdf"):
+            tail = "\n".join(l for l in r.stdout.splitlines() if l.startswith("!") or "Error" in l)[-800:]
+            print(f"levelspec ERROR: pdflatex failed for {out}.tex — a label is probably not valid LaTeX:\n{tail}", file=sys.stderr); rc = 2; continue
+        if shutil.which("pdftoppm"):
+            subprocess.run(["pdftoppm", "-r", "220", "-png", "-singlefile", out + ".pdf", out], capture_output=True)
+        lint = subprocess.run([sys.executable, FIGLINT, out + ".pdf", "--width", str(width_in)], capture_output=True, text=True)
+        sys.stderr.write(lint.stderr)
+        if lint.returncode == 2:
+            print(f"levelspec: {out}.pdf has layout errors at {width_in} in print width — move a level to another column, shorten a label, or drop a transition", file=sys.stderr); rc = 2
+        else:
+            print("wrote", out, f"(tex, pdf, png; figlint-pdf clean) — include it at its natural size: \\begin{{{'figure*' if width == 'double' else 'figure'}}} … \\includegraphics[width={width_in}in]{{…}} (fonts are designed for that width; do not scale it up)")
+    return rc
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

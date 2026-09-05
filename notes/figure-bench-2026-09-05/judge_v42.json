@@ -1,0 +1,418 @@
+[
+ {
+  "judge": "sonnet",
+  "pair": "GLM frontier: 09-03(A) vs v4.2(B)",
+  "swap": false,
+  "a": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 1,
+   "legible": 2,
+   "focus": 2,
+   "space": 1,
+   "convention": 2
+  },
+  "b": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 1,
+   "space": 2,
+   "convention": 1
+  },
+  "winner": "b",
+  "reason": "Fig1's gate-fails line at y=1 with curves reaching 10^1-10^2 shows infidelity exceeding 1, a physical impossibility; Fig2 uses semantic color coding and clean temperature labels without that flaw.",
+  "cost": 0.019659
+ },
+ {
+  "judge": "sonnet",
+  "pair": "GLM frontier: 09-03(A) vs v4.2(B)",
+  "swap": true,
+  "a": {
+   "claim": 1,
+   "condition": 2,
+   "physical": 1,
+   "legible": 1,
+   "focus": 1,
+   "space": 1,
+   "convention": 1
+  },
+  "b": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 2,
+   "space": 2,
+   "convention": 2
+  },
+  "winner": "b",
+  "reason": "Fig1 isolates decay-limited curves cleanly with direct labels and clear crossover annotations; Fig2 clutters with extraneous reference curves exceeding infidelity=1, crowded labels, and obscures the Ba comparison focus.",
+  "cost": 0.019829
+ },
+ {
+  "judge": "sonnet",
+  "pair": "GLM frontier: 09-03(A) vs v4.2(B)",
+  "swap": false,
+  "a": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 2,
+   "space": 1,
+   "convention": 2
+  },
+  "b": {
+   "claim": 1,
+   "condition": 2,
+   "physical": 2,
+   "legible": 1,
+   "focus": 1,
+   "space": 1,
+   "convention": 1
+  },
+  "winner": "a",
+  "reason": "Fig1 clearly shows the crossover claim with direct labels and distinct colors per species; Fig2 uses redundant gray hues, non-semantic coloring, and its condition (temperature) is irrelevant to the stated claim.",
+  "cost": 0.0032936000000000003
+ },
+ {
+  "judge": "sonnet",
+  "pair": "GLM frontier: 09-03(A) vs v4.2(B)",
+  "swap": true,
+  "a": {
+   "claim": 1,
+   "condition": 2,
+   "physical": 1,
+   "legible": 1,
+   "focus": 1,
+   "space": 1,
+   "convention": 1
+  },
+  "b": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 2,
+   "space": 2,
+   "convention": 2
+  },
+  "winner": "b",
+  "reason": "Fig1 isolates the decay-limited claim with clean direct-labeled traces; Fig2 mixes in irrelevant blockade-failure curves exceeding 1, cluttering focus, space, and physical plausibility of the intended comparison.",
+  "cost": 0.0034936000000000004
+ },
+ {
+  "judge": "sonnet",
+  "pair": "DS frontier: 09-03(A) vs v4.2 GLM(B)",
+  "swap": false,
+  "a": {
+   "claim": 1,
+   "condition": 1,
+   "physical": 2,
+   "legible": 2,
+   "focus": 1,
+   "space": 2,
+   "convention": 1
+  },
+  "b": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 1,
+   "space": 2,
+   "convention": 2
+  },
+  "winner": "b",
+  "reason": "Fig2 uses semantic gray/blue coloring, direct annotations ('above Rb,Cs,Sr', 'below all four'), and labels temperature conditions, making the claim directly readable; Fig1 requires reader to infer inversion themselves.",
+  "cost": 0.020439
+ },
+ {
+  "judge": "sonnet",
+  "pair": "DS frontier: 09-03(A) vs v4.2 GLM(B)",
+  "swap": true,
+  "a": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 1,
+   "space": 2,
+   "convention": 1
+  },
+  "b": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 2,
+   "space": 2,
+   "convention": 2
+  },
+  "winner": "b",
+  "reason": "Fig1 uses semantic grouping (blue=Ba, gray=refs) with direct annotations clarifying the crossover claim; Fig2 uses arbitrary per-species colors and lacks explicit above/below annotations, relying on legend-like labels.",
+  "cost": 0.020589
+ },
+ {
+  "judge": "sonnet",
+  "pair": "DS frontier: 09-03(A) vs v4.2 GLM(B)",
+  "swap": false,
+  "a": {
+   "claim": 1,
+   "condition": 1,
+   "physical": 2,
+   "legible": 2,
+   "focus": 1,
+   "space": 2,
+   "convention": 1
+  },
+  "b": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 1,
+   "space": 2,
+   "convention": 2
+  },
+  "winner": "b",
+  "reason": "Fig2 directly labels temperature conditions and annotates the crossover claim (below/above all four), while fig1 uses power labels without explicit inversion callouts, requiring more inference from readers.",
+  "cost": 0.0033720000000000004
+ },
+ {
+  "judge": "sonnet",
+  "pair": "DS frontier: 09-03(A) vs v4.2 GLM(B)",
+  "swap": true,
+  "a": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 1,
+   "space": 2,
+   "convention": 1
+  },
+  "b": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 1,
+   "space": 2,
+   "convention": 2
+  },
+  "winner": "b",
+  "reason": "Fig1 uses direct labels plus explicit annotations confirming crossover claim; fig2 lacks 20mW/2W condition labels on panel titles and uses legend-like color coding instead of clearer callouts.",
+  "cost": 0.0033020000000000002
+ },
+ {
+  "judge": "sonnet",
+  "pair": "GLM lifetime: v4.1(A) vs v4.2(B)",
+  "swap": false,
+  "a": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 2,
+   "space": 2,
+   "convention": 2
+  },
+  "b": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 1,
+   "focus": 2,
+   "space": 2,
+   "convention": 2
+  },
+  "winner": "a",
+  "reason": "Fig1 conveys the same claim with cleaner labeling; Fig2's annotation callouts add clutter and slightly reduce legibility without adding information.",
+  "cost": 0.0063765
+ },
+ {
+  "judge": "sonnet",
+  "pair": "GLM lifetime: v4.1(A) vs v4.2(B)",
+  "swap": true,
+  "a": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 2,
+   "space": 2,
+   "convention": 1
+  },
+  "b": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 2,
+   "space": 2,
+   "convention": 2
+  },
+  "winner": "b",
+  "reason": "Fig1 adds direct annotation callouts confirming 'above Rb/Sr' and 'far below Shi2025', making the claim explicitly readable without inference.",
+  "cost": 0.006406500000000001
+ },
+ {
+  "judge": "sonnet",
+  "pair": "GLM lifetime: v4.1(A) vs v4.2(B)",
+  "swap": false,
+  "a": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 2,
+   "space": 2,
+   "convention": 2
+  },
+  "b": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 1,
+   "focus": 2,
+   "space": 2,
+   "convention": 2
+  },
+  "winner": "a",
+  "reason": "Fig1 conveys the same claim with cleaner direct labeling; Fig2's annotation callouts add clutter and slightly reduce legibility without adding information.",
+  "cost": 0.0020234000000000003
+ },
+ {
+  "judge": "sonnet",
+  "pair": "GLM lifetime: v4.1(A) vs v4.2(B)",
+  "swap": true,
+  "a": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 2,
+   "space": 2,
+   "convention": 1
+  },
+  "b": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 2,
+   "space": 2,
+   "convention": 2
+  },
+  "winner": "b",
+  "reason": "Fig1 adds direct annotation callouts confirming 'above Rb, Sr' and 'far below Shi2025', making the claim explicitly readable rather than requiring visual inference.",
+  "cost": 0.0021034
+ },
+ {
+  "judge": "sonnet",
+  "pair": "DS lifetime: v4.1(A) vs v4.2(B)",
+  "swap": false,
+  "a": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 2,
+   "space": 2,
+   "convention": 2
+  },
+  "b": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 1,
+   "space": 2,
+   "convention": 1
+  },
+  "winner": "a",
+  "reason": "Fig1 conveys same data with cleaner single annotation; Fig2's redundant callouts ('above Rb, Sr') add clutter without new information, slightly reducing focus and convention scores.",
+  "cost": 0.0060314999999999995
+ },
+ {
+  "judge": "sonnet",
+  "pair": "DS lifetime: v4.1(A) vs v4.2(B)",
+  "swap": true,
+  "a": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 2,
+   "space": 2,
+   "convention": 2
+  },
+  "b": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 2,
+   "space": 2,
+   "convention": 2
+  },
+  "winner": "b",
+  "reason": "Fig1 explicitly annotates 'above Rb, Sr' and 'far below Shi2025', directly settling the claim's comparative statements, while Fig2 only labels the endpoint value without the comparative callouts.",
+  "cost": 0.0061015
+ },
+ {
+  "judge": "sonnet",
+  "pair": "DS lifetime: v4.1(A) vs v4.2(B)",
+  "swap": false,
+  "a": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 2,
+   "space": 2,
+   "convention": 2
+  },
+  "b": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 2,
+   "space": 2,
+   "convention": 1
+  },
+  "winner": "a",
+  "reason": "Fig1 is cleaner with a single direct annotation; fig2's redundant callouts ('above Rb, Sr', 'far below Shi2025') clutter the plot without adding clarity.",
+  "cost": 0.0020954000000000003
+ },
+ {
+  "judge": "sonnet",
+  "pair": "DS lifetime: v4.1(A) vs v4.2(B)",
+  "swap": true,
+  "a": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 2,
+   "space": 2,
+   "convention": 2
+  },
+  "b": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 2,
+   "space": 2,
+   "convention": 2
+  },
+  "winner": "b",
+  "reason": "Fig1 directly annotates 'above Rb, Sr' and 'far below Shi2025' claims on the plot, while Fig2 only labels one numeric value without explicitly marking the comparative claims.",
+  "cost": 0.0021254000000000004
+ }
+]

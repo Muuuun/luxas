@@ -1,4 +1,7 @@
-% Atomic energy level diagram — pure TikZ.
+% Atomic energy level diagram — pure TikZ (hand-placed).
+% For a diagram with more than ~4 levels use the generator instead:
+%   python3 $LUXAS_ROOT/skills/figure/scripts/levelspec <name>.levelspec.json
+% (compressed energy axis, straight drives / wavy decays, labels in slots, no key box).
 \documentclass[border=4pt]{standalone}
 \usepackage{tikz}
 \usepackage{amsmath}
@@ -14,11 +17,13 @@
   % Ground + Rydberg pair (atom)
   \draw[atomC, very thick] (0,0)    -- (2.0, 0)    node[right,font=\small]{$\ket{g}$};
   \draw[atomC, very thick] (0,2.5)  -- (2.0, 2.5)  node[right,font=\small]{$\ket{r}\ (n\!\sim\!60)$};
-  % Wavy excitation arrow
-  \draw[atomC, thick, decorate,
-        decoration={snake, amplitude=1.2pt, segment length=4pt, post length=4pt},
-        -{Stealth[length=6pt]}]
-      (1.0, 0.1) -- (1.0, 2.4);
+  % Laser drive: a STRAIGHT arrow. Convention: straight = coherent drive (laser,
+  % microwave), wavy (snake) = spontaneous emission / decay. The Ba run
+  % (2026-08-30) drew every laser wavy because this template did.
+  \draw[atomC, thick, -{Stealth[length=6pt]}] (1.0, 0.1) -- (1.0, 2.4);
+  % Decay back to the ground state: wavy, thin, grey.
+  \draw[gray, thin, decorate, decoration={snake, amplitude=1.0pt, segment length=4pt, post length=4pt},
+        -{Stealth[length=4pt]}] (1.6, 2.4) -- (1.6, 0.1);
   \node[atomC, font=\small\itshape] at (0.55, 1.25) {$\Omega_R$};
   \node[atomC, font=\small\bfseries] at (1.0, -0.5) {Atom};
 

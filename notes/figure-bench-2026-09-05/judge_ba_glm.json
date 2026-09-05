@@ -1,0 +1,158 @@
+[
+ {
+  "judge": "glm-5.3-flash",
+  "pair": "frontier: shipped(A) vs v4.1 rerender(B)",
+  "swap": false,
+  "a": {
+   "claim": 1,
+   "condition": 2,
+   "physical": 1,
+   "legible": 2,
+   "focus": 1,
+   "space": 1,
+   "convention": 1
+  },
+  "b": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 2,
+   "space": 2,
+   "convention": 2
+  },
+  "winner": "b",
+  "reason": "Fig 2 covers both temperatures and powers consistently with direct labels and a subordinate reference band; Fig 1 omits 2 W at 300 K, shows total Ba below its decay floor in (b), and pads space with a redundant legend.",
+  "cost": 0.00992555
+ },
+ {
+  "judge": "glm-5.3-flash",
+  "pair": "frontier: shipped(A) vs v4.1 rerender(B)",
+  "swap": true,
+  "a": {
+   "claim": 1,
+   "condition": 2,
+   "physical": 2,
+   "legible": 1,
+   "focus": 1,
+   "space": 0,
+   "convention": 1
+  },
+  "b": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 2,
+   "space": 2,
+   "convention": 2
+  },
+  "winner": "b",
+  "reason": "Fig 1 shows every claimed condition (4 K/300 K, 2 W/20 mW) with direct labels and a reference band. Fig 2 clips curves at the top, omits 300 K at 2 W, needs a seven-entry legend, and leaves much of each panel empty.",
+  "cost": 0.00907955
+ },
+ {
+  "judge": "glm-5.3-flash",
+  "pair": "lifetime: shipped(A) vs v4.1 rerender(B)",
+  "swap": false,
+  "a": {
+   "claim": 1,
+   "condition": 2,
+   "physical": 2,
+   "legible": 1,
+   "focus": 1,
+   "space": 1,
+   "convention": 1
+  },
+  "b": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 2,
+   "space": 2,
+   "convention": 2
+  },
+  "winner": "b",
+  "reason": "Fig2 uses direct semantic labels: Ba 300 K clearly above Rb/Sr, far below 7.1 ms, power-law visible. Fig1 buries this under a remote legend with a duplicate entry, an off-claim Cs series, and overlapping markers near the Sr point.",
+  "cost": 0.0022845
+ },
+ {
+  "judge": "glm-5.3-flash",
+  "pair": "lifetime: shipped(A) vs v4.1 rerender(B)",
+  "swap": true,
+  "a": {
+   "claim": 1,
+   "condition": 2,
+   "physical": 2,
+   "legible": 1,
+   "focus": 1,
+   "space": 0,
+   "convention": 0
+  },
+  "b": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 2,
+   "space": 2,
+   "convention": 2
+  },
+  "winner": "b",
+  "reason": "Fig1 directly labels every curve (Ba 4K/300K, Rb, Sr, Shi2025) with all claim elements readable. Fig2 relies on a distant legend with duplicate entries, overlapping Sr/Cs markers, an ambiguous dotted line, and large dead space below the panels.",
+  "cost": 0.0018254999999999999
+ },
+ {
+  "judge": "glm-5.3-flash",
+  "pair": "level diagram: hand TikZ(A) vs levelspec(B)",
+  "swap": false,
+  "a": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 1,
+   "space": 1,
+   "convention": 1
+  },
+  "b": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 1,
+   "focus": 2,
+   "space": 2,
+   "convention": 2
+  },
+  "winner": "b",
+  "reason": "Fig 2 uses correct conventions: straight arrows for drives, wavy for 1P1 decay, direct labels, compact landscape, no key box. Fig 1 is page-tall with a reference-laden key and wavy arrows for coherent drives; Fig 2 wins despite minor rotated-label overlap.",
+  "cost": 0.00408865
+ },
+ {
+  "judge": "glm-5.3-flash",
+  "pair": "level diagram: hand TikZ(A) vs levelspec(B)",
+  "swap": true,
+  "a": {
+   "claim": 1,
+   "condition": 2,
+   "physical": 1,
+   "legible": 2,
+   "focus": 1,
+   "space": 1,
+   "convention": 0
+  },
+  "b": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 2,
+   "space": 2,
+   "convention": 2
+  },
+  "winner": "b",
+  "reason": "Fig 1: straight arrows for drives, wavy for 1P1 decay, 1G4 below limit, direct labels. Fig 2: lasers drawn wavy, decay conflated, Rydberg level at the limit, redundant key, tall with dead zones.",
+  "cost": 0.00533915
+ }
+]

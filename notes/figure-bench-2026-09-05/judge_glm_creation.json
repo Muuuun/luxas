@@ -1,0 +1,106 @@
+[
+ {
+  "judge": "sonnet",
+  "pair": "GLM creation: 09-03 prompt+renderer(A) vs v4.1(B)",
+  "swap": false,
+  "a": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 1,
+   "legible": 2,
+   "focus": 1,
+   "space": 1,
+   "convention": 1
+  },
+  "b": {
+   "claim": 1,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 2,
+   "space": 2,
+   "convention": 1
+  },
+  "winner": "a",
+  "reason": "Fig1 shows explicit 20mW/2W crossover with references individually labeled, directly satisfying both claim halves; Fig2 lacks distinct Sr crossing above Ba(20mW) and separates panels by temperature, not power, weakening claim readout.",
+  "cost": 0.016974
+ },
+ {
+  "judge": "sonnet",
+  "pair": "GLM creation: 09-03 prompt+renderer(A) vs v4.1(B)",
+  "swap": true,
+  "a": {
+   "claim": 2,
+   "condition": 1,
+   "physical": 2,
+   "legible": 2,
+   "focus": 1,
+   "space": 2,
+   "convention": 2
+  },
+  "b": {
+   "claim": 1,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 2,
+   "space": 2,
+   "convention": 1
+  },
+  "winner": "a",
+  "reason": "Fig2 explicitly shows Ba below all references at 2W and above three at 20mW with direct annotations, satisfying the claim; Fig1 lacks clear power-driven inversion demonstration and uses legend-like labels.",
+  "cost": 0.017004
+ },
+ {
+  "judge": "sonnet",
+  "pair": "GLM creation: 09-03 prompt+renderer(A) vs v4.1(B)",
+  "swap": false,
+  "a": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 1,
+   "legible": 1,
+   "focus": 1,
+   "space": 1,
+   "convention": 1
+  },
+  "b": {
+   "claim": 1,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 2,
+   "space": 2,
+   "convention": 2
+  },
+  "winner": "b",
+  "reason": "Fig2 is cleaner, legible, and better organized, but fails to show claimed crossover (Ba 2W stays below Sr in both panels); fig1 shows crossover clearly despite clutter/legend issues.",
+  "cost": 0.0031732
+ },
+ {
+  "judge": "sonnet",
+  "pair": "GLM creation: 09-03 prompt+renderer(A) vs v4.1(B)",
+  "swap": true,
+  "a": {
+   "claim": 2,
+   "condition": 1,
+   "physical": 2,
+   "legible": 2,
+   "focus": 1,
+   "space": 2,
+   "convention": 2
+  },
+  "b": {
+   "claim": 1,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 1,
+   "space": 2,
+   "convention": 1
+  },
+  "winner": "a",
+  "reason": "Fig2 directly shows Ba below all four references at 2W and inversion at 20mW with explicit annotations, satisfying the claim; Fig1 groups Rb/Cs/Yb into a band, obscuring individual comparison and the inversion condition.",
+  "cost": 0.0031632000000000006
+ }
+]

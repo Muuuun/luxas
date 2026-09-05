@@ -402,3 +402,168 @@ the reader rather than the lint.
 - **Level diagram**: compressed energy axis, three columns (¹S₀/¹D₂/³D on the left, P states centre,
   Rydberg + limit at the top right), straight coloured arrows with wavelength tags on the arrows,
   one wavy arrow for the ¹P₁ decay if shown at all, no key box.
+
+## 6. What shipped from §4 (2026-09-05) — figures v4
+
+Read against §4, in leverage order. Nothing here adds a model call; the drawing agents and the auditor
+keep their routing. The relay is what gets cheaper: the audit loop is capped, the style audit is gone.
+
+**§4.2 — the author can say what the figure needs, and the tool refuses what it does not understand.**
+`figspec` now validates the whole spec against an explicit key set. An unknown key is exit 2 with the
+nearest valid key; matplotlib vocabulary is refused with the figspec word to use (`title` → `tag`, `legend`
+→ nothing, `style`/`color` → `group`, `annotations` → `highlight`/`tag`). Re-running the Ba run's own
+`gate_infidelity_frontier.figspec.json` through it now stops at `panels[0].title` instead of drawing
+something else silently. New vocabulary, each one a bypass in §3.1: a per-panel `tag` ("T = 4 K" — the
+label every model in §4.7a omitted; placed inside the frame, else above the spine, never dropped), a `where`
+row filter on CSV references (the mixed `reference_lifetimes.csv` that zig-zagged through Rb l=0 and l=1
+rows), a colour `group` (one hue per species, variants by line style), a `reference` role (grey), an
+`envelope` for "the other four species", `markers: false`, `linestyle` in both spellings. Composition is
+now measured by the renderer itself: > 5 data series is an error, > 4 a warning; a series mostly outside
+the authored limits is an error (five of seven Ba curves were clipped at 1e-2); data filling < 35 % of an
+axis is a warning; a stacked panel is 2.45 in (the `double`+`column` spec that produced 7 × 9.3 in is now
+7 × 4.9); a label the placer cannot fit is exit 2 + a `<pdf>.figlint.json` sidecar — the same channel the
+save-time hook uses, so `compile_latex` refuses the figure until the spec is fixed. Before this, fig2's
+highlight label had been dropped silently in every render since 08-29 and the fixture was "publishable".
+
+**§4.3 — composition in the gate.** `figlint-pdf` rasterises the page and measures the largest empty
+interior band: ≥ 15 % of the height (or 20 % of the width) is an ERROR. At `--width` it computes the print
+height: > 6.5 in is an ERROR, > 5.5 in a WARN. On the three shipped Ba PDFs, which were lint-`clean`
+before: frontier → dead zone 18 %; lifetime → dead zone 22 %; level diagram → prints 7.6 in tall + the
+`ionization limit ⊗ 6sng¹G₄` collision. The two re-rendered data figures (below) pass. The compile gate
+already consumes these errors; nothing new to wire.
+
+**§4.5 — generated level diagrams.** `skills/figure/scripts/levelspec`: levels (label, energy, column,
+group, tag) + transitions (from, to, kind, label) → TikZ → pdf/png → figlint at the natural width. It owns
+the compressed energy axis (√ΔE gaps with a floor, break marks where compression > 3×), left-side labels
+with the role tag inline (no key box), arrow slots, straight arrows for drives and wavy for decays, inline
+wavelengths (rotated / sloped, so the stroke rule exempts them), elbow routing for a transition that skips
+a column, staggered label positions on a fan, auto-upgrade single → double when the labels need it, and
+the natural include width in its output. The Ba diagram from the fixture: 5.1 × 3.7 in, lint-clean,
+against 6.4 × 9.3 in shipped. `templates/energy_levels.tex` no longer teaches a wavy laser.
+
+**§4.4 — convergence.** `figure_auditor` classifies BLOCKING (claim not visible, impossible value,
+illegible, occlusion, missing panel condition) vs cosmetic; verdict is `ship` unless blocking; ≤ 3 fixes
+naming the spec knob, never coordinates; round 2 receives round 1 and may not reopen or reverse. The
+reviewer's loop is capped at two rounds, re-briefs only for BLOCKING items, and escalates a surviving
+blocking item to brain as a content problem instead of a third spawn. New audit lines: DATA (an infidelity
+above 1 is visible to a reader who knows no physics) and CONDITION.
+
+**§4.6 — the brief is a design.** brain's brief carries ≤ 2 panels, ≤ 4 series per panel, the one
+comparison per panel, each panel's `tag`, which reference carries the claim and which are an envelope;
+level diagrams are levelspec; the include width comes from the agent's return (never `0.74\textwidth`
+of a tall PDF). The post-creation `illustrator` "global style audit" is removed — with renderer-owned
+style there is nothing to align, and it was the palette ping-pong of §2 (design-figures-v2 §2.3).
+
+**§4.7 (prompt palimpsest).** `illustrator_write.md` rewritten from 305 lines to ~85 around one rule
+set (spec, look, lint, return); the ~200 lines of `ax.annotate` / `figplace` / `savefig` are gone.
+`illustrator.md` and the reviewer resolve sources as figspec → levelspec → tex; `plot_*.py` is legacy only.
+
+**Evidence, same data as §2.** The Ba frontier and lifetime re-rendered from the run's CSVs in the v4
+grammar (`figspec_schema.md` carries the frontier spec): two panels tagged 4 K / 300 K, Ba as one hue with
+2 W solid and 20 mW dashed, Sr grey, Rb/Cs/Yb one envelope, nothing clipped, direct labels, no legend, no
+dead zone; the lifetime as one panel with Rb selected by `where`, the Sr literature point as a single marker,
+Shi2025 as a margin-labelled reference line. Both lint-clean at their print widths. This is §5 as drawn.
+
+**Gates.** `smoke_figspec` (fig9 fixture: tag/group/where/reference/envelope; eight refused specs; the
+unfit-label exit-2 + sidecar path; the 4-panel column height cap), `smoke_figlint_pdf` (+ dead zone,
++ page-tall), new `smoke_levelspec` (Ba fixture renders, straight/wavy, no key, < 5.5 in, lint-clean;
+three refused specs; the template fix). All registered in the MANIFEST.
+
+**Not done, deliberately.** §4.1 (one agent that sees and draws on the strongest vision model) is a
+routing/cost decision the user makes; the structure now supports it (the auditor is a gate, not a fix
+generator). No live run has exercised v4 yet — the next `--profile dual` run is the measurement:
+count figspec exit-2 messages the agent recovers from, audit rounds per figure (cap 2), and whether the
+shipped PDFs carry a dead zone or a page-tall float (they cannot compile if they do).
+
+## 7. Nature methodology, checked against the renderer (2026-09-05, figures v4.1)
+
+Survey: Nature's *Guide to preparing final artwork* and research figure guide; Nature Methods *Points of
+View* (Wong, Krzywinski et al., 2010–13: colour coding, salience, Gestalt, negative space, typography,
+arrows, layout, axes/ticks/grids, labels and callouts, plotting symbols, mapping quantitative data to
+colour, simplify to clarify) and *Points of Significance: Error bars* (Krzywinski & Altman 2013). The
+mechanical rules (89/183 mm, ≤ 170 mm tall, 5–7 pt Helvetica/Arial, 8 pt bold panel letters, vector,
+white space minimised) were already met by v4. The one active contradiction was ours: the mined domain
+guides (tab10, red beside green) were declared ground truth over the mplstyle — Wong's colour-blindness
+column says the opposite. Eight changes, all in `figspec` + one line of brain.md, gated in `smoke_figspec`:
+
+1. mplstyle palette is ground truth; guides never override it (brain.md). A red–green pair on one axes
+   (deuteranope simulation, Machado 2009 matrix; tab10 red/green distance 0.07 vs Okabe-Ito pairs ≥ 0.20)
+   is separated by line style with a warning naming the pair.
+2. Label text colour darkened to WCAG 4.5 on white (Okabe-Ito yellow 1.4 → olive 4.8).
+3. `cmap` validated: sequential set, rainbow banned, `diverging: true` + `center` → RdBu_r symmetric.
+4. `sigma_kind` required with `sigma`; renderer prints `caption must state: …` and stores it in the sidecar.
+5. Reference role → open markers; data filled.
+6. `sharey` automatic for a row/grid of one quantity (union of limits, tick labels once); stacked column
+   shows x tick labels and title on the bottom panel only; `useOffset=False` on linear axes.
+7. Sizes from the style: panel letters `min(10, font.size+1)`, labels ≤ `font.size` (Nature: 8/7 pt);
+   `width: "1.5"` (120 mm).
+8. Group header: "Ba" over "2 W" / "20 mW" in the margin when a group's labels repeat the group word.
+
+Not adopted: Nature's "avoid coloured text" taken literally (direct labels in the series colour are the
+column-endorsed alternative to a legend; contrast is enforced instead); grids (still never drawn);
+1.5-column height rules beyond the existing 6.5 in cap.
+
+## 8. Is it really better? Measured (2026-09-05, ~$1 total) — and the one thing it broke
+
+Harness in `notes/figure-bench-2026-09-05/` (judge, pair lists, creation briefs, every PNG). Two tests.
+
+**A. Blind pairwise judgement.** A vision model sees two versions of one figure and the claim, scores each
+0–2 on seven criteria (claim, condition, physical, legible, focus, space, convention) and names the version a
+referee would accept with fewer revisions. Both presentation orders; two judge families (Sonnet, GLM-5.3-flash).
+
+| pair (A vs B) | judge | A wins | B wins | mean A | mean B |
+|---|---|---|---|---|---|
+| shipped Ba frontier vs v4.1 re-render | sonnet / glm | 0 / 0 | 2 / 2 | 7.0 / 8.5 | 14.0 / 14.0 |
+| shipped Ba lifetime vs v4.1 re-render | sonnet / glm | 0 / 0 | 2 / 2 | 8.0 / 8.0 | 13.5 / 14.0 |
+| hand TikZ level diagram vs levelspec | sonnet / glm | 0 / 0 | 2 / 2 | 9.0 / 9.5 | 12.5 / 13.5 |
+| shipped Ba lifetime vs v4.1 **created** by deepseek / glm | sonnet | 0 / 0 | 4 / 4 | 7.8 / 7.5 | 13.8 / 13.8 |
+| 09-03 GLM frontier vs **v4.1** GLM frontier (same brief) | sonnet | **3** | 1 | 10.8 | 12.0 |
+| 09-03 DS frontier vs **v4.1** DS frontier (same brief) | sonnet | **4** | 0 | 11.8 | 13.0 |
+| 09-03 GLM frontier vs **v4.2** GLM frontier | sonnet | 1 | **3** | 10.3 | 12.3 |
+| 09-03 DS frontier vs **v4.2** GLM frontier | sonnet | 0 | **4** | 11.0 | 13.3 |
+| v4.1 vs v4.2 lifetime (glm / ds) | sonnet | 2 / 2 | 2 / 2 | 13.5 / 14.0 | 13.5 / 13.3 |
+
+Against what the real run shipped, v4 wins every vote in both judge families (14 of 14 on the re-renders,
+8 of 8 on fresh creations), and the rubric moves from 7–9 to 13–14 of 14. That is the production baseline,
+and the answer to "is it really better" is yes by a wide margin.
+
+**The thing it broke.** Against the 09-03 *creation* outputs on the frontier brief — same brief, old prompt
+and renderer — v4.1 **lost 7 of 8 votes while scoring higher** on the rubric. Every losing reason was the
+same: the v4 rule "≤ 4 series, fold the references into an envelope" hid the four references the claim
+named individually, and nothing on the page said "inverts". The old figures were cluttered (six coloured
+lines, and the GLM one plotted the corrupted `_eps_total` column up to ε = 10, a physical impossibility the
+judge penalised) but they wrote "below all four references" and "above Rb, Cs, Sr" next to the curves. A
+referee weighs claim delivery above composition. That is Wong's *salience to relevance* read against my own
+rule, and the rule was wrong.
+
+**v4.2 (same day).** References get their own budget (≤ 4, thin grey, open markers, end-labelled) and do
+not count against the four foreground series; a reference the claim names is drawn individually, an
+envelope only for a set the claim does not name; `highlight` takes up to two callouts per panel whose label
+is the claim's words at the point where the relation holds (≤ 40 characters; a number in e-notation is
+typeset as ×10ⁿ); the colour-blind check ignores same-grey pairs; brain's `crux:` line names the words for
+the page; the auditor's CLAIM line asks for them. Re-run: the v4.2 GLM frontier beats the 09-03 GLM figure
+3–1 and the 09-03 DS figure 4–0. On the simple lifetime claim v4.1 and v4.2 tie 2–2 with equal scores in
+both models — the judge's split there is pure position bias, so the callout rule costs nothing.
+
+**B. Can an agent drive the strict grammar?** Six creation runs, `illustrator_write` under the v4 prompt,
+no human in the loop:
+
+| brief | model | tools | wall | exit-2 loops | lint | notes |
+|---|---|---|---|---|---|---|
+| frontier (v4.1) | glm-5.3-flash | 10 | 8.5 min | 0 | clean | tags, group, envelope, decay columns chosen |
+| frontier (v4.1) | deepseek-vision | 37 | 21 min | 0 | clean | 23 calls inspecting data AND reading the renderer source |
+| lifetime (v4.1) | glm / deepseek | 12 / 17 | 4 / 3 min | 0 / 0 | clean | `where` on the mixed table correct in both |
+| frontier (v4.2) | glm | 10 | 4.7 min | 0 | clean | 4 references + 2 callouts per panel |
+| lifetime (v4.2) | glm / deepseek | 13 / 16 | 4.5 / 3.4 min | 0 / 0 | clean | callouts "above Rb, Sr" / "far below Shi2025" |
+
+No run hit an exit-2 loop; every spec passed the lint first time. The frontier brief is contaminated — it
+is the schema's worked example — so its runs test the pipeline, not the model; the lifetime brief has no
+example and tests the model, and both models used the row filter, the tag, the reference role and (v4.2)
+the claim callouts without one. Cost signal: the deepseek frontier run spent half its 37 calls reading the
+renderer source to learn the grammar; the prompt now says the grammar document is complete and forbids
+that. Compare 09-03: 14–48 tools, 12–23 min, and figures that a judge now scores 10–12 of 14.
+
+**Caveats.** n = 1 creation run per cell; judge is a model, with visible position bias on close pairs
+(the 2–2 splits); the rubric is mine. What is not in doubt: the direction and size of the gap to the shipped
+figures, and that v4.1's envelope rule lost referee votes until v4.2 restored the named references and the
+claim callouts.

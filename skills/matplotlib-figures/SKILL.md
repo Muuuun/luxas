@@ -10,7 +10,11 @@ description: Publication-quality data plots via matplotlib with venue-specific s
 `python3 <luxas_root>/skills/matplotlib-figures/scripts/figspec <name>.figspec.json` renders a
 declarative spec (series as CSV references, one highlight, reference lines, bands) through a fixed
 template that owns style, marker policy, occupancy-aware label placement and legends. Grammar:
-`references/figspec_schema.md`. The archetype/figlint workflow below remains for figure classes
+`references/figspec_schema.md`. **The grammar is strict (figures v4, 2026-09-05)**: an unknown key is an
+error naming the key to use; exit 2 means the figure is not done (a label that could not be placed, more than
+five series, a page-tall layout) and `compile_latex` reads the same findings from `<pdf>.figlint.json`.
+Energy-level diagrams go through `skills/figure/scripts/levelspec` (grammar
+`skills/figure/references/levelspec_schema.md`). The archetype/figlint workflow below remains for figure classes
 the spec cannot express (dot matrices, comparison planes); a plain y(x) figure written in raw
 matplotlib by an agent is a defect.
 

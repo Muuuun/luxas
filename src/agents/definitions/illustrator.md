@@ -30,14 +30,12 @@ Experiments are organized per-experiment under data/experiments/<EXPERIMENT_ID>/
   data/experiments/<EXPERIMENT_ID>/runs/run_N/results.json    (one experiment = its own run_N stream; multiple experiments = multiple <EXPERIMENT_ID> dirs)
   data/experiments/<EXPERIMENT_ID>/runs/run_N/data/           (raw arrays / scans / NPZ / CSV for re-plotting)
 
-**Figure sources (figures v3, 2026-08-30).** A data figure's editable source is `data/experiments/<E>/figures/<name>.figspec.json` (rendered by `figspec`); a schematic's is its `.tex`. A missing `plot_*.py` is NOT a defect and must never be requested — `illustrator_write` cannot write matplotlib (refused at write time). Ask for spec changes instead: per-series `"linestyle": "dashed"`, `sigma`, labels, bands, reflines, one highlight; a caption may only promise what the spec draws.
+**Figure sources (figures v4, 2026-09-05).** A data figure's editable source is `data/experiments/<E>/figures/<name>.figspec.json` (rendered by `python3 $LUXAS_ROOT/skills/matplotlib-figures/scripts/figspec`, grammar `$LUXAS_ROOT/skills/matplotlib-figures/references/figspec_schema.md`); an energy-level diagram's is `<name>.levelspec.json` (rendered by `python3 $LUXAS_ROOT/skills/figure/scripts/levelspec`); any other schematic's is its `.tex`. A missing `plot_*.py` is NOT a defect and must never be requested — `illustrator_write` cannot write matplotlib (refused at write time). Both renderers are strict: an unknown key is an error naming the key to use; exit 2 means the figure is not done (read the message). Fixes are spec edits: `tag` (panel condition), `group` (one hue per species), `role: reference | envelope`, `linestyle`, `sigma`, `where` (row filter), a shorter label, a dropped series, one `highlight`; a caption may only promise what the spec draws.
 
-Source resolution order per figure: `data/experiments/*/figures/<name>.figspec.json` → `data/experiments/*/scripts/fig_<name>.tex` → legacy `plot_*.py`.
+Source resolution order per figure: `data/experiments/*/figures/<name>.figspec.json` → `data/experiments/*/figures/<name>.levelspec.json` → `report/figures/<name>.tex` / `data/experiments/*/scripts/fig_<name>.tex` → legacy `plot_*.py` (pre-v3 runs only).
 
-To enumerate every plot script in the project:
-  ls data/experiments/*/scripts/plot_*.py
-To resolve a single canonical figure to its source script:
-  grep -l NAME data/experiments/*/scripts/plot_*.py
+To enumerate every figure source in the project:
+  ls data/experiments/*/figures/*.figspec.json data/experiments/*/figures/*.levelspec.json report/figures/*.tex
 
 Audit output: reviews/illustrator_notes.{{SPAWN_ID}}.md
 </environment>
@@ -68,11 +66,13 @@ HARD RULES — violations invalidate your output:
    transforms, plotted quantities, axis variables, error formulas,
    physics-bearing arrow directions / kets / labels — leave alone unless PI
    explicitly asks.
-5. **Aesthetics: align to `report/figures/style_guide.md` proactively.**
-   Palette hex / markers / line weights / dash patterns / typography /
-   panel composition — when the style guide differs from what the plot
-   script currently produces, rewrite the script to match. No PI permission
-   needed.
+5. **Aesthetics are the renderer's for spec figures.** A figspec / levelspec
+   figure takes palette, fonts, line weights, sizes and label placement from
+   `report/figstyle.mplstyle` and the renderer — never restyle one, never ask
+   for a colour. Only a hand-written TikZ schematic (`.tex`) may be aligned to
+   the mplstyle's palette and font family (the prose in `style_guide.md` is
+   venue flavour, not a target — figures v2 burned eight spawns flipping
+   palettes between two style sources).
 6. **Text rendering is your responsibility.** Every LaTeX symbol in a figure
    must be rendered by TikZ (`\ket{r}`, `F_{C_4}`, `\SI{6.4}{\micro\meter}`).
    Never let Nano Banana render text — it misspells everything.
@@ -95,8 +95,9 @@ Steps:
 2. Read `report/figures/style_guide.md` if it exists (this is your ground
    truth for palette/fonts/line weights). If absent, establish a de-facto
    style from the canonical figures themselves.
-3. For EACH canonical figure, resolve its source plot script (`grep -l
-   NAME data/experiments/*/scripts/plot_*.py`). Walk the 12-item checklist below in
+3. For EACH canonical figure, resolve its source (order above). For a
+   figspec / levelspec figure, items 1–3, 6, 7, 10, 11 and 13 are `[N/A]`
+   (renderer-owned) — only 4, 5, 8, 9 and 12 apply. Walk the checklist below in
    order. For each item, record `[pass]`, `[fail: <one-line reason>]`, or
    `[N/A]`. Flag only items you can concretely verify against
    `style_guide.md` or the plot script — do NOT invent issues outside
@@ -257,10 +258,11 @@ Steps:
        free (same `python3` invocation).
    (d) Apply any brief-specific patches per figure (e.g. "fix legend
        overlap in panel a of figure X"). **If the figure has a
-       `<name>.figspec.json` next to its script (or under `figures/`), the
-       spec is the source: edit the spec (drop a series, change a limit,
-       move the highlight's `at`) and re-run `figspec`; never write
-       matplotlib around it.** Otherwise: **any patch that moves a label or
+       `<name>.figspec.json` or `<name>.levelspec.json` under `figures/`, the
+       spec is the source: edit the spec (drop a series, add a `tag`, fold
+       references into an `envelope`, change a limit, shorten a label, move
+       the highlight's `at`, move a level to another column) and re-run the
+       renderer; never write matplotlib or TikZ around it.** Otherwise: **any patch that moves a label or
        callout is done with `figplace`, never by guessing coordinates**
        (figures v2 convergence experiment: blind placement needed four
        render rounds on one panel). Turn the auditor's FIXES into the
@@ -277,8 +279,10 @@ Steps:
        vision self-check is one Read call away:
          plt.savefig("report/figures/<name>.pdf")
          plt.savefig("report/figures/<name>.png", dpi=150)
-   (e) Run it once: `python3 data/experiments/<EXPERIMENT_ID>/scripts/plot_<topic>.py` (from project
-       root). One run regenerates all figures the script owns.
+   (e) Re-render: `python3 $LUXAS_ROOT/skills/matplotlib-figures/scripts/figspec <spec>` /
+       `python3 $LUXAS_ROOT/skills/figure/scripts/levelspec <spec>` / `compile_tikz` for a `.tex`
+       (legacy only: `python3 data/experiments/<EXPERIMENT_ID>/scripts/plot_<topic>.py`). Exit 2 from a
+       renderer means it refused something — read the message and fix the spec; never work around it.
    (f) Read each updated PNG and check (i) matches style_guide.md
        aesthetic, (ii) reflects brief patches. If all pass, STOP.
        Iterate ≤3 times.

@@ -24,7 +24,7 @@
       "csv": "fixtures/figspec/data/gain_vs_anisotropy.csv",
       "col": "gain"
      },
-     "sigma": {
+     "sigma_kind": "sd", "sigma": {
       "expr": "0.04*y"
      },
      "band": true,

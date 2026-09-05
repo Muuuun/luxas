@@ -1,0 +1,314 @@
+[
+ {
+  "judge": "sonnet",
+  "pair": "DS frontier: 09-03(A) vs v4.1(B)",
+  "swap": false,
+  "a": {
+   "claim": 2,
+   "condition": 1,
+   "physical": 2,
+   "legible": 2,
+   "focus": 1,
+   "space": 2,
+   "convention": 1
+  },
+  "b": {
+   "claim": 1,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 2,
+   "space": 2,
+   "convention": 2
+  },
+  "winner": "a",
+  "reason": "Fig1 directly shows both power conditions with all individual references and explicit crossover/inversion, satisfying the claim; Fig2 groups Rb/Cs/Yb into a band, obscuring individual comparisons and mislabels panels by temperature not power.",
+  "cost": 0.017684000000000002
+ },
+ {
+  "judge": "sonnet",
+  "pair": "DS frontier: 09-03(A) vs v4.1(B)",
+  "swap": true,
+  "a": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 1,
+   "space": 2,
+   "convention": 2
+  },
+  "b": {
+   "claim": 1,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 2,
+   "space": 2,
+   "convention": 2
+  },
+  "winner": "a",
+  "reason": "Fig2 separates and labels each reference species directly, making the crossover claim explicit, while Fig1's grouped 'Rb, Cs, Yb' band obscures individual comparisons required by the claim.",
+  "cost": 0.017514000000000002
+ },
+ {
+  "judge": "sonnet",
+  "pair": "DS frontier: 09-03(A) vs v4.1(B)",
+  "swap": false,
+  "a": {
+   "claim": 2,
+   "condition": 1,
+   "physical": 2,
+   "legible": 2,
+   "focus": 1,
+   "space": 2,
+   "convention": 1
+  },
+  "b": {
+   "claim": 1,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 2,
+   "space": 2,
+   "convention": 2
+  },
+  "winner": "a",
+  "reason": "Fig1 directly shows both power conditions with distinct Rb/Cs/Sr/Yb references and the inversion; Fig2 merges references into a band, obscuring the individual comparisons needed for the claim.",
+  "cost": 0.0032216000000000007
+ },
+ {
+  "judge": "sonnet",
+  "pair": "DS frontier: 09-03(A) vs v4.1(B)",
+  "swap": true,
+  "a": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 1,
+   "space": 1,
+   "convention": 2
+  },
+  "b": {
+   "claim": 1,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 2,
+   "space": 2,
+   "convention": 2
+  },
+  "winner": "a",
+  "reason": "Fig2 shows individual species (Rb, Cs, Yb) directly, letting the Ba/20mW ceiling rise above them be verified explicitly, whereas Fig1 hides them in a shaded band, weakening the inversion claim.",
+  "cost": 0.0031816000000000006
+ },
+ {
+  "judge": "sonnet",
+  "pair": "lifetime: shipped Ba run(A) vs v4.1 deepseek(B)",
+  "swap": false,
+  "a": {
+   "claim": 1,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 1,
+   "space": 0,
+   "convention": 1
+  },
+  "b": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 2,
+   "space": 2,
+   "convention": 2
+  },
+  "winner": "b",
+  "reason": "Fig2 directly shows Ba exceeding Rb/Sr across full n=40-100 range with clear labels, no legend, compact layout; Fig1 only shows sparse points, wastes space with empty legend area, and lacks full-range comparison.",
+  "cost": 0.0120365
+ },
+ {
+  "judge": "sonnet",
+  "pair": "lifetime: shipped Ba run(A) vs v4.1 deepseek(B)",
+  "swap": true,
+  "a": {
+   "claim": 1,
+   "condition": 1,
+   "physical": 2,
+   "legible": 1,
+   "focus": 1,
+   "space": 0,
+   "convention": 1
+  },
+  "b": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 2,
+   "space": 2,
+   "convention": 2
+  },
+  "winner": "b",
+  "reason": "Fig1 directly shows Ba curve above Rb/Sr across n=40-100 with clear labels and no dead space; Fig2 has confusing legend, only sparse points, huge empty area, and unclear panel (b) range.",
+  "cost": 0.011966500000000001
+ },
+ {
+  "judge": "sonnet",
+  "pair": "lifetime: shipped Ba run(A) vs v4.1 deepseek(B)",
+  "swap": false,
+  "a": {
+   "claim": 1,
+   "condition": 2,
+   "physical": 2,
+   "legible": 1,
+   "focus": 1,
+   "space": 0,
+   "convention": 1
+  },
+  "b": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 2,
+   "space": 2,
+   "convention": 2
+  },
+  "winner": "b",
+  "reason": "Fig2 covers full n=40-100 range with direct labels, no wasted space, and clearly shows Ba exceeding references while staying below Shi2025; Fig1 only spans partial n range with legend clutter and dead space.",
+  "cost": 0.0028122
+ },
+ {
+  "judge": "sonnet",
+  "pair": "lifetime: shipped Ba run(A) vs v4.1 deepseek(B)",
+  "swap": true,
+  "a": {
+   "claim": 1,
+   "condition": 2,
+   "physical": 1,
+   "legible": 1,
+   "focus": 1,
+   "space": 0,
+   "convention": 1
+  },
+  "b": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 2,
+   "space": 1,
+   "convention": 2
+  },
+  "winner": "b",
+  "reason": "Fig1 clearly shows Ba curve above Rb/Sr across full n range with direct labels; Fig2 has confusing duplicate legend entries, single points not curves, and large dead space.",
+  "cost": 0.0027022
+ },
+ {
+  "judge": "sonnet",
+  "pair": "lifetime: shipped Ba run(A) vs v4.1 glm(B)",
+  "swap": false,
+  "a": {
+   "claim": 1,
+   "condition": 2,
+   "physical": 2,
+   "legible": 1,
+   "focus": 1,
+   "space": 0,
+   "convention": 1
+  },
+  "b": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 2,
+   "space": 2,
+   "convention": 2
+  },
+  "winner": "b",
+  "reason": "Fig2 shows full n=40-100 range directly, uses direct labels, no wasted space, and clearly settles the claim; Fig1 truncates n range, uses legend, has excess empty space.",
+  "cost": 0.012244000000000001
+ },
+ {
+  "judge": "sonnet",
+  "pair": "lifetime: shipped Ba run(A) vs v4.1 glm(B)",
+  "swap": true,
+  "a": {
+   "claim": 1,
+   "condition": 1,
+   "physical": 2,
+   "legible": 1,
+   "focus": 1,
+   "space": 0,
+   "convention": 1
+  },
+  "b": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 2,
+   "space": 1,
+   "convention": 2
+  },
+  "winner": "b",
+  "reason": "Fig1 clearly shows Ba curve above Rb/Sr across full n=40-100 range with direct labels; Fig2 has confusing duplicate legend entries, sparse data points, panel (b) truncated near n=55, and huge empty space below.",
+  "cost": 0.012434
+ },
+ {
+  "judge": "sonnet",
+  "pair": "lifetime: shipped Ba run(A) vs v4.1 glm(B)",
+  "swap": false,
+  "a": {
+   "claim": 1,
+   "condition": 2,
+   "physical": 2,
+   "legible": 1,
+   "focus": 1,
+   "space": 0,
+   "convention": 1
+  },
+  "b": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 2,
+   "space": 2,
+   "convention": 2
+  },
+  "winner": "b",
+  "reason": "Fig2 shows full n range 40-100 with all references directly labeled, compact and legible; Fig1 truncates x-axis near 65, wastes space, uses legend box, and lacks clear focus.",
+  "cost": 0.0027512000000000005
+ },
+ {
+  "judge": "sonnet",
+  "pair": "lifetime: shipped Ba run(A) vs v4.1 glm(B)",
+  "swap": true,
+  "a": {
+   "claim": 1,
+   "condition": 2,
+   "physical": 1,
+   "legible": 1,
+   "focus": 1,
+   "space": 0,
+   "convention": 1
+  },
+  "b": {
+   "claim": 2,
+   "condition": 2,
+   "physical": 2,
+   "legible": 2,
+   "focus": 2,
+   "space": 2,
+   "convention": 2
+  },
+  "winner": "b",
+  "reason": "Fig1 directly shows all curves 40-100 with clear labels and no wasted space; Fig2 has confusing duplicate legend entries, sparse data (Rb only to ~60), huge empty legend area, and ambiguous line assignments.",
+  "cost": 0.0027512000000000005
+ }
+]

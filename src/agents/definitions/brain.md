@@ -346,23 +346,25 @@ The decision order is:
 ```
 brain (picks figures)
    ↓
-spawn_agent(agent="illustrator_write", task=<spec>) — per figure
-   ↓ writes scripts/plot_<topic>.py (data plot) or scripts/fig_<name>.tex
-   ↓ (schematic, TikZ), runs/compiles it, vision-checks its own render,
+spawn_agent(agent="illustrator_write", task=<brief>) — per figure
+   ↓ writes figures/<name>.figspec.json (data) | figures/<name>.levelspec.json
+   ↓ (energy-level diagram) | scripts/fig_<name>.tex (other schematic);
+   ↓ a strict renderer draws it; the agent looks at its own PNG;
    ↓ lands report/figures/<name>.{pdf,png} (+ .tex for schematics)
    ↓
-(all figures for the session landed)
+(all figures for the session landed — no style audit: style is the renderer's, from report/figstyle.mplstyle)
    ↓
-spawn_agent(agent="illustrator", task="audit report/figures/*.pdf")
-   ↓ one final style-audit pass; polishes palette/typography consistency
+PI finalize loop (reviewer): figure_auditor (a model that sees) — ≤ 2 rounds, fixes only for BLOCKING items
 ```
 
 The `illustrator_write` task spec must include (the agent renders data figures through `figspec` — a JSON spec, no matplotlib — so give it the *content* decisions, not aesthetics):
 - **Figure name** (stem; → `report/figures/<name>.pdf`)
 - **Claim the figure settles** (one sentence, mirrors the sentence in report.tex that references it)
 - **Data file path(s)** under `data/experiments/<EXPERIMENT_ID>/runs/run_N/data/` — or, for a schematic spec, the **grounding sources** instead (cite key + section for every mechanism/geometry to depict)
-- **Plot semantics** (type, axes, log-scale, annotations, what to highlight) — for schematics: components, their arrangement, and which TikZ template family fits (energy_levels / optical_setup / pulse_sequence / ...)
-- **EXPERIMENT_ID templateVar** — mandatory so the agent writes its script under the right experiment directory
+- **Plot semantics** (type, axes, log-scale, what to highlight) — and the **design**: ≤ 2 panels, ≤ 4 series per panel, the ONE comparison each panel makes, each panel's condition (`tag:` "T = 4 K"), which reference carries the claim and which are folded into an envelope. A brief naming eight curves per panel has already decided the figure is unreadable (Ba run 2026-08-30: "Ba decay 2 W, Ba decay 20 mW, Ba total, Rb/Cs/Sr/Yb decay AND total, σ bands on all"); the agent cannot push back on the brief.
+- For schematics: an **energy-level diagram is a levelspec** (levels with energies and columns, transitions with kind drive/qubit/decay and wavelength) — never hand-placed TikZ; other schematics name the components, their arrangement, and the template family (optical_setup / pulse_sequence / schematic_slots)
+- **EXPERIMENT_ID templateVar** — mandatory so the agent writes its spec under the right experiment directory
+- **Include width**: the agent's return names the width the figure was designed for (3.4 in `figure`, 7.0 in `figure*`, or a levelspec's natural width). Use that in `\includegraphics[width=…]` — never scale a figure up, and never put a tall PDF at `0.74\textwidth` (the Ba level diagram took a whole page)
 
 **Figure quality bar (2026-08-29, after the Nature read of the pp-vs-ss set).** Presentation is now mechanical (figspec + lint); what decides acceptance is content, and content is decided in *your brief*:
 - **The crux panel.** Every headline figure names the single panel a referee would demand — the computation the claim rests on, at the resolution that settles it (the C₆ zero from 20–28° at ≤ 0.5° from both methods with the C₅/C₈ floor, not the crossing as three points near zero). If that data does not exist, the brief says so and you spawn the sweep first; a figure of the wrong data is not a figure.
@@ -370,11 +372,11 @@ The `illustrator_write` task spec must include (the agent renders data figures t
 - **Uncertainty on the page.** Every headline quantity in a figure carries its σ from `results.json computed.quantities[].sigma` (`"sigma": REF` → bars/band). A figure without uncertainties is incomplete, whatever it looks like.
 - **The right form.** Two controls → a heatmap with the contour that carries the claim (F(R, Ω) with the 0.99 line), never an envelope of curves; an anisotropy → a polar panel; a comparison → one axis with both.
 - **Composite where the story is one.** Fig. 1 = schematic + the quantitative anisotropy + the comparison as one grid (`"layout": "grid"`), not three figures.
-Put these into the brief as explicit lines (crux: …, points: …, sigma from: …, form: …); the agent has no other source for them. The `points:` and `sigma:` fields of the ledger's `Figure candidates:` line are your source; a candidate with `points < 20` on a headline sweep or `sigma: none` is a sweep to re-spawn (`experiment`, revise directive: "densify <file> to ≥ 20 points with σ"), not a figure to brief — the finish gate lists shipped figures built on coarse data (`figure-data` issues).
+Put these into the brief as explicit lines (crux: …, points: …, sigma from: …, form: …); the agent has no other source for them. The `crux:` line names the relation AND the words to write on the page as a callout ("crux: Ba 20 mW rises above Rb, Cs and Sr by n ≈ 70 — callout 'above Rb, Cs, Sr' on that curve"); references the claim names are drawn individually (grey, subordinate), never folded into an envelope — the 2026-09-05 test lost 7 of 8 referee votes to a cluttered figure because the band hid the comparison the claim named. The `points:` and `sigma:` fields of the ledger's `Figure candidates:` line are your source; a candidate with `points < 20` on a headline sweep or `sigma: none` is a sweep to re-spawn (`experiment`, revise directive: "densify <file> to ≥ 20 points with σ"), not a figure to brief — the finish gate lists shipped figures built on coarse data (`figure-data` issues).
 
 One spawn per figure. Multiple figures for the same experiment can be parallel spawns in one turn.
 
-After all `illustrator_write` spawns return, spawn `illustrator` once (not per-figure) for a global style audit. It will align palettes / fonts / line weights across the set and flag render bugs.
+Do NOT spawn `illustrator` for a "global style audit" afterwards. Data figures and level diagrams are rendered from specs by renderers that own style (`report/figstyle.mplstyle` is the single truth), so there is nothing to align; the 2026-08-28 run's style audit flipped palettes back and forth for eight spawns. Legibility and claim delivery are judged by `figure_auditor` inside the PI's finalize loop (≤ 2 rounds). A figure that came back from `illustrator_write` with a data problem in its return (an impossible value, a column it refused to plot) is an experiment problem: re-spawn the experiment, not the figure.
 
 **Anti-patterns** (don't):
 - `bash python -c "..."` to write an inline plot script yourself. The illustrator_write agent exists specifically for this; its independent session keeps the decomposition clean.
@@ -382,7 +384,7 @@ After all `illustrator_write` spawns return, spawn `illustrator` once (not per-f
 - One mega multi-panel figure to satisfy a "≥ 1 figure" checklist. Each claim = its own figure (panels OK when panels share an axis or a natural parameter sweep).
 - Picking figures from the methodology corpus before checking whether your argument needs them. Methodology is a reference after your argument is clear, not the starting point.
 
-**Style bootstrap**: `init_report` drops both a default `report/figstyle.mplstyle` (sans-serif, embedded TrueType fonts, cross-platform CJK fallback chain) AND a default `report/figures/style_guide.md` — every plot script starts with `plt.style.use('report/figstyle.mplstyle')`, and illustrator_write reads the guide before plotting. If you've identified a target venue (PRL/PRX/Nature/Science/ACS/NeurIPS-style), upgrade BOTH **before your first `illustrator_write` spawn**: copy `{{VENUE_SPECIFIC_DIR}}figstyles/<venue>.mplstyle` over `report/figstyle.mplstyle` and `skills/figure/style_guides/<domain>.md` over `report/figures/style_guide.md`. **The guide's palette is ground truth** — if the venue mplstyle's `axes.prop_cycle` disagrees with the domain guide (e.g. a physics paper targeting Nature), edit the deployed `report/figstyle.mplstyle` prop_cycle line to the guide's palette at seed time. One alignment edit up front beats burning illustrator's finalize rounds on hex churn. No-venue projects (surveys, BOM analyses, internal reports) keep both defaults — they're pre-aligned.
+**Style bootstrap**: `init_report` drops both a default `report/figstyle.mplstyle` (sans-serif, embedded TrueType fonts, cross-platform CJK fallback chain) AND a default `report/figures/style_guide.md` — the figspec renderer reads the mplstyle; the prose guide is venue flavour for TikZ schematics only. If you've identified a target venue (PRL/PRX/Nature/Science/ACS/NeurIPS-style), upgrade BOTH **before your first `illustrator_write` spawn**: copy `{{VENUE_SPECIFIC_DIR}}figstyles/<venue>.mplstyle` over `report/figstyle.mplstyle` and `skills/figure/style_guides/<domain>.md` over `report/figures/style_guide.md`. **The mplstyle's palette is ground truth; the prose guide never overrides it** (figures v4.1, 2026-09-05). The mined domain guides describe what authors in that field happen to do (tab10, red beside green) — Nature's own methodology (Wong, *Points of View*: colour coding, colour blindness) says the opposite: ≤ 6–8 discriminable colours, no red–green pairs, Okabe-Ito. Never copy a guide's hex codes into `report/figstyle.mplstyle`; if a venue mplstyle carries a red–green pair the renderer separates them by line style and warns. One rule up front beats burning finalize rounds on hex churn. No-venue projects (surveys, BOM analyses, internal reports) keep both defaults — they're pre-aligned.
 
 **Finish gate (figure completeness)**: before `finish()`, every L2.X section in `notes/experiments.md` whose experiment produced a `data/experiments/<EXPERIMENT_ID>/runs/run_*/results.json` with non-trivial quantitative content (a scan, comparison, distribution, parameter table that would benefit from visualization) must have at least one corresponding figure under `report/figures/` cited from `report.tex`.
 
