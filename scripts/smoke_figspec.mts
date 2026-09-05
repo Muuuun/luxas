@@ -70,19 +70,33 @@ refuse("five-references", (s) => { for (let i = 0; i < 5; i++) s.panels[0].serie
 refuse("three-callouts", (s) => { s.panels[0].highlight = [1, 2, 3].map((k) => ({ series: 0, at: 10 * k, label: "c" + k })); }, /3 callouts \(max 2 per panel\)/);
 refuse("long-callout", (s) => { s.panels[0].highlight = { series: 0, at: 30, label: "this callout is a whole sentence that belongs in the caption" }; }, /a callout is ≤ 5 words/);
 {
-  const s = JSON.parse(JSON.stringify(base)); s.out = join(out, "refs4");
-  s.panels[0].highlight = [{ series: 0, at: 5, label: "{y:.2e}" }, { series: 0, at: 2, label: "start" }];
-  for (let i = 0; i < 4; i++) s.panels[0].series.push({ x: { logspace: [1, 1000, 30] }, y: { expr: `0.9*x**(1/${6 + i})` }, label: "R" + i, role: "reference" });
-  writeFileSync(join(out, "refs4.json"), JSON.stringify(s));
+  // A purpose-built roomy panel: this checks the v4.2 FEATURES (reference budget, two callouts,
+  // e-notation typesetting, no colour-blind warning between two greys), not the placer's luck in a
+  // crowded fixture — matplotlib's text metrics differ by version and 3.11 packs fig3 tighter than 3.9.
+  const spec: any = {
+    out: join(out, "refs4"), width: "double",
+    panels: [{
+      label: "a", xlabel: "$x$", ylabel: "$y$", xlim: [0, 100], ylim: [0, 12],
+      series: [
+        { x: { linspace: [0, 100, 40] }, y: { expr: "1e-5 + 0.01*x" }, label: "this work", group: "W" },
+        { x: { linspace: [0, 100, 40] }, y: { expr: "2 + 0.01*x" }, label: "variant", group: "W" },
+        ...[0, 1, 2, 3].map((i) => ({ x: { linspace: [0, 100, 40] }, y: { expr: `${4 + 1.6 * i} + 0.005*x` }, label: "R" + i, role: "reference" })),
+      ],
+      highlight: [{ series: 0, at: 20, label: "{y:.2e}" }, { series: 1, at: 70, label: "above R0" }],
+    }],
+  };
+  writeFileSync(join(out, "refs4.json"), JSON.stringify(spec));
+  const r = spawnSync("python3", [FIGSPEC, join(out, "refs4.json")], { env, encoding: "utf-8" });
+  check("two foreground + four grey references + two callouts: renders with exit 0", r.status === 0, (r.stderr || "").slice(-400));
   const probe = spawnSync("python3", ["-c", `
 import json, sys; sys.argv=['x']
 exec(open('${FIGSPEC}').read().split('if __name__')[0])
 spec = json.load(open('${join(out, "refs4.json")}')); validate(spec); render(_resolve(spec), spec['out'])
 texts = [t.get_text() for t in LAST_FIG.axes[0].texts]
-print(any('times10^{' in t for t in texts), any("start" in t for t in texts), len(FINDINGS['warnings']), [w for w in FINDINGS['warnings'] if 'colour-blind' in w])
+print("PROBE", any('times10^{' in t for t in texts), any('above R0' in t for t in texts), [w for w in FINDINGS['warnings'] if 'colour-blind' in w], FINDINGS['errors'])
 `], { env, encoding: "utf-8" });
-  const last = probe.stdout.trim().split("\n").pop() ?? "";
-  check("two data + four grey references + two callouts: renders; e-notation typeset as ×10^; no colour-blind warning for same-grey references", /^True True \d+ \[\]/.test(last), probe.stdout + probe.stderr.slice(-300));
+  const last = (probe.stdout.trim().split("\n").filter((l) => l.startsWith("PROBE")).pop() ?? "");
+  check("both callouts drawn; e-notation typeset as ×10^; two greys are not a colour-blind clash", /^PROBE True True \[\] \[\]$/.test(last), probe.stdout + probe.stderr.slice(-300));
 }
 refuse("bad-where", (s) => { s.panels[0].series[0].x.where = { nope: 1 }; }, /where: column 'nope' not in/);
 // figures v4.1 — Nature methodology
