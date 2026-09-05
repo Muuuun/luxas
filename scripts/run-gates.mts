@@ -97,7 +97,7 @@ const MANIFEST: Record<string, GateSpec> = {
 	smoke_abstention: { kind: "assert" },
 	smoke_finish_batch_and_speed_bump: { kind: "assert" },
 	smoke_figlint_pdf: { kind: "assert" },
-	smoke_figspec: { kind: "assert" },
+	smoke_figspec: { kind: "assert", timeoutMs: 300_000 },   // ~40 python subprocesses; 22 s on a dev Mac, 143 s on the droplet
 	smoke_figure_spec_only: { kind: "assert" },
 	smoke_figure_data: { kind: "assert" },
 	smoke_figure_gate: { kind: "assert" },
