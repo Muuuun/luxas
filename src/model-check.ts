@@ -20,7 +20,7 @@
  *     to start when a model the run will actually use is gone.
  */
 
-export type ProviderId = "anthropic" | "deepseek" | "glm" | "kimi-coding";
+export type ProviderId = "anthropic" | "deepseek" | "glm" | "kimi-coding" | "openai";
 
 /** Where each provider lists its models, and how the response is shaped. */
 const CATALOG_ENDPOINT: Record<ProviderId, { url: string; auth: (k: string) => Record<string, string> }> = {
@@ -38,6 +38,14 @@ const CATALOG_ENDPOINT: Record<ProviderId, { url: string; auth: (k: string) => R
   },
   "kimi-coding": {
     url: "https://api.moonshot.cn/v1/models",
+    auth: (k) => ({ Authorization: `Bearer ${k}` }),
+  },
+  // Added 2026-09-06 with the gpt-6-astra brain routing. Without it every
+  // OpenAI-routed model (brain, math) came back "unreachable" from the
+  // preflight instead of being checked — the freshness/liveness guard was
+  // silently blind to the provider brain now depends on.
+  openai: {
+    url: "https://api.openai.com/v1/models",
     auth: (k) => ({ Authorization: `Bearer ${k}` }),
   },
 };

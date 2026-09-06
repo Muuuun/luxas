@@ -247,6 +247,14 @@ if (profile === "dual") {
   // asserts it. Swapping either side onto the other's model silently turns the
   // ship/no-ship gate into a self-check.
   process.env.LUXAS_VISION_AUDIT_MODEL_PROFILE = "glm-5.3-flash";
+  // brain does NOT take the producer profile (2026-09-06, measured — see
+  // notes/model-routing-2026-09-06.md). deepseek-v4-pro placed last of five
+  // models on brain's own decomposition task on all three scoring channels,
+  // and brain decides what the rest of the run spends its money on. gpt-6-astra
+  // was the only candidate with zero fabrication flags and is ~2.7x faster per
+  // call, which is wall clock because brain's ~340 calls are serial.
+  // An explicit --model is a deliberate family switch and keeps priority.
+  if (!explicitModel) process.env.LUXAS_BRAIN_MODEL = "gpt-6-astra";
 } else if (profile === "claude") {
   // No env override — every agent uses its declared frontmatter model.
 } else if (profile) {
@@ -289,6 +297,7 @@ if (command === "models") {
     process.env.LUXAS_MODEL_PROFILE = "deepseek-v4-pro";
     process.env.LUXAS_VISION_MODEL_PROFILE = "deepseek-v4-flash-vision-exp";
     process.env.LUXAS_VISION_AUDIT_MODEL_PROFILE = "glm-5.3-flash";
+    process.env.LUXAS_BRAIN_MODEL = "gpt-6-astra";
   }
   const { formatFindings } = await import("./model-check.js");
   console.error(`◈ profile: ${profile}`);

@@ -115,7 +115,9 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
   // (brain + every anthropic-tier sub-agent) routes through deepseek; when
   // they pass --model opus, today's behavior is preserved.
   const modelKey = opts.model ?? "opus";
-  const model = resolveModel(modelKey);
+  // Pass the agent name so brain participates in the same agent-specific
+  // routing every sub-agent gets (LUXAS_BRAIN_MODEL, set by --profile dual).
+  const model = resolveModel(modelKey, "brain");
   const provider: string = (model as any).provider;
   const modelId: string = (model as any).id;
   const thinkingLevel = opts.thinkingLevel ?? "medium";

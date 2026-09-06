@@ -182,6 +182,45 @@ const MODEL_MAP: Record<string, [string, string] | InlineModel> = {
   "gpt-5.5": ["openai", "gpt-5.5"],
   "gpt-5.4": ["openai", "gpt-5.4"],
   "gpt-5.4-mini": ["openai", "gpt-5.4-mini"],
+  // GPT-6-Astra — brain's model since 2026-09-06. Platform API (the `openai`
+  // key slot), like the 5.x tiers above. It needs a full inline entry for the
+  // same reason claude-fable-5-1 does: pi-ai's catalog does not carry it, so
+  // getModel returns a hollow object with an undefined id (smoke_model_routing
+  // is the gate for exactly that).
+  //
+  // Why brain is here — benchmark 2026-09-06, notes/model-routing-2026-09-06.md.
+  // Five models on brain's own pipeline-design task, 3 benches x 3 blind judges
+  // + an oracle-anchored pass. deepseek-v4-pro placed LAST on all three
+  // channels; gpt-6-astra was the only model with ZERO fabrication flags from
+  // any judge and the fastest by a wide margin (81 s median vs deepseek's
+  // 217 s). brain is ~340 SERIAL calls of a run, so its latency is wall clock:
+  // the reference run took 13.2 h against an 8 h default cap.
+  //
+  // PRICE IS AN ESTIMATE, PINNED HIGH ON PURPOSE. OpenAI publishes no rate the
+  // API exposes and pi-ai has no entry, so this follows the deepseek entries'
+  // rule — quote the pessimistic number so the cost cap never under-counts.
+  // The routing analysis used $3/$18 and projected ~$51/run; at this
+  // conservative $5/$30 the same run comes to ~$67, against ~$240 for
+  // claude-opus-5. The decision does not depend on which is right. Correct it
+  // when OpenAI publishes, and re-check `luxas models`.
+  //
+  // Live-probed 2026-09-06: clean completions on /v1/chat/completions, wants
+  // `max_completion_tokens` (not max_tokens), modest reasoning use (~0.5-1.4k
+  // tokens on a 3k-token prompt). Deliberately NOT flagged `reasoning: true` —
+  // it accepts a forced tool choice, so the silent-exit guard keeps working
+  // (pickRequireToolChoice returns "required").
+  "gpt-6-astra": {
+    id: "gpt-6-astra",
+    name: "GPT-6-Astra",
+    api: "openai-completions",
+    provider: "openai",
+    baseUrl: "https://api.openai.com/v1",
+    input: ["text"],
+    cost: { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 0 },
+    contextWindow: 400000,
+    maxTokens: 128000,
+    compat: { maxTokensField: "max_completion_tokens" },
+  },
   "deepseek-v4-pro": {
     id: "deepseek-v4-pro",
     name: "DeepSeek-V4-Pro",
@@ -434,6 +473,17 @@ function applyProfile(modelKey: string, agentName?: string): string {
     const visionProfile = process.env.LUXAS_VISION_MODEL_PROFILE;
     if (visionProfile) return visionProfile;
   }
+  // brain routes independently of the producer profile (2026-09-06, measured).
+  // On brain's own pipeline-design task deepseek-v4-pro placed LAST of five
+  // models on all three scoring channels: it collapsed a 3-4 experiment chain
+  // into one mega-experiment, and its "independent" legs were the same
+  // Hamiltonian solved two ways — precisely the fake independence the
+  // claims-first architecture exists to catch. brain is only ~19% of a run's
+  // cost but it decides what the other 81% gets spent on, so it is the one slot
+  // where the producer profile's economics are the wrong trade.
+  // Unset => brain follows the profile exactly as before, so `--profile claude`
+  // and an explicit `--model deepseek-*` family switch are both unaffected.
+  if (agentName === "brain" && process.env.LUXAS_BRAIN_MODEL) return process.env.LUXAS_BRAIN_MODEL;
   // Non-PI reviewers always run on GLM (independent prior); PI keeps its
   // declared Anthropic tier. Both checked before the producer-profile downgrade.
   if (agentName && GLM_REVIEWER_AGENTS.has(agentName)) return process.env.LUXAS_TOOL_REVIEW_MODEL || "glm-5.3";

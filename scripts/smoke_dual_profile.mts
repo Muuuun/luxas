@@ -4,7 +4,8 @@
  * agents to the multimodal model while text agents go to DeepSeek-v4-pro.
  *
  * Vision agents:  illustrator, illustrator_write, typesetter  → deepseek-v4-flash-vision-exp
- * Text agents:    brain, experiment, reader, search, ...      → deepseek-v4-pro
+ * Text agents:    experiment, reader, search, ...             → deepseek-v4-pro
+ * brain:          gpt-6-astra (LUXAS_BRAIN_MODEL, 2026-09-06) → NOT the producer profile
  * PI reviewers:   reviewer, experiment_reviewer               → declared Anthropic tier
  *
  * Also guards the two live-probed API constraints of the vision model
@@ -50,7 +51,11 @@ check("figure_auditor (sonnet) → claude-sonnet-5 (Anthropic-only run)",
 console.log("\n2. legacy --model deepseek-v4-pro (no vision split)");
 process.env.LUXAS_MODEL_PROFILE = "deepseek-v4-pro";
 delete process.env.LUXAS_VISION_MODEL_PROFILE;
-check("brain (sonnet) → deepseek-v4-pro",
+delete process.env.LUXAS_BRAIN_MODEL;
+// With LUXAS_BRAIN_MODEL unset, brain still follows the producer profile. That
+// is the escape hatch an explicit `--model deepseek-*` family switch relies on:
+// index.ts only pins brain when the user did NOT name a model.
+check("brain (sonnet) → deepseek-v4-pro when LUXAS_BRAIN_MODEL is unset",
   modelId(resolveModel("sonnet", "brain")) === "deepseek-v4-pro");
 check("illustrator (sonnet) → deepseek-v4-pro (NO vision split)",
   modelId(resolveModel("sonnet", "illustrator")) === "deepseek-v4-pro");
@@ -62,8 +67,25 @@ console.log("\n3. --profile dual (deepseek text + deepseek vision)");
 process.env.LUXAS_MODEL_PROFILE = "deepseek-v4-pro";
 process.env.LUXAS_VISION_MODEL_PROFILE = "deepseek-v4-flash-vision-exp";
 process.env.LUXAS_VISION_AUDIT_MODEL_PROFILE = "glm-5.3-flash";
-check("brain (sonnet) → deepseek-v4-pro",
-  modelId(resolveModel("sonnet", "brain")) === "deepseek-v4-pro");
+// Mirrors the env `--profile dual` sets in src/index.ts. brain is deliberately
+// NOT on the producer model: measured 2026-09-06, deepseek-v4-pro placed last
+// of five models on brain's own pipeline-design task on all three scoring
+// channels (notes/model-routing-2026-09-06.md). If index.ts and this line ever
+// disagree, the gate is testing a routing nobody runs.
+process.env.LUXAS_BRAIN_MODEL = "gpt-6-astra";
+{
+  const b = resolveModel("sonnet", "brain");
+  check("brain (sonnet) → gpt-6-astra, NOT the producer profile",
+    modelId(b) === "gpt-6-astra", `got ${modelId(b)}`);
+  check("brain's model resolves to a real id on a provider with a key slot",
+    (b as any)?.provider === "openai" && !!(b as any)?.cost);
+  // brain sends a forced tool choice every turn (the silent-exit guard). A
+  // model that rejects it would 400 on turn 1 — fable-5.1 does exactly that.
+  check("brain → tool_choice \"required\" (silent-exit guard intact)",
+    pickRequireToolChoice(b) === "required", `got ${pickRequireToolChoice(b)}`);
+}
+check("experiment stays on the producer profile while brain does not",
+  modelId(resolveModel("sonnet", "experiment")) === "deepseek-v4-pro");
 check("experiment (sonnet) → deepseek-v4-pro",
   modelId(resolveModel("sonnet", "experiment")) === "deepseek-v4-pro");
 check("reader (haiku) → deepseek-v4-pro",
