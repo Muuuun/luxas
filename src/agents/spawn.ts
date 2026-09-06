@@ -159,13 +159,29 @@ const MODEL_MAP: Record<string, [string, string] | InlineModel> = {
   o3: ["openai", "o3"],
   "o3-mini": ["openai", "o3-mini"],
   "o4-mini": ["openai", "o4-mini"],
-  // OpenAI Codex (ChatGPT backend — works with Codex OAuth). pi-ai 0.84's
-  // catalog dropped the 5.1/5.2 tiers; these are the shipped successors.
-  "gpt-5.6-terra": ["openai-codex", "gpt-5.6-terra"],
-  "gpt-5.6-luna": ["openai-codex", "gpt-5.6-luna"],
-  "gpt-5.5": ["openai-codex", "gpt-5.5"],
-  "gpt-5.4": ["openai-codex", "gpt-5.4"],
-  "gpt-5.4-mini": ["openai-codex", "gpt-5.4-mini"],
+  // GPT-5.x tiers. pi-ai 0.84's catalog dropped the 5.1/5.2 tiers; these are the
+  // shipped successors. They exist under BOTH providers — `openai` (platform key,
+  // api openai-responses) and `openai-codex` (ChatGPT backend, needs a Codex OAuth
+  // token) — and resolve to the same model with the same pricing.
+  //
+  // They route to `openai` because that is the credential this installation
+  // actually has. ~/.sisyphus/auth.json carries slots for deepseek, kimi,
+  // anthropic, glm and openai; there is no openai-codex slot, and the two are not
+  // interchangeable (3d1313e split them for exactly this reason). While these sat
+  // on openai-codex the `math` agent — reachable from both brain and experiment —
+  // died on turn 1 of every spawn with no key, the same armed-hazard class as the
+  // Kimi 404 and the dry GLM account. Verified live 2026-09-06 on `openai`:
+  // gpt-5.6-terra returns tool calls under tool_choice "auto" and "required", and
+  // costs are accounted (~$0.00044/call) because the catalog carries its pricing.
+  //
+  // To use the Codex backend instead, install a Codex OAuth token and change the
+  // provider string here back to "openai-codex". smoke_model_routing guards it.
+  "gpt-5.6-terra": ["openai", "gpt-5.6-terra"],
+  "gpt-5.6-luna": ["openai", "gpt-5.6-luna"],
+  "gpt-5.6-sol": ["openai", "gpt-5.6-sol"],
+  "gpt-5.5": ["openai", "gpt-5.5"],
+  "gpt-5.4": ["openai", "gpt-5.4"],
+  "gpt-5.4-mini": ["openai", "gpt-5.4-mini"],
   "deepseek-v4-pro": {
     id: "deepseek-v4-pro",
     name: "DeepSeek-V4-Pro",
