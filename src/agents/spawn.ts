@@ -189,14 +189,6 @@ const MODEL_MAP: Record<string, [string, string] | InlineModel> = {
   // getModel returns a hollow object with an undefined id (smoke_model_routing
   // is the gate for exactly that).
   //
-  // Why brain is here — benchmark 2026-09-06, notes/model-routing-2026-09-06.md.
-  // Five models on brain's own pipeline-design task, 3 benches x 3 blind judges
-  // + an oracle-anchored pass. deepseek-v4-pro placed LAST on all three
-  // channels; gpt-6-astra was the only model with ZERO fabrication flags from
-  // any judge and the fastest by a wide margin (81 s median vs deepseek's
-  // 217 s). brain is ~340 SERIAL calls of a run, so its latency is wall clock:
-  // the reference run took 13.2 h against an 8 h default cap.
-  //
   // PRICE IS AN ESTIMATE, PINNED HIGH ON PURPOSE. OpenAI publishes no rate the
   // API exposes and pi-ai has no entry, so this follows the deepseek entries'
   // rule — quote the pessimistic number so the cost cap never under-counts.
@@ -205,22 +197,46 @@ const MODEL_MAP: Record<string, [string, string] | InlineModel> = {
   // claude-opus-5. The decision does not depend on which is right. Correct it
   // when OpenAI publishes, and re-check `luxas models`.
   //
-  // Live-probed 2026-09-06: clean completions on /v1/chat/completions, wants
-  // `max_completion_tokens` (not max_tokens), modest reasoning use (~0.5-1.4k
-  // tokens on a 3k-token prompt). Deliberately NOT flagged `reasoning: true` —
-  // it accepts a forced tool choice, so the silent-exit guard keeps working
-  // (pickRequireToolChoice returns "required").
+  // MUST be api "openai-responses", not "openai-completions" (fixed 2026-09-15).
+  // The 09-06 benchmark only ever sent plain completions, so nobody sent this
+  // model a function tool until the first real run, and it failed on turn 1:
+  //   400 Function tools with reasoning_effort are not supported for
+  //       gpt-6-astra in /v1/chat/completions. To use function tools, use
+  //       /v1/responses or set reasoning_effort to 'none'.
+  // Luxas is tools-on-every-turn, so this made brain unusable, and every agent
+  // Luxas runs is a tool caller. The error's own escape hatch does not exist —
+  // probed the same day, `reasoning_effort: "none"` comes back
+  //   400 Unsupported value: 'reasoning_effort' does not support 'none' with
+  //       this model. Supported values are: 'low', 'medium', 'high', 'xhigh'.
+  // so OpenAI applies a reasoning effort server-side and will not let you turn
+  // it off on chat/completions. /v1/responses is the only path that takes
+  // function tools: probed 200 in 1.8 s with a clean function_call under
+  // tool_choice "required".
+  //
+  // Consequences of the switch, all checked rather than assumed:
+  //  - pi-ai's openai-responses sends `max_output_tokens` itself, so the
+  //    `max_completion_tokens` compat that chat/completions needed is gone.
+  //  - still NOT flagged `reasoning: true`: the reasoning is server-side and
+  //    not selectable here, and the flag would flip pickRequireToolChoice to
+  //    "auto" and disarm the silent-exit guard. "required" is accepted.
+  //
+  // Why brain is here — benchmark 2026-09-06, notes/model-routing-2026-09-06.md.
+  // Five models on brain's own pipeline-design task, 3 benches x 3 blind judges
+  // + an oracle-anchored pass. deepseek-v4-pro placed LAST on all three
+  // channels; gpt-6-astra was the only model with ZERO fabrication flags from
+  // any judge and the fastest by a wide margin (81 s median vs deepseek's
+  // 217 s). brain is ~340 SERIAL calls of a run, so its latency is wall clock:
+  // the reference run took 13.2 h against an 8 h default cap.
   "gpt-6-astra": {
     id: "gpt-6-astra",
     name: "GPT-6-Astra",
-    api: "openai-completions",
+    api: "openai-responses",
     provider: "openai",
     baseUrl: "https://api.openai.com/v1",
     input: ["text"],
     cost: { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 0 },
     contextWindow: 400000,
     maxTokens: 128000,
-    compat: { maxTokensField: "max_completion_tokens" },
   },
   "deepseek-v4-pro": {
     id: "deepseek-v4-pro",

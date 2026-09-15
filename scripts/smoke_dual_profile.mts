@@ -83,6 +83,17 @@ process.env.LUXAS_BRAIN_MODEL = "gpt-6-astra";
   // model that rejects it would 400 on turn 1 — fable-5.1 does exactly that.
   check("brain → tool_choice \"required\" (silent-exit guard intact)",
     pickRequireToolChoice(b) === "required", `got ${pickRequireToolChoice(b)}`);
+  // gpt-6-astra REFUSES function tools on /v1/chat/completions:
+  //   400 Function tools with reasoning_effort are not supported ... To use
+  //       function tools, use /v1/responses or set reasoning_effort to 'none'.
+  // and its own suggested escape hatch is also rejected ('none' is not a
+  // supported value for this model). /v1/responses is the only path that takes
+  // tools. Every Luxas agent is a tool caller on every turn, so routing brain
+  // here on openai-completions is a turn-1 death for the whole run — which is
+  // how it shipped on 2026-09-06 and stayed latent until the first real launch
+  // reached the brain on 2026-09-15. The bench only sent plain completions.
+  check("brain's model uses an api that accepts function tools",
+    (b as any)?.api === "openai-responses", `got api=${(b as any)?.api} — chat/completions cannot take tools on this model`);
 }
 check("experiment stays on the producer profile while brain does not",
   modelId(resolveModel("sonnet", "experiment")) === "deepseek-v4-pro");
