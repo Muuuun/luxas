@@ -191,7 +191,7 @@ Each `.md` is YAML frontmatter + system prompt body. Key fields:
 
 ```yaml
 name: tool_impl
-model: sonnet                                  # opus|sonnet|haiku|gpt-5.2|deepseek-v4-pro|deepseek-v4-flash|deepseek-v4-flash-vision-exp|inherit
+model: sonnet                                  # opus|sonnet|haiku|gpt-5.2|deepseek-v4-pro|deepseek-flash|inherit
 thinkingLevel: medium                          # off|low|medium|high
 toolSets: [coding]                             # named tool-set factories
 templates: [PROJECT_DIR, EXPERIMENT_ID, TOOL_NAME]

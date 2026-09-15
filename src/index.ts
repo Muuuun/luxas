@@ -213,7 +213,7 @@ if (model.startsWith("deepseek-")) {
 }
 
 // Profile presets. `dual` = deepseek-v4-pro for text agents +
-// deepseek-v4-flash-vision-exp for vision-required agents
+// deepseek-flash for vision-required agents
 // (illustrator/illustrator_write/typesetter). Routes around the TEXT models'
 // blindness, which otherwise produces visually unverified figures and PDF
 // layouts. Both halves are the same provider and key since 2026-09-02, so a
@@ -236,7 +236,7 @@ if (profile === "dual") {
   // and did not flag their absence when auditing, while a cross-family auditor
   // named it as its top fix. The auditor is the ship/no-ship gate, so it keeps
   // the better model and the drawers take the cost.
-  process.env.LUXAS_VISION_MODEL_PROFILE = "deepseek-v4-flash-vision-exp";
+  process.env.LUXAS_VISION_MODEL_PROFILE = "deepseek-flash";
   // figure_auditor on glm-5.3-flash (2026-09-04, by request): best AND cheapest
   // of four models benchmarked on the real Ba figures — it alone caught the
   // ionization line struck through the Rydberg label — and on its first live
@@ -289,13 +289,62 @@ async function checkRoutedModels() {
   return findings;
 }
 
+/**
+ * Try to rescue every dead pin by finding and PROVING its successor.
+ * Returns the ones still dead afterwards — the caller refuses on those.
+ *
+ * The proposer is a cheap text model (`LUXAS_AUTOFIX_MODEL`, default
+ * deepseek-v4-pro) because name matching provably cannot do this job:
+ * model-check's own family parser puts `deepseek-v4-flash-vision-exp` and its
+ * real successor `deepseek-flash` in different families. The model only ever
+ * proposes; the candidate list is intersected with the live catalog and each
+ * survivor must pass ground-truth capability probes before anything is
+ * adopted. Disable the whole path with LUXAS_NO_MODEL_AUTOFIX=1.
+ */
+async function autofixDeadModels(dead: any[]): Promise<{ from: string }[]> {
+  const { autofixDeadPins, formatOutcomes } = await import("./model-autofix.js");
+  const { listModels } = await import("./model-check.js");
+  const { getApiKey } = await import("./auth.js");
+  const { lookupInlineEntry, resolveModel, refreshModelOverrides } = await import("./agents/spawn.js");
+  const { completeSimple } = await import("@earendil-works/pi-ai/compat");
+
+  const proposerKey = process.env.LUXAS_AUTOFIX_MODEL || "deepseek-v4-pro";
+  const outcomes = await autofixDeadPins(dead.map((d) => ({ ...d, kind: "dead" as const })), {
+    listModels: (provider, key) => listModels(provider, key),
+    getApiKey: (provider) => getApiKey(provider as any),
+    lookupEntry: (id) => lookupInlineEntry(id),
+    complete: async (systemPrompt, user) => {
+      const model: any = resolveModel(proposerKey);
+      const apiKey = await getApiKey(model.provider);
+      if (!apiKey) throw new Error(`no API key for proposer provider ${model.provider}`);
+      const res: any = await completeSimple(model, {
+        systemPrompt,
+        messages: [{ role: "user", content: [{ type: "text", text: user }], timestamp: Date.now() }],
+        tools: [],
+      }, { maxTokens: 2048, apiKey } as any);
+      return (res?.content ?? [])
+        .filter((b: any) => b?.type === "text")
+        .map((b: any) => b.text)
+        .join("");
+    },
+    log: (line) => console.error(line),
+  });
+
+  console.error(formatOutcomes(outcomes));
+  // Adoptions land in ~/.sisyphus/model-overrides.json; this process cached the
+  // old table at first resolveModel, so drop it or the run still routes to the
+  // corpse it just replaced.
+  if (outcomes.some((o) => o.adopted)) refreshModelOverrides();
+  return outcomes.filter((o) => !o.adopted).map((o) => ({ from: o.from }));
+}
+
 if (command === "models") {
   // Report what an actual run would route to: `luxas run` defaults to dual,
   // so a bare `luxas models` must too, or it audits a routing nobody uses.
   if (!profile) profile = "dual";
   if (profile === "dual") {
     process.env.LUXAS_MODEL_PROFILE = "deepseek-v4-pro";
-    process.env.LUXAS_VISION_MODEL_PROFILE = "deepseek-v4-flash-vision-exp";
+    process.env.LUXAS_VISION_MODEL_PROFILE = "deepseek-flash";
     process.env.LUXAS_VISION_AUDIT_MODEL_PROFILE = "glm-5.3-flash";
     process.env.LUXAS_BRAIN_MODEL = "gpt-6-astra";
   }
@@ -319,7 +368,26 @@ if (command === "models") {
   }
   const actionable = findings.filter((f) => f.kind !== "unreachable");
   if (actionable.length) console.log("\n" + formatFindings(actionable));
-  process.exit(findings.some((f) => f.kind === "dead") ? 1 : 0);
+
+  // Renames already adopted. Printed every time: an override silently
+  // redirects a pin, so it must never be invisible in the routing report.
+  const { loadOverrides, OVERRIDES_PATH } = await import("./model-autofix.js");
+  const overrides = Object.values(loadOverrides());
+  if (overrides.length) {
+    console.log(`\nAdopted renames (${OVERRIDES_PATH}):`);
+    for (const o of overrides) {
+      console.log(`  ${o.from} → ${o.to} (${o.provider}) — proved ${o.verified.join(", ")} on ${o.at.slice(0, 10)}`);
+    }
+  }
+
+  let dead = findings.filter((f) => f.kind === "dead") as any[];
+  if (dead.length && process.argv.includes("--fix")) {
+    console.log("");
+    dead = (await autofixDeadModels(dead)).map((u) => ({ pinned: u.from }));
+  } else if (dead.length) {
+    console.log(`\n  Run \`luxas models --fix\` to search each provider's catalog for a proven replacement.`);
+  }
+  process.exit(dead.length ? 1 : 0);
 }
 
 if (command === "status") {
@@ -425,12 +493,31 @@ async function run(dir: string, modelName: string, userDirective?: string, maxCo
         console.error(`◈ newer model available: ${n.pinned} → ${n.candidate} (${n.provider}), used by ${n.usedBy.join(", ")}. Run \`luxas models\` for the full report.`);
       }
       if (dead.length) {
-        console.error(`✗ ${dead.length} pinned model(s) no longer exist at their provider — this run would die on them:`);
+        console.error(`✗ ${dead.length} pinned model(s) no longer exist at their provider:`);
         for (const d of dead) {
           console.error(`    ${d.pinned} (${d.provider}) — used by ${d.usedBy.join(", ")}`);
         }
-        console.error(`  Fix the pin in src/agents/spawn.ts, or re-point the profile. Override with LUXAS_SKIP_MODEL_CHECK=1.`);
-        process.exit(1);
+        // Most dead pins are RENAMES, not withdrawals — the capability is
+        // still on sale under a new id. Try to find it and prove it before
+        // giving up, so a provider's rename costs nobody a launch. On
+        // 2026-09-12 one cost three days: DeepSeek folded
+        // deepseek-v4-flash-vision-exp into deepseek-flash and every dual run
+        // refused until a human edited spawn.ts.
+        //
+        // Adoption requires GROUND-TRUTH probes, never a status code. Probed
+        // the same day, deepseek-v4-pro answered a read-these-digits image
+        // with a confident, wrong `{"answer":"3"}` at HTTP 200 — a candidate
+        // can look perfectly healthy and be blind, and routing the figure
+        // agents to it would be worse than this refusal.
+        const unfixed = process.env.LUXAS_NO_MODEL_AUTOFIX === "1"
+          ? dead.map((d) => ({ from: d.pinned }))
+          : await autofixDeadModels(dead);
+        if (unfixed.length) {
+          console.error(`✗ ${unfixed.length} could not be auto-fixed — this run would die on them.`);
+          console.error(`  Fix the pin in src/agents/spawn.ts, or re-point the profile. Override with LUXAS_SKIP_MODEL_CHECK=1.`);
+          process.exit(1);
+        }
+        console.error(`◈ all dead pins auto-fixed; continuing.`);
       }
     } catch (e: any) {
       console.error(`◈ model check skipped: ${e?.message ?? e}`);

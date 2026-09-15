@@ -6,6 +6,7 @@
 
 import { Agent } from "@earendil-works/pi-agent-core";
 import { getModel, streamSimple } from "@earendil-works/pi-ai/compat";
+import { loadOverrides, type ModelOverride } from "../model-autofix.js";
 import { mkdirSync, appendFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join, dirname } from "node:path";
@@ -235,49 +236,44 @@ const MODEL_MAP: Record<string, [string, string] | InlineModel> = {
     compat: { ...DEEPSEEK_COMPAT },
     thinkingLevelMap: { ...DEEPSEEK_THINKING },
   },
-  "deepseek-v4-flash": {
-    id: "deepseek-v4-flash",
-    name: "DeepSeek-V4-Flash",
-    api: "openai-completions",
-    provider: "deepseek",
-    baseUrl: "https://api.deepseek.com/v1",
-    reasoning: true,
-    input: ["text"],
-    cost: { input: 0.44, output: 1.32, cacheRead: 0.014, cacheWrite: 0 },
-    contextWindow: 1048576,
-    maxTokens: 393216,
-    compat: { ...DEEPSEEK_COMPAT },
-    thinkingLevelMap: { ...DEEPSEEK_THINKING },
-  },
-  // DeepSeek's multimodal model — the vision half of --profile dual since
-  // 2026-09-02 (announcement: api-docs.deepseek.com/news/news260821).
-  // Same endpoint, key and wire format as the text producers, so a dual run
-  // now needs ONE provider instead of two; that is the point of the switch.
-  // Kimi K2.5 (below) started returning 404 mid-run on 2026-08-31 and every
-  // illustrator/illustrator_write/typesetter spawn died on turn 1 for the rest
-  // of the Ba run while the reviewer kept spawning audits nobody could act on
-  // (notes/figure-pipeline-review-2026-09-02.md §3.6).
+  // DeepSeek's flash tier. ONE model, and it can see.
   //
-  // Live-probed 2026-09-02 against the real endpoint:
-  //  - image + tools + thinking + tool_choice="auto" → tool_calls, 5 s. This is
-  //    the production shape, reached because `reasoning: true` makes
-  //    pickRequireToolChoice return "auto".
-  //  - the SAME call with tool_choice="required" → 400 "Thinking mode does not
-  //    support this tool_choice". Never set reasoning:false here, or the
-  //    silent-exit guard will force "required" and every turn 400s.
+  // Renamed 2026-09-15: the catalog served `deepseek-v4-flash` (text) and
+  // `deepseek-v4-flash-vision-exp` (multimodal) until DeepSeek collapsed both
+  // into `deepseek-flash`. Both old ids are gone from /v1/models, and the
+  // vision one is what `--profile dual` routes illustrator/illustrator_write/
+  // typesetter to, so every dual run refused to start (a 2026-09-12 launch
+  // died in preflight three times). The retired names stay below as aliases.
+  //
+  // Live-probed 2026-09-15 against the real endpoint, production call shape
+  // (image + tools + thinking + tool_choice="auto", the shape reached because
+  // `reasoning: true` makes pickRequireToolChoice return "auto"):
+  //  - rendered "74629" to a PNG and asked it to read the digits back:
+  //    `deepseek-flash` returned {"digits":"74629"} in 1.2 s. It sees.
+  //  - the SAME probe on `deepseek-v4-pro` came back "I'm unable to read the
+  //    digits because the image is not available" — HTTP 200, a well-formed
+  //    tool_call, and totally blind. The text tier is NOT a vision fallback,
+  //    and a 200 is not evidence a candidate can do the job. That is why
+  //    model-autofix.ts verifies with ground truth instead of a status code.
+  //
+  // Carried over from the 09-02 probe of the model this replaces, still true:
+  //  - tool_choice="required" → 400 "Thinking mode does not support this
+  //    tool_choice". Never set reasoning:false here, or the silent-exit guard
+  //    forces "required" and every turn 400s.
   //  - reasoning eats the output budget before content appears (a tall
   //    schematic spent 9179 of 9500 completion tokens on reasoning), so
-  //    maxTokens must stay large — same lesson K2.5 taught.
-  //  - an image bills as ~384 input tokens (doc: "up to 384 tokens each").
-  "deepseek-v4-flash-vision-exp": {
-    id: "deepseek-v4-flash-vision-exp",
-    name: "DeepSeek-V4-Flash-Vision (exp)",
+  //    maxTokens must stay large.
+  //  - an image bills as ~384 input tokens (doc: "up to 384 tokens each");
+  //    the digits probe billed 505 prompt tokens for ~25 tokens of text.
+  "deepseek-flash": {
+    id: "deepseek-flash",
+    name: "DeepSeek-Flash",
     api: "openai-completions",
     provider: "deepseek",
     baseUrl: "https://api.deepseek.com/v1",
     reasoning: true,
     input: ["text", "image"],
-    // Documented PEAK rates (same tier as v4-flash) so the cost cap never
+    // Documented PEAK rates for the flash tier so the cost cap never
     // under-counts; image tokens bill as input.
     cost: { input: 0.44, output: 1.32, cacheRead: 0.014, cacheWrite: 0 },
     contextWindow: 1048576,
@@ -401,6 +397,17 @@ const MODEL_MAP: Record<string, [string, string] | InlineModel> = {
     compat: { supportsDeveloperRole: false },
   },
 };
+
+// Retired DeepSeek ids, kept resolving to the live model instead of 404ing.
+// DeepSeek folded `deepseek-v4-flash` (text) and `deepseek-v4-flash-vision-exp`
+// (multimodal) into `deepseek-flash` on or before 2026-09-15; both old ids are
+// gone from /v1/models. An alias is the honest encoding of a rename: a stale
+// pin in a saved run_config, a benchmark script, or someone's env var lands on
+// the model that replaced it rather than dying on turn 1. They resolve to the
+// same object, so `listRoutedModels` reports the LIVE id and the freshness
+// check sees `deepseek-flash` — an alias cannot hide a dead pin.
+MODEL_MAP["deepseek-v4-flash"] = MODEL_MAP["deepseek-flash"];
+MODEL_MAP["deepseek-v4-flash-vision-exp"] = MODEL_MAP["deepseek-flash"];
 
 // Anthropic tier names that participate in profile redirection. When
 // LUXAS_MODEL_PROFILE is set (e.g. to "deepseek-v4-flash"), any agent that
@@ -540,10 +547,45 @@ export async function streamWithRetry(
   throw new Error("streamWithRetry: unreachable");
 }
 
+/**
+ * Adopted model renames (src/model-autofix.ts), loaded once per process.
+ *
+ * Keyed by the DEAD id, not the MODEL_MAP key, because a rename is a fact
+ * about the provider's id — `k2p5` is our name for it and survives unchanged.
+ */
+let _overrides: Record<string, ModelOverride> | null = null;
+function activeOverrides(): Record<string, ModelOverride> {
+  if (_overrides === null) _overrides = loadOverrides();
+  return _overrides;
+}
+
+/** Re-read the override file — after autofix adopts one mid-process, and in gates. */
+export function refreshModelOverrides(): void {
+  _overrides = null;
+}
+
+/**
+ * The inline MODEL_MAP entry serving a given provider id, or null when the id
+ * is served from pi-ai's catalog (tuple form). model-autofix needs the entry's
+ * transport settings and declared modalities to build a probe.
+ */
+export function lookupInlineEntry(id: string): any | null {
+  for (const entry of Object.values(MODEL_MAP)) {
+    if (!Array.isArray(entry) && (entry as any)?.id === id) return entry;
+  }
+  return null;
+}
+
 export function resolveModel(modelKey: string, agentName?: string) {
   const effectiveKey = applyProfile(modelKey, agentName);
   const entry = MODEL_MAP[effectiveKey] ?? MODEL_MAP.sonnet;
   if (Array.isArray(entry)) return getModel(entry[0] as any, entry[1] as any);
+  // A provider renamed this model and autofix PROVED the replacement can still
+  // do the job (ground-truth probes, not a 200). Swap the id and keep the rest
+  // of the entry: same provider, endpoint, auth and wire format, by
+  // construction — autofix only ever adopts within one provider's catalog.
+  const ov = activeOverrides()[(entry as any)?.id];
+  if (ov?.to && ov.to !== (entry as any)?.id) return { ...(entry as any), id: ov.to };
   return entry as any;
 }
 

@@ -3,7 +3,7 @@
  * smoke_dual_profile — verify --profile dual routes only vision-required
  * agents to the multimodal model while text agents go to DeepSeek-v4-pro.
  *
- * Vision agents:  illustrator, illustrator_write, typesetter  → deepseek-v4-flash-vision-exp
+ * Vision agents:  illustrator, illustrator_write, typesetter  → deepseek-flash
  * Text agents:    experiment, reader, search, ...             → deepseek-v4-pro
  * brain:          gpt-6-astra (LUXAS_BRAIN_MODEL, 2026-09-06) → NOT the producer profile
  * PI reviewers:   reviewer, experiment_reviewer               → declared Anthropic tier
@@ -65,7 +65,7 @@ check("typesetter (sonnet) → deepseek-v4-pro (NO vision split)",
 // ── 3. --profile dual (text=deepseek, vision=deepseek multimodal) ──
 console.log("\n3. --profile dual (deepseek text + deepseek vision)");
 process.env.LUXAS_MODEL_PROFILE = "deepseek-v4-pro";
-process.env.LUXAS_VISION_MODEL_PROFILE = "deepseek-v4-flash-vision-exp";
+process.env.LUXAS_VISION_MODEL_PROFILE = "deepseek-flash";
 process.env.LUXAS_VISION_AUDIT_MODEL_PROFILE = "glm-5.3-flash";
 // Mirrors the env `--profile dual` sets in src/index.ts. brain is deliberately
 // NOT on the producer model: measured 2026-09-06, deepseek-v4-pro placed last
@@ -99,8 +99,8 @@ check("reviewer (sonnet) → claude-sonnet-5 (PI keeps Anthropic tier)",
 // must land on a model that actually accepts images.
 for (const agent of ["illustrator", "illustrator_write", "typesetter"]) {
   const m = resolveModel("sonnet", agent);
-  check(`${agent} (sonnet) → deepseek-v4-flash-vision-exp`,
-    modelId(m) === "deepseek-v4-flash-vision-exp", `got ${modelId(m)}`);
+  check(`${agent} (sonnet) → deepseek-flash`,
+    modelId(m) === "deepseek-flash", `got ${modelId(m)}`);
   check(`${agent} model accepts image input`, acceptsImages(m));
   // Reasoning models get tool_choice "auto". This is a hard requirement on the
   // deepseek vision entry (thinking + "required" is a 400 there) and harmless
@@ -132,7 +132,7 @@ check("brain's text model does NOT accept images (the reason for the split)",
 process.env.LUXAS_VISION_MODEL_PROFILE = "k2p5";
 check("LUXAS_VISION_MODEL_PROFILE=k2p5 still resolves to a vision model",
   acceptsImages(resolveModel("sonnet", "illustrator")));
-process.env.LUXAS_VISION_MODEL_PROFILE = "deepseek-v4-flash-vision-exp";
+process.env.LUXAS_VISION_MODEL_PROFILE = "deepseek-flash";
 
 // ── 4. OpenAI/Codex tiers (gpt-5.6-terra, o3) bypass profile ───────────
 console.log("\n4. OpenAI tiers bypass profile");
