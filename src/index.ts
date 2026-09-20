@@ -247,14 +247,31 @@ if (profile === "dual") {
   // asserts it. Swapping either side onto the other's model silently turns the
   // ship/no-ship gate into a self-check.
   process.env.LUXAS_VISION_AUDIT_MODEL_PROFILE = "glm-5.3-flash";
-  // brain does NOT take the producer profile (2026-09-06, measured — see
-  // notes/model-routing-2026-09-06.md). deepseek-v4-pro placed last of five
-  // models on brain's own decomposition task on all three scoring channels,
-  // and brain decides what the rest of the run spends its money on. gpt-6-astra
-  // was the only candidate with zero fabrication flags and is ~2.7x faster per
-  // call, which is wall clock because brain's ~340 calls are serial.
-  // An explicit --model is a deliberate family switch and keeps priority.
-  if (!explicitModel) process.env.LUXAS_BRAIN_MODEL = "gpt-6-astra";
+  // brain follows the producer profile again (2026-09-20, operator decision:
+  // OpenAI ran out of credit mid-run and DeepSeek is funded). A brain that
+  // cannot bill is a brain that cannot run — on 2026-09-19 OpenAI hit zero and
+  // the whole run died 24 minutes after an Anthropic top-up had revived it.
+  //
+  // The 2026-09-06 benchmark is unchanged and is the reason to switch back the
+  // moment OpenAI has credit (notes/model-routing-2026-09-06.md): on brain's
+  // own decomposition task deepseek-v4-pro placed LAST of five models on all
+  // three scoring channels. It collapsed 3-4 experiment chains into one
+  // mega-experiment and presented a symbolic and a numerical solution of the
+  // SAME Hamiltonian as independent legs — precisely the fake independence the
+  // claims-first architecture exists to catch. gpt-6-astra was the only
+  // candidate with zero fabrication flags and ~2.7x faster per call, which is
+  // wall clock because brain's ~340 calls are serial. So this is a funding
+  // decision, not a quality one, and it costs real rigor while it stands.
+  //   switch back:  LUXAS_BRAIN_MODEL=gpt-6-astra luxas run <project>
+  //
+  // An explicit --model is a deliberate family switch and keeps priority — and
+  // so does a pre-set LUXAS_BRAIN_MODEL. That assignment used to be
+  // unconditional, which silently ate the documented one-line rollback: under
+  // --profile dual, `LUXAS_BRAIN_MODEL=glm-5.3 luxas run` was overwritten and
+  // the operator got the pinned model anyway, with nothing printed.
+  if (!explicitModel && !process.env.LUXAS_BRAIN_MODEL) {
+    process.env.LUXAS_BRAIN_MODEL = "deepseek-v4-pro";
+  }
 } else if (profile === "claude") {
   // No env override — every agent uses its declared frontmatter model.
 } else if (profile) {
@@ -346,7 +363,7 @@ if (command === "models") {
     process.env.LUXAS_MODEL_PROFILE = "deepseek-v4-pro";
     process.env.LUXAS_VISION_MODEL_PROFILE = "deepseek-flash";
     process.env.LUXAS_VISION_AUDIT_MODEL_PROFILE = "glm-5.3-flash";
-    process.env.LUXAS_BRAIN_MODEL = "gpt-6-astra";
+    if (!process.env.LUXAS_BRAIN_MODEL) process.env.LUXAS_BRAIN_MODEL = "deepseek-v4-pro";
   }
   const { formatFindings } = await import("./model-check.js");
   console.error(`◈ profile: ${profile}`);

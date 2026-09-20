@@ -5,7 +5,7 @@
  *
  * Vision agents:  illustrator, illustrator_write, typesetter  → deepseek-flash
  * Text agents:    experiment, reader, search, ...             → deepseek-v4-pro
- * brain:          gpt-6-astra (LUXAS_BRAIN_MODEL, 2026-09-06) → NOT the producer profile
+ * brain:          deepseek-v4-pro (LUXAS_BRAIN_MODEL, 2026-09-20 — OpenAI out of credit)
  * PI reviewers:   reviewer, experiment_reviewer               → declared Anthropic tier
  *
  * Also guards the two live-probed API constraints of the vision model
@@ -72,28 +72,51 @@ process.env.LUXAS_VISION_AUDIT_MODEL_PROFILE = "glm-5.3-flash";
 // of five models on brain's own pipeline-design task on all three scoring
 // channels (notes/model-routing-2026-09-06.md). If index.ts and this line ever
 // disagree, the gate is testing a routing nobody runs.
-process.env.LUXAS_BRAIN_MODEL = "gpt-6-astra";
+process.env.LUXAS_BRAIN_MODEL = "deepseek-v4-pro";
 {
   const b = resolveModel("sonnet", "brain");
-  check("brain (sonnet) → gpt-6-astra, NOT the producer profile",
-    modelId(b) === "gpt-6-astra", `got ${modelId(b)}`);
+  check("brain (sonnet) → deepseek-v4-pro (2026-09-20: OpenAI out of credit)",
+    modelId(b) === "deepseek-v4-pro", `got ${modelId(b)}`);
   check("brain's model resolves to a real id on a provider with a key slot",
-    (b as any)?.provider === "openai" && !!(b as any)?.cost);
-  // brain sends a forced tool choice every turn (the silent-exit guard). A
-  // model that rejects it would 400 on turn 1 — fable-5.1 does exactly that.
-  check("brain → tool_choice \"required\" (silent-exit guard intact)",
-    pickRequireToolChoice(b) === "required", `got ${pickRequireToolChoice(b)}`);
-  // gpt-6-astra REFUSES function tools on /v1/chat/completions:
-  //   400 Function tools with reasoning_effort are not supported ... To use
-  //       function tools, use /v1/responses or set reasoning_effort to 'none'.
-  // and its own suggested escape hatch is also rejected ('none' is not a
-  // supported value for this model). /v1/responses is the only path that takes
-  // tools. Every Luxas agent is a tool caller on every turn, so routing brain
-  // here on openai-completions is a turn-1 death for the whole run — which is
-  // how it shipped on 2026-09-06 and stayed latent until the first real launch
-  // reached the brain on 2026-09-15. The bench only sent plain completions.
+    !!(b as any)?.provider && !!(b as any)?.cost);
+  // brain sends a forced tool choice every turn (the silent-exit guard), and a
+  // model that rejects one 400s on turn 1 — fable-5.1 does exactly that.
+  // But "required" is NOT universally right: DeepSeek's reasoning models
+  // answer a forced choice with 400 "Thinking mode does not support this
+  // tool_choice", so "auto" is CORRECT for them and the guard's job passes to
+  // the prompt instruction plus the maxTurns cap. Assert the pairing rather
+  // than a fixed string, or this gate fails every time brain moves to a
+  // reasoning model and tempts someone to "fix" it by forcing a 400.
+  const tc = pickRequireToolChoice(b);
+  check("brain's tool_choice is the strongest value its model accepts",
+    (b as any)?.reasoning ? tc === "auto" : (tc === "required" || tc === "any"),
+    `${modelId(b)} reasoning=${!!(b as any)?.reasoning} → ${tc}`);
+  // Every Luxas agent is a tool caller on EVERY turn, so a brain model whose
+  // api cannot carry function tools is a turn-1 death for the whole run.
+  // gpt-6-astra shipped that way on 2026-09-06 and stayed latent until the
+  // first launch that actually reached the brain (2026-09-15): on
+  // /v1/chat/completions it answers any request carrying tools with
+  //   400 Function tools with reasoning_effort are not supported ... use
+  //       /v1/responses or set reasoning_effort to 'none'
+  // and its own suggested escape hatch is rejected too ('none' is not a
+  // supported value for this model). Assert the constraint, not one model's
+  // answer, so this protects whichever brain is configured.
+  const brainApi = (b as any)?.api, brainId = modelId(b);
   check("brain's model uses an api that accepts function tools",
-    (b as any)?.api === "openai-responses", `got api=${(b as any)?.api} — chat/completions cannot take tools on this model`);
+    brainId === "gpt-6-astra" ? brainApi === "openai-responses" : !!brainApi,
+    `got ${brainId} on api=${brainApi}`);
+}
+// The documented one-line rollback must actually reach applyProfile. This
+// assignment was unconditional until 2026-09-20, so `LUXAS_BRAIN_MODEL=... `
+// was silently overwritten under --profile dual and the operator got the
+// pinned model with nothing printed.
+{
+  const saved = process.env.LUXAS_BRAIN_MODEL;
+  process.env.LUXAS_BRAIN_MODEL = "glm-5.3";
+  check("a pre-set LUXAS_BRAIN_MODEL wins over the profile's pin",
+    modelId(resolveModel("sonnet", "brain")) === "glm-5.3",
+    `got ${modelId(resolveModel("sonnet", "brain"))}`);
+  process.env.LUXAS_BRAIN_MODEL = saved;
 }
 check("experiment stays on the producer profile while brain does not",
   modelId(resolveModel("sonnet", "experiment")) === "deepseek-v4-pro");
