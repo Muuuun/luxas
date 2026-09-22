@@ -56,7 +56,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, basename } from "node:path";
 import { listExperimentDirs } from "./tools/report-integrity.js";
-import { openReviewFindings, sameRoute } from "./claims-review.js";
+import { openReviewFindings, routeConfessesDependence, sameRoute } from "./claims-review.js";
 import { listJobIds, readState } from "./jobs/registry.js";
 
 // ── types ──────────────────────────────────────────────────────────────────
@@ -540,12 +540,20 @@ function relDiff(a: number, b: number): number {
 
 export type PairRelation = "wiring" | "incomparable" | "comparable";
 
-export function relation(a: Estimate, b: Estimate): { rel: PairRelation; differing: string[] } {
+export function relation(a: Estimate, b: Estimate): { rel: PairRelation; differing: string[]; why?: string } {
   const bothInt = Number.isInteger(a.value) && Number.isInteger(b.value);
   if (!bothInt && relDiff(a.value, b.value) < WIRING_REL) return { rel: "wiring", differing: [] };
   if (a.script && b.script && a.script === b.script) return { rel: "wiring", differing: [] };
   // v3 D2: two names for one route are one leg; same model on the same route too.
   if (a.route && b.route && sameRoute(a.route, b.route) && (a.kind !== "own" || b.kind !== "own")) return { rel: "wiring", differing: [] };
+  // …and a leg that ADMITS it re-reads / re-sums / is internal to the other is
+  // not a second leg either. sameRoute (token-set equality) fired 0/64 on the
+  // real corpus; this fires 4/64 with 0 false positives, 2 of them above the
+  // numeric 1e-6 veto where nothing else looks. notes/jev-evaluation-2026-09-22.md §5.
+  if (a.route && b.route && (a.kind !== "own" || b.kind !== "own")) {
+    const confession = routeConfessesDependence(a.route, b.route);
+    if (confession) return { rel: "wiring", differing: [], why: confession };
+  }
   const differing: string[] = [];
   if (a.inputs && b.inputs) {
     for (const k of Object.keys(a.inputs)) {
@@ -710,9 +718,9 @@ export function buildClaimTable(projectDir: string): ClaimTable {
     const producers = allProducers.filter((e) => !(e.experiment && retiredExps.has(e.experiment)));
     for (let i = 0; i < producers.length; i++) for (let k = i + 1; k < producers.length; k++) {
       const a = producers[i], b = producers[k];
-      const { rel, differing } = relation(a, b);
+      const { rel, differing, why } = relation(a, b);
       const ag = agreement(a, b);
-      if (rel === "wiring") { if (ag !== "disagree") reasons.push(`wiring: ${a.source} ≈ ${b.source}`); continue; }
+      if (rel === "wiring") { if (ag !== "disagree") reasons.push(`wiring: ${a.source} ≈ ${b.source}${why ? ` (${why})` : ""}`); continue; }
       if (rel === "incomparable") {
         reasons.push(`incomparable: ${a.source} vs ${b.source} differ in inputs ${differing.join(",")}`);
         if (ag === "disagree") { const ups = differing.filter((u) => known.has(u)); propagate.push(...ups); if (ups.length) reasons.push(`dispute propagated to ${ups.join(",")}`); }
@@ -728,7 +736,9 @@ export function buildClaimTable(projectDir: string): ClaimTable {
         // An assigned route on the replication side counts as different when the
         // producer never named its own route (unknown ≠ same); relation() has
         // already turned two named identical routes into wiring.
-        const routesDiffer = (a.route && b.route) ? !sameRoute(a.route, b.route) : true;
+        const routesDiffer = (a.route && b.route)
+          ? !sameRoute(a.route, b.route) && !routeConfessesDependence(a.route, b.route)
+          : true;
         const attested = !headline.has(id) || rev.independent.has(id) || ((computingLeg(a) || computingLeg(b)) && routesDiffer);
         if (attested) {
           agreeingPair = true;

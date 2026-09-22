@@ -469,6 +469,60 @@ export function routeTokens(method: string): Set<string> {
   return new Set(String(method ?? "").toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length >= 3 && !ROUTE_STOPWORDS.has(t)));
 }
 /** True when two method descriptions name the same route (no distinguishing content token on either side). */
+/**
+ * Does either route ADMIT, in its own words, that it is downstream of the other
+ * leg? This is reading a confession, not inferring a similarity.
+ *
+ * Why it exists: `sameRoute` below is token-set EQUALITY, and measured over the
+ * whole corpus (64 real cross_validation pairs with both method strings and both
+ * numbers, 5 projects — `scripts/route_pairs.mts`) it fires **0 times**. Every
+ * wiring verdict in production has come from the numeric 1e-6 veto alone. Worse,
+ * ROUTE_STOPWORDS deletes "same", "own", "from", "via", "using" — so the
+ * tokenizer strips exactly the words a confession is made of before comparing.
+ *
+ * Text SIMILARITY cannot fix that: the bit-identical pairs have near-zero token
+ * overlap ("analytic sixth-root closed form" vs "direct geometric 3D density
+ * ratio", agreeing to 1e-16). Jaccard and containment score AUC 0.76/0.82 on
+ * that corpus and an evaluation model scores 0.67 — all three are thresholds
+ * tuned on n=25, which is how this check got broken the first time. So no
+ * threshold is shipped. Only self-admission is.
+ *
+ * Measured on the same 64 pairs: 4 hits, 4/4 genuine wiring, 0 false positives
+ * on the 20 numerically-independent pairs — and 2 of the 4 sit ABOVE the 1e-6
+ * veto (rel 3.4e-5 and 7.8e-6), where nothing catches them today.
+ *
+ * Known risk, deliberately not hidden: this penalises honesty. A producer that
+ * writes "internal check" loses the credit a producer writing "second method"
+ * keeps. Every text rule has that flaw (sameRoute included). If producers are
+ * ever seen avoiding these words, replace this with provenance — who produced
+ * the artifact — not wording. See notes/jev-evaluation-2026-09-22.md §5.
+ *
+ * Returns the reason (for the claim table's `reasons` line), or null.
+ */
+const ROUTE_CONFESSIONS: { re: RegExp; why: string }[] = [
+  // "E6 packing optimizer INTERNAL full-pairwise check" vs "independent recheck
+  // of the same exhibited lattice" — agreed to 2.2e-13.
+  { re: /\binternal\b/i, why: "one route calls itself internal to what it checks" },
+  { re: /\bre-?sum(?:s|med|ming)?\b/i, why: "one route re-sums an existing result" },
+  // "E4 declared computed.laser_inventory.mot_laser_count READ DIRECTLY from …"
+  { re: /\bre-?reads?\b|\bread directly\b/i, why: "one route re-reads a stored value" },
+  { re: /\bre-?comput(?:e|ed|es|ing)\s+from\b/i, why: "one route recomputes from the other's output" },
+  { re: /\b(?:\w+)'s own\b|\bits own\b/i, why: "one route consumes the checked tool's own output" },
+  // "alpha = sum f_n/omega_n^2 with f derived from the SAME A" — agreed to 7.8e-6.
+  // `same` only counts beside a derivation verb, so "at the same temperature"
+  // and "the same n=60 state" stay innocent.
+  { re: /\b(?:derived|computed|obtained|taken|built|constructed)\s+(?:\w+\s+){0,3}?(?:from|via|using)\s+the same\b/i,
+    why: "one route derives from the same upstream input as the other" },
+  { re: /\b(?:from|via|using)\s+the same\s+(?:\w+\s+){0,2}?(?:value|result|output|fit|data|coefficient|constant)\b/i,
+    why: "one route reuses the other's own value" },
+];
+
+export function routeConfessesDependence(a: string, b: string): string | null {
+  const text = `${a ?? ""} ${b ?? ""}`;
+  for (const { re, why } of ROUTE_CONFESSIONS) if (re.test(text)) return why;
+  return null;
+}
+
 export function sameRoute(a: string, b: string): boolean {
   const ta = routeTokens(a), tb = routeTokens(b);
   if (ta.size === 0 || tb.size === 0) return a.trim().toLowerCase() === b.trim().toLowerCase();

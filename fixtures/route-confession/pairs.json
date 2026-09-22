@@ -1,0 +1,642 @@
+[
+ {
+  "project": "ba-neutral-atom-qc-20260829/project",
+  "experiment": "E1_ba_isotope_selection",
+  "key": "0",
+  "method_a": "Casimir formula from measured A/B (van Wijngaarden & Li 1995: a=-109.50, b=+50.09 MHz)",
+  "method_b": "directly measured hyperfine transition-frequency difference (van Wijngaarden & Li 1995: T(F=5/2)=63.43, T(F=3/2)=274.56 MHz relative to 138Ba)",
+  "value_a": 211.1375,
+  "value_b": 211.13,
+  "rel": 3.5521875554997e-05
+ },
+ {
+  "project": "ba-neutral-atom-qc-20260829/project",
+  "experiment": "E1_ba_isotope_selection",
+  "key": "1",
+  "method_a": "Casimir formula from A/B (A=1149.9, B=-41.6 MHz) + Grundevik 1983 isotope shift +183.4 MHz",
+  "method_b": "directly measured 1S0(F=3/2)->3P1(F'=3/2) transition frequency (Dammalapati 2009: -925.6(1.0) MHz relative to 138Ba)",
+  "value_a": -924.9,
+  "value_b": -925.6,
+  "rel": 0.0007562662057044571
+ },
+ {
+  "project": "ba-neutral-atom-qc-20260829/project",
+  "experiment": "E1_ba_isotope_selection",
+  "key": "2",
+  "method_a": "Casimir formula (scripts/hyperfine_casimir.py, A=3417.341 MHz)",
+  "method_b": "literature value: Rb87 5S hyperfine splitting 6.834682610904 GHz (Steck, Rb87 D Line Data); independent of the Casimir formula used for method_a",
+  "value_a": 6834.681999999999,
+  "value_b": 6834.682610904,
+  "rel": 8.938293644106552e-08
+ },
+ {
+  "project": "ba-neutral-atom-qc-20260829/project",
+  "experiment": "E2_qubit_encoding_rydberg_series",
+  "key": "0",
+  "method_a": "Rydberg-Ritz fit to NIST ASD Sr I 5sns 1S0 term energies (scripts/ba_quantum_defects.py)",
+  "method_b": "published Vaillant2012 Table I Sr 1S0 delta0 = 3.26896(2)",
+  "value_a": 3.268782,
+  "value_b": 3.26896,
+  "rel": 5.445156869463422e-05
+ },
+ {
+  "project": "ba-neutral-atom-qc-20260829/project",
+  "experiment": "E2_qubit_encoding_rydberg_series",
+  "key": "1",
+  "method_a": "Rydberg-Ritz fit to NIST ASD Sr I 5sns 3S1 term energies (scripts/ba_quantum_defects.py)",
+  "method_b": "published Vaillant2012 Table I Sr 3S1 delta0 = 3.371(2)",
+  "value_a": 3.371218,
+  "value_b": 3.371,
+  "rel": 6.466505577504316e-05
+ },
+ {
+  "project": "ba-neutral-atom-qc-20260829/project",
+  "experiment": "E2_qubit_encoding_rydberg_series",
+  "key": "2",
+  "method_a": "Rydberg-Ritz fit delta0(6sng 1G4)=0.0542 to NIST ASD energies -> E(6s78g 1G4) -> step2 wavelength",
+  "method_b": "published Shi2025 657.9 nm (Neukammer1988 quantum defects)",
+  "value_a": 657.869,
+  "value_b": 657.9,
+  "rel": 4.711962304293824e-05
+ },
+ {
+  "project": "ba-neutral-atom-qc-20260829/project",
+  "experiment": "E2_qubit_encoding_rydberg_series",
+  "key": "3",
+  "method_a": "k = 2*pi*|1/648.47 - 1/657.87| from computed step wavelengths (counter-propagating)",
+  "method_b": "published Shi2025 two-photon wavevector 0.138 um^-1",
+  "value_a": 0.138433,
+  "value_b": 0.138,
+  "rel": 0.0031278669103464414
+ },
+ {
+  "project": "ba-neutral-atom-qc-20260829/project",
+  "experiment": "E3_rydberg_lifetime_vs_n",
+  "key": "0",
+  "method_a": "exact hydrogenic dipole sum (Gauss-Laguerre + Gordon)",
+  "method_b": "Shi2025 Kaulakys quasiclassical (published)",
+  "value_a": 0.371,
+  "value_b": 7.1,
+  "rel": 0.9477464788732394
+ },
+ {
+  "project": "ba-neutral-atom-qc-20260829/project",
+  "experiment": "E3_rydberg_lifetime_vs_n",
+  "key": "1",
+  "method_a": "ARC model potential",
+  "method_b": "Evered2023 measured",
+  "value_a": 72.45,
+  "value_b": 88,
+  "rel": 0.17670454545454542
+ },
+ {
+  "project": "ba-neutral-atom-qc-20260829/project",
+  "experiment": "E3_rydberg_lifetime_vs_n",
+  "key": "2",
+  "method_a": "pairinteraction MQDT",
+  "method_b": "Pagano2022 published",
+  "value_a": 121.64,
+  "value_b": 65,
+  "rel": 0.4656363038474186
+ },
+ {
+  "project": "ba-neutral-atom-qc-20260829/project",
+  "experiment": "E3_rydberg_lifetime_vs_n",
+  "key": "3",
+  "method_a": "Gauss-Laguerre exact quadrature",
+  "method_b": "analytic n^3 scaling law (fixed-l hydrogenic Rydberg states scale as tau ~ n^3, exponent exactly 3)",
+  "value_a": 2.992,
+  "value_b": 3,
+  "rel": 0.002666666666666669
+ },
+ {
+  "project": "ba-neutral-atom-qc-20260829/project",
+  "experiment": "E4_interaction_strength",
+  "key": "0",
+  "method_a": "c6_vdw second-order dipole-dipole sum (Kaulakys radial + D11 angular + calibrated F/H defects)",
+  "method_b": "Shi2025 published perturbative C6 (ARPACK-consistent)",
+  "value_a": -286.38,
+  "value_b": -570,
+  "rel": 0.49757894736842107
+ },
+ {
+  "project": "ba-neutral-atom-qc-20260829/project",
+  "experiment": "E4_interaction_strength",
+  "key": "1",
+  "method_a": "c6_vdw second-order dipole-dipole sum",
+  "method_b": "Shi2025 published perturbative C6",
+  "value_a": -3954,
+  "value_b": -10000,
+  "rel": 0.6046
+ },
+ {
+  "project": "ba-neutral-atom-qc-20260829/project",
+  "experiment": "E4_interaction_strength",
+  "key": "2",
+  "method_a": "ARC PairStateInteractions.getC6perturbatively",
+  "method_b": "pairinteraction pi.C6",
+  "value_a": 3149.6,
+  "value_b": 3169.1,
+  "rel": 0.006153166514152283
+ },
+ {
+  "project": "ba-neutral-atom-qc-20260829/project",
+  "experiment": "E4_interaction_strength",
+  "key": "3",
+  "method_a": "ARC PairStateInteractions.getC6perturbatively",
+  "method_b": "pairinteraction pi.C6",
+  "value_a": 2495.4,
+  "value_b": 2316.1,
+  "rel": 0.07185220806283568
+ },
+ {
+  "project": "ba-neutral-atom-qc-20260829/project",
+  "experiment": "E4_interaction_strength",
+  "key": "4",
+  "method_a": "pairinteraction pi.C6 (Sr88_mqdt)",
+  "method_b": "Vaillant2012 CSV (K=0 Omega=0 isotropic column)",
+  "value_a": 148.3,
+  "value_b": 223,
+  "rel": 0.33497757847533627
+ },
+ {
+  "project": "ba-neutral-atom-qc-20260829/project",
+  "experiment": "E4_interaction_strength",
+  "key": "5",
+  "method_a": "c6_vdw second-order dipole-dipole sum (Sr 1S0 channel: D11 + Kaulakys radial + Rydberg-Ritz energies)",
+  "method_b": "Vaillant2012 Strontium1S0C6.csv",
+  "value_a": -23.98,
+  "value_b": -24.07,
+  "rel": 0.003739094308267547
+ },
+ {
+  "project": "ba-neutral-atom-qc-20260829/project",
+  "experiment": "E5_ba_1F3_channel_closure",
+  "key": "0",
+  "method_a": "QD Numerov channel sum (delta_F=0.048)",
+  "method_b": "exact-hydrogenic limit delta_F to 0 (matches E3 Gordon/Gauss-Laguerre 0.371 to 0.04%)",
+  "value_a": 0.3029,
+  "value_b": 0.371,
+  "rel": 0.18355795148247978
+ },
+ {
+  "project": "ba-neutral-atom-qc-20260829/project",
+  "experiment": "E5_ba_1F3_channel_closure",
+  "key": "1",
+  "method_a": "Foerster-gap inversion E(57f)=E(57g)+0.01 cm^-1 against the 1G4 Rydberg-Ritz fit",
+  "method_b": "Neukammer1988 directly-quoted 6snf 1F3 delta3 = 0.047(5) (independent tabulated value)",
+  "value_a": 0.0459,
+  "value_b": 0.047,
+  "rel": 0.02340425531914887
+ },
+ {
+  "project": "ba-neutral-atom-qc-20260829/project",
+  "experiment": "E6_gate_infidelity_frontier",
+  "key": "0",
+  "method_a": "this run's closed-form eps_decay=(3pi/2)/(Omega*tau) at tau=56 us, Omega=2pi*2.5 MHz (square-pulse Tbar_r=2pi/Omega)",
+  "method_b": "Peper2025 MEASURED Yb gate decay error 3.3e-3 (their optimized pulse)",
+  "value_a": 0.005357,
+  "value_b": 0.0033,
+  "rel": 0.3839835728952772
+ },
+ {
+  "project": "ba-neutral-atom-qc-20260829/project",
+  "experiment": "E6_gate_infidelity_frontier",
+  "key": "1",
+  "method_a": "this run's closed-form at Pagano params (tau=50 us, Omega=2pi*10 MHz)",
+  "method_b": "Pagano2022 Table II Sr-88 Bell-state decay infidelity 0.092%",
+  "value_a": 0.0015,
+  "value_b": 0.00092,
+  "rel": 0.38666666666666666
+ },
+ {
+  "project": "ba-neutral-atom-qc-20260829/project",
+  "experiment": "E6_gate_infidelity_frontier",
+  "key": "2",
+  "method_a": "Shi2025 primary Ba C6 (single-anchor n^11 extrapolation, U/Omega=213.6)",
+  "method_b": "E4 independent second-order dipole-dipole sum (U/Omega=103.5)",
+  "value_a": 2.491e-05,
+  "value_b": 9.627e-05,
+  "rel": 0.7412485717253557
+ },
+ {
+  "project": "ba-neutral-atom-qc-20260829/project",
+  "experiment": "E6_gate_infidelity_frontier",
+  "key": "3",
+  "method_a": "E3 exact-hydrogenic tau_rad(n=100)=1.712 ms (upper band)",
+  "method_b": "E5 QD-corrected tau_rad(n=100)=1.398 ms (lower band)",
+  "value_a": 2.996e-06,
+  "value_b": 3.654e-06,
+  "rel": 0.1800766283524904
+ },
+ {
+  "project": "ba-neutral-atom-qc-20260829/project",
+  "experiment": "E7_ba_equal_power_rabi",
+  "key": "0",
+  "method_a": "E7 power_matched_frontier (Ba at Omega_eff=15 MHz vs Sr at 38.091 MHz)",
+  "method_b": "E8 n-scaled corrected value computed.ba_decay_ratio_vs_sr_equal_power_20mW = 7.562372021908208 (n*^-3/2-corrected n=100 Ba Rabi 5.7835 MHz)",
+  "value_a": 2.915806473149635,
+  "value_b": 7.562372021908208,
+  "rel": 0.6144322886122849
+ },
+ {
+  "project": "ba-neutral-atom-qc-20260829/project",
+  "experiment": "E8_claim_closure",
+  "key": "0",
+  "method_a": "E8 rydberg_rabi_n_scaling.scale_rabi_n + decay_infidelity_ratio (n*^{-3/2} with delta(1G4)=0.054164)",
+  "method_b": "E8 replication/ba_decay_ratio_vs_sr.py (independent n^{-3/2} scaling, exponent verified hydrogenically 1.5038)",
+  "value_a": 7.562372021908208,
+  "value_b": 7.556921153599482,
+  "rel": 0.0007207881724060665
+ },
+ {
+  "project": "ba-neutral-atom-qc-20260829/project",
+  "experiment": "E8_claim_closure",
+  "key": "1",
+  "method_a": "E8 rydberg_rabi_n_scaling.scale_rabi_n(15.0, 53, 100, 0.054164) — n*^{-3/2} with the 1G4 quantum defect",
+  "method_b": "E8 replication/ba_decay_ratio_vs_sr.py — independent n^{-3/2} scaling (bare n, quantum defect omitted), exponent verified first-principles by the hydrogenic <1s|r|np> fit (1.5038)",
+  "value_a": 5.783515670815725,
+  "value_b": 5.787687361978013,
+  "rel": 0.0007207872335491953
+ },
+ {
+  "project": "pp-vs-ss-gate-packing-20260826/project",
+  "experiment": "E1_ss_pp_c6_anisotropy",
+  "key": "0",
+  "method_a": "pairinteraction degenerate perturbation theory (pi.C6)",
+  "method_b": "full pair-Hamiltonian diagonalization (pi.SystemPair, R^-6 tail fit)",
+  "value_a": -138.86163356371736,
+  "value_b": -138.41975978104594,
+  "rel": 0.0031821156883385365
+ },
+ {
+  "project": "pp-vs-ss-gate-packing-20260826/project",
+  "experiment": "E1_ss_pp_c6_anisotropy",
+  "key": "1",
+  "method_a": "pairinteraction degenerate perturbation theory (pi.C6)",
+  "method_b": "full pair-Hamiltonian diagonalization (pi.SystemPair, R^-6 tail fit)",
+  "value_a": 299.10912743715437,
+  "value_b": 268.0806139003557,
+  "rel": 0.10373643159157046
+ },
+ {
+  "project": "pp-vs-ss-gate-packing-20260826/project",
+  "experiment": "E1_ss_pp_c6_anisotropy",
+  "key": "2",
+  "method_a": "full pair-Hamiltonian diagonalization, converged energy window +/-100 GHz (pi.SystemPair, R^-6 tail fit)",
+  "method_b": "explicit all-channel second-order perturbation sum (n_range 50-70)",
+  "value_a": -10.40774,
+  "value_b": -10.411924,
+  "rel": 0.00040184695931322676
+ },
+ {
+  "project": "pp-vs-ss-gate-packing-20260826/project",
+  "experiment": "E1_ss_pp_c6_anisotropy",
+  "key": "3",
+  "method_a": "pairinteraction perturbative C6",
+  "method_b": "Singer n^11 analytic formula (11.97 - 0.8486 n + 3.385e-3 n^2, 30<n<95)",
+  "value_a": -138.862,
+  "value_b": -140.269,
+  "rel": 0.010030726675174205
+ },
+ {
+  "project": "pp-vs-ss-gate-packing-20260826/project",
+  "experiment": "E1_ss_pp_c6_anisotropy",
+  "key": "4",
+  "method_a": "pairinteraction perturbative C6",
+  "method_b": "ARC PairStateInteractions.getC6perturbatively (theta=90)",
+  "value_a": 299.109,
+  "value_b": 292.415,
+  "rel": 0.02237980134332287
+ },
+ {
+  "project": "pp-vs-ss-gate-packing-20260826/project",
+  "experiment": "E2_pp_packing_density",
+  "key": "0",
+  "method_a": "analytic sixth-root closed form (rectangular lattice)",
+  "method_b": "numerical full-pairwise lattice packing (densest, staggered allowed)",
+  "value_a": 1.3800920903957115,
+  "value_b": 1.3146191446659026,
+  "rel": 0.04744099773156148
+ },
+ {
+  "project": "pp-vs-ss-gate-packing-20260826/project",
+  "experiment": "E2_pp_packing_density",
+  "key": "1",
+  "method_a": "analytic sixth-root closed form",
+  "method_b": "direct geometric 3D density ratio from blockade/cross-talk radii (orthorhombic SS vs PP unit cells, d_gate terms retained, no sixth-root product formula assumed)",
+  "value_a": 1.2367850025552363,
+  "value_b": 1.2367850025552365,
+  "rel": 1.7953371399740473e-16
+ },
+ {
+  "project": "pp-vs-ss-gate-packing-20260826/project",
+  "experiment": "E3_pp_packing_geometry",
+  "key": "0",
+  "method_a": "generalized oriented packing at (theta_gate=90, psi=0)",
+  "method_b": "E2 axis-aligned packing_density (data/experiments/E2_pp_packing_density)",
+  "value_a": 1.3314,
+  "value_b": 1.3146,
+  "rel": 0.0126182965299684
+ },
+ {
+  "project": "pp-vs-ss-gate-packing-20260826/project",
+  "experiment": "E3_pp_packing_geometry",
+  "key": "1",
+  "method_a": "three-channel all-channel second-order sum root (E4)",
+  "method_b": "hand-built full dipole-dipole diagonalization (E4)",
+  "value_a": 24.65,
+  "value_b": 24,
+  "rel": 0.026369168356997916
+ },
+ {
+  "project": "pp-vs-ss-gate-packing-20260826/project",
+  "experiment": "E3_pp_packing_geometry",
+  "key": "2",
+  "method_a": "closed-form two-channel c2*(4/9) at 54.7356 deg",
+  "method_b": "direct three-channel model evaluation (all-channel second-order sum, E4) at 54.7 deg",
+  "value_a": 120.30333333333333,
+  "value_b": 126.1019,
+  "rel": 0.04598318238398211
+ },
+ {
+  "project": "pp-vs-ss-gate-packing-20260826/project",
+  "experiment": "E4_verify_c6_zero_physical_gain",
+  "key": "0",
+  "method_a": "explicit all-channel second-order sum (n_range 55-65)",
+  "method_b": "hand-built full dipole-dipole diagonalization (window 30 GHz, zeeman 0.005 GHz)",
+  "value_a": 24.65,
+  "value_b": 24,
+  "rel": 0.026369168356997916
+ },
+ {
+  "project": "pp-vs-ss-gate-packing-20260826/project",
+  "experiment": "E4_verify_c6_zero_physical_gain",
+  "key": "1",
+  "method_a": "explicit all-channel second-order sum",
+  "method_b": "hand-built full dipole-dipole diagonalization",
+  "value_a": 126.1,
+  "value_b": 126.43,
+  "rel": 0.002610139998418196
+ },
+ {
+  "project": "pp-vs-ss-gate-packing-20260826/project",
+  "experiment": "E4_verify_c6_zero_physical_gain",
+  "key": "2",
+  "method_a": "full diagonalization min |C6| at its 24.0 deg zero (headline)",
+  "method_b": "second-order all-channel sum min |C6| at its 24.65 deg zero (bound: < 1 GHz um^6)",
+  "value_a": 0.007,
+  "value_b": 0.0059,
+  "rel": 0.15714285714285717
+ },
+ {
+  "project": "pp-vs-ss-gate-packing-20260826/project",
+  "experiment": "E4_verify_c6_zero_physical_gain",
+  "key": "3",
+  "method_a": "E3 two-channel packing optimizer + strong-blockade constraint",
+  "method_b": "E3 baseline_gain_theta90_psi0 (known-answer limit)",
+  "value_a": 1.35,
+  "value_b": 1.331,
+  "rel": 0.014074074074074168
+ },
+ {
+  "project": "pp-vs-ss-gate-packing-20260826/project",
+  "experiment": "E4_verify_c6_zero_physical_gain",
+  "key": "4",
+  "method_a": "single diagonal matrix element <aa|V_QQ|aa> R^5 (direct)",
+  "method_b": "full diagonalization with quadrupole (pairinteraction order-5 vs order-3 at theta=0), R^-5 tail fit Delta=-C5/R^5-C8/R^8, then exact P4(cos theta) angular scaling to 24.65 deg",
+  "value_a": -0.1259,
+  "value_b": -0.1251,
+  "rel": 0.0063542494042893
+ },
+ {
+  "project": "pp-vs-ss-gate-packing-20260826/project",
+  "experiment": "E5_weak_blockade_gate_viability",
+  "key": "0",
+  "method_a": "master-equation interaction gate (qutip liouvillian)",
+  "method_b": "Saffman 2010 Eq. 34 analytic interaction-gate error (E -> F = 1 - E)",
+  "value_a": 0.9967,
+  "value_b": 0.997,
+  "rel": 0.00030090270812433995
+ },
+ {
+  "project": "pp-vs-ss-gate-packing-20260826/project",
+  "experiment": "E5_weak_blockade_gate_viability",
+  "key": "1",
+  "method_a": "Saffman 2016 fundamental bound E >= 2/(V tau) solved for V at E=0.01, tau=100 us (analytic lower bound; 2/(0.01 tau) angular -> 0.318 MHz regular)",
+  "method_b": "numeric master-equation interaction-gate V-scan (qutip): smallest |V| (MHz) where the pi-pi-hold-pi-pi process fidelity reaches 0.99, optimizing over Omega, tau=100 us",
+  "value_a": 0.318,
+  "value_b": 0.56,
+  "rel": 0.43214285714285716
+ },
+ {
+  "project": "pp-vs-ss-gate-packing-20260826/project",
+  "experiment": "E6_interaction_gate_packing_gain",
+  "key": "0",
+  "method_a": "E6 packing optimizer (grid sweep + bisection, isotropic staggered lattice)",
+  "method_b": "E2 independently-verified staggered packing density",
+  "value_a": 0.007038181,
+  "value_b": 0.007038,
+  "rel": 2.5716872015672713e-05
+ },
+ {
+  "project": "pp-vs-ss-gate-packing-20260826/project",
+  "experiment": "E6_interaction_gate_packing_gain",
+  "key": "1",
+  "method_a": "E6 three-channel strong-blockade PP gain (gate at 90 deg, blockade length (293.02/0.01)^(1/6))",
+  "method_b": "E4 strong-blockade PP baseline (two-channel, C6(90)=268.08)",
+  "value_a": 1.3385,
+  "value_b": 1.331,
+  "rel": 0.005603287261860337
+ },
+ {
+  "project": "pp-vs-ss-gate-packing-20260826/project",
+  "experiment": "E6_interaction_gate_packing_gain",
+  "key": "2",
+  "method_a": "packing optimizer internal full-pairwise cross-talk evaluation of the exhibited lattice (L1=8.5418, L2=40.3555 um, aligned)",
+  "method_b": "independent brute-force full-cell cross-talk re-check (self-contained physics code, 300 um enumeration, 2838 inter-pair vectors)",
+  "value_a": 1,
+  "value_b": 1.000034,
+  "rel": 3.399884403939217e-05
+ },
+ {
+  "project": "pp-vs-ss-gate-packing-20260826/project",
+  "experiment": "E7_discriminator_settlement",
+  "key": "0",
+  "method_a": "wide-window (100 GHz) full pair-Hamiltonian diagonalization (E4 pair_dipole_diag)",
+  "method_b": "all-channel second-order perturbation sum (E1 c6_second_order_sum, n_range 55-65)",
+  "value_a": 0.639,
+  "value_b": 0.518,
+  "rel": 0.189358372456964
+ },
+ {
+  "project": "pp-vs-ss-gate-packing-20260826/project",
+  "experiment": "E7_discriminator_settlement",
+  "key": "1",
+  "method_a": "wide-window (100 GHz) full pair-Hamiltonian diagonalization",
+  "method_b": "all-channel second-order perturbation sum",
+  "value_a": 24.4327,
+  "value_b": 24.6426,
+  "rel": 0.008517770040499016
+ },
+ {
+  "project": "pp-vs-ss-gate-packing-20260826/project",
+  "experiment": "E7_discriminator_settlement",
+  "key": "2",
+  "method_a": "three-channel packing optimizer (E6, theta=90, aligned+staggered)",
+  "method_b": "two-channel strong-blockade sweep (E4, theta=90/psi=0 baseline)",
+  "value_a": 1.3385,
+  "value_b": 1.331,
+  "rel": 0.005603287261860337
+ },
+ {
+  "project": "pp-vs-ss-gate-packing-20260826/project",
+  "experiment": "E7_discriminator_settlement",
+  "key": "3",
+  "method_a": "E6 packing optimizer internal full-pairwise check of the exhibited lattice (worst |V|/v_ct, from binding_constraint)",
+  "method_b": "independent brute-force full-cell cross-talk recheck of the same exhibited lattice (self-contained physics code, 2838 inter-pair vectors)",
+  "value_a": 1.0000001,
+  "value_b": 1.0000000999997838,
+  "rel": 2.1627142356983813e-13
+ },
+ {
+  "project": "probe-claims-20260826/bench02",
+  "experiment": "E1_c6_theta_60p",
+  "key": "0",
+  "method_a": "second-order perturbative sum over dipole-coupled intermediates (pairinteraction full-m pair Hamiltonian)",
+  "method_b": "exact pair-Hamiltonian diagonalization, R^-6 fit of the lab-state eigenenergy (pairinteraction SystemPair)",
+  "value_a": -293.01,
+  "value_b": -327.24,
+  "rel": 0.10460212687935465
+ },
+ {
+  "project": "probe-claims-20260826/bench02",
+  "experiment": "E1_c6_theta_60p",
+  "key": "1",
+  "method_a": "perturbative C6(pi/2)/r0^6",
+  "method_b": "exact diagonalized lab-state eigenenergy at r0=13.65 um, theta=pi/2",
+  "value_a": -45.36,
+  "value_b": -49.46,
+  "rel": 0.08289526890416501
+ },
+ {
+  "project": "yttrium-magic-wavelengths-20260906/project",
+  "experiment": "E1_y_sos_dataset_validation",
+  "key": "0",
+  "method_a": "Le Kien SOS (A -> |<d>|^2 -> 6j -> alpha), scripts/sos_polarizability.py",
+  "method_b": "alpha = sum f_n/omega_n^2 with f derived from the SAME A via the standard f(A) relation (NOT an independent oscillator-strength source)",
+  "value_a": 141.66433540013045,
+  "value_b": 141.66543483816494,
+  "rel": 7.760806549196963e-06
+ },
+ {
+  "project": "yttrium-magic-wavelengths-20260906/project",
+  "experiment": "E1_y_sos_dataset_validation",
+  "key": "1",
+  "method_a": "sum of absorption f over merged ground transitions",
+  "method_b": "TRK sum rule N_eff = 3 (valence electron count)",
+  "value_a": 2.1996762127382947,
+  "value_b": 3,
+  "rel": 0.2667745957539018
+ },
+ {
+  "project": "yttrium-tweezer-20260905/project",
+  "experiment": "E1_y_mot_laser_inventory",
+  "key": "0",
+  "method_a": "NIST ASD total A-sum (Sigma A_NIST), s^-1",
+  "method_b": "1/tau_meas (Hannaford1982 tau=5.3(2) ns), s^-1",
+  "value_a": 189000000,
+  "value_b": 188679245.28301886,
+  "rel": 0.001697114904662131
+ },
+ {
+  "project": "yttrium-tweezer-20260905/project",
+  "experiment": "E1_y_mot_laser_inventory",
+  "key": "1",
+  "method_a": "NIST ASD total A-sum (Sigma A_NIST), s^-1",
+  "method_b": "1/tau_meas (Hannaford1982 tau=15.7(10) ns), s^-1",
+  "value_a": 64000000,
+  "value_b": 63694267.51592356,
+  "rel": 0.00477707006369438
+ },
+ {
+  "project": "yttrium-tweezer-20260905/project",
+  "experiment": "E1_y_mot_laser_inventory",
+  "key": "2",
+  "method_a": "NIST ASD A_i / Sigma A",
+  "method_b": "Hannaford1982 measured branch fraction",
+  "value_a": 0.8412698412698413,
+  "value_b": 0.841,
+  "rel": 0.00032075471698117845
+ },
+ {
+  "project": "yttrium-tweezer-20260905/project",
+  "experiment": "E2_y_tweezer_trapping",
+  "key": "0",
+  "method_a": "sum-over-states over NIST ASD A-values (sos_polarizability.py)",
+  "method_b": "Schwerdtfeger 2025 recommended static dipole polarizability",
+  "value_a": 99.109,
+  "value_b": 162,
+  "rel": 0.3882160493827161
+ },
+ {
+  "project": "yttrium-tweezer-20260905/project",
+  "experiment": "E2_y_tweezer_trapping",
+  "key": "1",
+  "method_a": "harmonic approximation (trap_design.py, omega_r = sqrt(4 U0/(m w0^2)))",
+  "method_b": "numeric Hessian of the Gaussian potential U = -U0 (w0/w(z))^2 exp(-2 r^2/w(z)^2)",
+  "value_a": 828438800000000000,
+  "value_b": 828397300000000000,
+  "rel": 5.009422542739427e-05
+ },
+ {
+  "project": "yttrium-tweezer-20260905/project",
+  "experiment": "E3_y_single_atom_imaging",
+  "key": "0",
+  "method_a": "single-atom recoil-heating Monte Carlo (energy-space, Grun 2025 single-atom limit)",
+  "method_b": "closed-form analytic energy balance (Gamma(3,T0) + Poisson(N) convolution)",
+  "value_a": 0.99995,
+  "value_b": 0.9997597589308582,
+  "rel": 0.00019025058167086684
+ },
+ {
+  "project": "yttrium-tweezer-20260905/project",
+  "experiment": "E4_y_integrated_design",
+  "key": "0",
+  "method_a": "laser_inventory_integrator dict-merge dedup",
+  "method_b": "independent set-union over the flat dedup-key list (selected scheme + trap + imaging)",
+  "value_a": 4,
+  "value_b": 4,
+  "rel": 0
+ },
+ {
+  "project": "yttrium-tweezer-20260905/project",
+  "experiment": "E4_y_integrated_design",
+  "key": "1",
+  "method_a": "thermal-flux model R = n v_bar pi w0^2 (loading_path.py)",
+  "method_b": "volume/transit-time estimate R = n (4/3 pi w0^3) / (2 w0 / v_bar) = (2/3) n v_bar pi w0^2",
+  "value_a": 155149.90629006858,
+  "value_b": 103433.27086004571,
+  "rel": 0.33333333333333337
+ },
+ {
+  "project": "yttrium-tweezer-20260905/project",
+  "experiment": "E5_y_qc_advantage",
+  "key": "0",
+  "method_a": "Landé g_J*J from (L=6, S=2, J=8) -> g_J=5/4, mu=10 mu_B (dipolar_relaxation.py)",
+  "method_b": "published measured Dy ground-state g_J approx 1.24 -> mu approx 9.9 mu_B (Dreon2017, 5I8 J=8)",
+  "value_a": 10,
+  "value_b": 9.92,
+  "rel": 0.008000000000000007
+ },
+ {
+  "project": "yttrium-tweezer-20260905/project",
+  "experiment": "E5_y_qc_advantage",
+  "key": "1",
+  "method_a": "fom_table resolution of quantity id y_mot_laser_count_typeI against E4 results.json (no recomputation)",
+  "method_b": "E4 declared computed.laser_inventory.mot_laser_count read directly from data/experiments/E4_y_integrated_design/runs/run_1/results.json",
+  "value_a": 3,
+  "value_b": 3,
+  "rel": 0
+ }
+]
