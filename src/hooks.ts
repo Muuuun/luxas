@@ -10,11 +10,107 @@ import { join, dirname } from "node:path";
 import { readFileSafe, extractTextContent } from "./utils.js";
 import { readUsageTotals } from "./usage-log.js";
 import { buildClaimTable } from "./claims-table.js";
+import { loadAgentDefinitions } from "./agents/registry.js";
 import type { ReminderRegistry } from "./reminders.js";
 import type { ExtensionBus } from "./extensions.js";
 
 /** Fraction of --max-cost at which the brain is told to wrap up (fix 4, 2026-09-01). */
 export const SOFT_CAP_FRACTION = 0.9;
+
+// ── Finalization freeze policy ─────────────────────────────────────────────
+// One allow-list, two triggers: the PI's STOP verdict and the soft cost cap.
+// Both mean the same thing operationally — "land what exists, open nothing
+// new" — so they must not disagree about which tools are still legal.
+
+/** Tools that remain available once a run is in finalization. */
+export const FINALIZATION_TOOLS = new Set([
+  "read", "write", "edit", "compile_latex", "request_pi_review", "escalate_authority_bound", "finish",
+]);
+
+/**
+ * Agents a finish() gate (or a PI-mandated finalization pass) can require.
+ * Allowing these through breaks the deadlock observed 2026-05-07 on the BOM
+ * run: PI verdict STOP blocked spawn_agent, the typesetter finish-gate
+ * required spawn_agent typesetter, and brain looped 240+ times alternating
+ * spawn (blocked) / finish (blocked).
+ *
+ * These are SEEDS, not the answer — see finalizationAllowedAgents().
+ */
+export const FINALIZATION_SEED_AGENTS = [
+  "typesetter", "illustrator", "illustrator_write", "experiment_reviewer", "reviewer",
+  // Both are finish-gate mandated (2026-07-05). Omitting contradiction_auditor
+  // created a genuine deadlock: the finish gate demands a clean sweep while the
+  // PI-STEER hook blocked spawning the only agent that can produce it — the brain
+  // was cornered into hand-writing sweep files with forged/placeholder md5s.
+  "contradiction_auditor", "ledger_writer",
+  // finish() blocks on a stale reviews/prior_art.md and names this agent as the
+  // only fix, but the freeze did not list it: blocker #4 of four unclearable
+  // blockers in pp-vs-ss-gate-packing-20260826's finalization-blocked.md.
+  "prior_art_auditor",
+];
+
+/** A blind replicate never opens new research, so it is always finalization. */
+export const SETTLING_SEED_AGENTS = ["replicator"];
+
+/** Finalization only while the claim table has a blocked headline row. */
+export const DISPUTE_SEED_AGENTS = ["experiment"];
+
+/**
+ * Close the seed set under `spawn.allowedTypes`.
+ *
+ * The freeze used to be a hand-maintained list of leaf agents, and it was
+ * wrong in both directions at once (measured 2026-09-22 across the 08-25..09-20
+ * runs): `reviewer` was allowed but the `figure_auditor` it spawns 15 times
+ * was not, and the 2026-08-28 settling hatch allowed `experiment` while
+ * freezing the `tool_impl` / `tool_review` that every experiment spawns on
+ * turn one — so the hatch could not actually settle anything. Deriving the
+ * closure makes "allowed" mean "allowed to do its job", by construction.
+ * The graph is validated acyclic by validateSpawnGraph().
+ */
+function spawnClosure(seeds: string[]): Set<string> {
+  const out = new Set<string>();
+  let defs: Map<string, { spawn: { allowedTypes: string[] } }>;
+  try { defs = loadAgentDefinitions() as any; } catch { return new Set(seeds); }
+  const stack = [...seeds];
+  while (stack.length) {
+    const n = stack.pop()!;
+    if (out.has(n)) continue;
+    out.add(n);
+    for (const child of defs.get(n)?.spawn?.allowedTypes ?? []) stack.push(child);
+  }
+  return out;
+}
+
+let _allowedBase: Set<string> | undefined;
+let _allowedDisputed: Set<string> | undefined;
+
+/** Agent types spawnable during finalization. `claimBlocked` opens the settling hatch. */
+export function finalizationAllowedAgents(claimBlocked: boolean): Set<string> {
+  if (claimBlocked) {
+    return (_allowedDisputed ??= spawnClosure([...FINALIZATION_SEED_AGENTS, ...SETTLING_SEED_AGENTS, ...DISPUTE_SEED_AGENTS]));
+  }
+  return (_allowedBase ??= spawnClosure([...FINALIZATION_SEED_AGENTS, ...SETTLING_SEED_AGENTS]));
+}
+
+/** The single predicate both finalization triggers ask. */
+export function finalizationAllows(toolName: string, spawnTarget: string, claimBlocked: boolean): boolean {
+  if (FINALIZATION_TOOLS.has(toolName)) return true;
+  if (toolName !== "spawn_agent") return false;
+  return finalizationAllowedAgents(claimBlocked).has(spawnTarget);
+}
+
+/** The block text both triggers share: what is still legal, and what was refused. */
+export function finalizationDenyText(toolName: string, spawnTarget: string, claimBlocked: boolean): string {
+  const agents = [...finalizationAllowedAgents(claimBlocked)].sort().join("/");
+  const what = toolName === "spawn_agent" ? `Tool "spawn_agent" (target: ${spawnTarget || "?"})` : `Tool "${toolName}"`;
+  return (
+    `Only finalization tools (${[...FINALIZATION_TOOLS].join(", ")}, and spawn_agent for ${agents}) are allowed. ` +
+    `${what} is blocked. ` +
+    (claimBlocked
+      ? `A headline quantity is DISPUTED/CONDITIONAL, so settling work (replicator / experiment and the tools an experiment needs) is open.`
+      : `If a headline quantity is DISPUTED/CONDITIONAL the settling agents open automatically — check the claim table rather than working around this block.`)
+  );
+}
 
 
 export interface ResearchOptions {
@@ -66,24 +162,10 @@ export function buildResearchHooks(opts: ResearchOptions) {
     lastContextTokens: init?.lastContextTokens ?? 0,
   };
 
-  // PI STOP enforcement — when PI says stop, block non-finalization tools
+  // PI STOP enforcement — when PI says stop, block non-finalization tools.
+  // The allow-list itself is module scope (FINALIZATION_TOOLS /
+  // finalizationAllowedAgents) because the soft cost cap uses the same one.
   let piStopped = init?.piStopped ?? false;
-  const FINALIZATION_TOOLS = new Set([
-    "read", "write", "edit", "compile_latex", "request_pi_review", "escalate_authority_bound", "finish",
-  ]);
-  // Spawn targets that are themselves finalization helpers (audit / red-team
-  // agents required by various finish() gates). Allowing these through PI-STOP
-  // breaks the deadlock observed 2026-05-07 BOM run: PI verdict STOP blocked
-  // spawn_agent, but the typesetter finish-gate required spawn_agent typesetter,
-  // and brain looped 240+ times alternating spawn (blocked) / finish (blocked).
-  const FINALIZATION_HELPER_AGENTS = new Set([
-    "typesetter", "illustrator", "illustrator_write", "experiment_reviewer", "reviewer",
-    // Both are finish-gate mandated (2026-07-05). Omitting contradiction_auditor
-    // created a genuine deadlock: the finish gate demands a clean sweep while the
-    // PI-STEER hook blocked spawning the only agent that can produce it — the brain
-    // was cornered into hand-writing sweep files with forged/placeholder md5s.
-    "contradiction_auditor", "ledger_writer",
-  ]);
 
   // Simple rate limiters
   const lastCallTime: Record<string, number> = {};
@@ -96,6 +178,34 @@ export function buildResearchHooks(opts: ResearchOptions) {
   let logWriteFailures = 0;
   const MAX_LOG_FAILURES = 3;
 
+  // The hard-cap comment below warns that a blocked tool call is still a paid
+  // turn (~$70 burned on 2026-04-20 by a block loop). The soft-cap freeze can
+  // loop the same way, so it is bounded: a brain that refuses this many
+  // landing invitations in a row is not going to land, and grinding to the
+  // hard cap costs more than stopping here. Reset by any allowed call.
+  const MAX_SOFT_CAP_DENIALS = 10;
+  let softCapDenials = 0;
+
+  /**
+   * Refuse a tool call AND leave a trace.
+   *
+   * A hook that returns {block:true} short-circuits the call, so afterToolCall
+   * never runs and nothing reaches log.jsonl. Measured 2026-09-22: across six
+   * runs — two of which ended in operator escalations *about* the STOP freeze —
+   * `grep "PI verdict is STOP" .agent/log.jsonl` matched zero lines in all six.
+   * The only record of a freeze deadlock was the brain's own prose. A policy
+   * nobody can measure is a policy nobody can fix, so every block is logged.
+   */
+  const deny = (tool: string, args: any, reason: string) => {
+    try {
+      appendFileSync(logFile, JSON.stringify({
+        type: "tool_block", tool, args: summarizeArgs(args),
+        reason: reason.slice(0, 400), timestamp: new Date().toISOString(),
+      }) + "\n");
+    } catch { /* logging must never convert a block into a crash */ }
+    return { block: true, reason };
+  };
+
   const before = async (ctx: any): Promise<any> => {
     // 1. RESEARCH.md write protection (defense-in-depth; the brain/experiment
     // safety wrappers are the primary line of defense for tools that go through
@@ -106,7 +216,7 @@ export function buildResearchHooks(opts: ResearchOptions) {
       // pi-coding-agent uses `path`; some other tools may use `file_path`.
       const filePath = String(args.path ?? args.file_path ?? "");
       if (filePath && (filePath.endsWith("RESEARCH.md") || filePath.includes("/RESEARCH.md"))) {
-        return { block: true, reason: "RESEARCH.md is read-only. It contains the human-written research goal and must not be modified." };
+        return deny(name, args, "RESEARCH.md is read-only. It contains the human-written research goal and must not be modified.");
       }
     }
 
@@ -121,12 +231,12 @@ export function buildResearchHooks(opts: ResearchOptions) {
     if (name === "bash") {
       const cmd = String(args.command ?? "");
       if (/\b(?:lualatex|luahbtex|xelatex|pdflatex|latexmk)\b/.test(cmd)) {
-        return { block: true, reason:
+        return deny(name, args,
           "Direct LaTeX engine invocation in bash is blocked. Use the compile_latex tool — " +
           "it selects the correct engine (xelatex for CJK), runs the guards, and produces the " +
           "verdict that finish() reads. Hand-compiling (especially lualatex: xeCJK requires " +
           "XeTeX and silently drops every CJK glyph under LuaTeX) pollutes report.log and " +
-          "ships mojibake PDFs." };
+          "ships mojibake PDFs.");
       }
     }
 
@@ -134,18 +244,18 @@ export function buildResearchHooks(opts: ResearchOptions) {
     // spawn_agent is allowed when the target is a finalization helper
     // (typesetter / illustrator / experiment_reviewer / reviewer) — these
     // are mandated by finish-gate audits, not new research.
-    if (piStopped && !FINALIZATION_TOOLS.has(name)) {
+    // Claims-first settling work is finalization (2026-08-28 pp-vs-ss
+    // deadlock): with headline rows DISPUTED/CONDITIONAL, finish() blocks and
+    // every legal move is a replicator or a discriminator experiment — both of
+    // which the STOP freeze refused. The brain wrote three escalation notes and
+    // exited. Replicators are always finalization; an experiment is, exactly
+    // while the table has a blocked headline row — and so is everything that
+    // experiment must spawn to run (the closure, see finalizationAllowedAgents).
+    if (piStopped) {
       const target = String(args.agent ?? "");
-      const isFinalizationSpawn = name === "spawn_agent" && FINALIZATION_HELPER_AGENTS.has(target);
-      // Claims-first settling work is finalization (2026-08-28 pp-vs-ss
-      // deadlock): with headline rows DISPUTED/CONDITIONAL, finish() blocks
-      // and every legal move is a replicator or a discriminator experiment —
-      // both of which the STOP freeze refused. The brain wrote three
-      // escalation notes and exited. Replicators are always finalization;
-      // an experiment is, exactly while the table has a blocked headline row.
-      const isSettlingSpawn = name === "spawn_agent" && (target === "replicator" || (target === "experiment" && claimTableBlocked(opts.projectDir)));
-      if (!isFinalizationSpawn && !isSettlingSpawn) {
-        return { block: true, reason: `PI verdict is STOP. Only finalization tools (read, write, edit, compile_latex, request_pi_review, escalate_authority_bound, finish, spawn_agent for ${[...FINALIZATION_HELPER_AGENTS].join("/")}, and — while a headline quantity is DISPUTED/CONDITIONAL — spawn_agent for replicator / experiment to settle it) are allowed. Tool "${name}"${name === "spawn_agent" ? ` (target: ${args.agent})` : ""} is blocked.` };
+      const claimBlocked = name === "spawn_agent" && claimTableBlocked(opts.projectDir);
+      if (!finalizationAllows(name, target, claimBlocked)) {
+        return deny(name, args, `PI verdict is STOP. ${finalizationDenyText(name, target, claimBlocked)}`);
       }
     }
 
@@ -165,9 +275,45 @@ export function buildResearchHooks(opts: ResearchOptions) {
         );
         process.exit(1);
       }
-      // Soft cap: see buildBudgetStatus() in context.ts. It is computed there
-      // from usage.log + run_config.json rather than written here, so it is
-      // always current and can never go stale across a resume.
+      // Soft cap — finalization freeze, not advice.
+      //
+      // The 90% notice (buildBudgetStatus() in context.ts) is prose: it asks
+      // the brain to open no new work. Measured 2026-08-31 on
+      // ba-neutral-atom-qc-20260829: it kept spawning past $144 and the hard
+      // cap SIGKILLed it mid-`read` at $160.28 — no finish(), no landing, the
+      // run recoverable only from checkpoint. Two other runs of the six died
+      // the same family of death (provider 402 at the cap).
+      //
+      // So the last 10% is reserved for landing by the same mechanism the PI's
+      // STOP verdict uses. Same allow-list, so the two triggers cannot
+      // disagree: read/write/edit/compile_latex/finish stay open, new
+      // experiments and searches do not. The hard kill below stays as the
+      // backstop for a run that ignores the freeze.
+      if (totals.cost >= maxCost * SOFT_CAP_FRACTION) {
+        const target = String(args.agent ?? "");
+        const claimBlocked = name === "spawn_agent" && claimTableBlocked(opts.projectDir);
+        if (!finalizationAllows(name, target, claimBlocked)) {
+          if (++softCapDenials > MAX_SOFT_CAP_DENIALS) {
+            console.error(
+              `\n[FATAL] ${softCapDenials - 1} consecutive non-finalization tool calls after the ` +
+              `${Math.round(SOFT_CAP_FRACTION * 100)}% cost freeze ($${totals.cost.toFixed(2)} of $${maxCost}). ` +
+              `The brain is not landing; each blocked call is still a paid turn. Killing process — ` +
+              `the checkpoint is live.\n`,
+            );
+            process.exit(1);
+          }
+          return deny(name, args,
+            `Spend has passed ${Math.round(SOFT_CAP_FRACTION * 100)}% of this run's $${maxCost} cap ` +
+            `($${totals.cost.toFixed(2)}), so the run is in finalization: what is left is reserved for landing. ` +
+            finalizationDenyText(name, target, claimBlocked) + " " +
+            `Write down anything held only in this conversation (notes/experiments.md, notes/memory.md), ` +
+            `compile once, then finish() — DISCLOSING what is unresolved. A disclosed limitation is a ` +
+            `finished report; an undisclosed one is the only real failure. If a gate blocks finish() and ` +
+            `you cannot clear it within what is left, say so plainly and let the escalation hand the run ` +
+            `to a person — do not iterate against it.`);
+        }
+        softCapDenials = 0;
+      }
     }
 
     // 4. Rate limiting for API tools

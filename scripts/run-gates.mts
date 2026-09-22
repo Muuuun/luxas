@@ -62,6 +62,7 @@ const MANIFEST: Record<string, GateSpec> = {
 	smoke_claim_registry: { kind: "assert" },
 	smoke_compaction_ratchet: { kind: "assert" },
 	smoke_dual_profile: { kind: "assert" },
+	smoke_finalization_freeze: { kind: "assert" },
 	smoke_edit_noop_guard: { kind: "assert" },
 	smoke_experiment_paths: { kind: "assert" },
 	smoke_figlint: { kind: "assert", timeoutMs: 180_000 },

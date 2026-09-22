@@ -59,8 +59,10 @@ export const MIN_ATTEMPTS = 3;
  * Without this the gate eats its own use case: a run whose tool_review 429s
  * three times and dies at the cost cap could never be finished by a resume —
  * the resumed run does no experiments, so it spawns no tool_review, so
- * successes stays 0 forever, and under the PI-STOP freeze tool_review is not
- * even in FINALIZATION_HELPER_AGENTS, leaving no way to clear it.
+ * successes stays 0 forever, and under the finalization freeze tool_review is
+ * only reachable while the claim table has a blocked headline row (it enters
+ * via the settling experiment's spawn closure — see finalizationAllowedAgents
+ * in hooks.ts), leaving a settled-table resume no way to clear it.
  */
 export function markRunStart(projectDir: string): void {
   if (!projectDir) return;

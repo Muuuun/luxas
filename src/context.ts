@@ -60,8 +60,8 @@ export function buildBudgetStatus(projectDir: string): string {
   if (!(spent >= maxCost * SOFT_CAP_FRACTION)) return "";
   return [
     `<budget_status priority="high">`,
-    `Spend has passed ${Math.round(SOFT_CAP_FRACTION * 100)}% of this run's $${maxCost} cost cap. The cap is not a warning: it SIGKILLs this process mid-tool-call, and anything not written to disk is lost. Spend what is left on landing, not on polish.`,
-    `1. Open no new work — no new experiments, no new literature, no further figure-polish rounds.`,
+    `Spend has passed ${Math.round(SOFT_CAP_FRACTION * 100)}% of this run's $${maxCost} cost cap. The run is now in FINALIZATION: the hook blocks every non-finalization tool (new experiments, searches, readers), exactly as it does under a PI STOP verdict — read/write/edit/compile_latex/finish and the finalization agents stay open. The remaining cap is not a warning either: it SIGKILLs this process mid-tool-call, and anything not written to disk is lost. Spend what is left on landing, not on polish.`,
+    `1. Do not try to open new work — no new experiments, no new literature, no further figure-polish rounds. Those calls are now REFUSED by the hook, and each refused call is still a paid turn.`,
     `2. Write down anything held only in this conversation (notes/experiments.md, notes/memory.md), so a resume starts informed.`,
     `3. Compile once, then finish() — DISCLOSING what is unresolved (disputed quantities, cosmetic figure defects, deferred computations). A disclosed limitation is a finished report; an undisclosed one is the only real failure.`,
     `4. If a gate blocks finish() and you cannot clear it within what is left, do not iterate against it — say so plainly and let the escalation hand the run to a person.`,

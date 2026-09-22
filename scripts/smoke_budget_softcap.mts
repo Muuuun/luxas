@@ -15,7 +15,7 @@
  *
  * Run:  npx tsx scripts/smoke_budget_softcap.mts
  */
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -76,6 +76,64 @@ try {
 } catch { threw = true; }
 check("never throws into the context path", !threw);
 
+// ── The freeze is mechanical, not advisory ────────────────────────────────
+// ba-neutral-atom-qc-20260829 read the notice above and kept spawning past
+// $144; the hard cap SIGKILLed it mid-`read` at $160.28 with a compiled report
+// it never filed. Prose alone did not hold, so the last 10% is now reserved by
+// the same allow-list the PI-STOP verdict uses.
+const { buildResearchHooks } = await import(join(ROOT, "src/hooks.js"));
+const fdir = mkdtempSync(join(tmpdir(), "softcap-hook-"));
+mkdirSync(join(fdir, ".agent"), { recursive: true });
+// A distinct usage.log per probe: readUsageTotals caches on file SIZE, and
+// "50" and "91" are the same width, so rewriting one file in place would hand
+// back the first probe's total forever. Production only ever appends.
+let probe = 0;
+const callFresh = async (total: number, name: string, args: any = {}) => {
+	const log = join(fdir, ".agent", `usage-${probe++}.log`);
+	writeFileSync(log, `1788000000000\tm\tp\t1\t1\t0\t0\t${total}\n`);
+	// Fresh hooks each call: the denial counter is per-run, and these probes
+	// are independent runs, not one brain grinding against the freeze.
+	const h = buildResearchHooks({ projectDir: fdir, maxCostUsd: 100, usageLogPath: log } as any);
+	const r = await h.before({ toolCall: { name }, args });
+	return r?.block ? String(r.reason) : "";
+};
+
+check("under 90%: a new experiment is allowed", (await callFresh(50, "spawn_agent", { agent: "experiment" })) === "");
+check("under 90%: bash is allowed", (await callFresh(50, "bash", { command: "ls" })) === "");
+
+const denied = await callFresh(91, "spawn_agent", { agent: "experiment" });
+check("at 90%: a new experiment is REFUSED", denied !== "");
+check("the refusal names the freeze and the cap", /finalization/i.test(denied) && /\$100/.test(denied), denied.slice(0, 160));
+check("the refusal says what to do instead (compile → finish → disclose)",
+	/finish\(\)/.test(denied) && /DISCLOSING/.test(denied), denied.slice(0, 200));
+check("at 90%: search is REFUSED", (await callFresh(95, "spawn_agent", { agent: "search" })) !== "");
+check("at 90%: bash is REFUSED", (await callFresh(95, "bash", { command: "python3 sweep.py" })) !== "");
+
+check("at 90%: finish() is still allowed", (await callFresh(95, "finish", { summary: "x" })) === "");
+check("at 90%: compile_latex is still allowed", (await callFresh(95, "compile_latex", {})) === "");
+check("at 90%: edit is still allowed (the report still needs writing)",
+	(await callFresh(95, "edit", { path: "report/report.tex" })) === "");
+check("at 90%: typesetter/illustrator/contradiction_auditor still spawnable",
+	(await callFresh(95, "spawn_agent", { agent: "typesetter" })) === "" &&
+	(await callFresh(95, "spawn_agent", { agent: "illustrator" })) === "" &&
+	(await callFresh(95, "spawn_agent", { agent: "contradiction_auditor" })) === "");
+
+// Every block must leave a trace: a hook that returns {block:true} skips
+// afterToolCall, so before this the freeze was invisible in log.jsonl —
+// `grep "PI verdict is STOP"` matched 0 lines across all six runs, two of
+// which escalated to an operator *about* that freeze.
+const blockLog = readFileSync(join(fdir, ".agent", "log.jsonl"), "utf-8")
+	.trim().split("\n").map((l) => JSON.parse(l));
+check("each refusal is recorded in .agent/log.jsonl", blockLog.length > 0, `${blockLog.length} entries`);
+check("recorded as type tool_block with the tool and reason",
+	blockLog.every((e) => e.type === "tool_block" && e.tool && e.reason),
+	JSON.stringify(blockLog[0] ?? {}).slice(0, 200));
+// Three probes above are refused (experiment, search, bash); the seven
+// allowed ones must leave no entry, or the trace stops meaning "refused".
+check("only refusals are logged (allowed calls are not)",
+	blockLog.length === 3, `${blockLog.length} entries for 3 refused probes`);
+
+rmSync(fdir, { recursive: true, force: true });
 rmSync(dir, { recursive: true, force: true });
 console.log(failures === 0 ? "\nPASS" : `\n${failures} FAILURE(S)`);
 process.exit(failures === 0 ? 0 : 1);

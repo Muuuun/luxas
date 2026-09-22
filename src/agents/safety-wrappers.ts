@@ -230,7 +230,12 @@ export function luxasSelfWriteReason(absPath: string, projectDir: string): strin
 }
 
 function blocked(reason: string) {
-  return errorContent(`BLOCKED: ${reason}`);
+  // isError so the harness records a failed tool call. Before this every
+  // safety block was logged `success: true` (hooks.ts reads `!ctx.isError`),
+  // which is why the y-magic run's four consecutive blocked `edit` calls
+  // read as four successes in .agent/log.jsonl and the edit defect below
+  // stayed invisible to offline postmortems for two runs.
+  return { ...errorContent(`BLOCKED: ${reason}`), isError: true as const };
 }
 
 async function safeMtime(absPath: string): Promise<number | null> {
@@ -453,6 +458,54 @@ export function writeTimeValidation(projectDir: string, relPath: string, result:
   return { ...result, content: [...content, { type: "text", text: feedback }] };
 }
 
+/**
+ * pi-coding-agent's edit tool accepts two input shapes (see its
+ * `validateEditInput`): the canonical `{path, edits:[{oldText,newText}, …]}`
+ * and a legacy top-level `{path, oldText, newText}` pair. Some models also
+ * send `edits` as a JSON string.
+ *
+ * This wrapper used to read ONLY the legacy top-level fields. Every canonical
+ * call therefore reached the no-op guard below with oldText === newText === ""
+ * and was rejected — with a message asserting the call was the agent's own
+ * slip and "Do NOT record this as a tool bug". Measured on the 08-26..09-06
+ * runs: yttrium-magic-wavelengths-20260906 died there (four identical blocked
+ * `\bibliography{references}` edits, then an operator escalation), and
+ * pp-vs-ss-gate-packing-20260826 wrote "the `edit` tool has been broken all
+ * session" into two escalation notes. Normalize first, then guard.
+ */
+function normalizeEditList(params: any): { oldText: string; newText: string }[] {
+  const out: { oldText: string; newText: string }[] = [];
+  let list: any = params?.edits;
+  if (typeof list === "string") {
+    // Opus 4.6 / GLM-5.1 send the array as a JSON string; the underlying tool
+    // parses it, so the guard has to see the same edits the tool will apply.
+    try { const parsed = JSON.parse(list); if (Array.isArray(parsed)) list = parsed; } catch { /* invalid shape → handled below */ }
+  }
+  if (Array.isArray(list)) {
+    for (const e of list) {
+      if (typeof e?.oldText === "string" && typeof e?.newText === "string") {
+        out.push({ oldText: e.oldText, newText: e.newText });
+      }
+    }
+  }
+  // Legacy pair is appended last, matching the underlying tool's own ordering.
+  if (typeof params?.oldText === "string" && typeof params?.newText === "string") {
+    out.push({ oldText: params.oldText, newText: params.newText });
+  }
+  return out;
+}
+
+/**
+ * Which edit to build the fresh-excerpt hint around: the first whose oldText
+ * is no longer in the file (that is the one that failed), else the first edit.
+ */
+function culpritOldText(edits: { oldText: string }[], content?: string): string {
+  if (content !== undefined) {
+    for (const e of edits) if (findOldTextLine(content, e.oldText) === null) return e.oldText;
+  }
+  return edits[0]?.oldText ?? "";
+}
+
 function wrapEdit(
   tool: any,
   cache: FileContextCache,
@@ -468,8 +521,7 @@ function wrapEdit(
     execute: async (id: string, params: any, signal?: any) => {
       const p = getPathArg(params);
       const abs = resolve(projectDir, p);
-      const oldText = String(params.oldText ?? "");
-      const newText = String(params.newText ?? "");
+      const edits = normalizeEditList(params);
 
       if (isCredentialPath(abs)) {
         return blocked(
@@ -477,12 +529,27 @@ function wrapEdit(
         );
       }
 
+      // Shape guard. A call carrying no replacement at all cannot be matched;
+      // the underlying tool throws a bare "edits must contain at least one
+      // replacement" that reads like a tool fault rather than a malformed call.
+      if (edits.length === 0) {
+        return blocked(
+          `Edit of ${p} carried no replacements. The edit tool takes ` +
+          `{path, edits: [{oldText, newText}, …]} (one call may carry several ` +
+          `disjoint replacements), or a single top-level oldText/newText pair. ` +
+          `Re-issue with at least one replacement whose oldText matches the file exactly.`
+        );
+      }
+
       // Reject no-op edits before fuzzy matching. Without this guard, the
       // underlying edit tool runs fuzzyFindText against text that may not
       // even exist, returns "no changes made", and the agent burns turns
       // retrying with stranger oldText values instead of recognising the
-      // append-via-edit antipattern.
-      if (oldText === newText) {
+      // append-via-edit antipattern. Only fires when EVERY replacement is a
+      // no-op: a mixed call still carries real work, and blocking it would
+      // throw that work away.
+      if (edits.every((e) => e.oldText === e.newText)) {
+        const oldText = edits[0].oldText;
         // Quote the identical payload back. Observed live (297nm run,
         // 2026-08-25): a deepseek tool_review sent identical 4-char strings,
         // could not see its own slip from the bare "oldText === newText"
@@ -561,16 +628,18 @@ function wrapEdit(
       if (entry.range !== undefined) {
         cachedContent = (await safeReadFile(abs)) ?? undefined;
         if (cachedContent !== undefined) {
-          const targetLine = findOldTextLine(cachedContent, oldText);
-          if (targetLine !== null &&
-              (targetLine < entry.range.start || targetLine > entry.range.end)) {
-            const endStr = entry.range.end === Number.MAX_SAFE_INTEGER
-              ? "EOF" : String(entry.range.end);
-            return blocked(
-              `You only read ${p} lines ${entry.range.start}-${endStr}, ` +
-              `but the text you are trying to edit is at approximately line ${targetLine}. ` +
-              `Re-read the file without offset/limit (or with a wider range that covers line ${targetLine}).`
-            );
+          for (const e of edits) {
+            const targetLine = findOldTextLine(cachedContent, e.oldText);
+            if (targetLine !== null &&
+                (targetLine < entry.range.start || targetLine > entry.range.end)) {
+              const endStr = entry.range.end === Number.MAX_SAFE_INTEGER
+                ? "EOF" : String(entry.range.end);
+              return blocked(
+                `You only read ${p} lines ${entry.range.start}-${endStr}, ` +
+                `but the text you are trying to edit is at approximately line ${targetLine}. ` +
+                `Re-read the file without offset/limit (or with a wider range that covers line ${targetLine}).`
+              );
+            }
           }
         }
       }
@@ -582,10 +651,11 @@ function wrapEdit(
       try {
         result = await origExecute(id, params, signal);
       } catch (err: any) {
+        const content = cachedContent ?? (await safeReadFile(abs)) ?? undefined;
         const enriched = await freshExcerptError(
-          abs, p, oldText,
+          abs, p, culpritOldText(edits, content),
           err?.message || String(err),
-          cachedContent,
+          content,
         );
         throw new Error(enriched);
       }
@@ -595,8 +665,9 @@ function wrapEdit(
       const text = extractTextContent(result?.content ?? []);
       const isContentError = result?.isError === true || EDIT_FAILURE_PATTERNS.test(text);
       if (isContentError) {
+        const content = cachedContent ?? (await safeReadFile(abs)) ?? undefined;
         const enriched = await freshExcerptError(
-          abs, p, oldText, text || "Edit failed", cachedContent,
+          abs, p, culpritOldText(edits, content), text || "Edit failed", content,
         );
         throw new Error(enriched);
       }
