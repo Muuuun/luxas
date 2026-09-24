@@ -22,7 +22,7 @@ import { getApiKey } from "./auth.js";
 import { extractTextContent } from "./utils.js";
 import { cleanMessagesForModel } from "./transform.js";
 import { installUsageTracking } from "./usage-log.js";
-import { createSpawnToolFactory } from "./tools/spawn-agent.js";
+import { createSpawnToolFactory, runExperimentReviewLoop } from "./tools/spawn-agent.js";
 import { jobOwnerAls } from "./jobs/als.js";
 
 // Match agent.ts: default Anthropic prompt-cache TTL to 5m.
@@ -233,10 +233,35 @@ async function main() {
     const lastAssistant = [...messages].reverse().find(
       (m: any) => m.role === "assistant",
     ) as any;
-    const output = (lastAssistant?.content ? extractTextContent(lastAssistant.content) : "") || "(no output)";
+    let output = (lastAssistant?.content ? extractTextContent(lastAssistant.content) : "") || "(no output)";
+
+    // A background experiment gets the same harness review as a foreground
+    // one. Without this, background spawns were never reviewed at all
+    // (yttrium-tweezer E1–E4; notes/backtest-2026-09-24/SUMMARY.md §2).
+    // A stopReason=error run is not a completed experiment: nothing to review.
+    const firstExit = exitCollector.finalize();
+    if (args.agent === "experiment" && firstExit.stopReason !== "error") {
+      const reviewed = await runExperimentReviewLoop({ output, success: true }, {
+        projectDir,
+        mergedTemplateVars: spawnOpts.templateVars ?? {},
+        baseOpts: {
+          name: args.agent,
+          templateVars: spawnOpts.templateVars,
+          projectDir,
+          getApiKey,
+          parentAgentId: spawnOpts.parentAgentId,
+          createSpawnTool: makeSpawnTool,
+        },
+        initialTask: args.task,
+        getApiKey,
+        parentAgentId: spawnOpts.parentAgentId,
+        makeSpawnTool,
+      });
+      output = reviewed.output;
+    }
 
     // Mark done in registry (with structured exit)
-    markDone(agentDir, args.id, output.slice(0, 50_000), exitCollector.finalize());
+    markDone(agentDir, args.id, output.slice(0, 50_000), firstExit);
 
   } catch (err: any) {
     // If buildAgentFromDefinition itself threw, the collector never got an

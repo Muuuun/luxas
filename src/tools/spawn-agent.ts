@@ -11,7 +11,7 @@
 import { Type } from "@earendil-works/pi-ai/compat";
 import type { Agent as AgentType } from "@earendil-works/pi-agent-core";
 import { spawn } from "node:child_process";
-import { spawnAgent, resolveModel, type SpawnAgentOptions } from "../agents/spawn.js";
+import { spawnAgent, resolveModel, type SpawnAgentOptions, type SpawnAgentResult } from "../agents/spawn.js";
 import { listAgentDescriptions, getDefinition } from "../agents/registry.js";
 import { addAgent, removeAgent, loadRegistry, isAlive, markFailed, tryExtractResult, formatExitHint, parseConvJsonl } from "../active-agents.js";
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
@@ -257,6 +257,181 @@ export function getActiveBackgroundAgents(projectDir?: string) {
  * Helper for callers (pi-agent.ts, runFigures) that need to pass a
  * `createSpawnTool` factory into `spawnAgent` without background capability.
  */
+
+export interface ExperimentReviewContext {
+  projectDir: string;
+  /** The experiment's merged templateVars (EXPERIMENT_ID lives here). */
+  mergedTemplateVars: Record<string, string>;
+  /** Options that re-run the same experiment for a REVISE round. */
+  baseOpts: Omit<SpawnAgentOptions, "prompt" | "instanceIndex">;
+  initialTask: string;
+  getApiKey: SpawnAgentOptions["getApiKey"];
+  parentAgentId?: string;
+  depth?: number;
+  makeSpawnTool: (parentId: string, childDepth: number, childAllowedTypes?: string[]) => any;
+  /** Injectable for the gate (scripts/smoke_background_review.mts); defaults to spawnAgent. */
+  spawn?: (opts: SpawnAgentOptions) => Promise<SpawnAgentResult>;
+}
+
+/**
+ * Harness-owned review of a completed experiment: blind estimates, then up to
+ * LUXAS_MAX_REVIEW_ITERATIONS rounds of experiment_reviewer, re-running the
+ * experiment on REVISE. Returns the (possibly revised) result with the
+ * reviewer's verdict appended to its output.
+ *
+ * Called from EVERY path an experiment can finish on — foreground here, and
+ * the detached background runner (subagent-runner.ts). Until 2026-09-24 it
+ * lived inline in the foreground branch only, and background spawns returned
+ * before reaching it: 5 of the last 7 runs spawned experiments in background,
+ * and yttrium-tweezer's E1–E4 were never reviewed — which is where every
+ * physics defect that reached its abstract lived
+ * (notes/backtest-2026-09-24/bt-ytweezer.md).
+ */
+export async function runExperimentReviewLoop<R extends { output: string; success: boolean }>(
+  initialResult: R,
+  ctx: ExperimentReviewContext,
+): Promise<R | SpawnAgentResult> {
+  const { projectDir, mergedTemplateVars, baseOpts, initialTask, getApiKey, parentAgentId, depth, makeSpawnTool } = ctx;
+  const spawn = ctx.spawn ?? spawnAgent;
+  let result: R | SpawnAgentResult = initialResult;
+  if (!result.success) return result;
+    const experimentId = mergedTemplateVars.EXPERIMENT_ID;
+    if (experimentId) {
+      // Env-configurable. Default 3 preserves prior behavior.
+      // Set LUXAS_MAX_REVIEW_ITERATIONS=1 for compute-heavy runs (Monte
+      // Carlo sims) where 3 rounds × hours/round burns wallclock budget
+      // and increases deepseek emit-tool-use bug risk. Set to 0 to skip
+      // the auto-review loop entirely.
+      const envCap = parseInt(process.env.LUXAS_MAX_REVIEW_ITERATIONS ?? "", 10);
+      const MAX_REVIEW_ITERATIONS = Number.isFinite(envCap) && envCap >= 0 ? envCap : 3;
+      const blindCapEnv = Number(process.env.LUXAS_BLIND_ESTIMATE_CAP);
+      const BLIND_ESTIMATE_CAP = Number.isFinite(blindCapEnv) && blindCapEnv >= 0 ? blindCapEnv : 3;
+
+      // Claims-first §3.5: the blind estimate is produced by the HARNESS
+      // before the reviewer runs — "preregistered" cannot be enforced
+      // inside one agent turn. A `replicator` in estimate mode sees the
+      // observable sentence and input values only; its ESTIMATE(blind)
+      // line is handed to the reviewer and persisted with the review so
+      // claims-table.ts can read it. LUXAS_BLIND_ESTIMATE=0 disables.
+      const claimNotes: string[] = [];
+      const scopeFor = () => {
+        try { return headlineDeclsFor(buildClaimTable(projectDir), experimentId); }
+        catch (err) { claimNotes.push(`[claim-table MALFORMED: ${(err as Error).message.slice(0, 120)} — no blind estimate or reviewer obligation could be computed]`); return []; }
+      };
+      let headlineDecls = scopeFor();
+      let headlineIds = [...new Set(headlineDecls.map((d) => d.id))];
+      const blindLines: string[] = [];
+      if (MAX_REVIEW_ITERATIONS > 0 && process.env.LUXAS_BLIND_ESTIMATE !== "0") {
+        let settled = new Set<string>();
+        // `corroborated` dropped from this union 2026-09-04 with the status
+        // itself. It was always OR'd with `converging`, and every row that
+        // could reach corroborated already satisfied converging's condition
+        // (agreeing pair + σ), so the settled set is unchanged.
+        try { settled = new Set(buildClaimTable(projectDir).rows.filter((r) => r.status === "converging").map((r) => r.id)); } catch { /* table malformed → estimate everything */ }
+        const { chosen, skipped } = selectBlindEstimateDecls(headlineDecls, parseFrameHeadline(projectDir), BLIND_ESTIMATE_CAP, settled);
+        if (skipped.length) claimNotes.push(`[blind estimates capped at ${BLIND_ESTIMATE_CAP}/round (frame ids first); not estimated this round: ${skipped.join(", ")}]`);
+        for (const decl of chosen) {
+          try {
+            const est = await spawn({
+              name: "replicator",
+              projectDir,
+              templateVars: { ...mergedTemplateVars, QUANTITY_ID: decl.id, MODE: "estimate" },
+              prompt: blindEstimateTask(decl),
+              getApiKey,
+              parentAgentId: `${parentAgentId ?? "brain"}.blind-estimate-${decl.id}`,
+              depth: (depth ?? 0) + 1,
+              createSpawnTool: makeSpawnTool,
+            });
+            const raw = extractBlindEstimate(est.output ?? "", decl.id);
+            const line = raw ? stampBlindInputs(raw, decl.inputs) : null;
+            if (line) blindLines.push(line);
+            else claimNotes.push(`[blind estimator for ${decl.id} returned no ESTIMATE(blind) line]`);
+          } catch (err) { claimNotes.push(`[blind estimator for ${decl.id} failed: ${(err as Error).message.slice(0, 100)}]`); }
+        }
+      }
+      let obligation = reviewerObligationBlock(headlineIds, blindLines);
+      // MAX=0 short-circuits the loop body and falls through to return.
+      for (let round = 1; round <= MAX_REVIEW_ITERATIONS; round++) {
+        const reviewResult = await spawn({
+          name: "experiment_reviewer",
+          projectDir,
+          templateVars: { ...mergedTemplateVars },
+          prompt:
+            `Audit the completed experiment with EXPERIMENT_ID=${experimentId}. ` +
+            `Read the matching L2 section in notes/experiments.md, its ` +
+            `data/experiments/${experimentId}/runs/run_N/results.json, the referenced ` +
+            `raw_data files, and the cited literature fragments under notes/literature.d/. ` +
+            `Return a VERDICT: satisfied or VERDICT: revise with actionable FEEDBACK per ` +
+            `your system prompt.` + obligation,
+          getApiKey,
+          parentAgentId: `${parentAgentId ?? "brain"}.experiment-review-${round}`,
+          depth: (depth ?? 0) + 1,
+          createSpawnTool: makeSpawnTool,
+        });
+
+        const verdictText = reviewResult.output ?? "";
+        // Persist the reviewer's obligation lines (it has no write tool).
+        // An incomplete review keeps its VERDICT/FEEDBACK (a substantive
+        // critique is never discarded for a missing ritual line) but its
+        // attestations are withheld and the quantities are NO REVIEW.
+        const reviewLines = extractReviewerLines(verdictText);
+        const missing = reviewCompleteness(reviewLines, headlineIds);
+        const verdictLineMatch = verdictText.match(/^\s*#{0,6}\s*VERDICT:\s*\w+.*$/im);
+        const feedbackForFile = (verdictText.match(/FEEDBACK:\s*([\s\S]*?)$/i) ?? [])[1];
+        try { persistReview(projectDir, experimentId, round, blindLines, reviewLines, verdictLineMatch ? verdictLineMatch[0].trim() : "VERDICT: (none)", missing, feedbackForFile); }
+        catch (err) { claimNotes.push(`[review persistence failed round ${round}: ${(err as Error).message.slice(0, 100)}]`); }
+        if (missing.length > 0) claimNotes.push(`[experiment_reviewer round ${round}: NO REVIEW for ${missing.join(", ")} — DISCRIMINATOR/SCALING lines missing; attestations withheld]`);
+        // Anchor to a standalone verdict line — reviewer.md emits
+        // "VERDICT: satisfied" as the LAST line. The old substring match
+        // false-passed on prose like "I cannot return VERDICT: satisfied"
+        // or "VERDICT: satisfied only after fixing X".
+        const satisfied = /^\s*#{0,6}\s*VERDICT:\s*satisfied\b[.\s]*$/im.test(verdictText);
+        if (satisfied) {
+          result = {
+            ...result,
+            output:
+              result.output +
+              `\n\n---\n[experiment_reviewer round ${round}: SATISFIED]` + (claimNotes.length ? `\n${claimNotes.join("\n")}` : ""),
+          };
+          break;
+        }
+
+        // Extract FEEDBACK block (machine contract with reviewer).
+        const feedbackMatch = verdictText.match(/FEEDBACK:\s*([\s\S]*?)$/i);
+        const feedback = feedbackMatch ? feedbackMatch[1].trim() : verdictText.trim();
+
+        if (round === MAX_REVIEW_ITERATIONS) {
+          result = {
+            ...result,
+            output:
+              result.output +
+              `\n\n---\n[experiment_reviewer round ${round}: REVISE but iteration cap reached — accepting current state with open issues]\n\nOutstanding reviewer feedback:\n${feedback}` + (claimNotes.length ? `\n${claimNotes.join("\n")}` : ""),
+          };
+          break;
+        }
+
+        // Re-run the experiment with feedback as a follow-up task.
+        // Tell the experiment agent explicitly to iterate on existing
+        // artifacts rather than start fresh.
+        const revisionTask =
+          `# Revision round ${round} — experiment_reviewer voted REVISE.\n\n` +
+          `Your previous run's L2 section + results.json have been audited. ` +
+          `Address these issues, iterating on existing data/experiments/${experimentId}/ ` +
+          `artifacts (scripts, tests, runs/). Do NOT start from scratch; reuse or extend.\n\n` +
+          `## Reviewer feedback\n\n${feedback}\n\n` +
+          `## Original task (for reference)\n\n${initialTask}`;
+        result = await spawn({ ...baseOpts, prompt: revisionTask, contextExtra: { task: revisionTask } });
+        if (!result.success) break;
+        // The revision may have re-declared quantities: recompute the
+        // obligation scope for the next round (blind lines are reused).
+        headlineDecls = scopeFor();
+        headlineIds = [...new Set(headlineDecls.map((d) => d.id))];
+        obligation = reviewerObligationBlock(headlineIds, blindLines);
+      }
+    }
+  return result;
+}
+
 export function createSpawnToolFactory(
   projectDir: string,
   getApiKey: (provider: string) => Promise<string | undefined> | string | undefined,
@@ -538,6 +713,12 @@ export function createSpawnAgentTool(
       }
 
       // ── Parallel mode ──
+      // Parallel tasks share one templateVars, hence one EXPERIMENT_ID: N
+      // experiments would write one directory and get one review. Refused
+      // rather than silently unreviewed (runExperimentReviewLoop).
+      if (taskList.length > 1 && params.agent === "experiment") {
+        return errResult('spawn_agent: parallel `tasks` are not supported for agent="experiment" — each experiment needs its own EXPERIMENT_ID and its own review. Spawn each one separately (background=true runs them concurrently).');
+      }
       if (taskList.length > 1) {
         const results = await Promise.all(
           taskList.map((task, i) =>
@@ -570,7 +751,8 @@ export function createSpawnAgentTool(
       if (cosmetic.refuse) return errResult(cosmetic.notice);
       let result = await spawnAgent({ ...baseOpts, prompt: initialTask, contextExtra: { task: initialTask } });
 
-      // Auto-review loop: after any foreground experiment completes, spawn
+      // Auto-review loop (runExperimentReviewLoop — the background runner
+      // calls the same function): after an experiment completes, spawn
       // the experiment_reviewer to audit its L2 section + results + cited
       // literature. If the reviewer votes revise, re-run the experiment
       // with the feedback injected as a follow-up task. Bounded at 3
@@ -578,141 +760,11 @@ export function createSpawnAgentTool(
       // team" section — the independent-auditor pattern (same as the
       // tool_impl / tool_review split) prevents template-filling
       // self-deflection.
-      if (params.agent === "experiment" && result.success) {
-        const experimentId = mergedTemplateVars.EXPERIMENT_ID;
-        if (experimentId) {
-          // Env-configurable. Default 3 preserves prior behavior.
-          // Set LUXAS_MAX_REVIEW_ITERATIONS=1 for compute-heavy runs (Monte
-          // Carlo sims) where 3 rounds × hours/round burns wallclock budget
-          // and increases deepseek emit-tool-use bug risk. Set to 0 to skip
-          // the auto-review loop entirely.
-          const envCap = parseInt(process.env.LUXAS_MAX_REVIEW_ITERATIONS ?? "", 10);
-          const MAX_REVIEW_ITERATIONS = Number.isFinite(envCap) && envCap >= 0 ? envCap : 3;
-          const blindCapEnv = Number(process.env.LUXAS_BLIND_ESTIMATE_CAP);
-          const BLIND_ESTIMATE_CAP = Number.isFinite(blindCapEnv) && blindCapEnv >= 0 ? blindCapEnv : 3;
-
-          // Claims-first §3.5: the blind estimate is produced by the HARNESS
-          // before the reviewer runs — "preregistered" cannot be enforced
-          // inside one agent turn. A `replicator` in estimate mode sees the
-          // observable sentence and input values only; its ESTIMATE(blind)
-          // line is handed to the reviewer and persisted with the review so
-          // claims-table.ts can read it. LUXAS_BLIND_ESTIMATE=0 disables.
-          const claimNotes: string[] = [];
-          const scopeFor = () => {
-            try { return headlineDeclsFor(buildClaimTable(projectDir), experimentId); }
-            catch (err) { claimNotes.push(`[claim-table MALFORMED: ${(err as Error).message.slice(0, 120)} — no blind estimate or reviewer obligation could be computed]`); return []; }
-          };
-          let headlineDecls = scopeFor();
-          let headlineIds = [...new Set(headlineDecls.map((d) => d.id))];
-          const blindLines: string[] = [];
-          if (MAX_REVIEW_ITERATIONS > 0 && process.env.LUXAS_BLIND_ESTIMATE !== "0") {
-            let settled = new Set<string>();
-            // `corroborated` dropped from this union 2026-09-04 with the status
-            // itself. It was always OR'd with `converging`, and every row that
-            // could reach corroborated already satisfied converging's condition
-            // (agreeing pair + σ), so the settled set is unchanged.
-            try { settled = new Set(buildClaimTable(projectDir).rows.filter((r) => r.status === "converging").map((r) => r.id)); } catch { /* table malformed → estimate everything */ }
-            const { chosen, skipped } = selectBlindEstimateDecls(headlineDecls, parseFrameHeadline(projectDir), BLIND_ESTIMATE_CAP, settled);
-            if (skipped.length) claimNotes.push(`[blind estimates capped at ${BLIND_ESTIMATE_CAP}/round (frame ids first); not estimated this round: ${skipped.join(", ")}]`);
-            for (const decl of chosen) {
-              try {
-                const est = await spawnAgent({
-                  name: "replicator",
-                  projectDir,
-                  templateVars: { ...mergedTemplateVars, QUANTITY_ID: decl.id, MODE: "estimate" },
-                  prompt: blindEstimateTask(decl),
-                  getApiKey,
-                  parentAgentId: `${parentAgentId ?? "brain"}.blind-estimate-${decl.id}`,
-                  depth: (depth ?? 0) + 1,
-                  createSpawnTool: makeSpawnTool,
-                });
-                const raw = extractBlindEstimate(est.output ?? "", decl.id);
-                const line = raw ? stampBlindInputs(raw, decl.inputs) : null;
-                if (line) blindLines.push(line);
-                else claimNotes.push(`[blind estimator for ${decl.id} returned no ESTIMATE(blind) line]`);
-              } catch (err) { claimNotes.push(`[blind estimator for ${decl.id} failed: ${(err as Error).message.slice(0, 100)}]`); }
-            }
-          }
-          let obligation = reviewerObligationBlock(headlineIds, blindLines);
-          // MAX=0 short-circuits the loop body and falls through to return.
-          for (let round = 1; round <= MAX_REVIEW_ITERATIONS; round++) {
-            const reviewResult = await spawnAgent({
-              name: "experiment_reviewer",
-              projectDir,
-              templateVars: { ...mergedTemplateVars },
-              prompt:
-                `Audit the completed experiment with EXPERIMENT_ID=${experimentId}. ` +
-                `Read the matching L2 section in notes/experiments.md, its ` +
-                `data/experiments/${experimentId}/runs/run_N/results.json, the referenced ` +
-                `raw_data files, and the cited literature fragments under notes/literature.d/. ` +
-                `Return a VERDICT: satisfied or VERDICT: revise with actionable FEEDBACK per ` +
-                `your system prompt.` + obligation,
-              getApiKey,
-              parentAgentId: `${parentAgentId ?? "brain"}.experiment-review-${round}`,
-              depth: (depth ?? 0) + 1,
-              createSpawnTool: makeSpawnTool,
-            });
-
-            const verdictText = reviewResult.output ?? "";
-            // Persist the reviewer's obligation lines (it has no write tool).
-            // An incomplete review keeps its VERDICT/FEEDBACK (a substantive
-            // critique is never discarded for a missing ritual line) but its
-            // attestations are withheld and the quantities are NO REVIEW.
-            const reviewLines = extractReviewerLines(verdictText);
-            const missing = reviewCompleteness(reviewLines, headlineIds);
-            const verdictLineMatch = verdictText.match(/^\s*#{0,6}\s*VERDICT:\s*\w+.*$/im);
-            const feedbackForFile = (verdictText.match(/FEEDBACK:\s*([\s\S]*?)$/i) ?? [])[1];
-            try { persistReview(projectDir, experimentId, round, blindLines, reviewLines, verdictLineMatch ? verdictLineMatch[0].trim() : "VERDICT: (none)", missing, feedbackForFile); }
-            catch (err) { claimNotes.push(`[review persistence failed round ${round}: ${(err as Error).message.slice(0, 100)}]`); }
-            if (missing.length > 0) claimNotes.push(`[experiment_reviewer round ${round}: NO REVIEW for ${missing.join(", ")} — DISCRIMINATOR/SCALING lines missing; attestations withheld]`);
-            // Anchor to a standalone verdict line — reviewer.md emits
-            // "VERDICT: satisfied" as the LAST line. The old substring match
-            // false-passed on prose like "I cannot return VERDICT: satisfied"
-            // or "VERDICT: satisfied only after fixing X".
-            const satisfied = /^\s*#{0,6}\s*VERDICT:\s*satisfied\b[.\s]*$/im.test(verdictText);
-            if (satisfied) {
-              result = {
-                ...result,
-                output:
-                  result.output +
-                  `\n\n---\n[experiment_reviewer round ${round}: SATISFIED]` + (claimNotes.length ? `\n${claimNotes.join("\n")}` : ""),
-              };
-              break;
-            }
-
-            // Extract FEEDBACK block (machine contract with reviewer).
-            const feedbackMatch = verdictText.match(/FEEDBACK:\s*([\s\S]*?)$/i);
-            const feedback = feedbackMatch ? feedbackMatch[1].trim() : verdictText.trim();
-
-            if (round === MAX_REVIEW_ITERATIONS) {
-              result = {
-                ...result,
-                output:
-                  result.output +
-                  `\n\n---\n[experiment_reviewer round ${round}: REVISE but iteration cap reached — accepting current state with open issues]\n\nOutstanding reviewer feedback:\n${feedback}` + (claimNotes.length ? `\n${claimNotes.join("\n")}` : ""),
-              };
-              break;
-            }
-
-            // Re-run the experiment with feedback as a follow-up task.
-            // Tell the experiment agent explicitly to iterate on existing
-            // artifacts rather than start fresh.
-            const revisionTask =
-              `# Revision round ${round} — experiment_reviewer voted REVISE.\n\n` +
-              `Your previous run's L2 section + results.json have been audited. ` +
-              `Address these issues, iterating on existing data/experiments/${experimentId}/ ` +
-              `artifacts (scripts, tests, runs/). Do NOT start from scratch; reuse or extend.\n\n` +
-              `## Reviewer feedback\n\n${feedback}\n\n` +
-              `## Original task (for reference)\n\n${initialTask}`;
-            result = await spawnAgent({ ...baseOpts, prompt: revisionTask, contextExtra: { task: revisionTask } });
-            if (!result.success) break;
-            // The revision may have re-declared quantities: recompute the
-            // obligation scope for the next round (blind lines are reused).
-            headlineDecls = scopeFor();
-            headlineIds = [...new Set(headlineDecls.map((d) => d.id))];
-            obligation = reviewerObligationBlock(headlineIds, blindLines);
-          }
-        }
+      if (params.agent === "experiment") {
+        result = await runExperimentReviewLoop(result, {
+          projectDir, mergedTemplateVars, baseOpts, initialTask,
+          getApiKey, parentAgentId, depth, makeSpawnTool,
+        });
       }
 
       // v3 D2: stamp the model that produced a replication so same-model-same-route is wiring.

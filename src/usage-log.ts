@@ -8,8 +8,8 @@
  * This is the SINGLE SOURCE OF TRUTH for cost tracking.
  */
 
-import { appendFileSync, readFileSync, mkdirSync, statSync } from "node:fs";
-import { dirname } from "node:path";
+import { appendFileSync, readFileSync, mkdirSync, statSync, writeFileSync, existsSync, renameSync } from "node:fs";
+import { dirname, join } from "node:path";
 import {
   getApiProviders,
   registerApiProvider,
@@ -229,9 +229,58 @@ export function enforceCostCap(logPath: string, exit: (code: number) => void = (
  * went unfunded at ~13:00; DeepSeek producers spent ~$20 more on work nobody
  * could review, and the PI's no-response placeholders fed a finish deadlock).
  */
-export const UNFUNDED_PROVIDER_RE = /credit balance is too low|insufficient[_ ]balance|insufficient[_ ]quota|billing hard limit|payment required|402\b/i;
+//
+// GLM reports an empty balance as HTTP **429** code 1113 "余额不足或无可用资源包"
+// — not a rate limit. The old pattern missed it: 71 of ba-qc's provider
+// errors were exactly this, 35/35 tool_review spawns died on turn 1, nine
+// experiments shipped with zero test files and the run spent two more days
+// disclosing the gap (notes/backtest-2026-09-24/bt-baqc.md). A true GLM rate
+// limit is code 1302 "速率限制" and is retried in the agent loop instead
+// (patches/pi-agent-core-no-tool-retry-guard.sh, Patch C).
+export const UNFUNDED_PROVIDER_RE = /credit balance is too low|insufficient[_ ]balance|insufficient[_ ]quota|exceeded_current_quota|billing hard limit|payment required|402\b|余额不足|无可用资源包|"code":\s*"1113"/i;
 export function isUnfundedProviderError(text: unknown): boolean {
   return typeof text === "string" && UNFUNDED_PROVIDER_RE.test(text);
+}
+
+// ── Run-wide unfunded stop ──────────────────────────
+//
+// process.exit only stops the process that saw the error. Background
+// experiments are detached subagent-runner processes, so an unfunded
+// provider inside one of them killed that runner and nothing else: the brain
+// and every sibling kept spending on work the dead provider could no longer
+// test or review. The sentinel makes the stop run-wide — every process that
+// shares this usage.log refuses its next model call. `luxas run` archives
+// the sentinel on start, so a resume after topping up is not stopped by it.
+export const UNFUNDED_SENTINEL = "unfunded.json";
+
+export function unfundedSentinelPath(logPath: string): string {
+  return join(dirname(logPath), UNFUNDED_SENTINEL);
+}
+
+export function writeUnfundedSentinel(logPath: string, provider: string, message: string): void {
+  try {
+    writeFileSync(unfundedSentinelPath(logPath), JSON.stringify({ provider, message: message.slice(0, 500), pid: process.pid, at: new Date().toISOString() }, null, 2) + "\n");
+  } catch { /* the local exit still happens */ }
+}
+
+/** Exit if another process of this run hit an unfunded provider. `exit` is injectable for the gate. */
+export function enforceUnfundedSentinel(logPath: string, exit: (code: number) => void = (c) => process.exit(c)): boolean {
+  if (process.env.LUXAS_UNFUNDED_EXIT === "0") return false;
+  const p = unfundedSentinelPath(logPath);
+  if (!existsSync(p)) return false;
+  let why = "";
+  try { const j = JSON.parse(readFileSync(p, "utf-8")); why = `${j.provider}: ${String(j.message).slice(0, 160)}`; } catch { /* torn write — still stop */ }
+  console.error(`\n[FATAL] Run stopped: a provider refused for lack of funds (${why}; ${p}). Top up, then \`luxas run\` resumes (checkpoint is live).\n`);
+  exit(1);
+  return true;
+}
+
+/** Called by `luxas run` on start: an operator resuming has (presumably) topped up. Kept, not deleted. */
+export function archiveUnfundedSentinel(agentDir: string): string | null {
+  const p = join(agentDir, UNFUNDED_SENTINEL);
+  if (!existsSync(p)) return null;
+  const dest = join(agentDir, `unfunded.${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
+  try { renameSync(p, dest); return dest; } catch { return null; }
 }
 
 export function installUsageTracking(logPath: string, opts: { maxCostUsd?: number } = {}): void {
@@ -246,6 +295,9 @@ export function installUsageTracking(logPath: string, opts: { maxCostUsd?: numbe
 
   function wrapStreamFn(originalFn: Function, api: string) {
     return (model: any, context: any, options: any) => {
+      // Before paying for this call: has another process of the run already
+      // found a provider unfunded?
+      enforceUnfundedSentinel(logPath);
       // Each attempt creates a fresh stream — retried attempts replace
       // `activeStream` so the eventStream wrapper exposes the latest one.
       let activeStream: any = originalFn(model, context, options);
@@ -259,6 +311,7 @@ export function installUsageTracking(logPath: string, opts: { maxCostUsd?: numbe
           try {
             const msg = await activeStream.result();
             if (msg?.stopReason === "error" && isUnfundedProviderError(msg?.errorMessage) && process.env.LUXAS_UNFUNDED_EXIT !== "0") {
+              writeUnfundedSentinel(logPath, String(model?.provider ?? api), String(msg.errorMessage));
               console.error(`\n[FATAL] Provider ${model?.provider ?? api} refuses for lack of funds: ${String(msg.errorMessage).slice(0, 160)}. ` +
                 `Stopping the run so the other providers do not keep spending on work this one cannot review. Top up, then resume (checkpoint is live).\n`);
               process.exit(1);

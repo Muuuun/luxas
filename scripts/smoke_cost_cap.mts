@@ -4,7 +4,7 @@
  * a `--max-cost 5` run reached $13 while the brain sat inside one foreground
  * experiment spawn and never made another tool call.
  */
-import { mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendUsage, enforceCostCap, setCostCap, installUsageTracking, readUsageTotals } from "../src/usage-log.ts";
@@ -61,8 +61,31 @@ check("a bare resume inherits maxCost from run_config.json (never widens to the 
   check("unfunded: Anthropic credit message", isUnfundedProviderError("400 {\"type\":\"error\",\"error\":{\"message\":\"Your credit balance is too low to access the Anthropic API.\"}}"));
   check("unfunded: DeepSeek 402 Insufficient Balance", isUnfundedProviderError("402: {\"message\":\"Insufficient Balance\"}"));
   check("not unfunded: overloaded / rate limit / network", !isUnfundedProviderError("529 overloaded_error") && !isUnfundedProviderError("429 rate_limit_error") && !isUnfundedProviderError("fetch failed"));
+  // The exact string from ba-qc's 71 dead tool_review turns (HTTP 429, not 402).
+  check("unfunded: GLM 429 code 1113 余额不足", isUnfundedProviderError('429: {"code":"1113","message":"余额不足或无可用资源包,请充值。"}'));
+  check("not unfunded: GLM 429 code 1302 rate limit", !isUnfundedProviderError('429: {"code":"1302","message":"您的账户已达到速率限制，请您控制请求频率"}'));
   const src2 = readFileSync("src/usage-log.ts", "utf-8");
-  check("stream wrapper exits on an unfunded error (LUXAS_UNFUNDED_EXIT=0 opts out)", /isUnfundedProviderError\(msg\?\.errorMessage\)[\s\S]{0,400}process\.exit\(1\)/.test(src2) && /LUXAS_UNFUNDED_EXIT/.test(src2));
+  check("stream wrapper exits on an unfunded error (LUXAS_UNFUNDED_EXIT=0 opts out)", /isUnfundedProviderError\(msg\?\.errorMessage\)[\s\S]{0,800}process\.exit\(1\)/.test(src2) && /LUXAS_UNFUNDED_EXIT/.test(src2));
+}
+
+// unfunded is RUN-WIDE: a detached background runner that hits it must stop
+// the brain and its siblings too, not only itself.
+{
+  const { writeUnfundedSentinel, enforceUnfundedSentinel, archiveUnfundedSentinel, unfundedSentinelPath } = await import("../src/usage-log.ts");
+  const d = mkdtempSync(join(tmpdir(), "unfunded-"));
+  const lp = join(d, "usage.log");
+  let code: number | null = null;
+  check("no sentinel → other processes keep running", enforceUnfundedSentinel(lp, (c) => { code = c; }) === false && code === null);
+  writeUnfundedSentinel(lp, "zai", '429: {"code":"1113","message":"余额不足"}');
+  check("sentinel written next to usage.log", existsSync(unfundedSentinelPath(lp)));
+  check("sentinel present → every process refuses its next model call", enforceUnfundedSentinel(lp, (c) => { code = c; }) === true && code === 1);
+  const archived = archiveUnfundedSentinel(d);
+  code = null;
+  check("luxas run archives the sentinel so a topped-up resume is not stopped", !!archived && existsSync(archived!) && !existsSync(unfundedSentinelPath(lp)) && enforceUnfundedSentinel(lp, (c) => { code = c; }) === false);
+  const src3 = readFileSync("src/usage-log.ts", "utf-8");
+  check("stream wrapper checks the sentinel before paying for a call", /return \(model: any, context: any, options: any\) => \{[\s\S]{0,200}enforceUnfundedSentinel\(logPath\)/.test(src3));
+  check("stream wrapper writes the sentinel before exiting on unfunded", /writeUnfundedSentinel\(logPath[\s\S]{0,400}process\.exit\(1\)/.test(src3));
+  check("luxas run archives a stale sentinel on start", /archiveUnfundedSentinel\(join\(projectDir, "\.agent"\)\)/.test(readFileSync("src/index.ts", "utf-8")));
 }
 if (fails) { console.log(`\n${fails} FAILED`); process.exit(1); }
 console.log("\nALL PASS — the cost cap fires at the usage record, in every agent.");

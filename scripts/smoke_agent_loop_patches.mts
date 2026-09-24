@@ -47,13 +47,13 @@ const src = readFileSync(loopPath, "utf8");
 console.log(`agent-loop: ${loopPath}\n`);
 
 // ── 1. every patch marker is present ──────────────────────────────────────
-for (const marker of ["[no-tool-retry-guard patched]", "[transient-error-retry patched]", "[finish-tool-exit patched]"]) {
+for (const marker of ["[no-tool-retry-guard patched]", "[transient-error-retry patched]", "[finish-tool-exit patched]", "[rate-limit-retry patched]"]) {
 	check(`marker present: ${marker}`, src.includes(marker));
 }
 
 // ── 2. the patched code references no undeclared identifier ───────────────
 // Catches the steeringAfterTools class of breakage statically.
-for (const ident of ["__transientRetryStreak", "hasMoreToolCalls"]) {
+for (const ident of ["__transientRetryStreak", "__rateRetryStreak", "hasMoreToolCalls"]) {
 	if (!src.includes(ident)) continue;
 	check(`${ident} is declared, not just assigned`, new RegExp(`\\blet\\s+${ident}\\b|\\bconst\\s+${ident}\\b|\\bvar\\s+${ident}\\b`).test(src));
 }
@@ -105,6 +105,23 @@ const prompt = [{ role: "user", content: [{ type: "text", text: "go" }], timesta
 	const s = scripted([errMsg("400 invalid_request: bad schema"), textMsg("should never run")]);
 	await runAgentLoop(prompt as any, baseCtx([]) as any, baseConfig as any, async () => {}, undefined, s.fn as any);
 	check("non-transient error still exits immediately", s.calls() === 1, `streamFn called ${s.calls()}x`);
+}
+
+{
+	// GLM rate limit (code 1302) is retried with backoff (first wait 5 s).
+	// XUV 2026-09-15: one 1302 ended a tool_review on turn 1 and brain
+	// concluded tool_review was OFFLINE.
+	const s = scripted([errMsg('429: {"code":"1302","message":"您的账户已达到速率限制，请您控制请求频率"}'), textMsg("recovered")]);
+	await runAgentLoop(prompt as any, baseCtx([]) as any, baseConfig as any, async () => {}, undefined, s.fn as any);
+	check("rate limit (GLM 1302) is retried, not fatal", s.calls() >= 2, `streamFn called ${s.calls()}x`);
+}
+
+{
+	// An EMPTY BALANCE that GLM also reports as 429 (code 1113) must not be
+	// retried here: usage-log.ts stops the whole run on it.
+	const s = scripted([errMsg('429: {"code":"1113","message":"余额不足或无可用资源包,请充值。"}'), textMsg("should never run")]);
+	await runAgentLoop(prompt as any, baseCtx([]) as any, baseConfig as any, async () => {}, undefined, s.fn as any);
+	check("unfunded 429 (GLM 1113) is not retried as a rate limit", s.calls() === 1, `streamFn called ${s.calls()}x`);
 }
 
 // ── 4. behavior: a text-only turn does not silently end a finish-tool agent ─

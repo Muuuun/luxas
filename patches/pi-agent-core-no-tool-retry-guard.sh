@@ -9,6 +9,8 @@
 #                            with backoff instead of ending a multi-hour run.
 #   B  finish-tool-exit      exit only when finish() actually SUCCEEDED, so a
 #                            gate-blocked finish cannot ship a corpse.
+#   D  rate-limit-retry      a provider rate limit (429 / GLM 1302) re-streams the
+#                            turn with minute-scale backoff; applied on top of C.
 #
 # Upstream deleted `steeringAfterTools` after 0.58.1 and routes steering through
 # `getSteeringMessages()`/`pendingMessages` instead. Both layouts are handled;
@@ -37,6 +39,7 @@ orig = src
 M_GUARD = "[no-tool-retry-guard patched]"
 M_RETRY = "[transient-error-retry patched]"
 M_EXIT = "[finish-tool-exit patched]"
+M_RATE = "[rate-limit-retry patched]"
 
 # Layout A (<=0.58.1) declares steeringAfterTools; layout B (>=0.62) does not.
 legacy = "let steeringAfterTools = null;" in src
@@ -147,6 +150,41 @@ if M_EXIT not in src:
     print("[patch] agent-loop finish-tool-exit applied")
 else:
     print("[patch] agent-loop finish-tool-exit already applied")
+
+# ── Patch D: rate-limit-retry (on top of C) ──────────────────────────────
+# A rate limit ended the turn like any hard error: the sub-agent died on turn
+# 1 and its parent disclosed the missing work (XUV, 2026-09-15: a GLM 1302
+# made brain decide tool_review was OFFLINE). Unfunded 429s (GLM 1113
+# "余额不足", OpenAI insufficient_quota) are excluded — usage-log.ts stops the
+# whole run on those before the loop ever sees them.
+if M_RATE not in src:
+    if M_RETRY not in src:
+        fail("rate-limit-retry: Patch C must be applied first")
+    sub("""        let __transientRetryStreak = 0; // """ + M_RETRY,
+        """        let __transientRetryStreak = 0; // """ + M_RETRY + """
+        let __rateRetryStreak = 0; // """ + M_RATE,
+        "rate-limit-retry (state)")
+    sub("""                if (message.stopReason === "error" && __TRANSIENT_RE.test(__errMsg) && __transientRetryStreak < 6) {""",
+        """                const __RATE_RE = /rate.?limit|速率限制|too many requests|"code":\\s*"1302"|\\b429\\b/i; // """ + M_RATE + """
+                const __UNFUNDED_RE = /余额不足|无可用资源包|insufficient|quota|credit balance|payment required/i;
+                if (message.stopReason === "error" && __RATE_RE.test(__errMsg) && !__UNFUNDED_RE.test(__errMsg) && __rateRetryStreak < 6) {
+                    const __rbackoff = [5000, 15000, 30000, 60000, 120000, 120000][__rateRetryStreak] ?? 120000;
+                    __rateRetryStreak++;
+                    newMessages.pop();
+                    console.error(`[rate-limit-retry ${__rateRetryStreak}/6] stopReason=error (${__errMsg.slice(0, 80)}); backoff ${__rbackoff}ms then re-stream the turn`);
+                    await new Promise((r) => setTimeout(r, __rbackoff));
+                    hasMoreToolCalls = true;
+                    continue;
+                }
+                if (message.stopReason === "error" && __TRANSIENT_RE.test(__errMsg) && __transientRetryStreak < 6) {""",
+        "rate-limit-retry (error stop)")
+    sub("""            __transientRetryStreak = 0; // """ + M_RETRY,
+        """            __transientRetryStreak = 0; // """ + M_RETRY + """
+            __rateRetryStreak = 0; // """ + M_RATE,
+        "rate-limit-retry (reset)")
+    print("[patch] agent-loop rate-limit-retry applied")
+else:
+    print("[patch] agent-loop rate-limit-retry already applied")
 
 if src != orig:
     open(path, "w").write(src)

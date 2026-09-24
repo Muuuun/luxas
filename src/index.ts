@@ -47,7 +47,7 @@ if (existsSync(join(browserUseDir, "browser-use")) && !process.env.PATH?.include
 }
 import { registerProject, updateProjectAfterRun, loadProjects, selectPastProjects } from "./memory.js";
 import { harvestCareer } from "./career.js";
-import { readUsageTotals } from "./usage-log.js";
+import { readUsageTotals, archiveUnfundedSentinel } from "./usage-log.js";
 import { TRANSIENT_RE } from "./agents/spawn.js";
 import { ORIGINAL_REQUEST_HEADER, deriveProjectTitle } from "./utils.js";
 
@@ -197,6 +197,8 @@ if (command === "run") {
     profile = "dual";
     console.error(`◈ No profile specified — defaulting to --profile dual (deepseek text + deepseek vision). Pass --profile claude to force Anthropic-only.`);
   }
+  const staleUnfunded = archiveUnfundedSentinel(join(projectDir, ".agent"));
+  if (staleUnfunded) console.error(`↺ Previous launch stopped on an unfunded provider (${staleUnfunded}). Resuming — make sure it was topped up.`);
   try {
     mkdirSync(join(projectDir, ".agent"), { recursive: true });
     writeFileSync(runCfgPath, JSON.stringify({ model, profile: profile ?? null, maxCost: maxCost ?? null, savedAt: new Date().toISOString() }, null, 2) + "\n");

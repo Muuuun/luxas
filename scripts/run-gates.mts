@@ -48,6 +48,7 @@ const MANIFEST: Record<string, GateSpec> = {
 	smoke_agent_defs: { kind: "assert" },
 	smoke_agent_liveness: { kind: "assert" },
 	smoke_agent_loop_patches: { kind: "assert", timeoutMs: 180_000 },
+	smoke_background_review: { kind: "assert" },
 	smoke_allowed_write_roots: { kind: "assert" },
 	smoke_atomic_counter: { kind: "assert" },
 	smoke_bash_status_truth: { kind: "assert" },
