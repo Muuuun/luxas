@@ -108,6 +108,15 @@ const MODEL_MAP: Record<string, [string, string] | InlineModel> = {
   //     beta header pi-ai's anthropic path does not expose today. Until that is
   //     wired, a refusal arrives as an EMPTY assistant turn with no explanation.
   //     Do not route the reviewer layer here.
+  // Claude Opus 5.5 — selectable, NOT wired into any profile (2026-09-24).
+  // pi-ai's catalog carries it since 0.87 ($4/$20, cache read $0.20, write $5,
+  // 1M context, 128K out, adaptive-only thinking). Luxas adds one thing the
+  // catalog does not know: it 400s on forced tool_choice, which Luxas sends
+  // every turn — hence `noForcedToolChoice` (pickRequireToolChoice → "auto").
+  // Its safety classifiers add `bio` and `reasoning_extraction` to `cyber`;
+  // measure review-shaped refusals (scripts/model_bench.mts --role auditor)
+  // before routing the reviewer layer here.
+  "claude-opus-5-5": { ...(getModel("anthropic" as any, "claude-opus-5-5" as any) as any), noForcedToolChoice: true },
   "claude-fable-5-1": {
     id: "claude-fable-5-1",
     name: "Claude Fable 5.1",

@@ -18,7 +18,7 @@
  * Run:  npx tsx scripts/smoke_cache_pin.mts
  */
 
-import { getModel, streamAnthropic, type Context } from "@earendil-works/pi-ai/compat";
+import { getModel, stream as piStream, type Context } from "@earendil-works/pi-ai/compat";
 
 let capturedBody: any = null;
 
@@ -67,7 +67,7 @@ const context: Context = {
 };
 
 const model = getModel("anthropic", "claude-sonnet-4-6");
-const stream = streamAnthropic(model, context, {
+const stream = piStream(model, context, {
 	apiKey: "sk-ant-fake-for-smoketest",
 	cacheRetention: "long",
 	fetch: capturingFetch,

@@ -42,7 +42,15 @@ M_EXIT = "[finish-tool-exit patched]"
 M_RATE = "[rate-limit-retry patched]"
 
 # Layout A (<=0.58.1) declares steeringAfterTools; layout B (>=0.62) does not.
+# Layout C (>=0.87) records lastCompletedTurn and calls finishTurn on error.
 legacy = "let steeringAfterTools = null;" in src
+v087 = "lastCompletedTurn = {" in src
+
+# The errored assistant message is in BOTH newMessages and currentContext
+# (streamAssistantResponse pushes it into the context). A retry must drop it
+# from both, or the next request re-sends the failed turn.
+DROP_FAILED = """                    newMessages.pop();
+                    if (currentContext.messages[currentContext.messages.length - 1] === message) currentContext.messages.pop();"""
 
 def fail(msg):
     print(f"[patch] FAIL: {msg}", file=sys.stderr)
@@ -82,6 +90,9 @@ if M_GUARD not in src:
         # The new loop reassigns pendingMessages after turn_end, so the guard
         # message must be merged in AFTER that assignment or it is discarded.
         drain = """            pendingMessages = (await config.getSteeringMessages?.()) || [];"""
+        if v087:
+            drain = """            explicitContinuation = decision?.action === "continue";
+""" + drain
         sub(drain,
             drain + """
             if (__guardSteer) { pendingMessages = [...pendingMessages, ...__guardSteer]; __guardSteer = null; } // """ + M_GUARD,
@@ -104,18 +115,31 @@ if M_RETRY not in src:
         let __guardSteer = null; // """ + M_GUARD
     sub(decl_old, decl_new, "transient-error-retry (inner-loop state)")
 
-    old_err = """            if (message.stopReason === "error" || message.stopReason === "aborted") {
+    err_head = """            if (message.stopReason === "error" || message.stopReason === "aborted") {"""
+    if v087:
+        old_err = err_head + """
+                lastCompletedTurn = {"""
+        err_tail = """
+                lastCompletedTurn = {"""
+    else:
+        old_err = err_head + """
                 await emit({ type: "turn_end", message, toolResults: [] });
                 await emit({ type: "agent_end", messages: newMessages });
                 return;
             }"""
+        err_tail = """
+                await emit({ type: "turn_end", message, toolResults: [] });
+                await emit({ type: "agent_end", messages: newMessages });
+                return;
+            }
+            __transientRetryStreak = 0; // """ + M_RETRY
     new_err = """            if (message.stopReason === "error" || message.stopReason === "aborted") {
                 const __errMsg = String(message.errorMessage ?? ""); // """ + M_RETRY + """
                 const __TRANSIENT_RE = /connection.?error|connection.?refused|fetch failed|terminated|other side closed|stream aborted|ECONNRESET|ETIMEDOUT|socket hang up|EAI_AGAIN|overloaded/i;
                 if (message.stopReason === "error" && __TRANSIENT_RE.test(__errMsg) && __transientRetryStreak < 6) {
                     const __backoff = [1000, 2000, 4000, 8000, 16000, 30000][__transientRetryStreak] ?? 30000;
                     __transientRetryStreak++;
-                    newMessages.pop();
+""" + DROP_FAILED + """
                     console.error(`[transient-error-retry ${__transientRetryStreak}/6] stopReason=error (${__errMsg.slice(0, 80)}); backoff ${__backoff}ms then re-stream the turn`);
                     await new Promise((r) => setTimeout(r, __backoff));
                     hasMoreToolCalls = true;
@@ -123,13 +147,14 @@ if M_RETRY not in src:
                 }
                 if (message.stopReason === "error" && __TRANSIENT_RE.test(__errMsg)) {
                     console.error(`[transient-error-retry] TRANSIENT-EXHAUSTED after 6 retries (~61s) — giving up turn: ${__errMsg.slice(0, 120)}`);
-                }
-                await emit({ type: "turn_end", message, toolResults: [] });
-                await emit({ type: "agent_end", messages: newMessages });
-                return;
-            }
-            __transientRetryStreak = 0; // """ + M_RETRY
+                }""" + err_tail
     sub(old_err, new_err, "transient-error-retry (error stop)")
+    if v087:
+        # The streak resets on the first successful turn after the error block.
+        sub("""            // Check for tool calls""",
+            """            __transientRetryStreak = 0; // """ + M_RETRY + """
+            // Check for tool calls""",
+            "transient-error-retry (reset)")
     print("[patch] agent-loop transient-error-retry applied")
 else:
     print("[patch] agent-loop transient-error-retry already applied")
@@ -170,7 +195,7 @@ if M_RATE not in src:
                 if (message.stopReason === "error" && __RATE_RE.test(__errMsg) && !__UNFUNDED_RE.test(__errMsg) && __rateRetryStreak < 6) {
                     const __rbackoff = [5000, 15000, 30000, 60000, 120000, 120000][__rateRetryStreak] ?? 120000;
                     __rateRetryStreak++;
-                    newMessages.pop();
+""" + DROP_FAILED + """
                     console.error(`[rate-limit-retry ${__rateRetryStreak}/6] stopReason=error (${__errMsg.slice(0, 80)}); backoff ${__rbackoff}ms then re-stream the turn`);
                     await new Promise((r) => setTimeout(r, __rbackoff));
                     hasMoreToolCalls = true;

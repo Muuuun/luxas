@@ -15,7 +15,7 @@
  * the provider's job to keep it — which is exactly why it stays checked.
  */
 
-import { getModel, streamAnthropic, type Context } from "@earendil-works/pi-ai/compat";
+import { getModel, stream as piStream, type Context } from "@earendil-works/pi-ai/compat";
 
 let capturedBody: any = null;
 // The provider accepts a `fetch` in its options; use that seam rather than
@@ -64,7 +64,7 @@ const context: Context = {
 };
 
 const model = getModel("anthropic", "claude-sonnet-4-6");
-const stream = streamAnthropic(model, context, { apiKey: "sk-ant-fake", cacheRetention: "long", fetch: capturingFetch } as any);
+const stream = piStream(model, context, { apiKey: "sk-ant-fake", cacheRetention: "long", fetch: capturingFetch } as any);
 try { await stream.result(); } catch {}
 
 if (!capturedBody) { console.error("FAIL: no body captured"); process.exit(1); }

@@ -67,7 +67,9 @@ const { runAgentLoop } = await import(`${pkgRoot}/dist/agent-loop.js`);
 /** Scripted stream: hands back one prepared assistant message per call. */
 function scripted(messages: any[], throwAfter = Infinity) {
 	let calls = 0;
-	const fn = async () => {
+	const seen: any[][] = [];
+	const fn = async (_model: any, context: any) => {
+		seen.push([...(context?.messages ?? [])]);
 		if (calls >= throwAfter) throw new Error("__scripted_stop__");
 		const msg = messages[Math.min(calls, messages.length - 1)];
 		calls++;
@@ -76,7 +78,7 @@ function scripted(messages: any[], throwAfter = Infinity) {
 			result: async () => msg,
 		};
 	};
-	return { fn, calls: () => calls };
+	return { fn, calls: () => calls, seen };
 }
 
 const textMsg = (text: string, stopReason = "stop") => ({
@@ -98,6 +100,10 @@ const prompt = [{ role: "user", content: [{ type: "text", text: "go" }], timesta
 	await runAgentLoop(prompt as any, baseCtx([]) as any, baseConfig as any, async () => {}, ac.signal, s.fn as any);
 	clearTimeout(t);
 	check("transient stream error is retried, not fatal", s.calls() >= 2, `streamFn called ${s.calls()}x`);
+	// The failed turn must not be re-sent: streamAssistantResponse pushes it into
+	// the context, so the retry has to drop it there too, not only from newMessages.
+	const resent = (s.seen[1] ?? []).filter((m: any) => m?.role === "assistant" && m?.stopReason === "error").length;
+	check("retry does not re-send the failed assistant turn", resent === 0, `${resent} error turn(s) in the retried request`);
 }
 
 {
