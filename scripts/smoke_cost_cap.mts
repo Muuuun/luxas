@@ -63,6 +63,7 @@ check("a bare resume inherits maxCost from run_config.json (never widens to the 
   check("not unfunded: overloaded / rate limit / network", !isUnfundedProviderError("529 overloaded_error") && !isUnfundedProviderError("429 rate_limit_error") && !isUnfundedProviderError("fetch failed"));
   // The exact string from ba-qc's 71 dead tool_review turns (HTTP 429, not 402).
   check("unfunded: GLM 429 code 1113 余额不足", isUnfundedProviderError('429: {"code":"1113","message":"余额不足或无可用资源包,请充值。"}'));
+  check("unfunded: Kimi 429 account suspended", isUnfundedProviderError('429: {"message":"Your account org-x <ak-y> is suspended, please check your plan and billing details","type":"exceeded_current_quota_error"}'));
   check("not unfunded: GLM 429 code 1302 rate limit", !isUnfundedProviderError('429: {"code":"1302","message":"您的账户已达到速率限制，请您控制请求频率"}'));
   const src2 = readFileSync("src/usage-log.ts", "utf-8");
   check("stream wrapper exits on an unfunded error (LUXAS_UNFUNDED_EXIT=0 opts out)", /isUnfundedProviderError\(msg\?\.errorMessage\)[\s\S]{0,800}process\.exit\(1\)/.test(src2) && /LUXAS_UNFUNDED_EXIT/.test(src2));

@@ -1,0 +1,9 @@
+{
+  "_note": "Bench-only candidates without a MODEL_MAP entry. Registered process-locally by scripts/model_bench.mts (registerBenchModel). Anything in pi-ai's catalog can be named as provider/id instead, e.g. anthropic/claude-opus-5.",
+  "kimi-k3": {
+    "id": "kimi-k3", "name": "Kimi K3", "api": "openai-completions", "provider": "kimi-coding",
+    "baseUrl": "https://api.moonshot.cn/v1", "reasoning": true, "input": ["text"],
+    "cost": { "input": 3, "output": 15, "cacheRead": 0.3, "cacheWrite": 0 },
+    "contextWindow": 1048576, "maxTokens": 131072, "compat": { "supportsDeveloperRole": false }
+  }
+}

@@ -594,7 +594,33 @@ export function lookupInlineEntry(id: string): any | null {
 
 export function resolveModel(modelKey: string, agentName?: string) {
   const effectiveKey = applyProfile(modelKey, agentName);
-  const entry = MODEL_MAP[effectiveKey] ?? MODEL_MAP.sonnet;
+  return modelFromEntry(MODEL_MAP[effectiveKey] ?? MODEL_MAP.sonnet);
+}
+
+/**
+ * Exactly this model, bypassing every routing rule (applyProfile, the GLM
+ * reviewer pin, LUXAS_BRAIN_MODEL, profiles). For the model bench
+ * (scripts/model_bench.mts), which must put the SAME agent definition on each
+ * candidate model. Accepts a MODEL_MAP key, or "provider/id" for anything in
+ * pi-ai's catalog. Unknown → throws (a bench cell silently measuring the
+ * fallback model would be worse than no cell).
+ */
+export function resolveModelExact(key: string) {
+  if (MODEL_MAP[key]) return modelFromEntry(MODEL_MAP[key]);
+  const slash = key.indexOf("/");
+  if (slash > 0) {
+    const m: any = getModel(key.slice(0, slash) as any, key.slice(slash + 1) as any);
+    if (m?.id) return m;
+  }
+  throw new Error(`resolveModelExact: unknown model "${key}" (not a MODEL_MAP key, not provider/id in pi-ai's catalog)`);
+}
+
+/** Model bench only: add a candidate that has no MODEL_MAP entry yet (process-local). */
+export function registerBenchModel(key: string, entry: InlineModel): void {
+  MODEL_MAP[key] = entry;
+}
+
+function modelFromEntry(entry: [string, string] | InlineModel) {
   if (Array.isArray(entry)) return getModel(entry[0] as any, entry[1] as any);
   // A provider renamed this model and autofix PROVED the replacement can still
   // do the job (ground-truth probes, not a 200). Swap the id and keep the rest
@@ -682,6 +708,8 @@ export interface SpawnAgentOptions {
   getApiKey: (provider: string) => Promise<string | undefined> | string | undefined;
   /** Override the definition's default model. */
   modelOverride?: string;
+  /** Model bench only: this exact model, no routing (resolveModelExact). */
+  exactModel?: string;
   /** Additional tools to include (e.g., PI's verdict tool). */
   toolOverrides?: any[];
   /** Extra data passed to the context builder. */
@@ -797,7 +825,8 @@ export function buildAgentFromDefinition(opts: SpawnAgentOptions): BuiltAgent {
 
   // 1. Resolve model
   const modelKey = opts.modelOverride ?? def.model;
-  const model = modelKey === "inherit" ? resolveModel("sonnet", opts.name) : resolveModel(modelKey, opts.name);
+  const model = opts.exactModel ? resolveModelExact(opts.exactModel)
+    : modelKey === "inherit" ? resolveModel("sonnet", opts.name) : resolveModel(modelKey, opts.name);
 
   // 2. Resolve system prompt with template variables
   // Inject SPAWN_ID = agentId so prompts can include the spawn-unique id in

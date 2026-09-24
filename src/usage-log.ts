@@ -237,7 +237,7 @@ export function enforceCostCap(logPath: string, exit: (code: number) => void = (
 // disclosing the gap (notes/backtest-2026-09-24/bt-baqc.md). A true GLM rate
 // limit is code 1302 "速率限制" and is retried in the agent loop instead
 // (patches/pi-agent-core-no-tool-retry-guard.sh, Patch C).
-export const UNFUNDED_PROVIDER_RE = /credit balance is too low|insufficient[_ ]balance|insufficient[_ ]quota|exceeded_current_quota|billing hard limit|payment required|402\b|余额不足|无可用资源包|"code":\s*"1113"/i;
+export const UNFUNDED_PROVIDER_RE = /credit balance is too low|insufficient[_ ]balance|insufficient[_ ]quota|exceeded_current_quota|billing hard limit|payment required|402\b|余额不足|无可用资源包|"code":\s*"1113"|account\b[^"]{0,120}\bis suspended/i;
 export function isUnfundedProviderError(text: unknown): boolean {
   return typeof text === "string" && UNFUNDED_PROVIDER_RE.test(text);
 }

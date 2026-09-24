@@ -1,0 +1,26 @@
+{
+  "project": "single_photon_297nm",
+  "remote": "/Users/muqiao/Documents/sisyphus-projects/manual/projects/single_photon_297nm",
+  "sources": ["notes/backtest-2026-09-24/bt-297nm.md", "notes/backtest-2026-09-24/blind-auditor/score-297nm.md"],
+  "note": "weight 3 = flips a headline conclusion; 2 = reached the report, weakens a claim; 1 = minor / latent. 'known_false' are claims a careful auditor might make that are wrong.",
+  "defects": [
+    {"id": "D1", "weight": 3, "text": "E5's 'leakage'/'gate fidelity' is only the |11> (|gg>) return population: no conditional phase error, no |01>/|10> branches, pulse area pi*sqrt2 is not a CZ gate. Including the phase error (~0.13-0.14 rad at 40 MHz, ~2.4-2.9e-3 infidelity) raises infidelity ~10x."},
+    {"id": "D2", "weight": 3, "text": "Headline flip F(40 MHz) > F(10 MHz) and the 28 MHz / 963 mW / 99.975% optimum rest on D1's metric; with the phase error the ordering reverses (optimum ~15 MHz)."},
+    {"id": "D3", "weight": 2, "text": "Direction of the C6/blockade correction is wrong: the report attributes a 4.3x leakage suppression to near-Forster mixing, but it comes from comparing a smooth-pulse simulation with a square-pulse formula; a weaker true V increases leakage. C6(n=75) is an n^11 extrapolation."},
+    {"id": "D4", "weight": 3, "text": "E2's 'pure sin^4 theta', C6(0)~1e-6, anisotropy ~1e6 and r_b(0)=0.32 um are artifacts; the run's own full diagonalization gives C6(0)=1.22 GHz um^6 at n=50 (~56x anisotropy, r_b(0)~3.3 um); the Vermersch benchmark failure at theta=0 was reported as a pass."},
+    {"id": "D5", "weight": 2, "text": "'Numerov reproduces the published D2 matrix element to 0.37%' is circular: the script takes the value from ARC's literature table."},
+    {"id": "D6", "weight": 1, "text": "The sole stated caveat (n=75 vs n~75.3) is ill-posed (n is an integer tuning choice) while the real modelling assumptions go undisclosed."},
+    {"id": "D7", "weight": 3, "text": "'Feasible and power-cheap' mixes operating points: 1.2 mW gives F~93.8% on the run's own frontier, while the fidelity claims need 123-963 mW (963 mW exceeds the demonstrated ~700 mW 297 nm source)."},
+    {"id": "D8", "weight": 1, "text": "Internal inconsistencies: 99.89% vs 99.909% for the same point; ledger 'DOES' vs report 'does not'; sign flips of +/-0.185 GHz."},
+    {"id": "N1", "weight": 1, "text": "Doppler dephasing double-counted: Pagano's recoil term (omega*coth) already contains the thermal term; 'recoil-limited' is really thermal-motion limited."},
+    {"id": "N2", "weight": 1, "text": "Fidelities assume a 1 kHz laser linewidth (~700x narrower than the demonstrated 297 nm laser) but the abstract/verdict quote F without that condition."},
+    {"id": "N3", "weight": 1, "text": "n~75 follows from 297.0 nm only as a vacuum wavelength; as an air wavelength it is n~62.5."},
+    {"id": "N4", "weight": 1, "text": "'Independent' checks share the pairinteraction code; the diagonalization control disagrees with the headline C6 by ~24% (68.5 vs 55.2) and this is not disclosed."},
+    {"id": "N5", "weight": 1, "text": "Comparison with Evered et al. sets a partial theoretical error budget against a measured all-inclusive gate error."}
+  ],
+  "unverifiable": [
+    "Degenerate Zeeman partners removed by hand without a stated magnetic field",
+    "Light shifts (ponderomotive ~1.2 MHz) at the ~1 W optimum missing from the budget"
+  ],
+  "known_false": []
+}

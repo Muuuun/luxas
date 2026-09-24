@@ -1,0 +1,11 @@
+{
+  "research": "benchmarks/bench-02-rb-blockade-leakage/RESEARCH.md",
+  "source": "benchmarks/bench-02-rb-blockade-leakage/ORACLE.md + notes/model-routing-2026-09-06.md §3",
+  "questions": [
+    {"id": "T1", "weight": 2, "q": "Does the design obtain C6 (or the pair interaction) at small polar angle / on the quantisation axis from a full pair-state diagonalisation (not only second-order perturbation theory), so that the perturbative artefact C6(theta=0)~0 cannot be read as 'no on-axis interaction'?"},
+    {"id": "T2", "weight": 2, "q": "Does it compute the leakage both with an analytic/closed-form blockade formula AND with a time-dependent (Schrodinger/master-equation) simulation, and treat a disagreement between them as a finding to explain rather than pick one?"},
+    {"id": "T3", "weight": 2, "q": "Are the two legs of each cross-validation genuinely independent (different method, not the same Hamiltonian solved symbolically vs numerically, not the same code path)? Answer yes only if every declared cross-check is independent."},
+    {"id": "T4", "weight": 2, "q": "Is the design free of any parameterisation that makes the quantity under test constant by construction (e.g. choosing r0(theta) so that |C6(theta)|/r0^6 = hbar*Omega at every theta, which flattens the angular dependence being measured)? Answer yes if it is free of such a trap."},
+    {"id": "T5", "weight": 1, "q": "Does it decompose the work into several experiments with distinct questions (not one mega-experiment doing everything)?"}
+  ]
+}
