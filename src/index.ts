@@ -48,6 +48,7 @@ if (existsSync(join(browserUseDir, "browser-use")) && !process.env.PATH?.include
 import { registerProject, updateProjectAfterRun, loadProjects, selectPastProjects } from "./memory.js";
 import { harvestCareer } from "./career.js";
 import { readUsageTotals, archiveUnfundedSentinel } from "./usage-log.js";
+import { applyDualProfileEnv } from "./profiles.js";
 import { TRANSIENT_RE } from "./agents/spawn.js";
 import { ORIGINAL_REQUEST_HEADER, deriveProjectTitle } from "./utils.js";
 
@@ -222,7 +223,6 @@ if (model.startsWith("deepseek-")) {
 // dual run no longer dies when a second provider drops the model (Kimi K2.5
 // 404'd mid-run on 2026-08-31 and took every figure fixer with it).
 if (profile === "dual") {
-  process.env.LUXAS_MODEL_PROFILE = "deepseek-v4-pro";
   // The drawing agents run on GLM-5.3-Flash (2026-09-03). On the figure-creation
   // task it needed 14 turns and $0.043 against deepseek's 36/$0.21 and sonnet's
   // 48/$2.18, and produced the best figure of the three: the only one to annotate
@@ -238,7 +238,6 @@ if (profile === "dual") {
   // and did not flag their absence when auditing, while a cross-family auditor
   // named it as its top fix. The auditor is the ship/no-ship gate, so it keeps
   // the better model and the drawers take the cost.
-  process.env.LUXAS_VISION_MODEL_PROFILE = "deepseek-flash";
   // figure_auditor on glm-5.3-flash (2026-09-04, by request): best AND cheapest
   // of four models benchmarked on the real Ba figures — it alone caught the
   // ionization line struck through the Rydberg label — and on its first live
@@ -248,7 +247,6 @@ if (profile === "dual") {
   // independence rule PI_REVIEWER_AGENTS encodes, and smoke_dual_profile
   // asserts it. Swapping either side onto the other's model silently turns the
   // ship/no-ship gate into a self-check.
-  process.env.LUXAS_VISION_AUDIT_MODEL_PROFILE = "glm-5.3-flash";
   // brain follows the producer profile again (2026-09-20, operator decision:
   // OpenAI ran out of credit mid-run and DeepSeek is funded). A brain that
   // cannot bill is a brain that cannot run — on 2026-09-19 OpenAI hit zero and
@@ -271,9 +269,8 @@ if (profile === "dual") {
   // unconditional, which silently ate the documented one-line rollback: under
   // --profile dual, `LUXAS_BRAIN_MODEL=glm-5.3 luxas run` was overwritten and
   // the operator got the pinned model anyway, with nothing printed.
-  if (!explicitModel && !process.env.LUXAS_BRAIN_MODEL) {
-    process.env.LUXAS_BRAIN_MODEL = "deepseek-v4-pro";
-  }
+  // Values: src/profiles.ts (shared with `luxas models` and the live canary).
+  applyDualProfileEnv({ setBrain: !explicitModel });
 } else if (profile === "claude") {
   // No env override — every agent uses its declared frontmatter model.
 } else if (profile) {
@@ -361,12 +358,7 @@ if (command === "models") {
   // Report what an actual run would route to: `luxas run` defaults to dual,
   // so a bare `luxas models` must too, or it audits a routing nobody uses.
   if (!profile) profile = "dual";
-  if (profile === "dual") {
-    process.env.LUXAS_MODEL_PROFILE = "deepseek-v4-pro";
-    process.env.LUXAS_VISION_MODEL_PROFILE = "deepseek-flash";
-    process.env.LUXAS_VISION_AUDIT_MODEL_PROFILE = "glm-5.3-flash";
-    if (!process.env.LUXAS_BRAIN_MODEL) process.env.LUXAS_BRAIN_MODEL = "deepseek-v4-pro";
-  }
+  if (profile === "dual") applyDualProfileEnv({ setBrain: true });
   const { formatFindings } = await import("./model-check.js");
   console.error(`◈ profile: ${profile}`);
   const { listRoutedModels } = await import("./agents/spawn.js");

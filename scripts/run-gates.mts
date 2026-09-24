@@ -136,6 +136,7 @@ const MANIFEST: Record<string, GateSpec> = {
 	// ── live-model gates: --live only ───────────────────────────────────────
 	smoke_typesetter: { kind: "live", timeoutMs: 600_000, note: "drives the typesetter agent end to end" },
 
+	smoke_live_canary: { kind: "live", timeoutMs: 600_000, note: "one real system-prompt → tool → result → finish round trip per routed model; the pi auto-updater's live gate" },
 	smoke_brain_guards: { kind: "live", needsKey: ["ANTHROPIC_API_KEY"], timeoutMs: 300_000 },
 	smoke_credential_guard: { kind: "live", needsKey: ["ANTHROPIC_API_KEY"], timeoutMs: 300_000 },
 	smoke_deepseek_web: { kind: "live", needsKey: ["DEEPSEEK_API_KEY"], timeoutMs: 300_000 },
