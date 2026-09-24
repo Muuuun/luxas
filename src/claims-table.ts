@@ -549,7 +549,7 @@ export function relation(a: Estimate, b: Estimate): { rel: PairRelation; differi
   // …and a leg that ADMITS it re-reads / re-sums / is internal to the other is
   // not a second leg either. sameRoute (token-set equality) fired 0/64 on the
   // real corpus; this fires 4/64 with 0 false positives, 2 of them above the
-  // numeric 1e-6 veto where nothing else looks. notes/jev-evaluation-2026-09-22.md §5.
+  // numeric 1e-6 veto where nothing else looks. notes/route-confession-2026-09-22.md §2.
   if (a.route && b.route && (a.kind !== "own" || b.kind !== "own")) {
     const confession = routeConfessesDependence(a.route, b.route);
     if (confession) return { rel: "wiring", differing: [], why: confession };

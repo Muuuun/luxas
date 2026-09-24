@@ -3,7 +3,7 @@
  * smoke_route_confession — the route leg of the wiring detector must actually
  * fire, and must not fire on genuinely independent routes.
  *
- * Background (notes/jev-evaluation-2026-09-22.md): `sameRoute` is token-set
+ * Background (notes/route-confession-2026-09-22.md): `sameRoute` is token-set
  * EQUALITY and, measured over every cross_validation pair in the corpus that
  * carries both method strings and both numbers (64 pairs, 5 projects), it fires
  * **0 times**. Every wiring verdict in production came from the numeric 1e-6

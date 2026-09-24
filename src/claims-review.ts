@@ -483,9 +483,10 @@ export function routeTokens(method: string): Set<string> {
  * Text SIMILARITY cannot fix that: the bit-identical pairs have near-zero token
  * overlap ("analytic sixth-root closed form" vs "direct geometric 3D density
  * ratio", agreeing to 1e-16). Jaccard and containment score AUC 0.76/0.82 on
- * that corpus and an evaluation model scores 0.67 — all three are thresholds
- * tuned on n=25, which is how this check got broken the first time. So no
- * threshold is shipped. Only self-admission is.
+ * that corpus — thresholds tuned on n=25, which is how this check got broken
+ * the first time. So no threshold is shipped. Only self-admission is. (A strong
+ * LLM reading the same two strings does better, AUC ~0.87, but flags 35–55% of
+ * numerically-independent pairs: a reviewer hint at most, never this gate.)
  *
  * Measured on the same 64 pairs: 4 hits, 4/4 genuine wiring, 0 false positives
  * on the 20 numerically-independent pairs — and 2 of the 4 sit ABOVE the 1e-6
@@ -495,7 +496,7 @@ export function routeTokens(method: string): Set<string> {
  * writes "internal check" loses the credit a producer writing "second method"
  * keeps. Every text rule has that flaw (sameRoute included). If producers are
  * ever seen avoiding these words, replace this with provenance — who produced
- * the artifact — not wording. See notes/jev-evaluation-2026-09-22.md §5.
+ * the artifact — not wording. See notes/route-confession-2026-09-22.md §2.
  *
  * Returns the reason (for the claim table's `reasons` line), or null.
  */

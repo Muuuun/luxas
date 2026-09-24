@@ -3,7 +3,7 @@
  * route_pairs — harvest every cross_validation pair that carries BOTH method
  * strings and BOTH numbers, from a tree of finished projects.
  *
- * This is the instrument behind notes/jev-evaluation-2026-09-22.md. Its point
+ * This is the instrument behind notes/route-confession-2026-09-22.md. Its point
  * is the labelling trick: the LABEL comes from the two numbers (agreement to
  * 1e-6 means one computation recorded twice; disagreement past 10% means it
  * cannot be), while everything under test reads only the two method STRINGS.
