@@ -13,7 +13,7 @@
 #   3. Green → commit on branch pi-auto/<ver>. Apply only when no Luxas run is
 #      active (swapping node_modules under a live run mixes old and new code
 #      on lazy imports); otherwise leave the branch and apply on a later day.
-#   4. Apply = fast-forward the real checkout, npm install, re-run npm test +
+#   4. Apply = fast-forward the real checkout, npm ci, re-run npm test +
 #      canary there. A failure here reverts the commit and reinstalls.
 #
 # Status: ~/.sisyphus/pi-autoupdate.json (one line of truth), logs in
@@ -60,7 +60,7 @@ if [ "$MODE" = "--rollback" ]; then
   C=$(git -C "$REPO" log --grep='^pi .* (auto-update' --format=%H -1)
   [ -n "$C" ] || { echo "no auto-update commit to roll back"; exit 1; }
   if busy; then echo "a run is active; refusing to swap node_modules under it"; exit 1; fi
-  git -C "$REPO" "${AUTHOR[@]}" revert --no-edit "$C" && (cd "$REPO" && npm install) || exit 1
+  git -C "$REPO" "${AUTHOR[@]}" revert --no-edit "$C" && (cd "$REPO" && npm ci --no-audit --no-fund) || exit 1
   CURRENT=$(vendored_version); LATEST="$CURRENT"
   status rolled_back "reverted $C"
   exit 0
@@ -122,18 +122,29 @@ fi
 # ── apply ──────────────────────────────────────────────────────────────────
 if busy; then status verified_waiting_idle "$LATEST verified on $BRANCH; a run is active, will apply when idle"; exit 0; fi
 PREV=$(git -C "$REPO" rev-parse HEAD)
-if ! git -C "$REPO" merge --ff-only -q "$BRANCH"; then
-  # The checkout moved (a deploy landed). Rebuild from the new HEAD tomorrow.
+if ! git -C "$REPO" merge-base --is-ancestor HEAD "$BRANCH"; then
+  # The checkout moved (a deploy landed). Rebuild from the new HEAD next run.
   git -C "$REPO" branch -D "$BRANCH" >/dev/null
   status needs_rebuild "checkout moved past the verified base; will re-verify on the new HEAD next run"; exit 0
 fi
-if (cd "$REPO" && npm install --no-audit --no-fund) && verify_in "$REPO"; then
+# Only the files this upgrade touches matter. package-lock.json drift from an
+# earlier `npm install` is noise the verified commit replaces; anything else
+# dirty is someone's work, so stop and keep the verified branch.
+touched=$(git -C "$REPO" diff --name-only HEAD "$BRANCH")
+dirty=$(git -C "$REPO" status --porcelain --untracked-files=no | awk '{print $2}' | grep -Fx -f <(printf '%s\n' $touched) || true)
+if [ "$dirty" = "package-lock.json" ]; then git -C "$REPO" checkout -- package-lock.json; dirty=""; fi
+if [ -n "$dirty" ]; then
+  status blocked_dirty "$LATEST verified on $BRANCH, but uncommitted changes in: $(echo $dirty); commit or discard them, the next run applies"; exit 0
+fi
+git -C "$REPO" merge --ff-only -q "$BRANCH" || { status error "ff-merge of $BRANCH failed unexpectedly; see log"; exit 1; }
+# npm ci installs exactly the verified lockfile and never rewrites it.
+if (cd "$REPO" && npm ci --no-audit --no-fund) && verify_in "$REPO"; then
   git -C "$REPO" branch -D "$BRANCH" >/dev/null
   status updated "$CURRENT -> $LATEST applied at $(git -C "$REPO" rev-parse --short HEAD) (was $(git -C "$REPO" rev-parse --short "$PREV"))"
   exit 0
 fi
 # Post-apply verification failed in the real checkout: undo.
-git -C "$REPO" "${AUTHOR[@]}" revert --no-edit HEAD && (cd "$REPO" && npm install --no-audit --no-fund)
+git -C "$REPO" "${AUTHOR[@]}" revert --no-edit HEAD && (cd "$REPO" && npm ci --no-audit --no-fund)
 echo "post-apply verification failed" > "$STATE/failed-$LATEST"
 status rolled_back "$LATEST passed in the worktree but failed after apply; reverted to $(git -C "$REPO" rev-parse --short HEAD)"
 exit 1
