@@ -7,6 +7,7 @@ description: >
 model: opus
 thinkingLevel: medium
 toolSets: [pi]
+safety: { presets: [research_brief], writeOnExistingPolicy: allow_as_read }
 contextBuilder: reviewer
 spawn: { enabled: true, allowedTypes: [illustrator, figure_auditor] }
 templates: []

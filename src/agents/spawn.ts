@@ -545,7 +545,9 @@ function applyProfile(modelKey: string, agentName?: string): string {
 //
 // Up to 3 attempts (1s, 2s, 4s backoff). Non-transient errors / non-error stops
 // pass through unchanged.
-export const TRANSIENT_RE = /connection.?error|connection.?refused|fetch failed|terminated|other side closed|stream aborted|ECONNRESET|ETIMEDOUT|socket hang up|EAI_AGAIN|overloaded/i;
+// One classifier for every layer (src/failure-taxonomy.ts); re-exported for existing importers.
+import { TRANSIENT_RE } from "../failure-taxonomy.js";
+export { TRANSIENT_RE };
 const RETRY_DELAYS_MS = [1000, 2000, 4000];
 
 export async function streamWithRetry(
@@ -603,7 +605,15 @@ export function lookupInlineEntry(id: string): any | null {
 
 export function resolveModel(modelKey: string, agentName?: string) {
   const effectiveKey = applyProfile(modelKey, agentName);
-  return modelFromEntry(MODEL_MAP[effectiveKey] ?? MODEL_MAP.sonnet);
+  const entry = MODEL_MAP[effectiveKey];
+  // No silent fallback: an unknown key used to resolve to sonnet, so a typo in
+  // --model or a LUXAS_*_MODEL var rerouted the agent to a different provider
+  // and price tier without a word.
+  if (!entry) {
+    const via = effectiveKey === modelKey ? "" : ` (routed from "${modelKey}"${agentName ? ` for ${agentName}` : ""})`;
+    throw new Error(`resolveModel: unknown model "${effectiveKey}"${via}. Known: ${Object.keys(MODEL_MAP).sort().join(", ")}`);
+  }
+  return modelFromEntry(entry);
 }
 
 /**

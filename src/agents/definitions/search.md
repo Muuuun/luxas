@@ -9,6 +9,7 @@ description: >
 model: sonnet
 thinkingLevel: medium
 toolSets: [coding, spawn]
+safety: { presets: [research_brief], writeOnExistingPolicy: allow_as_read }
 spawn: { enabled: true }
 templates: [PROJECT_DIR, SEARCH_SCRIPT, MERGE_NOTES]
 ---

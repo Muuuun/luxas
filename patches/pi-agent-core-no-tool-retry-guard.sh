@@ -11,6 +11,11 @@
 #                            gate-blocked finish cannot ship a corpse.
 #   D  rate-limit-retry      a provider rate limit (429 / GLM 1302) re-streams the
 #                            turn with minute-scale backoff; applied on top of C.
+#   E  failure-taxonomy      C and D classify with the RegExps Luxas publishes on
+#                            globalThis.__luxasFailureTaxonomy (src/failure-taxonomy.ts)
+#                            so the loop retries what every other layer calls
+#                            transient (5xx, timeouts); the literals stay as the
+#                            fallback for a process that never loaded that module.
 #
 # Upstream deleted `steeringAfterTools` after 0.58.1 and routes steering through
 # `getSteeringMessages()`/`pendingMessages` instead. Both layouts are handled;
@@ -40,6 +45,7 @@ M_GUARD = "[no-tool-retry-guard patched]"
 M_RETRY = "[transient-error-retry patched]"
 M_EXIT = "[finish-tool-exit patched]"
 M_RATE = "[rate-limit-retry patched]"
+M_TAX = "[failure-taxonomy patched]"
 
 # Layout A (<=0.58.1) declares steeringAfterTools; layout B (>=0.62) does not.
 # Layout C (>=0.87) records lastCompletedTurn and calls finishTurn on error.
@@ -210,6 +216,26 @@ if M_RATE not in src:
     print("[patch] agent-loop rate-limit-retry applied")
 else:
     print("[patch] agent-loop rate-limit-retry already applied")
+
+# ── Patch E: failure-taxonomy (on top of C and D) ────────────────────────
+# The loop's own literals knew nothing of 5xx or timeouts while usage-log.ts
+# did, so a gateway blip was retried by one layer and ended the turn in the
+# layer that owns it. One classifier now; see src/failure-taxonomy.ts.
+if M_TAX not in src:
+    if M_RETRY not in src or M_RATE not in src:
+        fail("failure-taxonomy: Patches C and D must be applied first")
+    sub("""                const __TRANSIENT_RE = /connection""",
+        """                const __TRANSIENT_RE = globalThis.__luxasFailureTaxonomy?.transient ?? /connection""",
+        "failure-taxonomy (transient)")
+    sub("""                const __RATE_RE = /rate""",
+        """                const __RATE_RE = globalThis.__luxasFailureTaxonomy?.rateLimit ?? /rate""",
+        "failure-taxonomy (rate limit)")
+    sub("""                const __errMsg = String(message.errorMessage ?? ""); // """ + M_RETRY,
+        """                const __errMsg = String(message.errorMessage ?? ""); // """ + M_RETRY + " " + M_TAX,
+        "failure-taxonomy (marker)")
+    print("[patch] agent-loop failure-taxonomy applied")
+else:
+    print("[patch] agent-loop failure-taxonomy already applied")
 
 if src != orig:
     open(path, "w").write(src)

@@ -42,6 +42,8 @@ export interface SafetyConfig {
   blockedBashWriteRoots?: string[];
   /** Bash commands that MENTION these project-relative path prefixes are refused (read-side blindness, claims-first §3.6). */
   blockedBashPathMentions?: string[];
+  /** Deny-list for the read tool, inside allowedReadRoots (see safety-wrappers.ts). */
+  blockedReadRoots?: string[];
   /** Figures v3: this agent may not write a plotting script — a `.py` whose content calls `savefig`/imports pyplot is refused (data figures are `.figspec.json`). */
   figureSpecOnly?: boolean;
   /** "block" = reject write on existing (force edit); "allow_as_read" = permit. */
@@ -194,6 +196,7 @@ function buildSafetyConfig(fields: Record<string, any>, filename: string): Safet
     figureSpecOnly: block.figureSpecOnly === true ? true : undefined,
     blockedBashWriteRoots: maybeList(block.blockedBashWriteRoots),
     blockedBashPathMentions: maybeList(block.blockedBashPathMentions),
+    blockedReadRoots: maybeList(block.blockedReadRoots),
     writeOnExistingPolicy: policy === "block" || policy === "allow_as_read" ? policy : undefined,
   };
 }

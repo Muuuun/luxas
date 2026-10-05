@@ -8,6 +8,8 @@
  * This is the SINGLE SOURCE OF TRUTH for cost tracking.
  */
 
+import { classifyProviderError, UNFUNDED_RE } from "./failure-taxonomy.js";
+import { setExitReason } from "./exit-state.js";
 import { appendFileSync, readFileSync, mkdirSync, statSync, writeFileSync, existsSync, renameSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
@@ -139,20 +141,10 @@ const TRANSIENT_RETRY_DELAYS_MS = [10_000, 30_000, 60_000];
  * exhaustion.
  */
 export function isTransientError(err: unknown): boolean {
-  const msg = String((err as any)?.message ?? err ?? "").toLowerCase();
-  return (
-    msg.includes("connection error") ||
-    msg.includes("request timed out") ||
-    msg.includes("econnreset") ||
-    msg.includes("etimedout") ||
-    msg.includes("econnrefused") ||
-    msg.includes("socket hang up") ||
-    msg.includes("fetch failed") ||
-    msg.includes("network error") ||
-    msg.includes("503") ||
-    msg.includes("504") ||
-    msg.includes("529") // Anthropic "overloaded"
-  );
+  // Classified in one place (failure-taxonomy.ts) so this layer, streamWithRetry
+  // and the agent loop cannot disagree about what is worth a retry.
+  const c = classifyProviderError(err);
+  return c === "transient";
 }
 
 /**
@@ -216,6 +208,7 @@ export function enforceCostCap(logPath: string, exit: (code: number) => void = (
   const totals = readUsageTotals(logPath);
   if (totals.cost > cap) {
     console.error(`\n[FATAL] Cost limit exceeded at usage record: $${totals.cost.toFixed(2)} > $${cap}. Killing process.\n`);
+    setExitReason("budget_exhausted", `cost $${totals.cost.toFixed(2)} exceeded the $${cap} cap`);
     exit(1);
     return true;
   }
@@ -237,7 +230,7 @@ export function enforceCostCap(logPath: string, exit: (code: number) => void = (
 // disclosing the gap (notes/backtest-2026-09-24/bt-baqc.md). A true GLM rate
 // limit is code 1302 "速率限制" and is retried in the agent loop instead
 // (patches/pi-agent-core-no-tool-retry-guard.sh, Patch C).
-export const UNFUNDED_PROVIDER_RE = /credit balance is too low|insufficient[_ ]balance|insufficient[_ ]quota|exceeded_current_quota|billing hard limit|payment required|402\b|余额不足|无可用资源包|"code":\s*"1113"|account\b[^"]{0,120}\bis suspended|no credits remaining/i;
+export const UNFUNDED_PROVIDER_RE = UNFUNDED_RE;
 export function isUnfundedProviderError(text: unknown): boolean {
   return typeof text === "string" && UNFUNDED_PROVIDER_RE.test(text);
 }
@@ -271,6 +264,7 @@ export function enforceUnfundedSentinel(logPath: string, exit: (code: number) =>
   let why = "";
   try { const j = JSON.parse(readFileSync(p, "utf-8")); why = `${j.provider}: ${String(j.message).slice(0, 160)}`; } catch { /* torn write — still stop */ }
   console.error(`\n[FATAL] Run stopped: a provider refused for lack of funds (${why}; ${p}). Top up, then \`luxas run\` resumes (checkpoint is live).\n`);
+  setExitReason("provider_unfunded", why);
   exit(1);
   return true;
 }
@@ -314,6 +308,7 @@ export function installUsageTracking(logPath: string, opts: { maxCostUsd?: numbe
               writeUnfundedSentinel(logPath, String(model?.provider ?? api), String(msg.errorMessage));
               console.error(`\n[FATAL] Provider ${model?.provider ?? api} refuses for lack of funds: ${String(msg.errorMessage).slice(0, 160)}. ` +
                 `Stopping the run so the other providers do not keep spending on work this one cannot review. Top up, then resume (checkpoint is live).\n`);
+              setExitReason("provider_unfunded", `${model?.provider ?? api}: ${String(msg.errorMessage).slice(0, 160)}`);
               process.exit(1);
             }
             if (msg?.usage) {

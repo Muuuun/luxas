@@ -8,6 +8,7 @@ description: >
 model: haiku
 thinkingLevel: low
 toolSets: [coding, report]
+safety: { presets: [research_brief], writeOnExistingPolicy: allow_as_read }
 spawn: { enabled: false }
 templates: [PROJECT_DIR]
 ---

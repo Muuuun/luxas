@@ -12,6 +12,9 @@
  * #5 session DAG, #6 cross-model transform, #7 custom messages, #8 extensions
  */
 
+import { setExitReason } from "./exit-state.js";
+import { pinHistoryBreakpoint } from "./cache-breakpoint.js";
+import type { FinishOutcome } from "./tools/index.js";
 import { Agent } from "@earendil-works/pi-agent-core";
 import { streamSimple, type TextContent } from "@earendil-works/pi-ai/compat";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
@@ -260,13 +263,17 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
   // index.ts to distinguish a genuine completion from a process that exited
   // while blocked at a gate — so "✓ Done" and the registry don't lie.
   let finishSucceeded = false;
+  // WHICH finish path fired: the gated success, a runaway backstop that shipped
+  // over open blockers, or the operator escalation. All three stop the loop;
+  // only the first is a completed study (exit-state.ts names the difference).
+  let finishOutcome: FinishOutcome | null = null;
   const sessionStartedAtMs = Date.now();
   const directiveGate = opts.directive
     ? { directive: opts.directive, sessionStartedAtMs, isResume: !!opts.resumedFromCheckpoint }
     : undefined;
   const { tools, setParentAgent } = buildResearchTools(
     projectDir, templateVars, getApiKey,
-    { onFinish: () => { finishSucceeded = true; finishCallback?.(); } },
+    { onFinish: (outcome = "finished") => { finishSucceeded = true; finishOutcome = outcome; finishCallback?.(); } },
     directiveGate,
   );
 
@@ -369,7 +376,12 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
     beforeToolCall: hooks.before,
     afterToolCall: hooks.after,
     getApiKey,
-    onPayload: payloadCapture,
+    // Pin the history breakpoint first, then capture what is actually sent.
+    onPayload: (payload: unknown, m: unknown) => {
+      const pinned = pinHistoryBreakpoint(payload);
+      payloadCapture?.(pinned ?? payload, m);
+      return pinned;
+    },
     // F5-lite: use streamWithRetry so transient DeepSeek/OpenAI connection errors
     // (mid-stream "Connection error", ECONNRESET, "fetch failed", "terminated")
     // get exp-backoff retry instead of killing the brain session.
@@ -493,6 +505,7 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
           `Killing process to stop runaway cost. ` +
           `Re-run with a larger maxTurns if this was intentional.\n`,
         );
+        setExitReason("budget_exhausted", `turn budget exceeded: ${turnCount} > ${maxTurns}`);
         process.exit(1);
       }
 
@@ -578,5 +591,5 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
   } : null;
 
   return { agent, hooks, bus, session, piFallback, restore, checkpointPath, usageLogPath,
-    didFinishSucceed: () => finishSucceeded };
+    didFinishSucceed: () => finishSucceeded, finishOutcome: () => finishOutcome };
 }

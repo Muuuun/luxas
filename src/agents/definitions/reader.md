@@ -11,7 +11,7 @@ model: haiku
 thinkingLevel: low
 toolSets: [coding]
 spawn: { enabled: false }
-safety: { presets: [report_surface] }
+safety: { presets: [research_brief, report_surface] }
 templates: [PROJECT_DIR, PAPER_ID, SEARCH_SCRIPT]
 ---
 

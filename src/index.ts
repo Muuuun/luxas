@@ -49,7 +49,8 @@ import { registerProject, updateProjectAfterRun, loadProjects, selectPastProject
 import { harvestCareer } from "./career.js";
 import { readUsageTotals, archiveUnfundedSentinel } from "./usage-log.js";
 import { applyDualProfileEnv } from "./profiles.js";
-import { TRANSIENT_RE } from "./agents/spawn.js";
+import { classifyProviderError } from "./failure-taxonomy.js";
+import { beginRun, setExitReason, readLastExit, describeExit, type ExitRecord } from "./exit-state.js";
 import { ORIGINAL_REQUEST_HEADER, deriveProjectTitle } from "./utils.js";
 
 // F2 — process-level crash handlers. Without these, Node's default behavior on
@@ -94,6 +95,9 @@ function _crashLog(kind: "unhandledRejection" | "uncaughtException", err: unknow
 process.on("unhandledRejection", (reason) => _crashLog("unhandledRejection", reason));
 process.on("uncaughtException", (err) => {
   _crashLog("uncaughtException", err);
+  // Name the ending before Node exits (no-op outside a run / in sub-agents).
+  setExitReason("crashed", `uncaughtException: ${String((err as any)?.message ?? err).slice(0, 300)}`);
+  process.exitCode = 1;
   // Node's default after uncaughtException is to exit with code 1 anyway. Let
   // the runtime do it so finalizers (other handlers, exit hooks) still fire.
 });
@@ -143,7 +147,15 @@ for (let i = 1; i < args.length; i++) {
   } else if (args[i] === "--style-domain" && args[i + 1]) {
     styleDomain = args[++i];
   } else if (args[i] === "--max-cost" && args[i + 1]) {
-    maxCost = parseFloat(args[++i]);
+    // A cap that does not parse must refuse to launch: NaN compares false
+    // against everything, so it used to switch off the hard cap AND the 90%
+    // freeze while looking like a cap was set.
+    const raw = args[++i];
+    maxCost = Number(raw);
+    if (!Number.isFinite(maxCost) || maxCost <= 0) {
+      console.error(`--max-cost must be a positive number of USD, got "${raw}".`);
+      process.exit(2);
+    }
   } else if (!args[i].startsWith("--")) {
     projectDir = args[i];
   }
@@ -660,7 +672,13 @@ async function run(dir: string, modelName: string, userDirective?: string, maxCo
   // mtimes are legitimately older than this process. The H7 content check still
   // applies on resume.
   const resumedFromCheckpoint = existsSync(join(dir, ".agent", "checkpoint.jsonl"));
-  const { agent, hooks, restore, usageLogPath, didFinishSucceed } = createResearchAgent({
+  // How did the previous session end? Read before this launch overwrites it,
+  // told to the operator here and to the resuming brain in its first prompt.
+  const previousExit: ExitRecord | null = beginRun(dir);
+  if (previousExit && previousExit.kind !== "finished" && previousExit.kind !== "running") {
+    console.error(`↺ Previous session ended: ${describeExit(previousExit)}`);
+  }
+  const { agent, hooks, restore, usageLogPath, didFinishSucceed, finishOutcome } = createResearchAgent({
     projectDir: dir,
     model: modelName,
     directive: userDirective,
@@ -686,6 +704,7 @@ async function run(dir: string, modelName: string, userDirective?: string, maxCo
 
   // Check for checkpoint to resume from
   const t0 = Date.now();
+  let runError: string | null = null;
   try {
     // Wrap the entire brain run in jobOwnerAls so every bash invocation made
     // by the brain (including ones nested in followUp/continue) tags its
@@ -699,9 +718,15 @@ async function run(dir: string, modelName: string, userDirective?: string, maxCo
           const resumePrompt = userDirective
             ? `Continue your research. Additional directive: ${userDirective}\n\nIMPORTANT: This is a follow-up directive on an existing project. After completing the analysis, you MUST update both notes/experiments.md AND report/report.tex (add new sections, update existing comparisons, recompile with compile_latex). The report should always reflect the latest state of the research.`
             : `Continue your research from where you left off. Check notes/literature.md and notes/experiments.md for your current progress.`;
+          // The brain cannot see how its last session died unless told: a run
+          // killed at the cost cap and one that paused cleanly restore the same
+          // checkpoint. Harness voice, one line, only when it was not a finish.
+          const exitNote = previousExit && previousExit.kind !== "finished" && previousExit.kind !== "running"
+            ? `\n\n[harness] The previous session did not end through finish(). It ended as: ${describeExit(previousExit)} Anything that was in flight then (a tool call, a background agent) did not complete — check for its artifact before relying on it.`
+            : "";
           await agent.followUp({
             role: "user",
-            content: resumePrompt,
+            content: resumePrompt + exitNote,
             timestamp: Date.now(),
           });
           await agent.continue();
@@ -718,6 +743,7 @@ async function run(dir: string, modelName: string, userDirective?: string, maxCo
     });
   } catch (err: any) {
     console.error(`\n✗ Agent error: ${err.message}`);
+    runError = String(err?.message ?? err);
   }
 
   const elapsed = Math.floor((Date.now() - t0) / 1000);
@@ -737,15 +763,22 @@ async function run(dir: string, modelName: string, userDirective?: string, maxCo
   // relaunch-with-backoff; otherwise it must NOT (a deterministic stop would
   // thrash, as the 2026-06-24 relaunch loop did).
   const lastMsg = agent.state.messages[agent.state.messages.length - 1];
-  const lastErrTransient = (lastMsg as any)?.stopReason === "error"
-    && TRANSIENT_RE.test(String((lastMsg as any)?.errorMessage ?? ""));
-  try {
-    writeFileSync(
-      join(dir, ".agent", "last_exit.json"),
-      JSON.stringify({ finished, lastErrTransient, ts: Date.now() }),
-    );
-  } catch { /* non-fatal */ }
-  if (finished) {
+  const lastErr = (lastMsg as any)?.stopReason === "error" ? String((lastMsg as any)?.errorMessage ?? "") : null;
+  const errClass = lastErr === null ? null : classifyProviderError(lastErr);
+  // One typed record (exit-state.ts); `finished` / `lastErrTransient` stay in it
+  // for the supervisor. A rate limit that outlived its retries is as
+  // relaunchable as a network blip.
+  const outcome = finishOutcome();
+  if (outcome) setExitReason(outcome, outcome === "finished" ? undefined : "see notes/escalations/ and the quarantine note in notes/experiments.md");
+  else if (runError) setExitReason("crashed", `agent error: ${runError.slice(0, 300)}`);
+  else if (errClass === "transient" || errClass === "rate_limit") setExitReason("provider_transient", lastErr!.slice(0, 300));
+  else if (errClass === "unfunded") setExitReason("provider_unfunded", lastErr!.slice(0, 300));
+  else if (errClass === "fatal") setExitReason("provider_error", lastErr!.slice(0, 300));
+  else setExitReason("stopped_unfinished", "the loop ended with no successful finish() and no provider error");
+  if (finished && outcome !== "finished") {
+    console.log(`\n⚠ Stopped as ${outcome} in ${elapsed}s | $${cost} | ${totalTokens} tokens — this is NOT a gated finish.`);
+    console.log(`  ${describeExit(readLastExit(dir)!)}`);
+  } else if (finished) {
     console.log(`\n✓ Done in ${elapsed}s | $${cost} | ${totalTokens} tokens`);
   } else {
     console.log(`\n⚠ Exited WITHOUT a successful finish() in ${elapsed}s | $${cost} | ${totalTokens} tokens`);
@@ -873,6 +906,8 @@ function showStatus(dir: string) {
 
   const research = readFileSync(researchFile, "utf-8").trim();
   console.log(`\n📚 Research Goal:\n${research.split("\n").slice(0, 5).join("\n")}\n`);
+  const lastExit = readLastExit(dir);
+  if (lastExit) console.log(`Last session: ${describeExit(lastExit)}\n`);
 
   const files: [string, string][] = [
     ["notes/literature.md", "Literature notes"],

@@ -73,8 +73,55 @@ async function failClosed() {
   assert(r.content[0].text.startsWith("BLOCKED"), "missing EXPERIMENT_ID fails closed (no reads allowed)");
 }
 
+// tool_impl is blind to the tests it is judged by (it fixes failures from the
+// pytest output the parent relays). The allowed root is the whole experiment
+// dir, so this needs the deny-list — and the bash path, the lazy way round it.
+async function blindToTests() {
+  mkdirSync(join(dir, "data/experiments/E_test/tests"), { recursive: true });
+  writeFileSync(join(dir, "data/experiments/E_test/tests/test_helper.py"), "def test_x(): assert True");
+  const fakeBash = { name: "bash", execute: async (_id: string, params: any) => ({ content: [{ type: "text" as const, text: `BASH_OK:${params.command}` }] }) };
+  const [r, b] = wrapToolImplTools!([fakeRead, fakeBash], dir, { EXPERIMENT_ID: "E_test" });
+  const t = await r.execute("20", { path: "data/experiments/E_test/tests/test_helper.py" });
+  assert(t.content[0].text.startsWith("BLOCKED"), "tool_impl read of tests/ blocked (deny wins over the allowed root)");
+  const viaDots = await r.execute("21", { path: "data/experiments/E_test/scripts/../tests/test_helper.py" });
+  assert(viaDots.content[0].text.startsWith("BLOCKED"), "…also through a .. path");
+  const own = await r.execute("22", { path: "data/experiments/E_test/scripts/helper.py" });
+  assert(own.content[0].text.startsWith("READ_OK"), "its own scripts/ stay readable");
+  const cat = await b.execute("23", { command: "cat data/experiments/E_test/tests/test_helper.py" });
+  assert(cat.content[0].text.startsWith("BLOCKED"), "tool_impl bash that names tests/ blocked");
+  const ok = await b.execute("24", { command: "python data/experiments/E_test/scripts/helper.py" });
+  assert(ok.content[0].text.startsWith("BASH_OK"), "bash on its own scripts/ still runs");
+}
+
+// No definition ships without a safety config: an agent holding write/bash with
+// none could overwrite RESEARCH.md (seven did until 2026-10-05).
+async function everyAgentGuarded() {
+  const { loadAgentDefinitions } = await import("../src/agents/registry.js");
+  const all: any = loadAgentDefinitions();
+  const defs: any[] = all instanceof Map ? [...all.values()] : Array.isArray(all) ? all : Object.values(all);
+  assert(defs.length >= 20, `loaded ${defs.length} agent definitions`);
+  const bare = defs.filter((d) => !d.safety).map((d) => d.name);
+  assert(bare.length === 0, `every definition declares safety${bare.length ? ` — missing: ${bare.join(", ")}` : ""}`);
+  writeFileSync(join(dir, "RESEARCH.md"), "the human's goal");
+  const fakeWrite = { name: "write", execute: async () => ({ content: [{ type: "text" as const, text: "WRITE_OK" }] }) };
+  const fakeEdit = { name: "edit", execute: async () => ({ content: [{ type: "text" as const, text: "EDIT_OK" }] }) };
+  const leaks: string[] = [];
+  for (const d of defs) {
+    const wrap = buildSafetyWrapper(d.safety);
+    if (!wrap) continue;
+    const [w, e, r] = wrap([fakeWrite, fakeEdit, fakeRead], dir, { EXPERIMENT_ID: "E_test" });
+    await r.execute("30", { path: "RESEARCH.md" }); // a prior read must not unlock the write
+    const wr = await w.execute("31", { path: "RESEARCH.md", content: "x" });
+    const ed = await e.execute("32", { path: "RESEARCH.md", edits: [{ oldText: "goal", newText: "x" }] });
+    if (wr.content[0].text === "WRITE_OK" || ed.content[0].text === "EDIT_OK") leaks.push(d.name);
+  }
+  assert(leaks.length === 0, `no agent can write RESEARCH.md${leaks.length ? ` — can: ${leaks.join(", ")}` : ""}`);
+}
+
 await run();
 await failClosed();
+await blindToTests();
+await everyAgentGuarded();
 
 rmSync(dir, { recursive: true, force: true });
 

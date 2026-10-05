@@ -47,7 +47,7 @@ const src = readFileSync(loopPath, "utf8");
 console.log(`agent-loop: ${loopPath}\n`);
 
 // ── 1. every patch marker is present ──────────────────────────────────────
-for (const marker of ["[no-tool-retry-guard patched]", "[transient-error-retry patched]", "[finish-tool-exit patched]", "[rate-limit-retry patched]"]) {
+for (const marker of ["[no-tool-retry-guard patched]", "[transient-error-retry patched]", "[finish-tool-exit patched]", "[rate-limit-retry patched]", "[failure-taxonomy patched]"]) {
 	check(`marker present: ${marker}`, src.includes(marker));
 }
 

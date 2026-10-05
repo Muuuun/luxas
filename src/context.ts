@@ -211,7 +211,10 @@ export function buildContextTransformer(opts: ContextTransformerOptions): Contex
       onAfterCondense: (p: any) => {
         bus?.emit({ type: "after_compaction", summary: p.note, droppedCount: p.removedCount });
         if (model && getApiKey) {
-          getApiKey("anthropic").then(apiKey => {
+          // Key for the model actually being called. This used to fetch the
+          // Anthropic key unconditionally and send it to whatever provider the
+          // brain runs on.
+          getApiKey(model.provider).then(apiKey => {
             if (apiKey) return compactNotesIfNeeded(projectDir, model, apiKey, bus);
           }).catch(() => {});
         }
@@ -305,10 +308,10 @@ function injectSnapshot(messages: any[], snapshot: string): any[] {
   // no longer expressible: pi-ai 0.84 removed `cacheControl` from TextContent
   // and always marks the LAST user content block itself, which is this
   // snapshot. The system-prompt and tool-definition breakpoints still hit; the
-  // history segment between them and the trailer is re-sent each turn.
-  // Recovering it means making the snapshot part of the stable prefix (persist
-  // it into history instead of regenerating per turn) — a change to what the
-  // model sees, so it is a measured decision, not part of this migration.
+  // history breakpoint is put back at the payload level instead, without
+  // changing what the model sees: cache-breakpoint.ts pinHistoryBreakpoint,
+  // wired into the brain's onPayload in agent.ts. Keep the trailer LAST and
+  // keep its opening tag — that module finds it by "<research_snapshot>".
   const result = [...messages];
 
   result.push({

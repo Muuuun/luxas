@@ -185,8 +185,11 @@ export function parseLatestPIVerdict(projectDir: string):
   return { verdict: last, reviewPath: p, reviewMtimeMs: mtimeMs };
 }
 
+/** Which finish path stopped the loop (see exit-state.ts for what each means to a reader). */
+export type FinishOutcome = "finished" | "forced_finish" | "needs_operator";
+
 export interface ToolCallbacks {
-  onFinish?: () => void;
+  onFinish?: (outcome?: FinishOutcome) => void;
 }
 
 /**
@@ -485,7 +488,7 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
       },
       required: ["summary"],
     },
-    execute: async (args: { summary: string; decline?: Array<{ leadId: string; reason: string }> }) => {
+    execute: async (_toolCallId: string, args: { summary: string; decline?: Array<{ leadId: string; reason: string }> }) => {
       // F3 (debate-adjudicated 2026-06-21): dispose frontier leads passed in-call,
       // collapsing dispose+finish into the one call the brain was already making.
       // Writes the FRONTIER-DECLINE lines the frontier gate's presence check (below)
@@ -523,7 +526,7 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
       // attempt past the background lock and force-exit a runaway. A legitimate finish
       // passes on attempt 1; only a cross-gate livelock reaches the cap.
       if (++finishCallCount >= 12) {
-        callbacks?.onFinish?.();
+        callbacks?.onFinish?.("forced_finish");
         writeFinishStats(projectDir, finishCallCount, true);
         return { content: [{ type: "text" as const, text:
           `Force-exit (runaway-finish backstop): finish() has been called ${finishCallCount} ` +
@@ -768,7 +771,7 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
           // F2 escape hatch: a gate-blocked finish() has no terminating edge; cap
           // consecutive blocks so a non-disposing brain can't spin to the turn cap.
           if (++blockedFinishStreak >= 3) {
-            callbacks?.onFinish?.();
+            callbacks?.onFinish?.("forced_finish");
             // Force-exit quarantine: the artifact ships, but the ledger — the
             // most-read artifact and next-run digest source — records that it
             // shipped over open blockers, in harness voice (agents cannot
@@ -1273,7 +1276,7 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
       if (r?.details?.success) { escalation.reset(); return r; }
       if (/^Cannot finish/.test(text) && escalation.record(text)) {
         const path = writeNeedsOperator(projectDir, text, finishCallCount);
-        callbacks?.onFinish?.();
+        callbacks?.onFinish?.("needs_operator");
         writeFinishStats(projectDir, finishCallCount, true);
         return { content: [{ type: "text" as const, text:
           `Escalated to the operator: the same finish gate blocked ${escalation.count} consecutive finish() calls, ` +
@@ -1312,7 +1315,7 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
         },
       },
     },
-    execute: async (args: { timeout_ms?: number }) => {
+    execute: async (_toolCallId: string, args: { timeout_ms?: number }) => {
       const body = await waitAndHarvestBackground(projectDir, args.timeout_ms ?? 600_000);
       return { content: [{ type: "text" as const, text: body }] };
     },

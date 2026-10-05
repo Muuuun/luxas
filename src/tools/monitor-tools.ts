@@ -16,6 +16,7 @@
  * the gate can drive them without a model.
  */
 
+import { readLastExit, describeExit } from "../exit-state.js";
 import { Type } from "@earendil-works/pi-ai/compat";
 import {
   existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync,
@@ -217,6 +218,10 @@ export function summarizeRunStatus(projectDir: string): string {
         (a.expected_artifact ? `; expects → ${a.expected_artifact}` : ""));
     }
   }
+
+  // How the last session ended (exit-state.ts) — "running" with a live pid is the normal case.
+  const lastExit = readLastExit(projectDir);
+  if (lastExit && lastExit.kind !== "running") lines.push(`LAST EXIT: ${describeExit(lastExit)}`);
 
   // Escalations
   const esc = join(projectDir, "notes", "escalations", "needs-operator.md");

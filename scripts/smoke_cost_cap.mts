@@ -86,7 +86,7 @@ check("a bare resume inherits maxCost from run_config.json (never widens to the 
   check("luxas run archives the sentinel so a topped-up resume is not stopped", !!archived && existsSync(archived!) && !existsSync(unfundedSentinelPath(lp)) && enforceUnfundedSentinel(lp, (c) => { code = c; }) === false);
   const src3 = readFileSync("src/usage-log.ts", "utf-8");
   check("stream wrapper checks the sentinel before paying for a call", /return \(model: any, context: any, options: any\) => \{[\s\S]{0,200}enforceUnfundedSentinel\(logPath\)/.test(src3));
-  check("stream wrapper writes the sentinel before exiting on unfunded", /writeUnfundedSentinel\(logPath[\s\S]{0,400}process\.exit\(1\)/.test(src3));
+  check("stream wrapper writes the sentinel before exiting on unfunded", /writeUnfundedSentinel\(logPath[\s\S]{0,700}process\.exit\(1\)/.test(src3));
   check("luxas run archives a stale sentinel on start", /archiveUnfundedSentinel\(join\(projectDir, "\.agent"\)\)/.test(readFileSync("src/index.ts", "utf-8")));
 }
 if (fails) { console.log(`\n${fails} FAILED`); process.exit(1); }

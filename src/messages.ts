@@ -73,6 +73,10 @@ export function convertToLlm(messages: any[]): Message[] {
             }],
             timestamp: m.timestamp,
           } as any;
+        // "system" carries the system prompt AND the tool declarations since
+        // pi 0.87 (agent-loop builds the LLM context from this array alone).
+        // Dropping it sends the brain out with no prompt and zero tools.
+        case "system":
         case "user":
         case "assistant":
         case "toolResult":

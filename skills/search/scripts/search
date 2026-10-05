@@ -451,7 +451,7 @@ async function webFetch(url) {
 
 // ─── Paper Download (arXiv + Sci-Hub) ────────────────────────
 
-import { execSync } from "node:child_process";
+import { execSync, execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, copyFileSync, statSync, unlinkSync } from "node:fs";
 import { join, extname, basename, isAbsolute } from "node:path";
 
@@ -538,7 +538,7 @@ async function downloadDoi(doi, outputDir) {
 
   const tmpHtml = pdfPath + ".tmp";
   try {
-    execSync(`curl -sL --max-time 30 -o "${tmpHtml}" "${mirror}/${doi}"`, { timeout: 35000 });
+    execFileSync("curl", ["-sL", "--max-time", "30", "-o", tmpHtml, "--", `${mirror}/${doi}`], { timeout: 35000 });
   } catch { try { unlinkSync(tmpHtml); } catch {} return null; }
 
   if (!existsSync(tmpHtml) || statSync(tmpHtml).size < 100) {
@@ -566,7 +566,9 @@ async function downloadDoi(doi, outputDir) {
   if (pdfUrl.startsWith("//")) pdfUrl = "https:" + pdfUrl;
   if (pdfUrl.startsWith("/")) pdfUrl = mirror + pdfUrl;
   try {
-    execSync(`curl -sL --max-time 60 -o "${pdfPath}" "${pdfUrl}"`, { stdio: "ignore", timeout: 65000 });
+    // pdfUrl is scraped from untrusted HTML: no shell, and http(s) only.
+    if (!/^https?:\/\//i.test(pdfUrl)) return null;
+    execFileSync("curl", ["-sL", "--max-time", "60", "--proto", "=http,https", "-o", pdfPath, "--", pdfUrl], { stdio: "ignore", timeout: 65000 });
   } catch { try { unlinkSync(pdfPath); } catch {} return null; }
   if (!existsSync(pdfPath) || statSync(pdfPath).size < 1000) {
     try { unlinkSync(pdfPath); } catch {} return null;

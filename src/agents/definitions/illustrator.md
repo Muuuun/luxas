@@ -10,6 +10,7 @@ description: >
 model: sonnet
 thinkingLevel: high
 toolSets: [coding, figure-gen]
+safety: { presets: [research_brief], writeOnExistingPolicy: allow_as_read }
 spawn: { enabled: false }
 templates: [PROJECT_DIR, SPAWN_ID]
 ---

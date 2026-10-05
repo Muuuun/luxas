@@ -5,6 +5,7 @@
  * afterToolCall: session logging, tmux logging, convergence tracking
  */
 
+import { setExitReason } from "./exit-state.js";
 import { appendFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { readFileSafe, extractTextContent } from "./utils.js";
@@ -273,6 +274,7 @@ export function buildResearchHooks(opts: ResearchOptions) {
           `\n[FATAL] Cost limit exceeded: $${totals.cost.toFixed(2)} > $${maxCost}. ` +
           `Killing process.\n`,
         );
+        setExitReason("budget_exhausted", `cost $${totals.cost.toFixed(2)} exceeded the $${maxCost} cap`);
         process.exit(1);
       }
       // Soft cap — finalization freeze, not advice.
@@ -300,6 +302,7 @@ export function buildResearchHooks(opts: ResearchOptions) {
               `The brain is not landing; each blocked call is still a paid turn. Killing process — ` +
               `the checkpoint is live.\n`,
             );
+            setExitReason("budget_exhausted", `${softCapDenials - 1} consecutive non-finalization calls after the ${Math.round(SOFT_CAP_FRACTION * 100)}% freeze at $${totals.cost.toFixed(2)} of $${maxCost}`);
             process.exit(1);
           }
           return deny(name, args,

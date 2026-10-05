@@ -12,6 +12,8 @@ toolSets: [coding]
 safety:
   presets: [research_brief, report_surface, notes_ledger]
   allowedReadRoots: ["data/experiments/{{EXPERIMENT_ID}}"]
+  blockedReadRoots: ["data/experiments/{{EXPERIMENT_ID}}/tests"]
+  blockedBashPathMentions: ["data/experiments/{{EXPERIMENT_ID}}/tests"]
   allowedWriteRoots: ["data/experiments/{{EXPERIMENT_ID}}/scripts/"]
   blockedBashWriteRoots:
     - "data/experiments/{{EXPERIMENT_ID}}/tests/"

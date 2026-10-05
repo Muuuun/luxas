@@ -100,6 +100,13 @@ interface SafetyOptions {
    */
   allowedReadRoots?: string[];
   /**
+   * Deny-list inside the allowed roots: the read tool refuses paths under
+   * these even when allowedReadRoots would admit them. For agents that are
+   * blind to a sibling's output by design (tool_impl must not read the tests
+   * it is being judged by). Same templating rules. Deny wins over allow.
+   */
+  blockedReadRoots?: string[];
+  /**
    * If set, write/edit paths must resolve under one of these roots. Same
    * templating rules as allowedReadRoots. Unset = no write-path whitelist
    * (blocklist via protectedFiles still applies).
@@ -262,6 +269,7 @@ function wrapRead(
   projectDir: string,
   allowedReadRoots: string[] | null,
   hooks: SafetyRuntimeHooks | undefined,
+  blockedReadRoots: string[] | null = null,
 ) {
   const origExecute = tool.execute;
   return {
@@ -277,6 +285,18 @@ function wrapRead(
             `Read of ${p} is denied: this path stores credentials and is ` +
             `unconditionally protected. The agent's API keys are loaded by ` +
             `pi-agent-core internally and never need to be read by tools.`
+          );
+        }
+      }
+
+      // Deny-list first: a path under a blocked root is refused even when an
+      // allowed root contains it.
+      if (blockedReadRoots && p) {
+        const abs = resolve(projectDir, p);
+        if (withinRoots(abs, blockedReadRoots)) {
+          return blocked(
+            `Read of ${p} is denied: this path holds a sibling agent's output that you are blind to by design. ` +
+            `Work from your task description; the parent agent relays what you need from there.`
           );
         }
       }
@@ -1105,6 +1125,7 @@ function createSafetyWrapper(opts: SafetyOptions): SafetyWrapper {
     // nonexistent path and fails closed (no reads allowed) — see expandTemplate.
     const allowedReadAbs = resolveScopeRoots(opts.allowedReadRoots, projectDir, templateVars);
     const allowedWriteAbs = resolveScopeRoots(opts.allowedWriteRoots, projectDir, templateVars);
+    const blockedReadAbs = resolveScopeRoots(opts.blockedReadRoots, projectDir, templateVars);
     const blockedBashAbs = resolveScopeRoots(opts.blockedBashWriteRoots, projectDir, templateVars);
     const mentions = [
       HARNESS_REVIEW_PREFIX,
@@ -1117,7 +1138,7 @@ function createSafetyWrapper(opts: SafetyOptions): SafetyWrapper {
     const forbiddenWritePatterns = [HARNESS_REVIEW_WRITE_PATTERN, ...(opts.forbiddenWritePatterns ?? [])];
 
     return tools.map((tool: any) => {
-      if (tool.name === "read")  return wrapRead(tool, cache, projectDir, allowedReadAbs, hooks);
+      if (tool.name === "read")  return wrapRead(tool, cache, projectDir, allowedReadAbs, hooks, blockedReadAbs);
       if (tool.name === "edit")  return wrapEdit(tool, cache, projectDir, protectedAbs, allowedWriteAbs, forbiddenWritePatterns, hooks);
       if (tool.name === "write") return wrapWrite(tool, cache, projectDir, protectedAbs, allowedWriteAbs, opts, forbiddenWritePatterns, hooks);
       if (tool.name === "bash")  return wrapBash(tool, projectDir, allowedWriteAbs, blockedBashAbs, mentions, opts.figureSpecOnly === true);
@@ -1171,6 +1192,7 @@ export function buildSafetyWrapper(
   return createSafetyWrapper({
     protectedFiles: [...presetPaths, ...(config.protectedFiles ?? [])],
     allowedReadRoots: config.allowedReadRoots,
+    blockedReadRoots: config.blockedReadRoots,
     allowedWriteRoots: config.allowedWriteRoots,
     blockedBashWriteRoots: config.blockedBashWriteRoots,
     blockedBashPathMentions: config.blockedBashPathMentions,
