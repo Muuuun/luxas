@@ -122,8 +122,25 @@ check("experiment stays on the producer profile while brain does not",
   modelId(resolveModel("sonnet", "experiment")) === "deepseek-v4-pro");
 check("experiment (sonnet) → deepseek-v4-pro",
   modelId(resolveModel("sonnet", "experiment")) === "deepseek-v4-pro");
-check("reader (haiku) → deepseek-v4-pro",
-  modelId(resolveModel("haiku", "reader")) === "deepseek-v4-pro");
+// reader: the profile names a cheap tier for it (measured, see profiles.ts).
+{
+  const { DUAL_READER_MODEL, applyDualProfileEnv } = await import("../src/profiles.ts");
+  const savedReader = process.env.LUXAS_READER_MODEL, savedBrain = process.env.LUXAS_BRAIN_MODEL;
+  delete process.env.LUXAS_READER_MODEL;
+  check("reader follows the producer profile when no cheap tier is named (the escape hatch)",
+    modelId(resolveModel("haiku", "reader")) === "deepseek-v4-pro", modelId(resolveModel("haiku", "reader")));
+  applyDualProfileEnv({ setBrain: false });
+  check("--profile dual puts reader on the profile's cheap tier",
+    modelId(resolveModel("haiku", "reader")) === DUAL_READER_MODEL && DUAL_READER_MODEL === "deepseek-flash", modelId(resolveModel("haiku", "reader")));
+  check("…and only reader: fixer shares the haiku tier but was not measured",
+    modelId(resolveModel("haiku", "fixer")) === "deepseek-v4-pro", modelId(resolveModel("haiku", "fixer")));
+  process.env.LUXAS_READER_MODEL = "deepseek-v4-pro";
+  applyDualProfileEnv({ setBrain: false });
+  check("a pre-set LUXAS_READER_MODEL survives the profile (the rollback works)",
+    modelId(resolveModel("haiku", "reader")) === "deepseek-v4-pro", modelId(resolveModel("haiku", "reader")));
+  if (savedReader === undefined) delete process.env.LUXAS_READER_MODEL; else process.env.LUXAS_READER_MODEL = savedReader;
+  if (savedBrain === undefined) delete process.env.LUXAS_BRAIN_MODEL; else process.env.LUXAS_BRAIN_MODEL = savedBrain;
+}
 // PI reviewers are exempt from the producer-profile downgrade and keep their
 // declared Anthropic tier (PI_REVIEWER_AGENTS in spawn.ts): an independent
 // prior is the point, so the reviewer must not run on the producer's model.

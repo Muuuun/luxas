@@ -12,7 +12,7 @@ function check(label: string, modelKey: string, expectId: string, expectProvider
 
 console.log("=== profile=unset (today's behavior) ===");
 delete process.env.LUXAS_MODEL_PROFILE;
-check("opus", "opus", "claude-opus-4-6", "anthropic");
+check("opus", "opus", "claude-opus-5-5", "anthropic");
 check("sonnet", "sonnet", "claude-sonnet-4-6", "anthropic");
 check("haiku", "haiku", "claude-haiku-4-5-20251001", "anthropic");
 check("gpt-5.2", "gpt-5.2", "gpt-5.2", "openai-codex");

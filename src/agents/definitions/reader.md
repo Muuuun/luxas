@@ -45,7 +45,7 @@ The two sides are independent — process whichever is outstanding.
 
 **LaTeX layout**: Read the paper's main TeX file under `data/papers/{{PAPER_ID}}/`. Candidate filenames: `Main.tex`, `main.tex`, `arXiv.tex`, `arXiv_v2.tex`, `paper.tex`, `ms.tex`, or the only `.tex` file in the directory (not files ending in `_supp`, `supplemental`, `SI`). If unsure, `ls` the directory first.
 
-**Flat PDF layout**: Use the `read` tool on `data/papers/{{PAPER_ID}}.pdf` — it renders PDF content visually. You do not need to read the entire PDF; read the first 10-20 pages (skip very long appendices) which cover the abstract, introduction, methods, and results.
+**Flat PDF layout**: Do NOT call the `read` tool on the PDF itself — it returns the file's raw bytes (about 100 KB of unreadable text that then rides along in your context on every later turn). Extract the text layer once with bash and read that instead: `pdftotext -layout data/papers/{{PAPER_ID}}.pdf /tmp/luxas-reader-{{PAPER_ID}}.txt && wc -l /tmp/luxas-reader-{{PAPER_ID}}.txt`, then `read` `/tmp/luxas-reader-{{PAPER_ID}}.txt` (use `offset`/`limit` on long papers). If `pdftotext` is not installed, `python3 -c "import fitz,sys; print(''.join(p.get_text() for p in fitz.open(sys.argv[1])))" data/papers/{{PAPER_ID}}.pdf > /tmp/luxas-reader-{{PAPER_ID}}.txt` does the same. You do not need the entire paper: the abstract, introduction, methods and results are enough (skip very long appendices). Scanned papers carry an OCR text layer in which digits and superscripts can be garbled (`0.OV` for `0.07`, an isotope label dropped); copy a number only where the surrounding text makes its value and what it belongs to unambiguous — the abstract usually restates the headline values cleanly.
 
 You read ONCE. Steps 2, 2.5, and 3 all work from this single read.
 
@@ -72,7 +72,7 @@ Be **concrete** but **shallow** — a bullet is one short line. Never include sp
 **Figure content inventory (C bucket)**. Figures carry information that isn't in the text. Extract what **kinds of content** are put in figures in this field — not what the data shows, but what the figure depicts.
 
 1. **LaTeX layout** — prefer `manifest.json` at `data/papers/{{PAPER_ID}}/figures/manifest.json`. It is a JSON array of `{file, caption, ...}` pre-extracted at download time; use the `caption` field to classify each figure. If missing, grep the main TeX for `\caption{...}` blocks.
-2. **Flat PDF layout** — scan the figure captions as you read the PDF visually.
+2. **Flat PDF layout** — scan the figure captions in the extracted text.
 
 One short line per figure describing the content type. Skip figures clearly irrelevant to scope. Do not reproduce caption text verbatim.
 

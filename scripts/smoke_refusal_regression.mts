@@ -14,8 +14,13 @@ const opus: any = resolveModel("opus");
 const sonnet: any = resolveModel("sonnet");
 check("opus tier is NOT claude-opus-5 (it refuses physics review, cat=cyber)",
   (opus?.id ?? opus?.model?.id) !== "claude-opus-5", String(opus?.id ?? opus?.model?.id));
-check("opus tier is a model verified to answer the E6 adjudication prompt",
-  (opus?.id ?? opus?.model?.id) === "claude-opus-4-6", String(opus?.id ?? opus?.model?.id));
+check("opus tier is the flagship Opus (5.5; probed for review refusals 2026-10-06, none in 6 calls + 2 audits)",
+  (opus?.id ?? opus?.model?.id) === "claude-opus-5-5", String(opus?.id ?? opus?.model?.id));
+// 5.5 400s on forced tool choice; a tuple-form pin would lose the flag and
+// every reviewer turn would be a hard 400.
+check("…and it gets tool_choice \"auto\" (5.5 rejects forced choice)", pickRequireToolChoice(opus) === "auto", pickRequireToolChoice(opus));
+check("the previous pin stays resolvable as the rollback",
+  ((resolveModel("opus-4-6") as any)?.id) === "claude-opus-4-6");
 check("sonnet tier is claude-sonnet-5 (verified end_turn on the same prompt)",
   (sonnet?.id ?? sonnet?.model?.id) === "claude-sonnet-5", String(sonnet?.id ?? sonnet?.model?.id));
 // Claude Fable/Mythos 5.1 400 on forced tool choice, which Luxas sends every
@@ -27,8 +32,8 @@ check("claude-fable-5-1 is a real entry, not a hollow pi-ai lookup",
   fable?.id === "claude-fable-5-1", String(fable?.id));
 check("fable gets tool_choice \"auto\" (it 400s on forced choice)",
   pickRequireToolChoice(fable) === "auto", pickRequireToolChoice(fable));
-check("the other Anthropic tiers keep forced tool choice",
-  pickRequireToolChoice(resolveModel("opus")) === "any" &&
+check("the tiers that accept it keep forced tool choice",
+  pickRequireToolChoice(resolveModel("opus-4-6")) === "any" &&
   pickRequireToolChoice(resolveModel("sonnet")) === "any");
 // Safety net for tuple-form models, which carry no inline capability flag.
 check("an id-only fable/mythos model still gets \"auto\"",

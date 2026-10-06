@@ -64,17 +64,20 @@ process.env.LUXAS_MODEL_PROFILE = "deepseek-v4-pro";
 process.env.LUXAS_VISION_MODEL_PROFILE = "glm-5.3-flash";
 {
   const tr: any = resolveModel("opus", "tool_review");
-  check("tool_review → glm-5.3 under --profile dual", tr?.id === "glm-5.3", String(tr?.id));
-  check("tool_review's model is text-only (it writes pytest, never sees a figure)",
-    Array.isArray(tr.input) && !tr.input.includes("image"));
+  check("tool_review → claude-opus-5-5 under --profile dual (measured 2026-10-06: 12/12 mutants in 1.8 min; glm 46.8 min)", tr?.id === "claude-opus-5-5", String(tr?.id));
+  check("tool_review did not inherit the vision profile (it writes pytest, never sees a figure)",
+    tr?.id !== process.env.LUXAS_VISION_MODEL_PROFILE && tr?.id !== process.env.LUXAS_MODEL_PROFILE, String(tr?.id));
   // The blind-test author must not share a family with the code's author.
   check("tool_review is a different family from tool_impl",
     tr?.provider !== (resolveModel("opus", "tool_impl") as any)?.provider);
 }
 delete process.env.LUXAS_MODEL_PROFILE;
 delete process.env.LUXAS_VISION_MODEL_PROFILE;
-check("tool_review → glm-5.3 with no profile set at all",
+// With no producer profile tool_impl is on Anthropic, so the test author must not be.
+check("tool_review → glm-5.3 when the producer is Anthropic (no profile)",
   (resolveModel("opus", "tool_review") as any)?.id === "glm-5.3");
+check("…and is still a different family from tool_impl there",
+  (resolveModel("opus", "tool_review") as any)?.provider !== (resolveModel("opus", "tool_impl") as any)?.provider);
 // The move to 5.3 was not backed by a blind-test benchmark, so the rollback
 // must actually work — a documented escape hatch that no code reads is the
 // orphan-mechanism failure this repo keeps re-learning.

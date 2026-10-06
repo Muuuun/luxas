@@ -164,7 +164,19 @@ const MODEL_MAP: Record<string, [string, string] | InlineModel> = {
   // PI layer would silently produce nothing and burn its turn budget.
   // Re-pin to opus-5 only together with the server-side `fallbacks` parameter
   // (platform.claude.com/docs/en/build-with-claude/refusals-and-fallback).
-  opus: ["anthropic", "claude-opus-4-6"],
+  //
+  // 2026-10-06: the tier moved to claude-opus-5-5 (operator decision: the
+  // judging seats run on the flagship). It is aliased to the inline entry
+  // below the map, not written as a tuple here, because 5.5 400s on forced
+  // tool choice and only the inline entry carries `noForcedToolChoice`.
+  // What was measured first, and what was not: 6 review-shaped calls (the E6
+  // adjudication framing, and the real experiment_reviewer / reviewer prompts
+  // on neutral-atom content) and two full adversarial-auditor runs on the
+  // 297nm project returned no refusal. The same 6 calls did not make
+  // claude-opus-5 refuse either, so that probe does not reproduce the 09-04
+  // trigger and is weaker evidence than it looks. Luxas still has NO refusal
+  // handling. "opus-4-6" stays resolvable as the rollback.
+  "opus-4-6": ["anthropic", "claude-opus-4-6"],
   // OpenAI (standard API — requires OPENAI_API_KEY sk-...)
   o3: ["openai", "o3"],
   "o3-mini": ["openai", "o3-mini"],
@@ -432,6 +444,8 @@ const MODEL_MAP: Record<string, [string, string] | InlineModel> = {
 // same object, so `listRoutedModels` reports the LIVE id and the freshness
 // check sees `deepseek-flash` — an alias cannot hide a dead pin.
 MODEL_MAP["deepseek-v4-flash"] = MODEL_MAP["deepseek-flash"];
+// The opus tier is the flagship Opus (see the note at "opus-4-6" above).
+MODEL_MAP["opus"] = MODEL_MAP["claude-opus-5-5"];
 MODEL_MAP["deepseek-v4-flash-vision-exp"] = MODEL_MAP["deepseek-flash"];
 
 // Anthropic tier names that participate in profile redirection. When
@@ -476,6 +490,9 @@ const PI_REVIEWER_AGENTS = new Set([
   // (deepseek: 100% hard-error on search-failure interpretation, n=20).
   "ledger_writer",
 ]);
+//  SUPERSEDED IN PART 2026-10-06 — see toolReviewDefault() below: under a
+//  non-Anthropic producer tool_review now runs on claude-opus-5-5, and falls
+//  back to GLM only when the producer is Anthropic. Original note:
 //  tool_review stays on GLM — a third prior, independent of BOTH the
 //  deepseek producer AND the Anthropic PI, routed there UNCONDITIONALLY
 //  (every profile). It authors BLIND TESTS whose arbiter is pytest, not its
@@ -489,6 +506,22 @@ const PI_REVIEWER_AGENTS = new Set([
 const GLM_REVIEWER_AGENTS = new Set([
   "tool_review",
 ]);
+
+// tool_review's default (2026-10-06, measured on scripts/model_bench.mts
+// tool_review/kurucz_parse, one run each): claude-opus-5-5 killed 12/12
+// mutants in 1.8 min for $0.28; glm-5.3 also 12/12 but in 46.8 min for $1.13;
+// deepseek-v4-pro wrote tests the reference implementation fails (0). GLM is
+// also the route that died on 429 for 34 of 35 spawns in the ba run. So under
+// a non-Anthropic producer the blind-test author is the flagship Opus. What
+// must not change is the rule the GLM pin existed for — the test author is a
+// different family from the code author — so when tool_impl itself is on
+// Anthropic (no producer profile, or an Anthropic one) it stays on GLM.
+function toolReviewDefault(): string {
+  const profile = process.env.LUXAS_MODEL_PROFILE;
+  const producer: any = profile ? MODEL_MAP[profile] : undefined;
+  const producerProvider = Array.isArray(producer) ? producer[0] : producer?.provider;
+  return producerProvider && producerProvider !== "anthropic" ? "claude-opus-5-5" : "glm-5.3";
+}
 
 function applyProfile(modelKey: string, agentName?: string): string {
   // figure_auditor (figures v2, 2026-08-28) keeps a vision model that can
@@ -516,9 +549,14 @@ function applyProfile(modelKey: string, agentName?: string): string {
   // Unset => brain follows the profile exactly as before, so `--profile claude`
   // and an explicit `--model deepseek-*` family switch are both unaffected.
   if (agentName === "brain" && process.env.LUXAS_BRAIN_MODEL) return process.env.LUXAS_BRAIN_MODEL;
+  // reader takes the profile's cheap tier when one is named (profiles.ts
+  // DUAL_READER_MODEL has the measurement). Unset => it follows the producer
+  // profile like every other tier, so `--profile claude` and an explicit
+  // `--model` family switch are unaffected.
+  if (agentName === "reader" && process.env.LUXAS_READER_MODEL) return process.env.LUXAS_READER_MODEL;
   // Non-PI reviewers always run on GLM (independent prior); PI keeps its
   // declared Anthropic tier. Both checked before the producer-profile downgrade.
-  if (agentName && GLM_REVIEWER_AGENTS.has(agentName)) return process.env.LUXAS_TOOL_REVIEW_MODEL || "glm-5.3";
+  if (agentName && GLM_REVIEWER_AGENTS.has(agentName)) return process.env.LUXAS_TOOL_REVIEW_MODEL || toolReviewDefault();
   if (agentName && PI_REVIEWER_AGENTS.has(agentName)) return modelKey;
   const profile = process.env.LUXAS_MODEL_PROFILE;
   if (!profile) return modelKey;
