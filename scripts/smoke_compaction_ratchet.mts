@@ -121,6 +121,38 @@ const model: any = { contextWindow: 1_048_576, maxTokens: 393_216 };
 	check("C5: legacy sliding window unchanged without ratchet", rLegacy.modified === true);
 }
 
+// ── D: trimming does not flap with the token tap's feedback ──
+// The engine is told the size of the LAST REQUEST. The last request was the
+// trimmed view, so a stateless "trim when over the warning line" decision
+// alternates: trimmed, full, trimmed, full — two contexts on alternate calls,
+// each one re-writing the other's prompt cache (Dy run, 2026-10-06: three Opus
+// experiment agents wrote 540-630K cache tokens each this way).
+{
+	const { ContextPacker } = await import(join(ROOT, "src/compaction/engine.js"));
+	const hist = (n: number) => [
+		{ role: "user", content: [{ type: "text", text: "goal" }], timestamp: 1 },
+		...Array.from({ length: n }, (_, k) => [
+			{ role: "assistant", content: [{ type: "toolCall", id: `c${k}`, name: "bash", arguments: { command: `step ${k}` } }], timestamp: 1 },
+			{ role: "toolResult", toolCallId: `c${k}`, toolName: "bash", content: [{ type: "text", text: `out${k} ` + big(20_000) }], isError: false, timestamp: 1 },
+		]).flat(),
+	];
+	const tokens = (msgs: any[]) => Math.ceil(JSON.stringify(msgs).length / 4);
+	const packer = new ContextPacker({ adapter: createBlockConversationAdapter(), thresholds: { windowLimit: 1_048_576 } } as any);
+	const modes: string[] = [], heads: string[] = [], sizes: number[] = [];
+	let prev: any[] | null = null;
+	for (let step = 0; step < 12; step++) {
+		const msgs = hist(40 + step);                       // the agent's stored history: always the full one
+		const out = await packer.runCycle({ messages: msgs, usageTokens: tokens(prev ?? msgs) });
+		modes.push(out.mode); heads.push(JSON.stringify(out.messages.slice(0, 21))); sizes.push(tokens(out.messages));
+		prev = out.messages;
+	}
+	check("D1: the fixture crosses the warning line and trims", modes[0] === "trimmed" && sizes[0] < 160_000, `mode=${modes[0]} size=${sizes[0]}`);
+	check("D2: the trimmed request alone reads as 'no pressure' (so a stateless rule would stop trimming)", sizes[0] < 160_000 * 0.85);
+	check("D3: trimming stays on for every later call", modes.every((m) => m === "trimmed"), modes.join(","));
+	check("D4: the request size never jumps back to the full history", Math.max(...sizes) < 160_000, `max ${Math.max(...sizes)}`);
+	check("D5: the old part of the context is the same bytes on consecutive calls (at most one ratchet advance in 12 steps)", new Set(heads).size <= 2, `${new Set(heads).size} distinct versions`);
+}
+
 console.log(failures === 0
 	? "\nALL PASS — compaction views are byte-stable between advances."
 	: `\n${failures} check(s) failed.`);

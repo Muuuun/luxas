@@ -35,6 +35,14 @@ export interface PackingMutableState {
   carryforwardNote?: string;
   /** Tool-prune ratchet high-water mark (see ToolPrunePolicy.ratchet). */
   pruneRatchet: { floor: number; batch?: number };
+  /**
+   * Once trimming has started it stays on until the next condense. The
+   * pressure reading is the size of the LAST REQUEST, which was the trimmed
+   * view; without the latch the engine saw that smaller number, decided there
+   * was no pressure, sent the full history, saw the big number, trimmed again
+   * — two different contexts on alternate calls.
+   */
+  pruneLatched: boolean;
 }
 
 export interface PackingPressure {

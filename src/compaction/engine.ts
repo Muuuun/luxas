@@ -30,6 +30,7 @@ export class ContextPacker<TMessage> {
       failureStreak: 0,
       warningRaised: false,
       pruneRatchet: { floor: 0, batch: 8 },
+      pruneLatched: false,
     };
   }
 
@@ -63,8 +64,20 @@ export class ContextPacker<TMessage> {
 
     let workingMessages = input.messages;
 
+    // Trimming is latched (PackingMutableState.pruneLatched). The trimmed view
+    // is only ever sent, never stored: agent state keeps the full history, and
+    // `pressure` is the token count of the last REQUEST. So a trimmed request
+    // reads as "no pressure", the next call went out un-trimmed, that one read
+    // as pressure again, and the context flapped between two versions on
+    // alternate calls — each flap re-writing 30-150K tokens of prompt cache.
+    // Measured on three Opus experiment agents (Dy run, 2026-10-06): 540-630K
+    // cache-write tokens each, about half of their cost, with cache reads
+    // alternating 218K / 98K / 217K / 93K once the context passed the warning
+    // threshold. Free on DeepSeek, which is why it went unseen.
+    const trimNow = !pressure.shouldCondense && (pressure.shouldWarn || this.state.pruneLatched);
+
     // ── Phase 1: Micro-compaction (trim old tool outputs) ──
-    if (pressure.shouldWarn && !pressure.shouldCondense) {
+    if (trimNow) {
       const trimOutcome = pruneHistoricToolOutputs(
         workingMessages,
         this.options.adapter,
@@ -73,6 +86,7 @@ export class ContextPacker<TMessage> {
         { ...this.options.toolPrune, ratchet: this.state.pruneRatchet },
       );
       if (trimOutcome.modified) {
+        this.state.pruneLatched = true;
         workingMessages = trimOutcome.messages;
         await this.options.callbacks?.onTrim?.({
           source: "tool-prune",
@@ -90,13 +104,14 @@ export class ContextPacker<TMessage> {
     }
 
     // ── Phase 1.5: Snip long historical plain-text messages ──
-    if (pressure.shouldWarn && !pressure.shouldCondense) {
+    if (trimNow) {
       const snipOutcome = snipHistoricText(
         workingMessages,
         this.options.adapter,
         this.options.snip,
       );
       if (snipOutcome.modified) {
+        this.state.pruneLatched = true;
         workingMessages = snipOutcome.messages;
         await this.options.callbacks?.onTrim?.({
           source: "snip",
@@ -220,6 +235,7 @@ export class ContextPacker<TMessage> {
     this.state.warningRaised = false;
     // The rebuilt array invalidates outcome ordinals — restart the ratchet.
     this.state.pruneRatchet.floor = 0;
+    this.state.pruneLatched = false;
 
     // ── Phase 6: Rebuild message array ──
     const carryforward = this.options.adapter.createCarryforwardMessage({
