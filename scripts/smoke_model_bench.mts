@@ -40,7 +40,7 @@ for (const t of readdirSync(root)) {
 // ── Luxas definition vs bare prompt (2026-10-05) ─────────────────────────────
 // The pairing decides whether a definition earns its keep, so it is pinned on
 // hand-made rows whose answer is known.
-const { pairArms, signTestP, renderReport, itemsOf, BARE_PROMPT } = await import("./model_bench.mts");
+const { pairArms, signTestP, renderReport, itemsOf, BARE_PROMPT, latestPerSandbox } = await import("./model_bench.mts");
 const row = (arm: string, items: Record<string, number>, extra: any = {}) => {
   const v = Object.values(items);
   return { role: "auditor", task: "t", model: "m", arm, score: v.reduce((a, b) => a + b, 0) / v.length, items, usage: { cost: arm === "bare" ? 1 : 2 }, ...extra };
@@ -81,6 +81,21 @@ for (const [role, prompt] of Object.entries(BARE_PROMPT as Record<string, string
 }
 check("bare auditor writes where the scorer reads", /\.audit\/findings\.md/.test((BARE_PROMPT as any).auditor));
 check("the bare arm keeps the definition's tools and replaces only the prompt", /arm === "bare" \? \{ systemPromptTemplate: BARE_PROMPT\[role\], contextBuilder: undefined \}/.test(benchSrc));
+
+// A re-scored trial (judge failed, agent work kept) appends a second row for
+// the same sandbox. Counting both would turn one run into n=2 with a null.
+{
+  const rows = [
+    { sandbox: "/r/a", role: "auditor", model: "m", arm: "bare", score: null, note: "scoring failed" },
+    { sandbox: "/r/b", role: "auditor", model: "m", arm: "luxas", score: 0.4 },
+    { sandbox: "/r/a", role: "auditor", model: "m", arm: "bare", score: 0.7, rescored: true },
+    { role: "brain", model: "m", score: 0.5 },
+  ];
+  const kept = (latestPerSandbox as any)(rows);
+  check("a re-scored trial replaces its earlier row", kept.length === 3 && kept.filter((r: any) => r.sandbox === "/r/a").length === 1 && kept.find((r: any) => r.sandbox === "/r/a").score === 0.7, JSON.stringify(kept));
+  check("rows without a sandbox are kept as they are", kept.some((r: any) => r.role === "brain"));
+  check("the report reads rows through it", /latestPerSandbox\(readFileSync\(RESULTS/.test(benchSrc));
+}
 
 if (fails) { console.log(`\n${fails} FAILED`); process.exit(1); }
 console.log("\nALL PASS — bench cells run the model they are labelled with, on sound fixtures.");

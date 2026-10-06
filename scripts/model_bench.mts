@@ -35,6 +35,7 @@
  *   npx tsx scripts/model_bench.mts validate
  *   npx tsx scripts/model_bench.mts run --role tool_review --models glm-5.3,anthropic/claude-opus-5 [--task kurucz_parse] [--reps 1] [--cap 5] [--judge kimi-k3] [--arms luxas,bare]
  *   npx tsx scripts/model_bench.mts report [--role R]
+ *   npx tsx scripts/model_bench.mts rescore --sandbox <run dir> [--judge M]   # judge failed, agent work is fine
  *
  * Results append to ~/.sisyphus/model-bench/results.jsonl; sandboxes live in
  * ~/.sisyphus/model-bench/runs/. Fixtures: fixtures/model-bench/. Snapshots of
@@ -456,8 +457,34 @@ export function renderReport(rows: any[]): string {
 
 function report(o: Record<string, string>) {
   if (!existsSync(RESULTS)) { console.log("no results yet"); return; }
-  const rows = readFileSync(RESULTS, "utf-8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((r) => !o.role || r.role === o.role);
+  const rows = latestPerSandbox(readFileSync(RESULTS, "utf-8").split("\n").filter(Boolean).map((l) => JSON.parse(l))).filter((r) => !o.role || r.role === o.role);
   console.log(renderReport(rows));
+}
+
+/** A re-scored trial appends a second row for the same sandbox; the report reads the last one. */
+export function latestPerSandbox(rows: any[]): any[] {
+  const last = new Map<string, number>();
+  rows.forEach((r, i) => { if (r.sandbox) last.set(r.sandbox, i); });
+  return rows.filter((r, i) => !r.sandbox || last.get(r.sandbox) === i);
+}
+
+/**
+ * Score a finished trial again without re-running it — for the case where the
+ * agent did its work and the JUDGE call failed (two auditor trials lost their
+ * score to a judge connection error on 2026-10-06, $3.18 of agent work each
+ * time). Appends a new row; `report` keeps the latest row per sandbox.
+ */
+async function rescore(o: Record<string, string>) {
+  const dir = resolve(o.sandbox), judgeModel = o.judge || "kimi-k3";
+  const t: any = JSON.parse(readFileSync(join(dir, "trial.json"), "utf-8"));
+  const prior = readFileSync(RESULTS, "utf-8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((r) => r.sandbox === dir).pop();
+  let s: any;
+  try {
+    s = t.role === "tool_review" ? scoreToolReview(t.task, dir) : t.role === "auditor" ? await scoreAuditor(t.task, dir, judgeModel) : await scoreBrain(t.task, dir, judgeModel);
+  } catch (e: any) { s = { score: null, note: `scoring failed: ${String(e?.message ?? e).slice(0, 300)}` }; }
+  const rec = { ...t, rep: prior?.rep ?? 1, sandbox: dir, usage: usageOf(dir), ...s, rescored: true, at: new Date().toISOString() };
+  appendFileSync(RESULTS, JSON.stringify(rec) + "\n");
+  console.log(`${t.role}/${t.task} × ${t.model} [${t.arm ?? "luxas"}]  score=${s.score == null ? "—" : s.score.toFixed(3)}${s.note ? "  (" + s.note + ")" : ""}`);
 }
 
 function validate() {
@@ -488,6 +515,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   if (cmd === "trial") await trial(o);
   else if (cmd === "run") await run(o);
   else if (cmd === "report") report(o);
+  else if (cmd === "rescore") await rescore(o);
   else if (cmd === "validate") validate();
   else { console.error("usage: model_bench.mts validate | run --role R --models a,b [--task T --reps N --cap USD --judge M --arms luxas,bare] | report [--role R]"); process.exit(2); }
 }
