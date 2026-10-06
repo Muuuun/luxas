@@ -15,7 +15,7 @@
  * 3. wiring: the detached background runner calls the same loop and returns
  *    its output.
  */
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runExperimentReviewLoop, createSpawnAgentTool } from "../src/tools/spawn-agent.ts";
@@ -31,6 +31,11 @@ delete process.env.LUXAS_MAX_REVIEW_ITERATIONS;
 
 const projectDir = mkdtempSync(join(tmpdir(), "bg-review-"));
 const EID = "E1_test";
+// This gate is about the REVIEW loop, so its experiment has delivered: since
+// 2026-10-06 an experiment with no results.json is sent back before any review
+// (smoke_solo_executor §5 covers that path).
+mkdirSync(join(projectDir, "data", "experiments", EID, "runs", "run_1"), { recursive: true });
+writeFileSync(join(projectDir, "data", "experiments", EID, "runs", "run_1", "results.json"), "{\"computed\":{}}");
 const calls: string[] = [];
 let reviewRound = 0;
 const stub = async (opts: any) => {

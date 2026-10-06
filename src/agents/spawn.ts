@@ -554,6 +554,12 @@ function applyProfile(modelKey: string, agentName?: string): string {
   // profile like every other tier, so `--profile claude` and an explicit
   // `--model` family switch are unaffected.
   if (agentName === "reader" && process.env.LUXAS_READER_MODEL) return process.env.LUXAS_READER_MODEL;
+  // Solo executor (registry.ts soloExperimentDefinition): the experiment is one
+  // agent doing the whole job, and that only works on a strong model — the
+  // same shape on deepseek-v4-pro delivered nothing in 200 steps (2026-10-06).
+  // The replicator stays on the producer profile, so with this on it is a
+  // different vendor from the executor, which is what makes it independent.
+  if (agentName === "experiment" && process.env.LUXAS_EXPERIMENT_MODE === "solo") return process.env.LUXAS_EXECUTOR_MODEL || "claude-opus-5-5";
   // Non-PI reviewers always run on GLM (independent prior); PI keeps its
   // declared Anthropic tier. Both checked before the producer-profile downgrade.
   if (agentName && GLM_REVIEWER_AGENTS.has(agentName)) return process.env.LUXAS_TOOL_REVIEW_MODEL || toolReviewDefault();

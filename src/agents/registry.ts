@@ -101,7 +101,69 @@ export function getDefinition(name: string): AgentDefinition {
   const defs = loadAgentDefinitions();
   const def = defs.get(name);
   if (!def) throw new Error(`Agent definition not found: "${name}". Available: ${[...defs.keys()].join(", ")}`);
+  if (name === "experiment" && soloExperimentEnabled()) return soloExperimentDefinition(def);
   return def;
+}
+
+// ── Solo executor (LUXAS_EXPERIMENT_MODE=solo) ────────────────────────────────
+//
+// One strong agent does the whole experiment: writes the code, runs it, writes
+// results.json and its ledger section. No tool_impl / tool_review sub-agents.
+// Everything downstream is untouched because the agent keeps the name
+// "experiment" and the same output contract — the blind replicator, the
+// experiment_reviewer loop, the claims table and the finish gates read the same
+// files as before.
+//
+// Why (measured 2026-10-06, four past experiments, verbatim task text, one run
+// each): a single Opus 5.5 agent was right and complete on 3 of 4 against 1 of
+// 4 for the orchestrated pipeline's first pass, in 175 turns / 24 M input /
+// 0.39 M output tokens against 1,132 calls / 116 M / 2.6 M. Across six real
+// runs the pipeline averaged ~300 calls and ~$10 per experiment, and on the Dy
+// run its 147 blind tests passed while four errors sat in the integration step
+// the orchestrator does alone. What caught those was the replicator and the
+// reviewer, which stay. The same single-agent shape on deepseek-v4-pro
+// delivered nothing in 200 steps: this mode is for a strong executor model
+// (spawn.ts routes it to claude-opus-5-5; LUXAS_EXECUTOR_MODEL overrides).
+//
+// It is derived from experiment.md rather than written as a second file so the
+// Evidence Contract and the results.json contract cannot drift apart between
+// the two modes; only the role block and the write/spawn permissions change.
+
+export function soloExperimentEnabled(): boolean {
+  return process.env.LUXAS_EXPERIMENT_MODE === "solo";
+}
+
+const ROLE_SEPARATION_RE = /<role_separation strict="true">[\s\S]*?<\/role_separation>/;
+
+export const SOLO_ROLE_BLOCK = `<solo_mode strict="true">
+This run uses the SOLO executor. There are no \`tool_impl\` and no \`tool_review\` agents: you write the code under \`data/experiments/{{EXPERIMENT_ID}}/scripts/\` yourself, run it, and check it yourself. Wherever the text below says to spawn \`tool_impl\` / \`tool_review\`, to describe a tool for them, to wait for their tests, or that a choice "belongs to tool_impl" — that work and that choice are yours. Do not try to spawn them; the spawn will be refused.
+
+Everything else below is unchanged and binding: the Evidence Contract, the acceptance criterion frozen before you compute anything, the results.json contract (quantities, method ladder, cross-validation plan, premise corrections), and your \`## L2.N\` ledger section.
+
+What replaces the independent test author: after you return, your result is checked by a blind replicator (another model that sees your quantity definitions and inputs, never your code or values) and by an independent reviewer. So tests you write are engineering hygiene, not evidence — keep them in \`tests/\` if they help you, and never cite "tests pass" as validation of a headline number. The validation that counts is the cross-validation plan you froze in Phase 1.
+
+Do not end your work while a computation you started is still running: wait for it, read its output, then write. You are done only when \`data/experiments/{{EXPERIMENT_ID}}/runs/run_1/results.json\` exists, every headline value in it is the number your final computation produced, and your ledger section is filled in. An experiment that returns without results.json is sent straight back.
+</solo_mode>`;
+
+export function soloExperimentDefinition(base: AgentDefinition): AgentDefinition {
+  // An anchor that no longer matches must fail loudly: a silent no-op would
+  // run the orchestrator prompt with the sub-agents it needs taken away.
+  if (!ROLE_SEPARATION_RE.test(base.systemPromptTemplate)) {
+    throw new Error("solo executor: experiment.md no longer has a <role_separation strict=\"true\"> block to replace — update soloExperimentDefinition");
+  }
+  const safety: any = { ...(base.safety ?? {}) };
+  const roots = ["data/experiments/{{EXPERIMENT_ID}}/scripts/", "data/experiments/{{EXPERIMENT_ID}}/tests/"];
+  safety.allowedWriteRoots = [...new Set([...(safety.allowedWriteRoots ?? []), ...roots])];
+  safety.blockedBashWriteRoots = (safety.blockedBashWriteRoots ?? []).filter((r: string) => !roots.includes(r));
+  const spawn: any = { ...(base.spawn ?? {}) };
+  spawn.allowedTypes = (spawn.allowedTypes ?? []).filter((t: string) => t !== "tool_impl" && t !== "tool_review");
+  return {
+    ...base,
+    description: "Research experiment, solo executor: one agent writes the code, runs it and writes results.json + its ledger section.",
+    systemPromptTemplate: base.systemPromptTemplate.replace(ROLE_SEPARATION_RE, SOLO_ROLE_BLOCK),
+    safety,
+    spawn,
+  };
 }
 
 export function resolvePrompt(def: AgentDefinition, vars: Record<string, string>): string {

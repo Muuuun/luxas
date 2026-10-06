@@ -14,7 +14,7 @@ import { spawn } from "node:child_process";
 import { spawnAgent, resolveModel, type SpawnAgentOptions, type SpawnAgentResult } from "../agents/spawn.js";
 import { listAgentDescriptions, getDefinition } from "../agents/registry.js";
 import { addAgent, removeAgent, loadRegistry, isAlive, markFailed, tryExtractResult, formatExitHint, parseConvJsonl } from "../active-agents.js";
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { join, dirname, sep as pathSep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { pidAlive } from "../utils.js";
@@ -287,6 +287,23 @@ export interface ExperimentReviewContext {
  * physics defect that reached its abstract lived
  * (notes/backtest-2026-09-24/bt-ytweezer.md).
  */
+/**
+ * Has this experiment delivered? One parseable results.json under runs/.
+ * An experiment can return "success" without it: the solo executor comparison
+ * (2026-10-06) had a run compute the right numbers and exit while waiting on
+ * its own background job, and ba-qc's E9 reached its reviewer with no
+ * results.json at all — a blind estimate and a review round spent on nothing.
+ */
+export function experimentDelivered(projectDir: string, experimentId: string): boolean {
+  const runs = join(projectDir, "data", "experiments", experimentId, "runs");
+  try {
+    return readdirSync(runs).some((r) => {
+      try { const j = JSON.parse(readFileSync(join(runs, r, "results.json"), "utf-8")); return !!j && typeof j === "object" && !Array.isArray(j); }
+      catch { return false; }
+    });
+  } catch { return false; }
+}
+
 export async function runExperimentReviewLoop<R extends { output: string; success: boolean }>(
   initialResult: R,
   ctx: ExperimentReviewContext,
@@ -297,6 +314,24 @@ export async function runExperimentReviewLoop<R extends { output: string; succes
   if (!result.success) return result;
     const experimentId = mergedTemplateVars.EXPERIMENT_ID;
     if (experimentId) {
+      // Deliverable check, before any review money is spent: no results.json
+      // means not delivered — send the experiment back once (the same way a
+      // revision is), and if it still has none, return that fact to brain
+      // instead of reviewing an empty directory.
+      if (!experimentDelivered(projectDir, String(experimentId))) {
+        const missingTask =
+          `# Not delivered — data/experiments/${experimentId}/runs/run_1/results.json does not exist.\n\n` +
+          `You returned without writing it. Do not start over: reuse what is already under ` +
+          `data/experiments/${experimentId}/ (scripts, outputs, logs). If a computation you launched ` +
+          `is still running or has finished since, read its output. Then write results.json per the ` +
+          `contract and fill in your ledger section.\n\n## Original task (for reference)\n\n${initialTask}`;
+        result = await spawn({ ...baseOpts, prompt: missingTask, contextExtra: { task: missingTask } });
+        if (!result.success) return result;
+        if (!experimentDelivered(projectDir, String(experimentId))) {
+          return { ...result, output: result.output + `\n\n---\n[harness: experiment ${experimentId} returned twice without data/experiments/${experimentId}/runs/*/results.json — NOT DELIVERED, not reviewed. Decide whether to re-dispatch it with a narrower task.]` };
+        }
+      }
+
       // Env-configurable. Default 3 preserves prior behavior.
       // Set LUXAS_MAX_REVIEW_ITERATIONS=1 for compute-heavy runs (Monte
       // Carlo sims) where 3 rounds × hours/round burns wallclock budget
