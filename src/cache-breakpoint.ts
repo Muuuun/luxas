@@ -11,9 +11,9 @@
  *
  * pi-ai 0.84 removed per-block cacheControl from its message types, so the
  * breakpoint cannot be expressed in the transcript. It can be expressed in the
- * outbound payload: onPayload may return a replacement. This adds one
- * breakpoint on the last block BEFORE the snapshot. What the model sees is
- * unchanged — only where the provider is told it may cut.
+ * outbound payload: onPayload may return a replacement. This moves the
+ * history breakpoint from the snapshot to the last block BEFORE it. What the
+ * model sees is unchanged — only where the provider is told it may cut.
  *
  * Providers with automatic prefix caching (DeepSeek, OpenAI) already hit on
  * the history because the trailer is last; this is a no-op for them.
@@ -47,7 +47,14 @@ export function pinHistoryBreakpoint(payload: any): any | undefined {
   const messages: any[] | undefined = payload?.messages;
   if (!Array.isArray(messages) || messages.length < 2) return undefined;
 
-  const lastIdx = messages.length - 1;
+  // The trailer is the last USER message, not necessarily the last message:
+  // for claude-opus-5-5 pi-ai interleaves empty `role:"system"` effort markers
+  // ({content: [], output_config}) and ends the list with one. Requiring the
+  // trailer to be last made this a silent no-op on exactly the model the brain
+  // was moved to — the Dy run (2026-10-06) re-wrote its history on every call.
+  const isEffortMarker = (m: any) => m?.role === "system" && Array.isArray(m.content) && m.content.length === 0;
+  let lastIdx = messages.length - 1;
+  while (lastIdx > 0 && isEffortMarker(messages[lastIdx])) lastIdx--;
   const last = messages[lastIdx];
   if (last?.role !== "user") return undefined;
   const lastBlocks: any[] = Array.isArray(last.content) ? last.content : [last.content];
@@ -65,6 +72,7 @@ export function pinHistoryBreakpoint(payload: any): any | undefined {
   if (snapAt > 0) { mi = lastIdx; bi = snapAt - 1; }
   else {
     mi = lastIdx - 1;
+    while (mi > 0 && isEffortMarker(messages[mi])) mi--;
     const prev = messages[mi];
     if (typeof prev?.content === "string") bi = 0;
     else if (Array.isArray(prev?.content)) {
@@ -86,14 +94,20 @@ export function pinHistoryBreakpoint(payload: any): any | undefined {
   target.content = content;
   out.messages[mi] = target;
 
-  // An OAuth request already carries four (two system blocks, tools, trailer).
-  // The first system block is a strict prefix of the second, so its marker is
-  // the one that buys nothing.
-  if (countBreakpoints(out) > MAX_BREAKPOINTS && Array.isArray(out.system) && out.system.length > 1 && out.system[0]?.cache_control) {
-    const [first, ...rest] = out.system;
-    const { cache_control: _dropped, ...bare } = first;
-    out.system = [bare, ...rest];
-  }
+  // Move the marker rather than add one. The trailer is rewritten every call
+  // and sits at a new position each time, so a prefix ending in it is written
+  // and never read: live probe 2026-10-06 (scripts/cache_probe.mts) billed the
+  // whole snapshot as a cache write on all 11 calls. Unmarked it is plain
+  // input — 1.25x cheaper at the 5-minute rate, 2x at the 1-hour rate the
+  // brain uses. It also keeps an OAuth request (two system blocks, tools,
+  // trailer) at four breakpoints without dropping one.
+  const trailer = { ...out.messages[lastIdx] };
+  trailer.content = (trailer.content as any[]).map((b: any, i: number) => {
+    if (i < snapAt || !b?.cache_control) return b;
+    const { cache_control: _dropped, ...bare } = b;
+    return bare;
+  });
+  out.messages[lastIdx] = trailer;
   if (countBreakpoints(out) > MAX_BREAKPOINTS) return undefined; // never send a request the API would reject
   return out;
 }

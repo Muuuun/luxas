@@ -78,13 +78,26 @@ export function measurePressure(
     };
   }
 
+  // No token count yet — the first call of a session, and the first call
+  // after every RESUME (the tap only learns the size from a response). The
+  // judgement must be the same one the token branch would make, on an
+  // estimate. It used to be a fixed 80K-character cap from the 200K-window
+  // days: a resumed brain with a 1M window and a 24K-token history was
+  // condensed on its first call, paid a summarizer call for it, and broke its
+  // prompt cache, then ran un-condensed from the second call on (Dy run,
+  // 2026-10-06). 3 chars/token over-estimates English and code, so this
+  // condenses slightly early, never late. Explicit char limits still win.
+  const CHARS_PER_TOKEN = 3;
+  const explicit = charPlan.warningThreshold !== DEFAULT_WARNING_CHARS || charPlan.condenseThreshold !== DEFAULT_CONDENSE_CHARS;
+  const warningThreshold = explicit ? charPlan.warningThreshold : windowPlan.warningThreshold * CHARS_PER_TOKEN;
+  const condenseThreshold = explicit ? charPlan.condenseThreshold : windowPlan.condenseThreshold * CHARS_PER_TOKEN;
   return {
     usingTokens: false,
     observedSize: observedCharCount,
-    warningThreshold: charPlan.warningThreshold,
-    condenseThreshold: charPlan.condenseThreshold,
-    shouldWarn: observedCharCount >= charPlan.warningThreshold,
-    shouldCondense: observedCharCount >= charPlan.condenseThreshold,
+    warningThreshold,
+    condenseThreshold,
+    shouldWarn: observedCharCount >= warningThreshold,
+    shouldCondense: observedCharCount >= condenseThreshold,
     isBlocked: false,
   };
 }

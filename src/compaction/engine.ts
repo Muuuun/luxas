@@ -165,7 +165,16 @@ export class ContextPacker<TMessage> {
       observedSize: pressure.observedSize,
     });
 
-    const removable = workingMessages.slice(0, cutPoint);
+    // The transcript's leading role:"system" message IS the system prompt and
+    // the tool declarations (pi 0.87 moved both there). It is never history:
+    // folding it into the note sent the next request with no prompt and no
+    // tools — the first brain call after every resume of the Dy run
+    // (2026-10-06) went out that way.
+    let headCount = 0;
+    while (headCount < cutPoint && this.options.adapter.getRole(workingMessages[headCount]!) === "system") headCount++;
+    const head = workingMessages.slice(0, headCount);
+    const removable = workingMessages.slice(headCount, cutPoint);
+    if (removable.length === 0) return { mode: "none", messages: workingMessages, pressure };
     let retained = workingMessages.slice(cutPoint);
 
     // ── Phase 5: Generate carry-forward note ──
@@ -255,7 +264,7 @@ export class ContextPacker<TMessage> {
       }
     }
 
-    let rebuilt = [carryforward, ...preamble, ...attachments, ...retained];
+    let rebuilt = [...head, carryforward, ...preamble, ...attachments, ...retained];
     const integrityOutcome = repairMessageIntegrity(
       rebuilt,
       this.options.adapter,

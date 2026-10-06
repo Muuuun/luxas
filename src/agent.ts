@@ -42,14 +42,25 @@ import { installUsageTracking, readUsageTotals } from "./usage-log.js";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { PIVerdict } from "./pi-agent.js";
 
-// Default Anthropic prompt-cache TTL to 5m. Empirically on Luxas runs the
-// cacheWrite/cacheRead ratio sits near 1:1 (mutable L3 + shifting context
-// snapshots force frequent re-writes), so the 1h premium rarely amortizes —
-// large writes with few reads overpay for the extended TTL. Gaps between
-// brain turns are almost always < 5m because foreground spawns resume
-// quickly. Override with PI_CACHE_RETENTION=long for workloads with proven
-// long idle gaps (e.g. many >15min brain-side gaps).
+// Sub-agents and anything else in this process default to the 5-minute
+// Anthropic cache: they call back within seconds. The BRAIN does not — it
+// waits on the agents it spawns — so it asks for the 1-hour cache per call
+// (BRAIN_CACHE_RETENTION below), not through this process-wide variable,
+// which child processes would inherit.
 process.env.PI_CACHE_RETENTION ||= "short";
+
+// The brain's cache lifetime on Anthropic. Measured on real runs' brain step
+// gaps (2026-10-06): ba-neutral-atom 79 of 525 steps came after a wait longer
+// than 5 minutes and 4 after more than an hour; two older runs 11/591 and
+// 7/464, none over an hour. Every step past the lifetime rewrites the whole
+// prefix (system prompt + tools + history) at the write rate. At 15% misses
+// the 5-minute cache costs ~1.36x the prefix per step in input-rate units
+// against ~0.57x for the 1-hour one; at 2% misses the two are about level.
+// An earlier note here argued for 5m from a ~1:1 write/read ratio — that
+// ratio was the snapshot-trailer bug cache-breakpoint.ts fixes, not idle gaps.
+// LUXAS_BRAIN_CACHE_RETENTION=short reverts. No effect on providers with
+// automatic caching.
+const BRAIN_CACHE_RETENTION: "short" | "long" = process.env.LUXAS_BRAIN_CACHE_RETENTION === "short" ? "short" : "long";
 
 // Parallel reader batches (the search-agent sweep pattern) fan out to 40+
 // concurrent child_process.spawn calls, each adding SIGTERM/SIGINT cleanup
@@ -385,7 +396,7 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
     // F5-lite: use streamWithRetry so transient DeepSeek/OpenAI connection errors
     // (mid-stream "Connection error", ECONNRESET, "fetch failed", "terminated")
     // get exp-backoff retry instead of killing the brain session.
-    streamFn: (m, ctx, opts) => streamWithRetry(m, ctx, { ...opts, toolChoice: pickRequireToolChoice(m) } as any),
+    streamFn: (m, ctx, opts) => streamWithRetry(m, ctx, { ...opts, toolChoice: pickRequireToolChoice(m), cacheRetention: BRAIN_CACHE_RETENTION } as any),
   });
 
   // Wire deferred refs now that agent exists

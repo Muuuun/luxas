@@ -47,11 +47,11 @@ const turn1 = [
 const turn2 = [...turn1, call("toolu_02", "b.md"), result("toolu_02", "contents of b")];
 
 /** What the adapter would send for this transcript, before and after the pin. */
-async function payloadFor(history: any[], n: number): Promise<{ raw: any; pinned: any }> {
+async function payloadFor(history: any[], n: number, extra: Record<string, unknown> = {}, mdl: any = model): Promise<{ raw: any; pinned: any }> {
   let raw: any, pinned: any;
   try {
-    const s: any = await streamSimple(model, { messages: [...history, snapshot(n)] } as any, {
-      apiKey: "sk-ant-api03-offline-gate",
+    const s: any = await streamSimple(mdl, { messages: [...history, snapshot(n)] } as any, {
+      apiKey: "sk-ant-api03-offline-gate", ...extra,
       onPayload: (p: any) => { raw = structuredClone(p); pinned = pinHistoryBreakpoint(p); throw new Error("gate: stop before the network"); },
     } as any);
     const r = await s.result?.();
@@ -108,6 +108,9 @@ if (a.pinned && b.pinned) {
   check("turn 2 can read back turn 1's whole history", reusable(pinA, pinB) === historyEndA,
     `reusable up to block ${reusable(pinA, pinB)}, history ends at ${historyEndA}`);
   check("what the model sees is unchanged", JSON.stringify(pinA.stream) === JSON.stringify(rawA.stream));
+  check("the snapshot trailer is no longer a breakpoint (it was written every call and never read)",
+    !pinA.marks.includes(pinA.stream.length - 1) && !pinB.marks.includes(pinB.stream.length - 1), `marks at ${pinA.marks.join(",")} of ${pinA.stream.length}`);
+  check("the pin moves a marker, it does not add one", pinA.marks.length === rawA.marks.length, `${rawA.marks.length} → ${pinA.marks.length}`);
   check("at most 4 breakpoints (API limit)", pinA.marks.length <= 4 && pinB.marks.length <= 4, `${pinA.marks.length} / ${pinB.marks.length}`);
   check("the adapter's own payload object was not mutated", JSON.stringify(flatten(a.raw).marks) === JSON.stringify(rawA.marks));
 }
@@ -126,8 +129,53 @@ check("OpenAI-shaped payload → untouched", pinHistoryBreakpoint({ input: [{ ro
       { role: "user", content: [{ type: "text", text: "<research_snapshot>s</research_snapshot>", cache_control: cc }] }],
   };
   const out = pinHistoryBreakpoint(four);
-  check("a request already at four breakpoints stays at four", !!out && flatten(out).marks.length === 4, out ? `${flatten(out).marks.length}` : "undefined");
+  check("a request already at four breakpoints stays at four", !!out && flatten(out).marks.length === 4 && !!out.system[0].cache_control, out ? `${flatten(out).marks.length}` : "undefined");
   check("…and the history breakpoint is one of them", !!out?.messages?.[0]?.content?.[0]?.cache_control);
+}
+
+console.log("\n5. the brain's cache outlives its waits");
+{
+  // The brain waits on the agents it spawns; 15% of its steps in the ba run
+  // came back after the 5-minute lifetime and rewrote the whole prefix.
+  const long = await payloadFor(turn1, 1, { cacheRetention: "long" });
+  const ttls = (p: any) => [...(p?.system ?? []), ...(p?.tools ?? []), ...(p?.messages ?? []).flatMap((m: any) => (Array.isArray(m.content) ? m.content : []))]
+    .map((b: any) => b?.cache_control).filter(Boolean).map((c: any) => c.ttl);
+  check("cacheRetention 'long' reaches the adapter as ttl 1h", ttls(long.raw).length > 0 && ttls(long.raw).every((t) => t === "1h"), JSON.stringify(ttls(long.raw)));
+  check("the moved history breakpoint keeps the 1h ttl", !!long.pinned && ttls(long.pinned).every((t) => t === "1h"), JSON.stringify(ttls(long.pinned)));
+  check("the default is still the 5-minute cache", ttls(a.raw).every((t) => t === undefined), JSON.stringify(ttls(a.raw)));
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../src/agent.ts", import.meta.url), "utf-8");
+  check("agent.ts: the brain's stream call asks for it", /streamWithRetry\(m, ctx, \{[^}]*cacheRetention: BRAIN_CACHE_RETENTION/.test(src));
+  check("agent.ts: LUXAS_BRAIN_CACHE_RETENTION=short reverts", /LUXAS_BRAIN_CACHE_RETENTION === "short" \? "short" : "long"/.test(src));
+  const sub = readFileSync(new URL("../src/subagent-runner.ts", import.meta.url), "utf-8");
+  check("sub-agents stay on the 5-minute cache", /PI_CACHE_RETENTION \|\|= "short"/.test(sub) && !/cacheRetention/.test(sub));
+}
+
+console.log("\n6. the model the brain actually runs on (claude-opus-5-5)");
+{
+  // pi-ai shapes this model's request differently: empty role:"system" effort
+  // markers are interleaved and one FOLLOWS the trailer. The pin used to
+  // require the trailer to be the last message, so on 5.5 it returned
+  // undefined and the Dy run re-wrote its whole history on every brain call —
+  // while sections 1-5, on sonnet, were green.
+  const o55: any = resolveModel("claude-opus-5-5", "brain");
+  const oa = await payloadFor(turn1, 1, { reasoning: "medium" }, o55);
+  const ob = await payloadFor(turn2, 2, { reasoning: "medium" }, o55);
+  check("payloads captured", !!oa.raw?.messages?.length && !!ob.raw?.messages?.length);
+  if (oa.raw && ob.raw) {
+    const shape = oa.raw.messages.map((m: any) => m.role).join(",");
+    console.log(`  (request roles: ${shape})`);
+    check("turn 1 is pinned", !!oa.pinned, "pinHistoryBreakpoint returned undefined");
+    check("turn 2 is pinned", !!ob.pinned);
+    if (oa.pinned && ob.pinned) {
+      const pa = flatten(oa.pinned), pb = flatten(ob.pinned), ra = flatten(oa.raw);
+      const trailerAt = ra.stream.findIndex((x) => x.includes("<research_snapshot>"));
+      check("turn 2 can read back turn 1's whole history", reusable(pa, pb) === trailerAt - 1, `reusable up to block ${reusable(pa, pb)}, history ends at ${trailerAt - 1}`);
+      check("the trailer is not a breakpoint", !pa.marks.includes(trailerAt), `marks ${pa.marks.join(",")}, trailer ${trailerAt}`);
+      check("what the model sees is unchanged", JSON.stringify(pa.stream) === JSON.stringify(ra.stream));
+      check("at most 4 breakpoints", pa.marks.length <= 4);
+    }
+  }
 }
 
 console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");
