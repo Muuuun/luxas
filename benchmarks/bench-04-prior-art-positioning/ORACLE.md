@@ -35,3 +35,22 @@ Any two of these three, with locators, satisfies the bench.
   attribution is too coarse for a referee.
 - Any prior cited that does not exist or whose locator does not contain the
   stated result: fabrication — fails regardless of the rest.
+
+## Machine-readable checks
+
+Consumed by `scripts/bench_score.mts`; the prose rubric above is the human half of the same claim — keep them in sync.
+
+```oracle
+{
+  "checks": [
+    { "kind": "mention", "label": "cites Vaillant, Jones & Potvliege 2012 (perturbative C6 fails; full diagonalisation needed)",
+      "patterns": ["Vaillant", "1203\\.3736"] },
+    { "kind": "mention", "label": "cites ARC (Sibalic et al. 2017) and its perturbative-C6 caveat",
+      "patterns": ["[SŠ]ibali[cć]", "\\bARC\\b", "Alkali\\.?\\s*Rydberg\\s*Calculator"] },
+    { "kind": "mention", "label": "cites the angular-dependence prior (arXiv:1605.00259)",
+      "patterns": ["1605\\.00259"] },
+    { "kind": "trap", "label": "claims the perturbation-theory artefact as its own / first result",
+      "patterns": ["we\\s+(?:are\\s+the\\s+first|show\\s+for\\s+the\\s+first\\s+time)", "to\\s+(?:our|the\\s+best\\s+of\\s+our)\\s+knowledge[^.]{0,80}(?:first|not\\s+been\\s+reported)", "previously\\s+unreported", "novel\\s+(?:finding|result|artefact|artifact)"] }
+  ]
+}
+```

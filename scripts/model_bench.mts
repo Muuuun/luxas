@@ -18,13 +18,22 @@
  *                (bench-02: the perturbative C6(θ=0) artefact, fake legs,
  *                V ≡ ħΩ by construction…).
  *
+ * A second question on the same items (2026-10-05): **does the Luxas
+ * definition add anything over the bare model?** `--arms luxas,bare` runs each
+ * model twice — once with the role's real definition, once with a
+ * two-sentence prompt and the SAME tools, sandbox, task text and scorer. The
+ * report then pairs the arms item by item (each mutant, each labelled defect,
+ * each trap question). That is the only harness-vs-no-harness number this
+ * project has; public leaderboards can rank models but none of them ran Luxas.
+ * With both arms on one model, a same-family judge biases both equally.
+ *
  * Each trial is a child process with its own sandbox and usage.log, so the
  * provider wrapper's cost accounting is exact per trial and a cost cap
  * (--cap, default $5) kills a runaway trial, not the sweep.
  *
  * Usage:
  *   npx tsx scripts/model_bench.mts validate
- *   npx tsx scripts/model_bench.mts run --role tool_review --models glm-5.3,anthropic/claude-opus-5 [--task kurucz_parse] [--reps 1] [--cap 5] [--judge kimi-k3]
+ *   npx tsx scripts/model_bench.mts run --role tool_review --models glm-5.3,anthropic/claude-opus-5 [--task kurucz_parse] [--reps 1] [--cap 5] [--judge kimi-k3] [--arms luxas,bare]
  *   npx tsx scripts/model_bench.mts report [--role R]
  *
  * Results append to ~/.sisyphus/model-bench/results.jsonl; sandboxes live in
@@ -41,7 +50,21 @@ import { fileURLToPath } from "node:url";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const FIX = join(ROOT, "fixtures", "model-bench");
 const HOME = join(homedir(), ".sisyphus", "model-bench");
-const RESULTS = join(HOME, "results.jsonl");
+const RESULTS = process.env.LUXAS_MODEL_BENCH_RESULTS || join(HOME, "results.jsonl");
+
+export const ARMS = ["luxas", "bare"] as const;
+export type Arm = (typeof ARMS)[number];
+
+/**
+ * The bare arm's whole system prompt. It states the deliverable (where the
+ * output goes, so the same scorer can read it) and nothing about method —
+ * method is what the Luxas definition claims to add.
+ */
+export const BARE_PROMPT: Record<string, string> = {
+  tool_review: "You are a software engineer. Write pytest tests for the tool described in the task and save them where the task says. When the test file is written, call finish.",
+  auditor: "You are a physicist. The working directory {{PROJECT_DIR}} holds a finished research project with a report under report/. Review it and find what is wrong with it. Write your findings to .audit/findings.md as a numbered list, then call finish.",
+  brain: "You are a physicist planning a research project. You have no tools and no literature: answer in one message.",
+};
 
 type Role = "tool_review" | "auditor" | "brain";
 const DEFAULT_TASK: Record<Role, string> = { tool_review: "kurucz_parse", auditor: "297nm", brain: "bench-02" };
@@ -83,6 +106,7 @@ function prepareSandbox(role: Role, task: string, dir: string) {
 
 async function trial(o: Record<string, string>) {
   const role = o.role as Role, model = o.model, task = o.task, dir = o.sandbox;
+  const arm: Arm = o.arm === "bare" ? "bare" : "luxas";
   process.env.LUXAS_PROJECT_DIR = dir;
   const { installUsageTracking } = await import("../src/usage-log.ts");
   installUsageTracking(join(dir, ".agent", "usage.log"), { maxCostUsd: Number(o.cap || 5) });
@@ -91,7 +115,7 @@ async function trial(o: Record<string, string>) {
   const { getDefinition } = await import("../src/agents/registry.ts");
   const { getApiKey } = await import("../src/auth.ts");
   const t0 = Date.now();
-  const rec: any = { role, model, task, started: new Date().toISOString() };
+  const rec: any = { role, model, task, arm, started: new Date().toISOString() };
   try {
     resolveModelExact(model); // fail fast on an unknown id
     // Every bench agent gets the `finish` exit tool and a turn cap. Anthropic
@@ -100,17 +124,26 @@ async function trial(o: Record<string, string>) {
     // a routing/config fact, not model quality, and would swamp the signal.
     const benchDef = (name: string) => {
       const d = name === "adversarial_auditor" ? auditorDefinition() : getDefinition(name);
-      return { ...d, toolSets: d.toolSets.includes("exit") ? d.toolSets : [...d.toolSets, "exit"], maxTurns: d.maxTurns ?? 80 };
+      // bare arm: same tools, safety, model tier and turn cap — only the prompt
+      // (and any injected context) is replaced.
+      const prompt = arm === "bare" ? { systemPromptTemplate: BARE_PROMPT[role], contextBuilder: undefined } : {};
+      return { ...d, ...prompt, toolSets: d.toolSets.includes("exit") ? d.toolSets : [...d.toolSets, "exit"], maxTurns: d.maxTurns ?? 80 };
     };
     if (role === "brain") {
       const { completeSimple } = await import("@earendil-works/pi-ai/compat");
       const m: any = resolveModelExact(model);
-      const { system, user } = brainPrompt(task);
+      const { system, user } = brainPrompt(task, arm);
       const res: any = await completeSimple(m, {
         systemPrompt: system,
         messages: [{ role: "user", content: [{ type: "text", text: user }], timestamp: Date.now() }],
         tools: [],
-      }, { maxTokens: Math.min(64000, m.maxTokens ?? 64000), apiKey: await getApiKey(m.provider) } as any);
+      }, {
+        maxTokens: Math.min(64000, m.maxTokens ?? 64000), apiKey: await getApiKey(m.provider),
+        // glm-5.3 cannot think "off" (400 code 1210: use low, high or max), and
+        // no reasoning option is sent as "off". Other providers keep the call
+        // shape the earlier rows were measured with.
+        ...(m.provider === "glm" ? { reasoning: "high" } : {}),
+      } as any);
       const text = (res?.content ?? []).filter((b: any) => b?.type === "text").map((b: any) => b.text).join("");
       writeFileSync(join(dir, "design.md"), text);
       rec.stopReason = res?.stopReason; rec.errorMessage = res?.errorMessage; rec.outputChars = text.length;
@@ -146,11 +179,11 @@ function auditorDefinition() {
   };
 }
 
-function brainPrompt(task: string) {
+function brainPrompt(task: string, arm: Arm = "luxas") {
   const traps = JSON.parse(readFileSync(join(FIX, "brain", task, "traps.json"), "utf-8"));
   const brain = readFileSync(join(ROOT, "src", "agents", "definitions", "brain.md"), "utf-8");
   const section = (tag: string) => (brain.match(new RegExp(`<${tag}>[\\s\\S]*?</${tag}>`)) ?? [""])[0];
-  const system = [
+  const system = arm === "bare" ? BARE_PROMPT.brain : [
     "You are the brain of Luxas, an autonomous physics research system. You decompose a research request into experiments that other agents will run. Methodology excerpts from your production prompt follow.",
     section("framing_phase"), section("decomposition"), section("claim_status_dispatch"),
     "For this task you have no tools and no literature: produce the full pipeline design in one answer.",
@@ -193,7 +226,8 @@ function scoreToolReview(task: string, dir: string) {
   }
   copyFileSync(join(src, "reference.py"), target);
   const n = killed.length + survived.length;
-  return { score: killed.length / n, passes_reference: true, killed: killed.length, mutants: n, survived };
+  const items = Object.fromEntries([...killed.map((m) => [m, 1]), ...survived.map((m) => [m, 0])]);
+  return { score: killed.length / n, passes_reference: true, killed: killed.length, mutants: n, survived, items };
 }
 
 async function judge(judgeModel: string, system: string, user: string, _logDir: string) {
@@ -218,6 +252,8 @@ async function judge(judgeModel: string, system: string, user: string, _logDir: 
   return { parsed: JSON.parse(json[0]), cost: readUsageTotals(log).cost - before };
 }
 
+const credit = (v: unknown) => { const s = String(v ?? "").toUpperCase(); return s === "FOUND" || s === "YES" ? 1 : s === "PARTIAL" ? 0.5 : 0; };
+
 async function scoreAuditor(task: string, dir: string, judgeModel: string) {
   const f = join(dir, ".audit", "findings.md");
   if (!existsSync(f)) return { score: 0, note: "no .audit/findings.md" };
@@ -238,6 +274,7 @@ async function scoreAuditor(task: string, dir: string, judgeModel: string) {
     score: got / total, weighted_recall: got / total, headline_recall: headlineGot / headlineTotal,
     findings: findings.length, false: count("FALSE"), unmatched: count("UNMATCHED"), unverifiable: count("UNVERIFIABLE"),
     per_defect: parsed.defects, judge: judgeModel, judge_cost: cost,
+    items: Object.fromEntries(labels.defects.map((d: any) => [d.id, credit(parsed.defects?.[d.id])])),
   };
 }
 
@@ -255,7 +292,8 @@ async function scoreBrain(task: string, dir: string, judgeModel: string) {
     const a = String(parsed.answers?.[q.id] ?? "no").toLowerCase();
     got += (a === "yes" ? 1 : a === "partial" ? 0.5 : 0) * q.weight; total += q.weight;
   }
-  return { score: got / total, answers: parsed.answers, fabrications: parsed.fabrications ?? [], judge: judgeModel, judge_cost: cost };
+  return { score: got / total, answers: parsed.answers, fabrications: parsed.fabrications ?? [], judge: judgeModel, judge_cost: cost,
+    items: Object.fromEntries(traps.questions.map((q: any) => [q.id, credit(parsed.answers?.[q.id])])) };
 }
 
 function usageOf(dir: string) {
@@ -278,18 +316,21 @@ async function run(o: Record<string, string>) {
   const task = o.task || DEFAULT_TASK[role];
   const models = (o.models ?? "").split(",").filter(Boolean);
   const reps = Number(o.reps || 1), cap = o.cap || "5", judgeModel = o.judge || "kimi-k3";
+  const arms = (o.arms || o.arm || "luxas").split(",").filter(Boolean) as Arm[];
+  const badArm = arms.filter((a) => !(ARMS as readonly string[]).includes(a));
+  if (badArm.length) throw new Error(`--arms must be from ${ARMS.join(", ")}; got ${badArm.join(", ")}`);
   mkdirSync(join(HOME, "runs"), { recursive: true });
-  for (const model of models) for (let rep = 1; rep <= reps; rep++) {
-    const dir = join(HOME, "runs", `${new Date().toISOString().replace(/[:.]/g, "-")}_${role}_${task}_${slug(model)}_r${rep}`);
+  for (const model of models) for (const arm of arms) for (let rep = 1; rep <= reps; rep++) {
+    const dir = join(HOME, "runs", `${new Date().toISOString().replace(/[:.]/g, "-")}_${role}_${task}_${slug(model)}_${arm}_r${rep}`);
     mkdirSync(dir, { recursive: true });
     prepareSandbox(role, task, dir);
-    console.log(`▶ ${role}/${task} × ${model} (rep ${rep}) → ${dir}`);
-    const child = spawnSync("npx", ["tsx", fileURLToPath(import.meta.url), "trial", "--role", role, "--model", model, "--task", task, "--sandbox", dir, "--cap", cap], {
+    console.log(`▶ ${role}/${task} × ${model} [${arm}] (rep ${rep}) → ${dir}`);
+    const child = spawnSync("npx", ["tsx", fileURLToPath(import.meta.url), "trial", "--role", role, "--model", model, "--task", task, "--sandbox", dir, "--cap", cap, "--arm", arm], {
       cwd: ROOT, stdio: ["ignore", "inherit", "pipe"], timeout: 3 * 3600_000, encoding: "utf-8",
     });
     process.stderr.write(child.stderr ?? "");
     const t: any = existsSync(join(dir, "trial.json")) ? JSON.parse(readFileSync(join(dir, "trial.json"), "utf-8"))
-      : { role, model, task, stopReason: child.status === 1 ? "killed_by_cap_or_fatal" : "no_trial_record", exitCode: child.status };
+      : { role, model, task, arm, stopReason: child.status === 1 ? "killed_by_cap_or_fatal" : "no_trial_record", exitCode: child.status };
     // A provider with no balance is an infrastructure fact, not a model score:
     // record it, never score it, and skip this model's remaining reps.
     const unfunded = join(dir, ".agent", "unfunded.json");
@@ -319,19 +360,104 @@ async function run(o: Record<string, string>) {
   }
 }
 
-function report(o: Record<string, string>) {
-  if (!existsSync(RESULTS)) { console.log("no results yet"); return; }
-  const rows = readFileSync(RESULTS, "utf-8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((r) => !o.role || r.role === o.role);
-  const key = (r: any) => `${r.role}/${r.task}\t${r.model}`;
+/** Per-item credit of a result row. Rows written before `items` existed are rebuilt from what they recorded. */
+export function itemsOf(r: any): Record<string, number> | null {
+  if (r.items && typeof r.items === "object") return r.items;
+  if (r.per_defect) return Object.fromEntries(Object.entries(r.per_defect).map(([k, v]) => [k, credit(v)]));
+  if (r.answers) return Object.fromEntries(Object.entries(r.answers).map(([k, v]) => [k, credit(v)]));
+  // tool_review rows from before `items` recorded only the survivors; the full list is the fixture's.
+  if (r.role === "tool_review" && Array.isArray(r.survived) && r.passes_reference) {
+    const dir = join(FIX, "tool_review", r.task, "mutants");
+    if (existsSync(dir)) return Object.fromEntries(readdirSync(dir).map((m) => m.replace(/\.py$/, "")).map((m) => [m, r.survived.includes(m) ? 0 : 1]));
+  }
+  return null;
+}
+
+export interface PairedCell {
+  key: string; nLuxas: number; nBare: number; luxas: number; bare: number; delta: number;
+  /** Items where the Luxas arm's mean credit is higher / lower / equal. null when a side has no per-item record. */
+  better: number | null; worse: number | null; same: number | null;
+  costLuxas: number; costBare: number;
+}
+
+/** Luxas definition vs bare prompt, same role/task/model, paired item by item. */
+export function pairArms(rows: any[]): PairedCell[] {
+  const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : NaN);
+  const groups = new Map<string, { luxas: any[]; bare: any[] }>();
+  for (const r of rows) {
+    if (r.score == null) continue; // unfunded / cost-cap rows are facts about infrastructure, not scores
+    const k = `${r.role}/${r.task}\t${r.model}`;
+    const g = groups.get(k) ?? groups.set(k, { luxas: [], bare: [] }).get(k)!;
+    (r.arm === "bare" ? g.bare : g.luxas).push(r);
+  }
+  const out: PairedCell[] = [];
+  for (const [key, g] of [...groups].sort()) {
+    if (!g.luxas.length || !g.bare.length) continue;
+    const perItem = (rs: any[]) => {
+      const acc = new Map<string, number[]>();
+      for (const r of rs) { const it = itemsOf(r); if (!it) return null; for (const [id, c] of Object.entries(it)) acc.set(id, [...(acc.get(id) ?? []), c]); }
+      return new Map([...acc].map(([id, cs]) => [id, mean(cs)]));
+    };
+    const L = perItem(g.luxas), B = perItem(g.bare);
+    let better: number | null = null, worse: number | null = null, same: number | null = null;
+    if (L && B) {
+      better = worse = same = 0;
+      for (const id of new Set([...L.keys(), ...B.keys()])) {
+        const d = (L.get(id) ?? 0) - (B.get(id) ?? 0);
+        if (d > 1e-9) better++; else if (d < -1e-9) worse++; else same++;
+      }
+    }
+    const l = mean(g.luxas.map((r) => r.score)), b = mean(g.bare.map((r) => r.score));
+    out.push({ key, nLuxas: g.luxas.length, nBare: g.bare.length, luxas: l, bare: b, delta: l - b, better, worse, same,
+      costLuxas: mean(g.luxas.map((r) => r.usage?.cost ?? 0)), costBare: mean(g.bare.map((r) => r.usage?.cost ?? 0)) });
+  }
+  return out;
+}
+
+/** Two-sided sign-test p-value for `better` vs `worse` (ties dropped). */
+export function signTestP(better: number, worse: number): number {
+  const n = better + worse;
+  if (n === 0) return 1;
+  const k = Math.min(better, worse);
+  let tail = 0, c = 1;
+  for (let i = 0; i <= k; i++) { tail += c; c = (c * (n - i)) / (i + 1); }
+  return Math.min(1, (2 * tail) / 2 ** n);
+}
+
+export function renderReport(rows: any[]): string {
+  const L: string[] = [];
+  const key = (r: any) => `${r.role}/${r.task}\t${r.model}\t${r.arm ?? "luxas"}`;
   const groups = new Map<string, any[]>();
   for (const r of rows) groups.set(key(r), [...(groups.get(key(r)) ?? []), r]);
   const mean = (xs: number[]) => xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : NaN;
-  console.log("role/task\tmodel\tn\tscore\t$/trial\tmin/trial\tfailures");
+  L.push("role/task\tmodel\tarm\tn\tscore\t$/trial\tmin/trial\tfailures");
   for (const [k, rs] of [...groups].sort()) {
     const ok = rs.filter((r) => r.score != null);
     const fails = rs.filter((r) => r.stopReason && !["stop", "end_turn", "toolUse", "length", "unknown"].includes(r.stopReason)).map((r) => r.stopReason);
-    console.log(`${k}\t${rs.length}\t${mean(ok.map((r) => r.score)).toFixed(3)}\t${mean(rs.map((r) => r.usage.cost)).toFixed(3)}\t${mean(rs.map((r) => (r.elapsedMs ?? 0) / 60000)).toFixed(1)}\t${fails.join(",") || "-"}`);
+    L.push(`${k}\t${rs.length}\t${mean(ok.map((r) => r.score)).toFixed(3)}\t${mean(rs.map((r) => r.usage?.cost ?? 0)).toFixed(3)}\t${mean(rs.map((r) => (r.elapsedMs ?? 0) / 60000)).toFixed(1)}\t${fails.join(",") || "-"}`);
   }
+  const pairs = pairArms(rows);
+  if (pairs.length) {
+    L.push("", "Luxas definition vs bare prompt (same model, tools, task and scorer):");
+    L.push("role/task\tmodel\tluxas\tbare\tdelta\titems better/worse/same\tsign-test p\t$luxas\t$bare");
+    let tb = 0, tw = 0;
+    for (const c of pairs) {
+      const items = c.better === null ? "n/a (no per-item record)" : `${c.better}/${c.worse}/${c.same}`;
+      const p = c.better === null ? "—" : signTestP(c.better, c.worse!).toFixed(2);
+      if (c.better !== null) { tb += c.better; tw += c.worse!; }
+      L.push(`${c.key}\t${c.luxas.toFixed(3)} (n=${c.nLuxas})\t${c.bare.toFixed(3)} (n=${c.nBare})\t${c.delta >= 0 ? "+" : ""}${c.delta.toFixed(3)}\t${items}\t${p}\t${c.costLuxas.toFixed(2)}\t${c.costBare.toFixed(2)}`);
+    }
+    L.push(`all paired items: ${tb} better, ${tw} worse — sign-test p = ${signTestP(tb, tw).toFixed(3)}`);
+    L.push("Read p > 0.05 as 'no difference shown', not as 'no difference'. Items within one task share a run, so they are not fully independent: the p-value is optimistic.");
+    if (pairs.some((c) => c.nLuxas < 3 || c.nBare < 3)) L.push("Some cells have fewer than 3 runs per arm: run-to-run variation is not yet separated from the arm effect.");
+  }
+  return L.join("\n");
+}
+
+function report(o: Record<string, string>) {
+  if (!existsSync(RESULTS)) { console.log("no results yet"); return; }
+  const rows = readFileSync(RESULTS, "utf-8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((r) => !o.role || r.role === o.role);
+  console.log(renderReport(rows));
 }
 
 function validate() {
@@ -356,10 +482,12 @@ function validate() {
   process.exit(bad ? 1 : 0);
 }
 
-const [cmd, ...rest] = process.argv.slice(2);
-const o = args(rest);
-if (cmd === "trial") await trial(o);
-else if (cmd === "run") await run(o);
-else if (cmd === "report") report(o);
-else if (cmd === "validate") validate();
-else { console.error("usage: model_bench.mts validate | run --role R --models a,b [--task T --reps N --cap USD --judge M] | report [--role R]"); process.exit(2); }
+if (import.meta.url === `file://${process.argv[1]}`) {
+  const [cmd, ...rest] = process.argv.slice(2);
+  const o = args(rest);
+  if (cmd === "trial") await trial(o);
+  else if (cmd === "run") await run(o);
+  else if (cmd === "report") report(o);
+  else if (cmd === "validate") validate();
+  else { console.error("usage: model_bench.mts validate | run --role R --models a,b [--task T --reps N --cap USD --judge M --arms luxas,bare] | report [--role R]"); process.exit(2); }
+}

@@ -30,9 +30,12 @@ import { join, basename } from "node:path";
 import { buildClaimTable, type ClaimStatus } from "../src/claims-table.ts";
 
 type Check =
-  | { kind: "value"; label: string; target: number; rtol?: number }
+  /** minSig: only numbers WRITTEN with at least this many significant digits count (a stray "43" must not satisfy 42.6). */
+  | { kind: "value"; label: string; target: number; rtol?: number; minSig?: number }
   | { kind: "discrepancy"; label: string; a: number; b: number; rtol?: number }
-  | { kind: "trap"; label: string; patterns: string[] };
+  | { kind: "trap"; label: string; patterns: string[] }
+  /** mention: passes when ANY pattern appears in the report or its bibliography (a prior cited, a caveat stated). */
+  | { kind: "mention"; label: string; patterns: string[] };
 
 interface CheckResult { kind: string; label: string; pass: boolean; detail: string }
 
@@ -67,34 +70,65 @@ function parseOracleBlock(benchDir: string): { checks: Check[]; raw: string } | 
   return { checks: parsed.checks as Check[], raw: m[1] };
 }
 
-/** Every number that appears anywhere in the report surface or the claims ledger. */
-function harvestNumbers(projectDir: string): number[] {
-  const out: number[] = [];
-  const tex = join(projectDir, "report", "report.tex");
-  if (existsSync(tex)) {
-    for (const m of readFileSync(tex, "utf8").matchAll(/-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?/g)) {
-      const v = Number(m[0]);
-      if (Number.isFinite(v)) out.push(v);
-    }
+interface Num { v: number; sig: number }
+
+const sigDigits = (mantissa: string): number => mantissa.replace(/^-/, "").replace(".", "").replace(/^0+/, "").length || 1;
+
+/**
+ * Every number in a piece of report text. Reads plain and e-notation, and the
+ * way a report actually writes small numbers — `6 \times 10^{-7}`, `1.0×10⁻⁶`
+ * is not handled, `10^{-6}` alone is. Without the LaTeX form a report that
+ * prints the right logical error rate scores as if it printed 6 and 10 and 7.
+ */
+export function numbersIn(text: string): Num[] {
+  const out: Num[] = [];
+  const SCI = /(-?\d+(?:\.\d+)?)\s*(?:\\times|\\cdot|×|\*)\s*10\s*\^\s*\{?\s*(-?\d+)\s*\}?/g;
+  const rest = text.replace(SCI, (_m, mant: string, exp: string) => {
+    const v = Number(mant) * 10 ** Number(exp);
+    if (Number.isFinite(v)) out.push({ v, sig: sigDigits(mant) });
+    return " ";
+  }).replace(/(?<![\d.])10\s*\^\s*\{?\s*(-?\d+)\s*\}?/g, (_m, exp: string) => {
+    const v = 10 ** Number(exp);
+    if (Number.isFinite(v)) out.push({ v, sig: 1 });
+    return " ";
+  });
+  for (const m of rest.matchAll(/-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?/g)) {
+    const v = Number(m[0]);
+    if (Number.isFinite(v)) out.push({ v, sig: sigDigits(m[0].replace(/[eE].*$/, "")) });
   }
+  return out;
+}
+
+/** Every number that appears anywhere in the report surface or the claims ledger. */
+function harvestNumbers(projectDir: string): Num[] {
+  const out: Num[] = numbersIn(reportText(projectDir));
   const cj = join(projectDir, "report", "claims.json");
   if (existsSync(cj)) {
     try {
       const arr = JSON.parse(readFileSync(cj, "utf8"));
-      for (const c of Array.isArray(arr) ? arr : []) if (typeof c?.value === "number") out.push(c.value);
+      for (const c of Array.isArray(arr) ? arr : []) if (typeof c?.value === "number") out.push({ v: c.value, sig: 99 });
     } catch { /* malformed ledger is reported by completion, not here */ }
   }
   return out;
 }
 
+/** The report surface: report.tex, or report.md for an arm that cannot run LaTeX. */
 function reportText(projectDir: string): string {
-  const tex = join(projectDir, "report", "report.tex");
-  return existsSync(tex) ? readFileSync(tex, "utf8") : "";
+  for (const f of ["report.tex", "report.md"]) {
+    const p = join(projectDir, "report", f);
+    if (existsSync(p)) return readFileSync(p, "utf8");
+  }
+  return "";
 }
 
-function hit(nums: number[], target: number, rtol: number): boolean {
+function bibText(projectDir: string): string {
+  const p = join(projectDir, "report", "references.bib");
+  return existsSync(p) ? readFileSync(p, "utf8") : "";
+}
+
+function hit(nums: Num[], target: number, rtol: number, minSig = 1): boolean {
   const tol = Math.abs(target) * rtol;
-  return nums.some((n) => Math.abs(n - target) <= tol);
+  return nums.some((n) => n.sig >= minSig && Math.abs(n.v - target) <= tol);
 }
 
 function runChecks(checks: Check[], projectDir: string): CheckResult[] {
@@ -104,12 +138,12 @@ function runChecks(checks: Check[], projectDir: string): CheckResult[] {
   // free point on every `trap` check, because an absent report trivially fails
   // to contain the trap pattern — a crashed arm would outscore a sloppy one.
   if (!text.trim()) {
-    return checks.map((c) => ({ kind: c.kind, label: c.label, pass: false, detail: "no report.tex — check not evaluable" }));
+    return checks.map((c) => ({ kind: c.kind, label: c.label, pass: false, detail: "no report — check not evaluable" }));
   }
   return checks.map((c): CheckResult => {
     if (c.kind === "value") {
       const rtol = c.rtol ?? 0.1;
-      const ok = hit(nums, c.target, rtol);
+      const ok = hit(nums, c.target, rtol, c.minSig);
       return { kind: c.kind, label: c.label, pass: ok, detail: ok ? `found ${c.target} +/-${rtol * 100}%` : `no number within ${rtol * 100}% of ${c.target}` };
     }
     if (c.kind === "discrepancy") {
@@ -120,6 +154,11 @@ function runChecks(checks: Check[], projectDir: string): CheckResult[] {
       const ok = ha && hb && flagged;
       const missing = [!ha && `${c.a}`, !hb && `${c.b}`, !flagged && "no disagreement language"].filter(Boolean).join(", ");
       return { kind: c.kind, label: c.label, pass: ok, detail: ok ? `both values present and disagreement flagged` : `missing: ${missing}` };
+    }
+    if (c.kind === "mention") {
+      const surface = text + "\n" + bibText(projectDir);
+      const by = c.patterns.filter((p) => new RegExp(p, "i").test(surface));
+      return { kind: c.kind, label: c.label, pass: by.length > 0, detail: by.length > 0 ? `matched: ${by[0]}` : "none of the patterns appear" };
     }
     // trap: passing means the trap was AVOIDED
     const firedBy = c.patterns.filter((p) => new RegExp(p, "i").test(text));
@@ -144,7 +183,7 @@ export function scoreBench(projectDir: string, benchDir?: string): BenchScore {
     project: projectDir,
     bench: benchDir ? basename(benchDir) : null,
     completion: {
-      reportTex: existsSync(join(projectDir, "report", "report.tex")),
+      reportTex: existsSync(join(projectDir, "report", "report.tex")) || existsSync(join(projectDir, "report", "report.md")),
       reportPdf: existsSync(join(projectDir, "report", "report.pdf")),
       claimsJson: existsSync(join(projectDir, "report", "claims.json")),
       experimentsWithResults: countExperimentsWithResults(projectDir),
@@ -178,7 +217,8 @@ export function scoreBench(projectDir: string, benchDir?: string): BenchScore {
       headline: hTotal,
       byStatus,
       headlineByStatus,
-      corroboratedHeadlineFrac: hTotal === 0 ? null : (headlineByStatus["corroborated"] ?? 0) / hTotal,
+      // `corroborated` was retired 2026-09-04; `converging` is the top tier. Field name kept for old records.
+      corroboratedHeadlineFrac: hTotal === 0 ? null : ((headlineByStatus["converging"] ?? 0) + (headlineByStatus["corroborated"] ?? 0)) / hTotal,
       estimateLegs: legs,
     };
   } catch (err) {
@@ -201,7 +241,7 @@ function render(s: BenchScore): string {
   if (s.claims) {
     const q = s.claims;
     const frac = q.corroboratedHeadlineFrac === null ? "n/a" : `${(q.corroboratedHeadlineFrac * 100).toFixed(0)}%`;
-    L.push(`claims: rows=${q.rows} headline=${q.headline} estimate_legs=${q.estimateLegs} corroborated_headline=${frac}`);
+    L.push(`claims: rows=${q.rows} headline=${q.headline} estimate_legs=${q.estimateLegs} converging_headline=${frac}`);
     L.push(`  all:      ${JSON.stringify(q.byStatus)}`);
     L.push(`  headline: ${JSON.stringify(q.headlineByStatus)}`);
   }

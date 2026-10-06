@@ -32,3 +32,40 @@ check the headline against `ORACLE.md`, and write `choice: a|b|tie` to
 Copy an existing directory. Keep the request narrow enough for 40 minutes and
 record the oracle with its two methods and a citation; a bench without an
 oracle is just a prompt comparison.
+
+## Measuring an arm against the oracle (2026-10-05)
+
+The A/B runner above compares Luxas with Luxas and is settled by a human vote.
+It cannot say whether Luxas is better than not having Luxas. This can:
+
+```bash
+npx tsx scripts/bench_run.mts --arm claude-code --bench all --max-usd 3   # bare `claude -p`, the baseline
+npx tsx scripts/bench_run.mts --arm luxas       --bench all --max-usd 10  # this checkout, --profile dual
+npx tsx scripts/bench_compare.mts                                         # the table
+```
+
+Both arms get the same `RESEARCH.md` in an empty directory outside the repo and
+never see `ORACLE.md`. Each run is scored by `scripts/bench_score.mts` against
+the `oracle` block and appended to `benchmarks/LEDGER.jsonl` (commit, model,
+cost, wall time, how it ended, every check). A run made elsewhere — on the
+droplet, say — is added with `bench_run.mts --record <run-dir> --arm … --bench …`.
+
+**The rule this makes possible: a harness change that claims to improve
+results comes with a row in the ledger, before and after.** Not for bug fixes
+or anything `npm test` already decides — for changes whose only justification
+is "the reports get better". Until the two arms have been run a few times
+each, nobody knows which side of the baseline Luxas is on, so nobody knows
+whether such a change is worth making.
+
+What the number does and does not mean:
+
+- It is the fraction of oracle checks a report passes: values within
+  tolerance, required caveats and citations present, named traps avoided. It
+  is lenient — a correct number anywhere in the report counts — so it rewards
+  getting the science right and says nothing about whether the report reads
+  well. The blind vote still owns that.
+- One run per cell is an anecdote. `bench_compare` prints the spread and says
+  so when a cell has n=1. Three runs per cell is the least that supports a
+  claim; a one-check difference at n=1 is noise.
+- Four tasks, all short and all from this project's own history. A win here
+  is necessary, not sufficient.

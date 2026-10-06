@@ -1,9 +1,44 @@
 {
   "_note": "Bench-only candidates without a MODEL_MAP entry. Registered process-locally by scripts/model_bench.mts (registerBenchModel). Anything in pi-ai's catalog can be named as provider/id instead, e.g. anthropic/claude-opus-5.",
   "kimi-k3": {
-    "id": "kimi-k3", "name": "Kimi K3", "api": "openai-completions", "provider": "kimi-coding",
-    "baseUrl": "https://api.moonshot.cn/v1", "reasoning": true, "input": ["text"],
-    "cost": { "input": 3, "output": 15, "cacheRead": 0.3, "cacheWrite": 0 },
-    "contextWindow": 1048576, "maxTokens": 131072, "compat": { "supportsDeveloperRole": false }
-  }
+    "id": "kimi-k3",
+    "name": "Kimi K3",
+    "api": "openai-completions",
+    "provider": "kimi-coding",
+    "baseUrl": "https://api.moonshot.cn/v1",
+    "reasoning": true,
+    "input": [
+      "text"
+    ],
+    "cost": {
+      "input": 3,
+      "output": 15,
+      "cacheRead": 0.3,
+      "cacheWrite": 0
+    },
+    "contextWindow": 1048576,
+    "maxTokens": 131072,
+    "compat": {
+      "supportsDeveloperRole": false
+    }
+  },
+  "gpt-6.1-sol": {
+    "id": "gpt-6.1-sol",
+    "name": "GPT-6.1-Sol",
+    "api": "openai-responses",
+    "provider": "openai",
+    "baseUrl": "https://api.openai.com/v1",
+    "input": [
+      "text"
+    ],
+    "cost": {
+      "input": 5,
+      "output": 30,
+      "cacheRead": 0.5,
+      "cacheWrite": 0
+    },
+    "contextWindow": 400000,
+    "maxTokens": 128000
+  },
+  "_note_gpt-6.1-sol": "Price is an estimate pinned to the gpt-6-astra entry in spawn.ts (OpenAI exposes no rate); openai-responses for the same reason as astra."
 }

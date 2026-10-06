@@ -26,3 +26,24 @@ feed-forward" sub-claims were audited as 0/0 and 0/1 respectively).
 
 This bench has no computation. It measures whether the literature pipeline
 can hold two sources in tension without collapsing to the louder one.
+
+## Machine-readable checks
+
+Consumed by `scripts/bench_score.mts`; the prose rubric above is the human half of the same claim — keep them in sync.
+
+```oracle
+{
+  "checks": [
+    { "kind": "value", "label": "Gidney 2024 d=3 logical error per accepted state",
+      "target": 6e-7, "rtol": 0.2 },
+    { "kind": "value", "label": "Claes 2025 d=3 logical error per accepted state",
+      "target": 1e-6, "rtol": 0.2 },
+    { "kind": "value", "label": "ratio of the two, ~1.67",
+      "target": 1.67, "rtol": 0.1, "minSig": 2 },
+    { "kind": "mention", "label": "states that the two figures are normalised differently / not directly comparable",
+      "patterns": ["ill-posed", "not\\s+(?:be\\s+)?directly\\s+comparable", "different\\s+(?:physical\\s+)?(?:error\\s+rates?|noise\\s+(?:models?|strengths?)|normali[sz]ation)", "normali[sz]\\w+\\s+(?:to|by)\\s+different"] },
+    { "kind": "trap", "label": "presents the abstract figures as directly comparable",
+      "patterns": ["are\\s+directly\\s+comparable", "can\\s+be\\s+directly\\s+compared"] }
+  ]
+}
+```

@@ -42,6 +42,24 @@ npx tsx scripts/model_bench.mts report
 
 A model is either a `MODEL_MAP` key (`src/agents/spawn.ts`), a `provider/id` from pi-ai's catalog, or an entry in `models.json`.
 
+## Does the definition add anything? (`--arms luxas,bare`)
+
+Same items, a second question. `--arms luxas,bare` runs each model once with the role's real definition and once with a two-sentence prompt (`BARE_PROMPT` in the script), keeping the tools, sandbox, task text and scorer identical. `report` then pairs the arms item by item — each mutant, labelled defect or trap question — and prints a sign test.
+
+```bash
+npx tsx scripts/model_bench.mts run --role auditor --models claude-opus-5-5 --arms luxas,bare --reps 3 --cap 4 --judge anthropic/claude-sonnet-5
+npx tsx scripts/model_bench.mts report
+```
+
+This is the only harness-versus-no-harness number the project has. Public leaderboards (CritPt, SciCode, SPOT) rank models and are the better source for that; none of them ran a Luxas definition.
+
+Reading it:
+
+- Both arms use one model, so a same-family judge biases both equally. The no-contestant-vendor rule below matters for comparing models, less for comparing arms.
+- The auditor labels are defects that got past the production review chain. That set is selected on production's misses, so it cannot score the production chain itself — only whether a method prompt beats a bare one at finding them.
+- A fixture where both arms score 1.0 is saturated and says nothing either way. `tool_review/kurucz_parse` is saturated on the top Anthropic models.
+- Three runs per arm is the least that separates the arm from run-to-run variation; `report` says so when a cell has fewer.
+
 ## Judges
 
 Judges are needed only for `auditor` (matching findings to labels) and `brain` (trap questions). **The judge panel must include a vendor with no contestant**, because same-family bias is measured and large (`notes/model-routing-2026-09-06.md` §2). Use `--judge` accordingly. A result judged by a contestant's own family must be read as provisional.

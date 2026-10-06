@@ -58,6 +58,7 @@ const MANIFEST: Record<string, GateSpec> = {
 	smoke_atomic_counter: { kind: "assert" },
 	smoke_bash_status_truth: { kind: "assert" },
 	smoke_bash_write_guard: { kind: "assert" },
+	smoke_bench_pipeline: { kind: "assert" },
 	smoke_benchmarks_discovery: { kind: "assert" },
 	smoke_brain_context: { kind: "assert" },
 	smoke_budget_softcap: { kind: "assert" },
