@@ -19,7 +19,10 @@
  * as a third, free sample: two notes from the SAME model show how much of any
  * difference is run-to-run noise.
  *
- *   npx tsx scripts/reader_compare.mts run --project <dir> --papers id1,id2 --models deepseek-v4-pro,deepseek-flash [--judge anthropic/claude-sonnet-5] [--out <dir>]
+ * --append <file> adds that text to the reader's prompt for this run only (try an
+ * instruction before writing it into reader.md); --reps N repeats each model.
+ *
+ *   npx tsx scripts/reader_compare.mts run --project <dir> --papers id1,id2 --models deepseek-v4-pro,deepseek-flash [--reps N] [--append FILE] [--judge anthropic/claude-sonnet-5|none] [--out <dir>]
  *   npx tsx scripts/reader_compare.mts score --out <dir> [--judge M]
  */
 import { spawn, spawnSync } from "node:child_process";
@@ -96,10 +99,16 @@ async function trial() {
   const rec: any = { paper, model, started: new Date().toISOString() };
   try {
     resolveModelExact(model);
+    // --append: a bench-only prompt variant (text added to the real definition),
+    // for trying an instruction before it is written into reader.md.
+    const append = arg("--append");
+    const { getDefinition } = await import("../src/agents/registry.ts");
+    const variant = (name: string) => { const d: any = getDefinition(name); return append && name === "reader" ? { ...d, systemPromptTemplate: `${d.systemPromptTemplate}\n\n${readFileSync(append, "utf-8")}` } : d; };
     const r = await spawnAgent({
       name: "reader", prompt: `Read paper ${paper} and extract methodology + literature entry.`,
       projectDir: dir, getApiKey, exactModel: model, parentAgentId: "bench",
       templateVars: { PROJECT_DIR: dir, PAPER_ID: paper, SEARCH_SCRIPT: SEARCH },
+      resolveDefinition: variant as any,
     } as any);
     rec.stopReason = r.exit?.stopReason; rec.errorMessage = r.exit?.errorMessage; rec.toolCalls = r.exit?.toolCallCount;
   } catch (e: any) { rec.stopReason = "harness_error"; rec.errorMessage = String(e?.message ?? e).slice(0, 500); }
@@ -115,18 +124,22 @@ async function run() {
   const project = resolve(arg("--project")!), papers = arg("--papers")!.split(","), models = arg("--models")!.split(",");
   const out = resolve(arg("--out", join(homedir(), ".sisyphus", "model-bench", "reader-compare", new Date().toISOString().replace(/[:.]/g, "-")))!);
   mkdirSync(out, { recursive: true });
-  writeFileSync(join(out, "plan.json"), JSON.stringify({ project, papers, models }, null, 2));
+  // --reps N runs each model N times; a sample key is "model" or "model@rep".
+  const reps = Number(arg("--reps", "1")), append = arg("--append");
+  const samples = models.flatMap((m) => (reps > 1 ? Array.from({ length: reps }, (_, i) => `${m}@${i + 1}`) : [m]));
+  writeFileSync(join(out, "plan.json"), JSON.stringify({ project, papers, models: samples, append: append ?? null }, null, 2));
   const jobs: Promise<void>[] = [];
-  for (const paper of papers) for (const model of models) {
-    const dir = join(out, `${safe(paper)}__${safe(model)}`);
+  for (const paper of papers) for (const key of samples) {
+    const model = key.split("@")[0];
+    const dir = join(out, `${safe(paper)}__${safe(key)}`);
     for (const d of [".agent", "notes/methodology.d", "notes/literature.d", "report/references.d", "data/papers"]) mkdirSync(join(dir, d), { recursive: true });
     cpSync(join(project, "RESEARCH.md"), join(dir, "RESEARCH.md"));
     const src = join(project, "data", "papers", paper);
     if (existsSync(src)) cpSync(src, join(dir, "data", "papers", paper), { recursive: true });
     else cpSync(`${src}.pdf`, join(dir, "data", "papers", `${paper}.pdf`));
-    console.log(`▶ ${paper} × ${model}`);
+    console.log(`▶ ${paper} × ${key}${append ? " (+appended instruction)" : ""}`);
     jobs.push(new Promise((done) => {
-      const c = spawn(join(ROOT, "node_modules", ".bin", "tsx"), [fileURLToPath(import.meta.url), "trial", "--sandbox", dir, "--paper", paper, "--model", model], { stdio: "ignore" });
+      const c = spawn(join(ROOT, "node_modules", ".bin", "tsx"), [fileURLToPath(import.meta.url), "trial", "--sandbox", dir, "--paper", paper, "--model", model, ...(append ? ["--append", resolve(append)] : [])], { stdio: "ignore" });
       const kill = setTimeout(() => c.kill("SIGKILL"), 25 * 60_000);
       c.on("exit", () => { clearTimeout(kill); done(); });
     }));
@@ -142,6 +155,30 @@ function usageOf(dir: string) {
   let calls = 0, input = 0, output = 0, cost = 0;
   try { for (const l of readFileSync(join(dir, ".agent", "usage.log"), "utf-8").trim().split("\n")) { const p = l.split("\t"); if (p.length < 8) continue; calls++; input += +p[3] + +p[5] + +p[6]; output += +p[4]; cost += +p[7]; } } catch { /* never reached a model */ }
   return { calls, input, output, cost };
+}
+/**
+ * Tool calls that name a path outside this trial's own sandbox (other trials,
+ * the source project). The reader's bash is not confined, and a reader that
+ * goes looking can find another sample's note for the same paper — a trial
+ * with any of these is contaminated and its score means nothing. Seen
+ * 2026-10-06: three trials given a page-image instruction each made 19-24.
+ */
+export function outsideReads(dir: string): number {
+  const convDir = join(dir, ".agent", "conversations");
+  if (!existsSync(convDir)) return 0;
+  const own = resolve(dir), home = homedir();
+  let n = 0;
+  for (const f of readdirSync(convDir)) for (const line of readFileSync(join(convDir, f), "utf-8").split("\n")) {
+    if (!line.includes('"toolCall"')) continue;
+    let m: any; try { const r = JSON.parse(line); m = r.message ?? r; } catch { continue; }
+    if (m?.role !== "assistant") continue;
+    for (const b of m.content ?? []) {
+      if (b?.type !== "toolCall") continue;
+      const paths = JSON.stringify(b.arguments ?? {}).match(new RegExp(`${home.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[^"'\\s;|&)]*`, "g")) ?? [];
+      if (paths.some((p) => !p.startsWith(own) && !p.startsWith(ROOT))) n++;
+    }
+  }
+  return n;
 }
 function noteOf(dir: string): string | null {
   const d = join(dir, "notes", "literature.d");
@@ -204,15 +241,17 @@ async function score(out: string) {
       const u = s.dir ? usageOf(s.dir) : null;
       const t = s.dir && existsSync(join(s.dir, "trial.json")) ? JSON.parse(readFileSync(join(s.dir, "trial.json"), "utf-8")) : null;
       const filesDone = s.dir ? ["notes/methodology.d", "notes/literature.d", "report/references.d"].filter((d) => readdirSync(join(s.dir!, d)).length > 0).length : null;
-      rows.push({ paper, sample: s.model, wrote: !!s.note, filesDone, noteChars: s.note?.length ?? 0, numbers: nums.length, ungrounded: missing, cost: u?.cost ?? null, calls: u?.calls ?? null, input: u?.input ?? null, output: u?.output ?? null,
+      rows.push({ paper, sample: s.model, wrote: !!s.note, filesDone, outside: s.dir ? outsideReads(s.dir) : null, noteChars: s.note?.length ?? 0, numbers: nums.length, ungrounded: missing, cost: u?.cost ?? null, calls: u?.calls ?? null, input: u?.input ?? null, output: u?.output ?? null,
         minutes: t ? t.elapsedMs / 60000 : null, stop: t?.stopReason ?? null, error: t?.errorMessage ?? null,
         judgeErrors: judged?.byKey?.[s.key]?.errors ?? null, judgeMissed: judged?.byKey?.[s.key]?.missed ?? null, judgeRank: judged?.byKey?.[s.key]?.rank ?? null });
     }
     if (judged?.comment) console.log(`  judge on ${paper}: ${judged.comment}`);
   }
   writeFileSync(join(out, "scores.json"), JSON.stringify({ judgeModel, judgeCost, rows }, null, 2));
-  console.log("\npaper\tsample\tfiles\tnumbers\tnot_in_paper\tjudge_errors\tjudge_rank\t$\tmin\tcalls");
-  for (const r of rows) console.log([r.paper, r.sample, r.filesDone ?? "-", r.numbers, r.ungrounded.length, r.judgeErrors ? r.judgeErrors.length : "-", r.judgeRank ?? "-", r.cost === null ? "-" : r.cost.toFixed(3), r.minutes === null ? "-" : r.minutes.toFixed(1), r.calls ?? "-"].join("\t"));
+  console.log("\npaper\tsample\tfiles\tnumbers\tnot_in_paper\tjudge_errors\tjudge_rank\t$\tmin\tcalls\toutside_reads");
+  for (const r of rows) console.log([r.paper, r.sample, r.filesDone ?? "-", r.numbers, r.ungrounded.length, r.judgeErrors ? r.judgeErrors.length : "-", r.judgeRank ?? "-", r.cost === null ? "-" : r.cost.toFixed(3), r.minutes === null ? "-" : r.minutes.toFixed(1), r.calls ?? "-", r.outside ?? "-"].join("\t"));
+  const dirty = rows.filter((r) => r.outside);
+  if (dirty.length) console.log(`\nCONTAMINATED: ${dirty.map((r) => `${r.paper}/${r.sample} (${r.outside})`).join(", ")} read outside their sandbox — do not use their scores.`);
   console.log(`\njudge ${judgeModel}: $${judgeCost.toFixed(3)}.  details: ${join(out, "scores.json")}`);
 }
 
