@@ -21,7 +21,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runExperimentReviewLoop } from "../src/tools/spawn-agent.ts";
-import { importProblems, latestResults, nextReviewRound } from "./review_experiment.mts";
+import { importProblems, latestResults, nextReviewRound, priorBlindLines } from "./review_experiment.mts";
 
 let fails = 0;
 function check(name: string, ok: boolean, detail = "") {
@@ -51,18 +51,26 @@ writeFileSync(join(runDir(EID, "run_1"), "results.json"), JSON.stringify({ compu
   process.env.LUXAS_BLIND_ESTIMATE = "0";
   process.env.LUXAS_MAX_REVIEW_ITERATIONS = "1";
   const calls: string[] = [];
+  let reviewerPrompt = "";
+  const BLIND = "ESTIMATE(blind): light_shift_kappa — 3.2e-7 ± 1.2e-7 via tensor shift — inputs: [alpha_s_au=184.4]";
+  writeFileSync(review(EID, 3), `# round three\n\nBlind estimates:\n${BLIND}\n${BLIND}\n\nReviewer obligation lines:\nESTIMATE: light_shift_kappa — 4e-7 ± 3e-7 via the agent's MC\n`);
+  const round3 = readFileSync(review(EID, 3), "utf-8");
+  check("earlier rounds' blind lines are read back once each; the reviewer's own ESTIMATE line is not one", JSON.stringify(priorBlindLines(projectDir, EID)) === JSON.stringify([BLIND]), JSON.stringify(priorBlindLines(projectDir, EID)));
   const stub = async (opts: any) => {
     calls.push(opts.name);
+    if (opts.name === "experiment_reviewer") reviewerPrompt = String(opts.prompt);
     return { elapsed: 1, success: true, agentId: `${opts.name}-x`, exit: { stopReason: "stop", filesTouched: [], elapsedMs: 1, toolCallCount: 0, endedAt: "" } as any,
       output: "VERDICT: revise\nFEEDBACK: the 532 nm sign is undetermined" };
   };
   const out = await runExperimentReviewLoop({ output: "executed outside", success: true }, {
     projectDir, mergedTemplateVars: { EXPERIMENT_ID: EID, PROJECT_DIR: projectDir },
     baseOpts: { name: "experiment", templateVars: { EXPERIMENT_ID: EID }, projectDir, getApiKey: () => undefined },
-    initialTask: "", getApiKey: () => undefined, makeSpawnTool: () => null, spawn: stub as any, startRound: 4,
+    initialTask: "", getApiKey: () => undefined, makeSpawnTool: () => null, spawn: stub as any, startRound: 4, priorBlindLines: priorBlindLines(projectDir, EID),
   });
+  check("the later-round reviewer is handed the earlier blind estimate, and no estimator ran", reviewerPrompt.includes(BLIND) && !calls.includes("replicator"), calls.join(","));
+  check("…and it is persisted with this round too", readFileSync(review(EID, 4), "utf-8").includes(BLIND));
   check("the review lands in _r4.md", existsSync(review(EID, 4)) && /round 4/.test(readFileSync(review(EID, 4), "utf-8")), existsSync(review(EID, 4)) ? readFileSync(review(EID, 4), "utf-8").slice(0, 80) : "missing");
-  check("earlier rounds are byte-identical", readFileSync(review(EID, 1), "utf-8") === "round one\n" && readFileSync(review(EID, 3), "utf-8") === "round three\n");
+  check("earlier rounds are byte-identical", readFileSync(review(EID, 1), "utf-8") === "round one\n" && readFileSync(review(EID, 3), "utf-8") === round3);
   check("no _r1 was rewritten into existence elsewhere (_r2 still absent)", !existsSync(review(EID, 2)));
   check("the reviewer ran once and `experiment` was NOT re-spawned", calls.join(",") === "experiment_reviewer", calls.join(","));
   check("the output names the round and carries the feedback", /experiment_reviewer round 4: REVISE/.test(out.output) && out.output.includes("532 nm sign is undetermined"), out.output.slice(-200));

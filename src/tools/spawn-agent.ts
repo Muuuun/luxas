@@ -277,6 +277,13 @@ export interface ExperimentReviewContext {
    * brain's spawn, so round 2 must not overwrite round 1's review file.
    */
   startRound?: number;
+  /**
+   * ESTIMATE(blind) lines recorded in earlier rounds. Inside one call the
+   * loop reuses round 1's estimates for every later round; a caller that
+   * enters once per round hands them back here so the round-2 reviewer still
+   * sees them (and they are persisted with that round, as they would be).
+   */
+  priorBlindLines?: string[];
 }
 
 /**
@@ -361,7 +368,7 @@ export async function runExperimentReviewLoop<R extends { output: string; succes
       };
       let headlineDecls = scopeFor();
       let headlineIds = [...new Set(headlineDecls.map((d) => d.id))];
-      const blindLines: string[] = [];
+      const blindLines: string[] = [...(ctx.priorBlindLines ?? [])];
       if (MAX_REVIEW_ITERATIONS > 0 && process.env.LUXAS_BLIND_ESTIMATE !== "0") {
         let settled = new Set<string>();
         // `corroborated` dropped from this union 2026-09-04 with the status

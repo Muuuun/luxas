@@ -26,7 +26,9 @@
  * Usage:
  *   npx tsx scripts/review_experiment.mts <projectDir> <EXPERIMENT_ID>
  *        [--profile dual|claude]   default dual, as `luxas run`
- *        [--no-blind]              skip blind estimates (a later round reuses round 1's)
+ *        [--no-blind]              skip blind estimates in round 1
+ *        [--blind]                 estimate again in a later round (default: round 1 estimates,
+ *                                  later rounds are handed the earlier rounds' lines, as inside one loop)
  *        [--summary <file>]        the executor's closing message, shown to nobody but kept in the output
  *        [--max-usd N]             stop when THIS invocation has spent N (default 5)
  *
@@ -54,6 +56,18 @@ export function nextReviewRound(projectDir: string, experimentId: string): numbe
     }
   } catch { /* no reviews/ yet → round 1 */ }
   return max + 1;
+}
+
+/** ESTIMATE(blind) lines persisted by this experiment's earlier review rounds, in order, without repeats. */
+export function priorBlindLines(projectDir: string, experimentId: string): string[] {
+  const out: string[] = [];
+  for (let n = 1; n < nextReviewRound(projectDir, experimentId); n++) {
+    try {
+      for (const line of readFileSync(join(projectDir, "reviews", `experiment_review_${experimentId}_r${n}.md`), "utf-8").split("\n"))
+        if (/^ESTIMATE\(blind\):/.test(line) && !out.includes(line.trim())) out.push(line.trim());
+    } catch { /* a missing round file contributes nothing */ }
+  }
+  return out;
 }
 
 /** The newest run's results.json, parsed; null when there is none. */
@@ -107,7 +121,6 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   else if (profile !== "claude") { console.error(`unknown --profile "${profile}" (dual | claude)`); process.exit(2); }
   // One round per invocation: a REVISE must not re-spawn Luxas's own `experiment` on work it did not write.
   process.env.LUXAS_MAX_REVIEW_ITERATIONS = "1";
-  if (argv.includes("--no-blind")) process.env.LUXAS_BLIND_ESTIMATE = "0";
 
   // Same ledger as the run's own sub-agents; the cap is this invocation's, on top of what the project has spent.
   const usageLog = join(projectDir, ".agent", "usage.log");
@@ -117,10 +130,13 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   installUsageTracking(usageLog, { maxCostUsd: spentBefore + maxUsd });
 
   const round = nextReviewRound(projectDir, experimentId);
+  // As inside one loop: estimate before round 1, reuse those lines afterwards.
+  const prior = round > 1 && !argv.includes("--blind") ? priorBlindLines(projectDir, experimentId) : [];
+  if (argv.includes("--no-blind") || (round > 1 && !argv.includes("--blind"))) process.env.LUXAS_BLIND_ESTIMATE = "0";
   const problems = importProblems(projectDir, experimentId);
   const summaryFile = flag("--summary");
   const summary = summaryFile && existsSync(summaryFile) ? readFileSync(summaryFile, "utf-8").trim() : `(experiment ${experimentId} was executed outside the brain's spawn)`;
-  console.error(`◈ review_experiment ${experimentId} — round ${round}, profile ${profile}, blind estimates ${process.env.LUXAS_BLIND_ESTIMATE === "0" ? "off" : "on"}`);
+  console.error(`◈ review_experiment ${experimentId} — round ${round}, profile ${profile}, blind estimates ${process.env.LUXAS_BLIND_ESTIMATE === "0" ? `off (${prior.length} line(s) carried from earlier rounds)` : "on"}`);
   if (problems.length) console.error(`◈ write-time checks the executor never saw (${problems.length}):\n${problems.map((p) => `  - ${p.split("\n")[0].slice(0, 300)}`).join("\n")}`);
   else console.error("◈ write-time checks: clean");
 
@@ -139,6 +155,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       depth: 0,
       makeSpawnTool: createSpawnToolFactory(projectDir, getApiKey),
       startRound: round,
+      priorBlindLines: prior,
     },
   );
   const tail = result.output.slice(result.output.lastIndexOf("\n---\n[experiment_reviewer") + 1);
