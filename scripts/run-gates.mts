@@ -69,6 +69,7 @@ const MANIFEST: Record<string, GateSpec> = {
 	smoke_claim_registry: { kind: "assert" },
 	smoke_compaction_ratchet: { kind: "assert" },
 	smoke_solo_executor: { kind: "assert" },
+	smoke_review_experiment: { kind: "assert" },
 	smoke_resume_request: { kind: "assert", timeoutMs: 360_000 },   // two offline brain replays in child processes
 	smoke_dual_profile: { kind: "assert" },
 	smoke_finalization_freeze: { kind: "assert" },

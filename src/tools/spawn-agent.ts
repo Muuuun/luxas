@@ -271,6 +271,12 @@ export interface ExperimentReviewContext {
   makeSpawnTool: (parentId: string, childDepth: number, childAllowedTypes?: string[]) => any;
   /** Injectable for the gate (scripts/smoke_background_review.mts); defaults to spawnAgent. */
   spawn?: (opts: SpawnAgentOptions) => Promise<SpawnAgentResult>;
+  /**
+   * Number of the first review round (default 1). scripts/review_experiment.mts
+   * enters this loop once per round for an experiment executed outside the
+   * brain's spawn, so round 2 must not overwrite round 1's review file.
+   */
+  startRound?: number;
 }
 
 /**
@@ -386,7 +392,9 @@ export async function runExperimentReviewLoop<R extends { output: string; succes
       }
       let obligation = reviewerObligationBlock(headlineIds, blindLines);
       // MAX=0 short-circuits the loop body and falls through to return.
-      for (let round = 1; round <= MAX_REVIEW_ITERATIONS; round++) {
+      const firstRound = Math.max(1, Math.floor(ctx.startRound ?? 1));
+      const lastRound = firstRound + MAX_REVIEW_ITERATIONS - 1;
+      for (let round = firstRound; round <= lastRound; round++) {
         const reviewResult = await spawn({
           name: "experiment_reviewer",
           projectDir,
@@ -435,7 +443,7 @@ export async function runExperimentReviewLoop<R extends { output: string; succes
         const feedbackMatch = verdictText.match(/FEEDBACK:\s*([\s\S]*?)$/i);
         const feedback = feedbackMatch ? feedbackMatch[1].trim() : verdictText.trim();
 
-        if (round === MAX_REVIEW_ITERATIONS) {
+        if (round === lastRound) {
           result = {
             ...result,
             output:
