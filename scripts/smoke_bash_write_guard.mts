@@ -59,7 +59,8 @@ async function test(label: string, wrapper: any, tvars: Record<string, string>, 
   console.log(`\n[${label}]`);
   for (const [cmd, want] of cases) {
     const got = await runCmd(wrapper, tvars, cmd);
-    assert(got === want, `${cmd.slice(0, 70)}${cmd.length > 70 ? "…" : ""} → ${got} (expected ${want})`);
+    const shown = cmd.replace(/\n/g, "\\n");
+    assert(got === want, `${shown.slice(0, 70)}${shown.length > 70 ? "…" : ""} → ${got} (expected ${want})`);
   }
 }
 
@@ -173,6 +174,45 @@ await test("tool_review", wrapperFor("tool_review"), { EXPERIMENT_ID: "E_test" }
   ["cat > notes/memory.md", "blocked"],
   // tests/ is the legitimate write target
   ["cat > data/experiments/E_test/tests/test_foo.py", "ok"],
+]);
+
+// ── §C22: a `>` inside awk / python / a heredoc body is usually a comparison,
+//    and the redirect pattern read its right operand as a write target (31 of
+//    the Dy run's 36 bash blocks). Operand shapes that cannot name an existing
+//    file pass; anything with `/`, `$` or `\` is still a path. `>|` (the
+//    noclobber override) is a write the pattern used to miss.
+const comparisons = [
+  "awk -F, '$1+0 >= 400 && $1+0 <= 600' f",
+  "python3 - <<'EOF'\nwhile hi - lo > tol:\n    mid = 0.5*(hi+lo)\nEOF",
+  "python3 -c 'N=3; print(N > 100)'",
+  "python3 - <<'EOF'\nassert np.all(base > 0), \"x\"\nEOF",
+  "python3 - <<'EOF'\nif off > 1e-9:\n    pass\nEOF",
+  "python3 - <<'EOF'\nif m > -J:\n    pass\nEOF",
+  "python3 - <<'EOF'\nassert gs.min() > 1e8, f\"min {gs.min()}\"\nEOF",
+];
+for (const agent of ["tool_impl", "experiment", "tool_review", "brain"]) {
+  await test(`§C22 comparisons are not writes (${agent})`, wrapperFor(agent), { EXPERIMENT_ID: "E_test" },
+    comparisons.map((c) => [c, "ok"] as [string, "ok"]));
+}
+await test("§C22 real writes stay blocked (tool_impl)", wrapperFor("tool_impl"), { EXPERIMENT_ID: "E_test" }, [
+  ["echo x > notes/memory.md", "blocked"],
+  ["bash -c 'echo x > blocked/p'", "blocked"],
+  ["sh <<'EOF'\necho x > blocked/p\nEOF", "blocked"],
+  ["cat <<EOF > RESEARCH.md\nx\nEOF", "blocked"],
+  ["echo x > \"notes/x.md\"", "blocked"],
+  ["echo x > RESEARCH\\.md", "blocked"],               // bash writes RESEARCH.md
+  ["F=notes/memory.md; echo x > ${F}", "blocked"],
+  ["echo x > \"${OUT}/x\"", "blocked"],
+  ["echo x >| blocked/p", "blocked"],                   // noclobber override
+]);
+await test("§C22 real writes stay blocked (experiment)", wrapperFor("experiment"), { EXPERIMENT_ID: "E_test" }, [
+  ["python x.py > report/report.tex", "blocked"],
+]);
+await test("§C22 real writes stay blocked (tool_review)", wrapperFor("tool_review"), { EXPERIMENT_ID: "E_test" }, [
+  ["cat >> data/experiments/E_test/scripts/a.py", "blocked"],
+]);
+await test("§C22 real writes stay blocked (brain)", wrapperFor("brain"), {}, [
+  ["cat > data/experiments/E1/scripts\\/foo.py", "blocked"],   // bash writes …/scripts/foo.py
 ]);
 
 rmSync(dir, { recursive: true, force: true });

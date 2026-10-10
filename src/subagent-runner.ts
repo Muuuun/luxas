@@ -13,7 +13,7 @@
  *     --session .agent/conversations/brain.worker-bg-1.jsonl
  */
 
-import { mkdirSync, appendFileSync, readFileSync } from "node:fs";
+import { mkdirSync, appendFileSync, existsSync, readFileSync } from "node:fs";
 import { join, isAbsolute, resolve, dirname } from "node:path";
 import { buildAgentFromDefinition, createSubAgentExitCollector, createLengthRecoveryController, runWithLengthRecovery, type SpawnAgentOptions } from "./agents/spawn.js";
 import { Session, deriveState, buildSessionContext } from "./session.js";
@@ -81,6 +81,16 @@ async function main() {
   process.env.LUXAS_PROJECT_DIR = projectDir;  // see src/index.ts — same contract for detached subagent processes
   const agentDir = join(projectDir, ".agent");
   const sessionFile = isAbsolute(args.session) ? args.session : join(projectDir, args.session);
+
+  // A fresh launch owns a fresh transcript. An existing file belongs to an
+  // earlier agent under the same id: appending would splice two agents into
+  // one transcript, and recovery reads the last result in it as this one's.
+  if (!args.resume && existsSync(sessionFile)) {
+    const msg = `refusing to append to existing session file ${sessionFile}`;
+    try { markFailed(agentDir, args.id, msg); } catch { /* registry locked/corrupt — stderr still records it */ }
+    console.error(`subagent-runner ${msg}`);
+    process.exit(1);
+  }
 
   mkdirSync(dirname(sessionFile), { recursive: true });
   const processStartTime = Date.now();
@@ -160,6 +170,9 @@ async function main() {
       },
       getApiKey,
       parentAgentId: args.id.split(".").slice(0, -1).join(".") || "brain",
+      // Built under the bg id, so SPAWN_ID and its children's parent prefix
+      // match the registry entry and the transcript this runner writes.
+      agentId: args.id,
       createSpawnTool: makeSpawnTool,
       runtimeHooks: exitCollector.runtimeHooks,
       lengthRecovery,
@@ -240,28 +253,40 @@ async function main() {
     // (yttrium-tweezer E1–E4; notes/backtest-2026-09-24/SUMMARY.md §2).
     // A stopReason=error run is not a completed experiment: nothing to review.
     const firstExit = exitCollector.finalize();
+    let exit = firstExit;
     if (args.agent === "experiment" && firstExit.stopReason !== "error") {
-      const reviewed = await runExperimentReviewLoop({ output, success: true }, {
-        projectDir,
-        mergedTemplateVars: spawnOpts.templateVars ?? {},
-        baseOpts: {
-          name: args.agent,
-          templateVars: spawnOpts.templateVars,
+      try {
+        const reviewed = await runExperimentReviewLoop({ output, success: true, exit: firstExit }, {
           projectDir,
+          mergedTemplateVars: spawnOpts.templateVars ?? {},
+          baseOpts: {
+            name: args.agent,
+            templateVars: spawnOpts.templateVars,
+            projectDir,
+            getApiKey,
+            parentAgentId: spawnOpts.parentAgentId,
+            createSpawnTool: makeSpawnTool,
+          },
+          initialTask: args.task,
           getApiKey,
           parentAgentId: spawnOpts.parentAgentId,
-          createSpawnTool: makeSpawnTool,
-        },
-        initialTask: args.task,
-        getApiKey,
-        parentAgentId: spawnOpts.parentAgentId,
-        makeSpawnTool,
-      });
-      output = reviewed.output;
+          makeSpawnTool,
+        });
+        output = reviewed.output;
+        // The last run's exit, as the foreground reports it: a failed
+        // revision must not be recorded under the first run's clean exit.
+        exit = reviewed.exit ?? firstExit;
+      } catch (err: any) {
+        // The experiment has delivered: a throw from its review must not reach
+        // the outer catch, whose markFailed would drop the output.
+        const msg = String(err?.message ?? err).replace(/\s+/g, " ").slice(0, 200);
+        const eid = spawnOpts.templateVars?.EXPERIMENT_ID ?? "<EID>";
+        output += `\n\n---\n[harness: review loop threw (${msg}) — the experiment's output is above; its review did not complete (any finished round is in reviews/experiment_review_${eid}_r*.md)]`;
+      }
     }
 
     // Mark done in registry (with structured exit)
-    markDone(agentDir, args.id, output.slice(0, 50_000), firstExit);
+    markDone(agentDir, args.id, output.slice(0, 50_000), exit);
 
   } catch (err: any) {
     // If buildAgentFromDefinition itself threw, the collector never got an

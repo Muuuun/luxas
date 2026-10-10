@@ -2,12 +2,12 @@
  * Cross-project memory system.
  *
  * Global state lives in ~/.sisyphus/:
- *   memory.md      — Agent-maintained cross-project insights (freeform)
  *   projects.json  — Registry of all research projects with summaries
  *
  * Each project generates a summary on completion from its notes/ files.
  * New runs get a <past_research> digest (buildPastResearchDigest) injected
- * into the brain's semi-static system layer — see context.ts.
+ * into the brain's semi-static system layer — see context.ts. The digest is
+ * scoped to the current project's owner (ownerKey).
  */
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, realpathSync } from "node:fs";
@@ -18,7 +18,6 @@ import { readFileSafe, deriveProjectTitle, originalRequestBlock, atomicWriteJson
 
 const SISYPHUS_DIR = join(homedir(), ".sisyphus");
 const PROJECTS_FILE = join(SISYPHUS_DIR, "projects.json");
-const GLOBAL_MEMORY_FILE = join(SISYPHUS_DIR, "memory.md");
 const ARCHIVE_DIR = join(SISYPHUS_DIR, "archive");
 
 export interface ProjectEntry {
@@ -247,14 +246,30 @@ function archiveProjectNotes(projectDir: string, projectName: string): void {
 // ── Read path: past-research digest ───────────────────────
 
 /**
- * Past projects worth surfacing to a new run: everything registered except
- * the current project, throwaway dirs, and never-completed entries (a
- * summary is only written after a run finishes).
+ * Who a project belongs to, read from its path. Studio and inbox projects
+ * live at <root>/<userHash>/projects/<name> (luxas-studio lib/inbox-config.ts
+ * userHash = sha256(email)[:12]); anything else is the operator's CLI pool,
+ * "local". The path is the ownership record the studio itself trusts
+ * (budget-watcher ownerFromPath), since the agent cannot move a project
+ * across userHash dirs.
+ */
+export function ownerKey(projectPath: string): string {
+  return projectPath.match(/\/([0-9a-f]{12})\/projects\/[^/]+/)?.[1] ?? "local";
+}
+
+/**
+ * Past projects worth surfacing to a new run: everything registered under
+ * the same owner except the current project, throwaway dirs, and
+ * never-completed entries (a summary is only written after a run finishes).
+ * Every tenant shares one projects.json, so without the owner filter one
+ * studio user's research questions reached another user's brain.
  */
 export function selectPastProjects(currentDir: string): ProjectEntry[] {
+  const owner = ownerKey(currentDir);
   return loadProjects()
     .filter(p =>
       p.path !== currentDir &&
+      ownerKey(p.path) === owner &&
       !isThrowawayPath(p.path) &&
       p.name !== "Untitled" &&
       p.summary.length > 0)
@@ -384,6 +399,3 @@ export function archiveSlug(projectDir: string): string {
   const hash = createHash("sha256").update(projectDir).digest("hex").slice(0, 6);
   return base ? `${base}_${hash}` : hash;
 }
-
-// Global memory file path — exposed for skill SKILL.md reference
-export const GLOBAL_MEMORY_PATH = GLOBAL_MEMORY_FILE;

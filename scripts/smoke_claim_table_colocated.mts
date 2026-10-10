@@ -84,6 +84,18 @@ check("no unparseable scaling lines from the live reviewer text", !t2.malformed.
   check("sign-only: magnitudes agree, signs differ → flagged as convention", agreement(own as any, blind as any) === "disagree" && signOnlyDisagreement(own as any, blind as any));
   check("sign-only: not when magnitudes also disagree (−16.2 vs +40±3)", !signOnlyDisagreement({ ...own, value: -16.16, sigma: 0.05 } as any, { ...blind, value: 40, sigma: 3 } as any));
   check("sign-only: missing σ falls back to a 10% magnitude window", signOnlyDisagreement({ ...own, sigma: undefined } as any, { ...blind, value: 141, sigma: undefined } as any) && !signOnlyDisagreement({ ...own, sigma: undefined } as any, { ...blind, value: 170, sigma: undefined } as any));
+  // C11 — Dy E2 κ532 (2026-10-07): own +7.315e-6 ± 2.4e-5 vs blind −2.56e-6 ± 1.3e-6, opposite sign AND 2.86× apart.
+  // The 50% σ cap made the magnitudes "agree"; a 2.86× gap is a physics dispute, not a convention.
+  check("C11 sign-only: opposite sign with a 2.86× magnitude gap is NOT a convention (Dy κ532)", !signOnlyDisagreement({ ...own, value: 7.315e-6, sigma: 2.4e-5 } as any, { ...blind, value: -2.56e-6, sigma: 1.3e-6 } as any));
+  {
+    const k = mkdtempSync(join(tmpdir(), "claims-k532-"));
+    const kr = join(k, "data", "experiments", "E2_tweezer", "runs", "run_1");
+    mkdirSync(kr, { recursive: true }); mkdirSync(join(k, "reviews"));
+    writeFileSync(join(kr, "results.json"), JSON.stringify({ computed: { quantities: [{ id: "tweezer_kappa_532_theta90", key: "computed.k532", headline: true, observable: "differential light shift / trap depth, 532 nm (dimensionless, signed)", uncertainty: 2.4e-5, uncertainty_source: "MC", inputs: { alpha_s_532_au: 180 } }], k532: 7.32e-6 } }));
+    writeFileSync(join(k, "reviews", "experiment_review_E2_tweezer_r1.md"), "ESTIMATE(blind): tweezer_kappa_532_theta90 — -2.56e-6 ± 1.3e-6 via full diagonalization — inputs: [alpha_s_532_au=180]\nVERDICT: revise\n");
+    const kRow = buildClaimTable(k).rows.find((x) => x.id === "tweezer_kappa_532_theta90")!;
+    check("C11 κ532: a 'signed' observable does not answer a 2.86× opposite-sign blind flag → disputed", kRow.status === "disputed" && kRow.reasons.some((x) => /blind reviewer estimate -0\.00000256 disagrees .*\(unanswered\)/.test(x)) && !kRow.reasons.some((x) => /sign convention/.test(x)), `${kRow.status} :: ${kRow.reasons.join(" | ")}`);
+  }
   writeFileSync(join(dir, "reviews", "experiment_review_E1_c6_theta_60p_r2.md"), "ESTIMATE(blind): c6_anisotropy_ratio_60p — -28.1 ± 2 via other route — inputs: [own]\nESTIMATE(blind): c6_anisotropy_ratio_60p — -28.1 ± 2 via other route — inputs: [own]\nVERDICT: revise\n");
   const t3 = buildClaimTable(dir);
   const r = t3.rows.find((x) => x.id === "c6_anisotropy_ratio_60p")!;

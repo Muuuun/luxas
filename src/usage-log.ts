@@ -8,8 +8,9 @@
  * This is the SINGLE SOURCE OF TRUTH for cost tracking.
  */
 
-import { classifyProviderError, UNFUNDED_RE } from "./failure-taxonomy.js";
+import { UNFUNDED_RE } from "./failure-taxonomy.js";
 import { setExitReason } from "./exit-state.js";
+import { jobOwnerAls } from "./jobs/als.js";
 import { appendFileSync, readFileSync, mkdirSync, statSync, writeFileSync, existsSync, renameSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
@@ -53,7 +54,17 @@ function fileSize(path: string): number {
 
 // ── Append ──────────────────────────────────────────
 
+/** Fields 9–10 of a row: who paid. Outside every agent's scope (preflight, autofix probes) it is never guessed as "brain" — the brain runs in its own scope. */
+const UNATTRIBUTED = "unattributed";
+const attributionField = (s: string | undefined) => (s || UNATTRIBUTED).replace(/[\t\r\n]/g, "_").slice(0, 200);
+
 export function appendUsage(logPath: string, entry: UsageEntry): void {
+  // The brain, its sub-agents, detached runners and review_experiment all
+  // append to one ledger; without the payer on each row, one writer's spend
+  // cannot be told from another's (review_experiment could only print
+  // "project spend since start (includes any concurrent writer)").
+  // Readers stay positional on fields 0–7, so older rows and readers both work.
+  const owner = jobOwnerAls.getStore();
   const line = [
     entry.timestamp,
     entry.model,
@@ -63,6 +74,8 @@ export function appendUsage(logPath: string, entry: UsageEntry): void {
     entry.cacheRead,
     entry.cacheWrite,
     entry.cost.toFixed(8),
+    attributionField(owner?.agentId),
+    attributionField(owner?.agentType),
   ].join("\t") + "\n";
 
   try {
@@ -80,7 +93,8 @@ export function appendUsage(logPath: string, entry: UsageEntry): void {
   totals.cacheWriteTokens += entry.cacheWrite;
   totals.cost += entry.cost;
   totals.calls++;
-  cache.set(logPath, { totals, size: (cached?.size ?? 0) + line.length });
+  // Bytes, as fileSize() measures: an id with a non-ASCII byte would otherwise force a re-parse every read.
+  cache.set(logPath, { totals, size: (cached?.size ?? 0) + Buffer.byteLength(line) });
 }
 
 // ── Read totals ─────────────────────────────────────
@@ -120,61 +134,46 @@ export function readUsageTotals(logPath: string): UsageTotals {
   return totals;
 }
 
-// ── Transient error retry ───────────────────────────
-//
-// Sessions 5 and 7 both died on a single network-layer transient failure
-// (`Connection error.`, `Request timed out.`) — pi-ai surfaces the rejection
-// to the agent loop, which has no retry path and exits. We wrap the provider
-// stream functions to retry once on recognized transient errors before
-// surfacing to the loop. Non-transient errors (e.g. context-length, rate
-// limit policy denials, malformed request) propagate unchanged.
-
-const TRANSIENT_RETRY_DELAYS_MS = [10_000, 30_000, 60_000];
+/** Bucket for rows written before fields 9–10 existed. */
+export const PRE_ATTRIBUTION = "(pre-attribution)";
 
 /**
- * Heuristic: does this error look like a temporary network / provider
- * blip we should retry? Matches phrases pi-ai's adapters surface from
- * fetch / undici / Anthropic SDK on connection drops, timeouts, and
- * provider 5xx. Pattern is intentionally inclusive — false-positive
- * retries cost time but never lose work; false negatives (real error
- * mistakenly retried) cost the wait time but ultimately throw at attempt
- * exhaustion.
+ * Cost and calls per agent type (field 10). `since` keeps rows whose timestamp
+ * is at or after it; `idPrefix` keeps rows whose agent id (field 9) starts with
+ * it — a spawn tree, e.g. "review_experiment.<EID>.". The id itself is never
+ * parsed: background ids look like "<parent>.<agent>-bg-<n>". Rows without
+ * fields 9–10 count under PRE_ATTRIBUTION, and never match an idPrefix.
  */
-export function isTransientError(err: unknown): boolean {
-  // Classified in one place (failure-taxonomy.ts) so this layer, streamWithRetry
-  // and the agent loop cannot disagree about what is worth a retry.
-  const c = classifyProviderError(err);
-  return c === "transient";
-}
-
-/**
- * Run `attemptFn` with exponential-backoff retry on transient failures.
- * Each attempt receives a fresh call to `attemptFn` — important when the
- * underlying resource (stream, request) is single-use and must be recreated
- * after a failure, not re-awaited.
- *
- * Defaults match the agent-loop case: [10s, 30s, 60s] = up to 4 total
- * attempts, ≤100s aggregate wait. Tests pass tiny delays.
- */
-export async function withTransientRetry<T>(
-  attemptFn: () => Promise<T>,
-  delaysMs: number[] = TRANSIENT_RETRY_DELAYS_MS,
-  log: (msg: string) => void = (m) => console.error(m),
-): Promise<T> {
-  let attempt = 0;
-  while (true) {
-    try {
-      return await attemptFn();
-    } catch (err: unknown) {
-      if (attempt >= delaysMs.length || !isTransientError(err)) throw err;
-      const delay = delaysMs[attempt];
-      const errMsg = String((err as any)?.message ?? err).slice(0, 120);
-      log(`[transient-retry] ${errMsg} — retrying in ${delay / 1000}s (attempt ${attempt + 1}/${delaysMs.length})`);
-      await new Promise((r) => setTimeout(r, delay));
-      attempt++;
-    }
+export function readUsageByAgent(logPath: string, opts: { since?: number; idPrefix?: string } = {}): Map<string, { cost: number; calls: number }> {
+  const out = new Map<string, { cost: number; calls: number }>();
+  let content = "";
+  try { content = readFileSync(logPath, "utf-8"); } catch { return out; }
+  for (const line of content.split("\n")) {
+    if (!line) continue;
+    const parts = line.split("\t");
+    if (parts.length < 8) continue;
+    if (opts.since !== undefined && !(Number(parts[0]) >= opts.since)) continue;
+    const attributed = parts.length >= 10;
+    if (opts.idPrefix !== undefined && !(attributed && parts[8].startsWith(opts.idPrefix))) continue;
+    const key = attributed ? parts[9] : PRE_ATTRIBUTION;
+    const acc = out.get(key) ?? { cost: 0, calls: 0 };
+    acc.cost += parseFloat(parts[7]) || 0;
+    acc.calls++;
+    out.set(key, acc);
   }
+  return out;
 }
+
+// ── Transient errors are not retried here ───────────
+//
+// Sessions 5 and 7 both died on a single network blip (`Connection error.`,
+// `Request timed out.`). The retry for that has one owner, the patched agent
+// loop (patches/pi-agent-core-no-tool-retry-guard.sh, Patch C/E). pi-ai
+// delivers a provider failure as an error event and a RESOLVED
+// stopReason="error" message — EventStream.result() never rejects — so a
+// catch around result() in this wrapper never ran on a real failure. The loop
+// learns which errors are transient from failure-taxonomy.ts, which the import
+// above loads and publishes.
 
 // ── Install provider-level tracking ─────────────────
 
@@ -195,6 +194,22 @@ const costCaps = new Map<string, number>();
 export function setCostCap(logPath: string, maxCostUsd: number | undefined): void {
   if (maxCostUsd !== undefined && Number.isFinite(maxCostUsd)) costCaps.set(logPath, maxCostUsd);
   else costCaps.delete(logPath);
+}
+
+/** Fraction of --max-cost at which the brain is told to wrap up (fix 4, 2026-09-01). */
+export const SOFT_CAP_FRACTION = 0.9;
+
+/**
+ * Has spend reached `fraction` of the cap this process enforces for this log?
+ * The brain's hook freezes new work at that line, but only between the brain's
+ * own tool calls; spawns the harness makes itself (runExperimentReviewLoop's
+ * revision and not-delivered re-runs) ask this instead. It is the cap that
+ * actually kills the process — the brain's --max-cost ?? 250, the runner's
+ * run_config ?? 250 — so false when none is registered.
+ */
+export function softCapReached(logPath: string, fraction: number): boolean {
+  const cap = costCaps.get(logPath);
+  return cap !== undefined && readUsageTotals(logPath).cost >= cap * fraction;
 }
 
 /**
@@ -292,56 +307,40 @@ export function installUsageTracking(logPath: string, opts: { maxCostUsd?: numbe
       // Before paying for this call: has another process of the run already
       // found a provider unfunded?
       enforceUnfundedSentinel(logPath);
-      // Each attempt creates a fresh stream — retried attempts replace
-      // `activeStream` so the eventStream wrapper exposes the latest one.
-      let activeStream: any = originalFn(model, context, options);
+      const stream: any = originalFn(model, context, options);
 
-      // result() promise: retry chain wrapped around the stream's own
-      // result(). On transient failure we recreate the stream and retry.
-      // Usage logging fires once on the eventually-successful msg.
+      // Record the call once it settles. A failed call is a resolved
+      // stopReason="error" message like any other (see the note above): billed
+      // here, re-streamed or not by the loop.
       const finalResult = (async () => {
-        let attempt = 0;
-        while (true) {
-          try {
-            const msg = await activeStream.result();
-            if (msg?.stopReason === "error" && isUnfundedProviderError(msg?.errorMessage) && process.env.LUXAS_UNFUNDED_EXIT !== "0") {
-              writeUnfundedSentinel(logPath, String(model?.provider ?? api), String(msg.errorMessage));
-              console.error(`\n[FATAL] Provider ${model?.provider ?? api} refuses for lack of funds: ${String(msg.errorMessage).slice(0, 160)}. ` +
-                `Stopping the run so the other providers do not keep spending on work this one cannot review. Top up, then resume (checkpoint is live).\n`);
-              setExitReason("provider_unfunded", `${model?.provider ?? api}: ${String(msg.errorMessage).slice(0, 160)}`);
-              process.exit(1);
-            }
-            if (msg?.usage) {
-              appendUsage(logPath, {
-                timestamp: Date.now(),
-                model: model.id ?? "unknown",
-                provider: model.provider ?? api,
-                input: msg.usage.input ?? 0,
-                output: msg.usage.output ?? 0,
-                cacheRead: msg.usage.cacheRead ?? 0,
-                cacheWrite: msg.usage.cacheWrite ?? 0,
-                cost: msg.usage.cost?.total ?? 0,
-              });
-              enforceCostCap(logPath);
-            }
-            return msg;
-          } catch (err: unknown) {
-            if (attempt >= TRANSIENT_RETRY_DELAYS_MS.length || !isTransientError(err)) throw err;
-            const delay = TRANSIENT_RETRY_DELAYS_MS[attempt];
-            const errMsg = String((err as any)?.message ?? err).slice(0, 120);
-            console.error(`[transient-retry] ${api} ${errMsg} — retrying in ${delay / 1000}s (attempt ${attempt + 1}/${TRANSIENT_RETRY_DELAYS_MS.length})`);
-            await new Promise((r) => setTimeout(r, delay));
-            activeStream = originalFn(model, context, options);
-            attempt++;
-          }
+        const msg = await stream.result();
+        if (msg?.stopReason === "error" && isUnfundedProviderError(msg?.errorMessage) && process.env.LUXAS_UNFUNDED_EXIT !== "0") {
+          writeUnfundedSentinel(logPath, String(model?.provider ?? api), String(msg.errorMessage));
+          console.error(`\n[FATAL] Provider ${model?.provider ?? api} refuses for lack of funds: ${String(msg.errorMessage).slice(0, 160)}. ` +
+            `Stopping the run so the other providers do not keep spending on work this one cannot review. Top up, then resume (checkpoint is live).\n`);
+          setExitReason("provider_unfunded", `${model?.provider ?? api}: ${String(msg.errorMessage).slice(0, 160)}`);
+          process.exit(1);
         }
+        if (msg?.usage) {
+          appendUsage(logPath, {
+            timestamp: Date.now(),
+            model: model.id ?? "unknown",
+            provider: model.provider ?? api,
+            input: msg.usage.input ?? 0,
+            output: msg.usage.output ?? 0,
+            cacheRead: msg.usage.cacheRead ?? 0,
+            cacheWrite: msg.usage.cacheWrite ?? 0,
+            cost: msg.usage.cost?.total ?? 0,
+          });
+          enforceCostCap(logPath);
+        }
+        return msg;
       })();
 
-      // Proxy the first stream but redirect `.result` to the retrying
-      // promise. Other props (events iterator, etc.) come from the active
-      // stream's first attempt — retries override only result, since that's
-      // what consumers actually depend on for state.
-      return new Proxy(activeStream, {
+      // The stream itself, with `.result` redirected to the promise above: a
+      // consumer that reads the final message sees it only after it has been
+      // billed and the unfunded and cost-cap checks have run.
+      return new Proxy(stream, {
         get(target, prop, receiver) {
           if (prop === "result") return () => finalResult;
           return Reflect.get(target, prop, receiver);

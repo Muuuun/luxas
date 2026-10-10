@@ -22,6 +22,8 @@ export interface PackingLimits {
   warningGapTokens?: number;
   condenseGapTokens?: number;
   manualGapTokens?: number;
+  /** Token count where trimming starts; default 160K, never above 85% of condense. */
+  microCompactionCap?: number;
   warningThresholdChars?: number;
   condenseThresholdChars?: number;
 }

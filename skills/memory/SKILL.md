@@ -1,6 +1,6 @@
 ---
 name: memory
-description: Cross-project research memory. Deep-dive past projects' notes, record corrections, and save cross-project insights across all Luxas research projects.
+description: Cross-project research memory. Deep-dive past projects' notes and record corrections across all Luxas research projects.
 compatibility: Always available. No external dependencies.
 allowed-tools: read write edit
 ---
@@ -11,9 +11,8 @@ Access persistent memory that spans across research projects.
 
 **You do not need this skill to discover past projects** — your system prompt
 already carries a `<past_research>` digest (every past project's name, date,
-notes path, and research question) and `<global_memory>` (cross-project
-lessons). This skill is for what comes after discovery: deep-diving a relevant
-project's notes, recording corrections, and saving insights.
+notes path, and research question). This skill is for what comes after
+discovery: deep-diving a relevant project's notes and recording corrections.
 
 ## Trust rule
 
@@ -41,15 +40,6 @@ Project registry (path, name, dates, auto-generated summary, cost). The
 digest is built from this; read it directly only for projects that fell into
 the digest's overflow index.
 
-### ~/.sisyphus/memory.md
-
-Cross-project lessons, injected into every run as `<global_memory>`. You can
-**read and write** it. Keep it SMALL; every entry starts with a provenance
-tag `[project, YYYY-MM]`. Tool/method lessons, recurring pitfalls, and
-cross-domain connections belong here — domain findings and numbers do NOT
-(they live in the source project's notes and must be re-verified wherever
-used).
-
 ### ~/.sisyphus/archive/<slug>/
 
 Auto-archived copies of each project's notes + report.tex, written when a run
@@ -65,8 +55,8 @@ refutation next to the claim.
 
 ## Write mechanics
 
-- `~/.sisyphus/memory.md` and `~/.sisyphus/archive/` are whitelisted for your
-  write/edit tools (read before edit, as usual).
+- `~/.sisyphus/archive/` is whitelisted for your write/edit tools (read
+  before edit, as usual).
 - Another project's LIVE notes are outside your write/edit scope — append
   corrections there via bash: `cat >> <path>/notes/experiments.md << 'EOF' ...`.
   Append-only; never rewrite or delete in another project's tree.

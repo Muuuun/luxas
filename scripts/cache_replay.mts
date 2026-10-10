@@ -48,6 +48,7 @@ const { agent, restore } = createResearchAgent({ projectDir: proj, maxCostUsd: 1
 const captured: any[] = [];
 let done = false;
 let restoredCount = 0;
+let resumeText: string | null = null;
 let n = 0;
 (agent as any).streamFunction = async (m: any, ctx: any, opts: any) => {
   let payload: any;
@@ -73,6 +74,11 @@ process.on("exit", () => report());
 try {
   const restored = restore ? restore() : 0;
   restoredCount = restored;
+  // The message restore() appends is what the resumed brain is told about its sub-agents.
+  if (restored > 0) {
+    const c = agent.state.messages.at(-1)?.content;
+    resumeText = typeof c === "string" ? c : Array.isArray(c) ? c.map((b: any) => b?.text ?? "").join("") : null;
+  }
   if (!asJson) console.log(`project ${inPlace ? "" : "copy "}${proj}\nmodel ${modelKey}, restored ${restored} checkpoint messages`);
   if (restored > 0) { await agent.followUp({ role: "user", content: "Continue your research from where you left off.", timestamp: Date.now() }); await agent.continue(); }
   else await agent.prompt("Research goal: replay");
@@ -117,7 +123,7 @@ function report() {
   });
   const later = rows.slice(1);
   const hitRate = later.length ? later.reduce((a, r) => a + (r.reusable ?? 0), 0) / later.reduce((a, r) => a + r.total, 0) : null;
-  if (asJson) { console.log("REPLAY_JSON " + JSON.stringify({ restored: restoredCount, hitRate, rows })); return; }
+  if (asJson) { console.log("REPLAY_JSON " + JSON.stringify({ restored: restoredCount, resumeText, hitRate, rows })); return; }
   if (rows.length < 2) { console.log(`only ${rows.length} request(s) captured — nothing to compare`); return; }
   console.log("\ncall  total_k  reusable_k  hit    breakpoints                first block that differs from the previous call");
   for (const r of rows) {

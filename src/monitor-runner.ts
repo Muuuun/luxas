@@ -41,7 +41,7 @@ import { Agent } from "@earendil-works/pi-agent-core";
 import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { getDefinition, resolvePrompt } from "./agents/registry.js";
-import { buildSafetyWrapper } from "./agents/safety-wrappers.js";
+import { buildSafetyWrapper, surfaceReturnedIsError } from "./agents/safety-wrappers.js";
 import { resolveToolSets } from "./agents/tool-sets.js";
 import { resolveModel, streamWithRetry } from "./agents/spawn.js";
 import { Session, buildSessionContext } from "./session.js";
@@ -191,19 +191,26 @@ export async function runMonitorTurn(args: MonitorArgs): Promise<number> {
       tools,
     },
     getApiKey,
+    // A safety block returns isError:true; without this the loop sends it as a success.
+    afterToolCall: surfaceReturnedIsError,
     // No forced toolChoice — a text-only reply ends the turn (see header).
     streamFn: (m: any, ctx: any, opts: any) => streamWithRetry(m, ctx, opts),
   });
 
-  // Restore prior chat.
+  // Restore prior chat. The leading role:"system" message holds this turn's
+  // prompt and tools (pi 0.87); a stored one is the first turn's copy, or is
+  // gone once trimHistory cuts it, so the current one always leads.
   const session = Session.open(sessionFile, projectDir);
   let lastSaved = 0;
   if (session.getEntries().length > 0) {
     const prior = buildSessionContext(session);
     if (prior.length > 0) {
       const cleaned = trimHistory(cleanMessagesForModel(prior, { provider: model.provider, id: model.id }));
-      agent.state.messages = cleaned;
-      lastSaved = cleaned.length;
+      const head = (agent.state.messages as any[]).filter((m) => m.role === "system");
+      agent.state.messages = [...head, ...cleaned.filter((m: any) => m.role !== "system")];
+      // Not cleaned.length: the two differ whenever a stored system message was
+      // dropped or trimmed, and the difference would be re-appended every turn.
+      lastSaved = agent.state.messages.length;
     }
   }
 

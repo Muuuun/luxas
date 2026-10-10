@@ -1,0 +1,59 @@
+{
+  "$comment": "Byte ceilings on the brain.md and experiment.md bodies (frontmatter excluded), checked by scripts/smoke_agent_defs.mts §C55 against its pinned pre-ratchet BASELINE. A ceiling rises only with a growth entry naming the metric the new text moves, the script that measures it, the item or commit it came from, and the text it superseded (deleted in the same diff) or 'none'. Deletions are logged with negative bytes.",
+  "brain": { "ceilingBytes": 91358 },
+  "experiment": { "ceilingBytes": 49015 },
+  "growth": [
+    {
+      "agent": "brain",
+      "item": "C4",
+      "bytes": 179,
+      "metric": "refused spawn_agent(experiment) tool_block entries past 90%",
+      "measuredBy": "scripts/smoke_budget_softcap.mts",
+      "supersedes": "none"
+    },
+    {
+      "agent": "brain",
+      "item": "C44",
+      "bytes": 58,
+      "metric": "prompt-to-code contradictions (FAIL C44 lines)",
+      "measuredBy": "scripts/smoke_agent_defs.mts",
+      "supersedes": "'+ downstream notes' in the experiment task template; 'experiments.md,' in the notes-update list; 'When you see `[MEMORY WARNING]`, save findings before continuing.'; 'task=' in the three request_pi_review(\"plan: ...\") calls; 'it flips its section' and 'flips to `Complete` on Phase 3 integrate.'"
+    },
+    {
+      "agent": "brain",
+      "item": "C26",
+      "bytes": 190,
+      "metric": "cold rewrites on idle-timeout wakes",
+      "measuredBy": "scripts/cache_replay.mts",
+      "supersedes": "pass `timeout_ms` for longer-running experiments."
+    },
+    {
+      "agent": "brain",
+      "item": "C84",
+      "bytes": -262,
+      "supersedes": "'and `<global_memory>` (cross-project lessons)' in the READ line; 'for surprising or broadly valuable tool/method lessons (not domain numbers), append a provenance-tagged entry (`[project, YYYY-MM]`) to `~/.sisyphus/memory.md` (write/edit whitelisted, as is `~/.sisyphus/archive/`). To' in the WRITE line"
+    },
+    {
+      "agent": "brain",
+      "item": "F9",
+      "bytes": -15,
+      "supersedes": "'/CORROBORATED' in the breadth policy's 'already CONVERGING/CORROBORATED'; 'CORROBORATED' in the done rule, now 'CONVERGING' (the status retired 2026-09-04)"
+    },
+    {
+      "agent": "experiment",
+      "item": "C44",
+      "bytes": 271,
+      "metric": "prompt-to-code contradictions (FAIL C44 lines)",
+      "measuredBy": "scripts/smoke_agent_defs.mts",
+      "supersedes": "'the `notes/experiments.md` L2 section (Phase 3) and' in <role_separation>; 'Brain may have already written it as a `**Status:** Pending` placeholder; edit that in place to Complete during Phase 3.'; 'that file is yours.'"
+    },
+    {
+      "agent": "experiment",
+      "item": "C15",
+      "bytes": 141,
+      "metric": "review-open issues cleared by round-bound answers",
+      "measuredBy": "scripts/claims_compliance.mts",
+      "supersedes": "'when a revision round's feedback is not fully addressed, the L2 section's `### Limitations` carries `finding_open: \"<reviewer's first sentence verbatim>\"`; when it is addressed, `finding_answered: <clause> — <locator>`.'"
+    }
+  ]
+}

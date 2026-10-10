@@ -142,37 +142,6 @@ const pngFigures: ReminderProvider = {
   },
 };
 
-/** Post-experiment — remind to update notes before continuing. Self-clears when notes updated. */
-const postExperiment: ReminderProvider = {
-  id: "post-experiment",
-  priority: 20,
-  evaluate(ctx) {
-    const flag = ctx.flags.get("experiment_completed");
-    if (!flag) return null;
-    // Self-clear: if experiments.md was modified after the flag, notes are updated
-    try {
-      const mtime = statSync(join(ctx.projectDir, "notes", "experiments.md")).mtimeMs;
-      if (mtime > flag.setAt) { ctx.flags.delete("experiment_completed"); return null; }
-    } catch {}
-    return "Update notes/experiments.md with experiment results before doing anything else.";
-  },
-};
-
-/** Post-workers — remind to record findings before dispatching more. Self-clears. */
-const postWorkers: ReminderProvider = {
-  id: "post-workers",
-  priority: 15,
-  evaluate(ctx) {
-    const flag = ctx.flags.get("workers_completed");
-    if (!flag) return null;
-    try {
-      const mtime = statSync(join(ctx.projectDir, "notes", "literature.md")).mtimeMs;
-      if (mtime > flag.setAt) { ctx.flags.delete("workers_completed"); return null; }
-    } catch {}
-    return "Update notes/literature.md with worker findings BEFORE dispatching more workers.";
-  },
-};
-
 /** Post-compile with errors — remind to record fix. TTL-based (5 min). */
 const postLatexError: ReminderProvider = {
   id: "post-latex-error",
@@ -309,8 +278,6 @@ export const builtinProviders: ReminderProvider[] = [
   planRequired,
   figstyle,
   pngFigures,
-  postExperiment,
-  postWorkers,
   postLatexError,
   paperFigures,
   citationIntegrity,

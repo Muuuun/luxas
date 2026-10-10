@@ -68,8 +68,8 @@ const MANIFEST: Record<string, GateSpec> = {
 	smoke_career: { kind: "assert" },
 	smoke_claim_registry: { kind: "assert" },
 	smoke_compaction_ratchet: { kind: "assert" },
-	smoke_solo_executor: { kind: "assert" },
-	smoke_review_experiment: { kind: "assert" },
+	smoke_solo_executor: { kind: "assert", timeoutMs: 180_000 },   // CLI child processes; 6 s on a dev Mac
+	smoke_review_experiment: { kind: "assert", timeoutMs: 300_000 },   // ~12 offline CLI child processes; 54 s on a dev Mac
 	smoke_resume_request: { kind: "assert", timeoutMs: 360_000 },   // two offline brain replays in child processes
 	smoke_dual_profile: { kind: "assert" },
 	smoke_finalization_freeze: { kind: "assert" },
@@ -86,7 +86,7 @@ const MANIFEST: Record<string, GateSpec> = {
 	smoke_meta_registry: { kind: "assert" },
 	smoke_meta_spawn_wiring: { kind: "assert" },
 	smoke_meta_state: { kind: "assert" },
-	smoke_monitor: { kind: "assert" },
+	smoke_monitor: { kind: "assert", timeoutMs: 180_000 },   // starts `luxas status` child processes; 12 s on a dev Mac
 	smoke_observations: { kind: "assert" },
 	smoke_premise_corrections: { kind: "assert" },
 	smoke_xval_dispute_gate: { kind: "assert" },
@@ -123,7 +123,7 @@ const MANIFEST: Record<string, GateSpec> = {
 	smoke_result_integrity_detectors: { kind: "assert" },
 	smoke_route_confession: { kind: "assert" },
 	smoke_claim_table_colocated: { kind: "assert" },
-	smoke_overflow_backstop: { kind: "assert" },
+	smoke_overflow_backstop: { kind: "assert", timeoutMs: 180_000 },   // 6 s on a dev Mac, about six times that on the droplet
 	smoke_prior_art_gate: { kind: "assert" },
 	smoke_prompt_assembly: { kind: "assert" },
 	smoke_read_scope: { kind: "assert" },

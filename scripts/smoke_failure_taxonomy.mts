@@ -3,17 +3,18 @@
  * smoke_failure_taxonomy — one classifier, and every layer reads it.
  *
  * Pins (a) the classes of the error strings this project has actually died on,
- * (b) that the three retry layers hold the SAME RegExp objects rather than
- * copies that can drift (they had drifted: the agent loop did not retry a 5xx
- * that usage-log.ts did), and (c) that the patched loop really consults the
- * published taxonomy — a 502 is retried only because of it.
+ * (b) that every layer that classifies holds the SAME RegExp objects rather
+ * than copies that can drift (they had drifted: the agent loop did not retry a
+ * 5xx that another layer matched), and (c) that the patched loop really
+ * consults the published taxonomy — a 502 is retried only because of it.
  *
  *   npx tsx scripts/smoke_failure_taxonomy.mts
  */
 import { fileURLToPath } from "node:url";
+import { formatProviderError, normalizeProviderError } from "@earendil-works/pi-ai/utils/error-body";
 import { classifyProviderError, TRANSIENT_RE, RATE_LIMIT_RE, UNFUNDED_RE } from "../src/failure-taxonomy.js";
 import { TRANSIENT_RE as SPAWN_TRANSIENT_RE } from "../src/agents/spawn.js";
-import { isTransientError, isUnfundedProviderError, UNFUNDED_PROVIDER_RE } from "../src/usage-log.js";
+import { isUnfundedProviderError, UNFUNDED_PROVIDER_RE } from "../src/usage-log.js";
 
 let failures = 0;
 function check(label: string, cond: boolean, detail?: string) {
@@ -22,6 +23,18 @@ function check(label: string, cond: boolean, detail?: string) {
 }
 
 console.log("1. classes");
+// C45: pi-ai's formatProviderError puts a prefix before the status
+// ("OpenAI API error (503): …", the gpt-6-astra brain route). Built with
+// pi-ai's own formatter on SDK-shaped errors, so a change of shape there
+// shows up here rather than as a run ended by a gateway blip.
+function sdkErr(status: number, message: string, body?: object): Error {
+  const e: any = new Error(message);
+  e.status = status;
+  if (body) e.error = body;
+  return e;
+}
+const piFormat = (e: Error, prefix = "OpenAI API error") => formatProviderError(normalizeProviderError(e), prefix);
+const PREFIXED_503 = piFormat(sdkErr(503, "503 status code (no body)"));
 const CASES: Array<[string, string]> = [
   // unfunded — stop the whole run
   [`402: {"message":"Insufficient Balance"}`, "unfunded"],
@@ -50,7 +63,20 @@ const CASES: Array<[string, string]> = [
   [`tool output was 402 lines long`, "fatal"],
   [`prompt is too long: 215503 tokens > 200000 maximum`, "fatal"],
   [``, "fatal"],
+  // C45: the status after a provider prefix, in pi-ai's "(NNN): " shape
+  [PREFIXED_503, "transient"],
+  [piFormat(sdkErr(502, "502 status code (no body)")), "transient"],
+  [piFormat(sdkErr(500, "500 The server had an error while processing your request. Sorry about that!",
+    { message: "The server had an error while processing your request. Sorry about that!", type: "server_error" })), "transient"],
+  [piFormat(sdkErr(504, "504 status code (no body)"), "Azure OpenAI API error"), "transient"],
+  [piFormat(sdkErr(402, "402 status code (no body)")), "unfunded"],
+  [piFormat(sdkErr(429, "429 Rate limit reached", { message: "Rate limit reached", code: "rate_limit_exceeded" })), "rate_limit"],
+  [piFormat(sdkErr(400, "400 Invalid schema", { message: "Invalid schema" })), "fatal"],
+  // ...but a parenthesised number in prose, without the formatter's colon, is not
+  [`400 {"message":"max_tokens must be <= (500)"}`, "fatal"],
 ];
+check("C45: pi-ai's formatter still emits the prefixed shape",
+  PREFIXED_503 === "OpenAI API error (503): 503 status code (no body)", PREFIXED_503);
 for (const [text, want] of CASES) {
   const got = classifyProviderError(text);
   check(`${want.padEnd(10)} ← ${text.slice(0, 70) || "(empty)"}`, got === want, `got ${got}`);
@@ -60,8 +86,6 @@ check("accepts an Error object", classifyProviderError(new Error("ECONNRESET")) 
 console.log("\n2. one owner");
 check("spawn.ts re-exports the taxonomy's transient RegExp", SPAWN_TRANSIENT_RE === TRANSIENT_RE);
 check("usage-log.ts UNFUNDED_PROVIDER_RE is the taxonomy's", UNFUNDED_PROVIDER_RE === UNFUNDED_RE);
-check("usage-log.ts isTransientError agrees (5xx)", isTransientError(new Error("503 Service Unavailable")));
-check("usage-log.ts isTransientError: a rate limit is not a plain transient", !isTransientError(new Error("429 Too Many Requests")));
 check("usage-log.ts isUnfundedProviderError: bare 402 in prose is not unfunded", !isUnfundedProviderError("tool output was 402 lines long"));
 const pub = (globalThis as any).__luxasFailureTaxonomy;
 check("published on globalThis for the compiled loop", pub?.transient === TRANSIENT_RE && pub?.rateLimit === RATE_LIMIT_RE);
@@ -88,6 +112,7 @@ async function callsFor(first: any): Promise<number> {
 }
 check("502 Bad Gateway is retried by the loop", (await callsFor(errMsg("502 Bad Gateway"))) >= 2);
 check("Request timed out is retried by the loop", (await callsFor(errMsg("Request timed out."))) >= 2);
+check("C45: a prefixed 503 is retried by the loop", (await callsFor(errMsg(PREFIXED_503))) >= 2);
 check("a 400 still ends the turn", (await callsFor(errMsg("400 invalid_request: bad schema"))) === 1);
 // The承重 half: with the taxonomy withdrawn the loop falls back to its literals,
 // which do not know 5xx — proving the retry above came from the taxonomy.

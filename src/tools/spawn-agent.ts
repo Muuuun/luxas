@@ -13,22 +13,43 @@ import type { Agent as AgentType } from "@earendil-works/pi-agent-core";
 import { spawn } from "node:child_process";
 import { spawnAgent, resolveModel, type SpawnAgentOptions, type SpawnAgentResult } from "../agents/spawn.js";
 import { listAgentDescriptions, getDefinition } from "../agents/registry.js";
+import { replicatorEstimateDefinition } from "../agents/registry.js";
+import { nextReviewRound, priorBlindLines, reusableBlindLine } from "../claims-review.js";
 import { addAgent, removeAgent, loadRegistry, isAlive, markFailed, tryExtractResult, formatExitHint, parseConvJsonl } from "../active-agents.js";
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { join, dirname, sep as pathSep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { pidAlive } from "../utils.js";
-import { buildClaimTable, parseFrameHeadline } from "../claims-table.js";
+import { softCapReached, SOFT_CAP_FRACTION } from "../usage-log.js";
+import { buildClaimTable, parseFrameHeadline, parseResultsJson } from "../claims-table.js";
 import { blindEstimateTask, extractBlindEstimate, extractReviewerLines, headlineDeclsFor, persistReview, reviewCompleteness, reviewerObligationBlock, selectBlindEstimateDecls, stampBlindInputs, cosmeticSpawnNotice } from "../claims-review.js";
 
 // Primary defense against path-escape via LLM-supplied id; the realpath check
 // in handleContinue is defense-in-depth in case this regex is ever widened.
 const AGENT_ID_RE = /^[A-Za-z0-9._-]+$/;
 
-// Module-scope: spawn-agent tools are rebuilt per brain turn (see tools/index.ts),
-// so a closure-local counter would reset and collide across turns. Keeping this
-// at module scope gives every background spawn in the process a unique bg id.
-let bgCounter = 0;
+const BG_N_RE = /-bg-(\d+)(?=\.|$)/g;
+
+/**
+ * Next background id, one past the highest bg-N on disk. A process counter
+ * restarted at bg-1 in every resumed brain, so the new runner appended to the
+ * previous process's transcript and a resume read one agent's result as
+ * another's. Sources: transcripts, runner logs (opened at every launch, and
+ * kept when the brain's restore empties the registry) and registry ids.
+ * Synchronous, so no other launch in this process can take the same N before
+ * the caller's addAgent records it.
+ */
+export function nextBackgroundId(agentDir: string): string {
+  let max = 0;
+  const scan = (name: string) => {
+    for (const m of name.matchAll(BG_N_RE)) max = Math.max(max, Number(m[1]));
+  };
+  for (const sub of ["conversations", "runner-logs"]) {
+    try { for (const f of readdirSync(join(agentDir, sub))) scan(f); } catch { /* not created yet */ }
+  }
+  for (const a of loadRegistry(agentDir)) if (typeof a.id === "string") scan(a.id);
+  return `bg-${max + 1}`;
+}
 
 interface ContinueContext {
   projectDir: string;
@@ -179,6 +200,9 @@ async function handleContinue(
       name: spawnInit.agent,
       templateVars: mergedTemplateVars,
       prompt: params.task,
+      // The rebuilt prompt picks its methods sheet from the task, so it must
+      // see the spawn's whole task, not the revision's, to match the fresh prompt.
+      contextExtra: { task: spawnInit.contextTask ?? spawnInit.task },
       projectDir: ctx.projectDir,
       getApiKey: ctx.getApiKey,
       parentAgentId: callerParent,
@@ -272,18 +296,55 @@ export interface ExperimentReviewContext {
   /** Injectable for the gate (scripts/smoke_background_review.mts); defaults to spawnAgent. */
   spawn?: (opts: SpawnAgentOptions) => Promise<SpawnAgentResult>;
   /**
-   * Number of the first review round (default 1). scripts/review_experiment.mts
-   * enters this loop once per round for an experiment executed outside the
-   * brain's spawn, so round 2 must not overwrite round 1's review file.
+   * Number of the first review round. Default: one past the highest round
+   * already persisted for this EXPERIMENT_ID, so a re-dispatch continues the
+   * numbering instead of overwriting r1.. (claims-table.ts and
+   * openReviewFindings read every round). The brain's callers rely on it.
    */
   startRound?: number;
   /**
-   * ESTIMATE(blind) lines recorded in earlier rounds. Inside one call the
-   * loop reuses round 1's estimates for every later round; a caller that
-   * enters once per round hands them back here so the round-2 reviewer still
-   * sees them (and they are persisted with that round, as they would be).
+   * ESTIMATE(blind) lines from earlier rounds. Default: every such line in
+   * this experiment's persisted rounds. A line whose stamped inputs still
+   * match the declaration is reused and its id is not estimated again; an id
+   * whose inputs moved is re-estimated. scripts/review_experiment.mts passes
+   * [] for --blind (estimate every id again).
    */
   priorBlindLines?: string[];
+}
+
+/**
+ * Why a reviewer's reply is no review at all, as one line; null when it is a
+ * review. spawnAgent returns "(no output)" for a refusal, a provider error past
+ * its retries or an empty turn, and the failure text for a throw — read as
+ * REVISE, that became the next revision's feedback. A VERDICT line or a
+ * FEEDBACK block is a review whatever ended the agent; so is a terse critique
+ * from a clean stop.
+ */
+export function reviewerGaveNoReview(r: { output?: string; success?: boolean; exit?: { stopReason?: string; errorMessage?: string } }): string | null {
+  const text = r.output ?? "";
+  if (/^\s*#{0,6}\s*VERDICT:\s*\w+/im.test(text)) return null;
+  if ((text.match(/FEEDBACK:\s*([\s\S]*?)$/i)?.[1] ?? "").trim()) return null;
+  const oneLine = (s: string) => s.replace(/\s+/g, " ").trim().slice(0, 160);
+  if (!r.success) return oneLine(`spawn failed: ${text}`);
+  const stop = r.exit?.stopReason;
+  if (stop === "error" || stop === "killed") return oneLine(`stopReason ${stop}${r.exit?.errorMessage ? `: ${r.exit.errorMessage}` : ""}`);
+  if (!text.trim() || text.trim() === "(no output)") return "empty output";
+  return null;
+}
+
+/**
+ * The reviewer's reply with its VERDICT and FEEDBACK labels in plain form.
+ * DeepSeek reviewers bolded them ("**VERDICT: revise**" / "**FEEDBACK:**",
+ * 67 of 345 final replies, April–June): the loop read that as REVISE but
+ * persisted "VERDICT: (none)", so the finish gate never bound its issues, and
+ * a bold satisfied paid for a re-run. Normalised once here, the persisted
+ * round is canonical and the readers of reviews/ stay strict. Only the label
+ * changes: "satisfied only after …" stays qualified.
+ */
+function canonicalReviewerReply(text: string): string {
+  return text
+    .replace(/^[\s#*_>]*VERDICT[*_\s]*:[*_\s]*(satisfied|revise)\b(\.?)[*_]*/im, (_m, v: string, dot: string) => `VERDICT: ${v.toLowerCase()}${dot}`)
+    .replace(/^[\s#*_>]*FEEDBACK[*_\s]*:[*_]*/im, "FEEDBACK:");
 }
 
 /**
@@ -308,13 +369,30 @@ export interface ExperimentReviewContext {
  * results.json at all — a blind estimate and a review round spent on nothing.
  */
 export function experimentDelivered(projectDir: string, experimentId: string): boolean {
-  const runs = join(projectDir, "data", "experiments", experimentId, "runs");
-  try {
-    return readdirSync(runs).some((r) => {
-      try { const j = JSON.parse(readFileSync(join(runs, r, "results.json"), "utf-8")); return !!j && typeof j === "object" && !Array.isArray(j); }
-      catch { return false; }
-    });
-  } catch { return false; }
+  return experimentDeliveryProblem(projectDir, experimentId) === null;
+}
+
+/**
+ * Why the experiment has not delivered, or null when it has. No file and a
+ * file that does not parse need different answers from the agent, and the
+ * re-send used to call both "does not exist", contradicting the file the agent
+ * could see. Names the newest unusable file and its parse error.
+ */
+export function experimentDeliveryProblem(projectDir: string, experimentId: string): string | null {
+  const rel = `data/experiments/${experimentId}/runs`;
+  let runs: string[] = [];
+  try { runs = readdirSync(join(projectDir, rel)); } catch { /* no runs/ */ }
+  let problem: string | null = null;
+  for (const r of runs.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))) {
+    const p = join(projectDir, rel, r, "results.json");
+    if (!existsSync(p)) continue;
+    let j: unknown;
+    try { j = parseResultsJson(readFileSync(p, "utf-8")); }
+    catch (err) { problem = `${rel}/${r}/results.json is not valid JSON: ${(err as Error).message.replace(/\s+/g, " ").slice(0, 160)}`; continue; }
+    if (j && typeof j === "object" && !Array.isArray(j)) return null;
+    problem = `${rel}/${r}/results.json is not a JSON object`;
+  }
+  return problem ?? `no results.json under ${rel}/run_N/`;
 }
 
 export async function runExperimentReviewLoop<R extends { output: string; success: boolean }>(
@@ -327,21 +405,35 @@ export async function runExperimentReviewLoop<R extends { output: string; succes
   if (!result.success) return result;
     const experimentId = mergedTemplateVars.EXPERIMENT_ID;
     if (experimentId) {
-      // Deliverable check, before any review money is spent: no results.json
-      // means not delivered — send the experiment back once (the same way a
-      // revision is), and if it still has none, return that fact to brain
-      // instead of reviewing an empty directory.
-      if (!experimentDelivered(projectDir, String(experimentId))) {
+      // A re-send or a revision is a fresh experiment run the harness starts
+      // itself, where the brain's hook never sees it. Past the soft cap the
+      // hook refuses exactly that (C4): what is left cannot pay for one, and
+      // in the foreground the hard cap would kill the brain mid-run.
+      const pastFreeze = () => softCapReached(join(projectDir, ".agent", "usage.log"), SOFT_CAP_FRACTION);
+      const freezePct = Math.round(SOFT_CAP_FRACTION * 100);
+      // Deliverable check, before any review money is spent: no usable
+      // results.json means not delivered — send the experiment back once (the
+      // same way a revision is), and if it still has none, return that fact
+      // to brain instead of reviewing an empty directory.
+      const problem = experimentDeliveryProblem(projectDir, String(experimentId));
+      if (problem) {
+        if (pastFreeze()) {
+          return { ...result, output: result.output + `\n\n---\n[harness: experiment ${experimentId} returned without a usable results.json (${problem}) — NOT DELIVERED — not re-sent: past the ${freezePct}% cost freeze; not reviewed. Disclose it as undelivered.]` };
+        }
         const missingTask =
-          `# Not delivered — data/experiments/${experimentId}/runs/run_1/results.json does not exist.\n\n` +
-          `You returned without writing it. Do not start over: reuse what is already under ` +
+          `# Not delivered — ${problem}.\n\n` +
+          (problem.startsWith("no results.json")
+            ? `You returned without writing it. `
+            : `The file is there but cannot be read as one JSON object (a truncated write, a trailing comma, a Python repr in place of json.dump): repair it, or write it again from the outputs you already have. `) +
+          `Do not start over: reuse what is already under ` +
           `data/experiments/${experimentId}/ (scripts, outputs, logs). If a computation you launched ` +
           `is still running or has finished since, read its output. Then write results.json per the ` +
           `contract and fill in your ledger section.\n\n## Original task (for reference)\n\n${initialTask}`;
         result = await spawn({ ...baseOpts, prompt: missingTask, contextExtra: { task: missingTask } });
         if (!result.success) return result;
-        if (!experimentDelivered(projectDir, String(experimentId))) {
-          return { ...result, output: result.output + `\n\n---\n[harness: experiment ${experimentId} returned twice without data/experiments/${experimentId}/runs/*/results.json — NOT DELIVERED, not reviewed. Decide whether to re-dispatch it with a narrower task.]` };
+        const still = experimentDeliveryProblem(projectDir, String(experimentId));
+        if (still) {
+          return { ...result, output: result.output + `\n\n---\n[harness: experiment ${experimentId} returned twice without a usable results.json (${still}) — NOT DELIVERED, not reviewed. Decide whether to re-dispatch it with a narrower task.]` };
         }
       }
 
@@ -368,7 +460,12 @@ export async function runExperimentReviewLoop<R extends { output: string; succes
       };
       let headlineDecls = scopeFor();
       let headlineIds = [...new Set(headlineDecls.map((d) => d.id))];
-      const blindLines: string[] = [...(ctx.priorBlindLines ?? [])];
+      // An earlier round's estimate stands while the inputs it was made
+      // against have not moved; only the other ids are estimated below.
+      const prior = ctx.priorBlindLines ?? priorBlindLines(projectDir, experimentId);
+      const reused = new Set(headlineDecls.filter((d) => reusableBlindLine(prior, d)).map((d) => d.id));
+      if (reused.size) claimNotes.push(`[blind estimates reused from earlier rounds: ${[...reused].join(", ")}]`);
+      const fresh = new Map<string, string>();
       if (MAX_REVIEW_ITERATIONS > 0 && process.env.LUXAS_BLIND_ESTIMATE !== "0") {
         let settled = new Set<string>();
         // `corroborated` dropped from this union 2026-09-04 with the status
@@ -376,33 +473,82 @@ export async function runExperimentReviewLoop<R extends { output: string; succes
         // could reach corroborated already satisfied converging's condition
         // (agreeing pair + σ), so the settled set is unchanged.
         try { settled = new Set(buildClaimTable(projectDir).rows.filter((r) => r.status === "converging").map((r) => r.id)); } catch { /* table malformed → estimate everything */ }
-        const { chosen, skipped } = selectBlindEstimateDecls(headlineDecls, parseFrameHeadline(projectDir), BLIND_ESTIMATE_CAP, settled);
+        // A reused id takes no slot under the cap.
+        const { chosen, skipped } = selectBlindEstimateDecls(headlineDecls.filter((d) => !reused.has(d.id)), parseFrameHeadline(projectDir), BLIND_ESTIMATE_CAP, settled);
         if (skipped.length) claimNotes.push(`[blind estimates capped at ${BLIND_ESTIMATE_CAP}/round (frame ids first); not estimated this round: ${skipped.join(", ")}]`);
-        for (const decl of chosen) {
-          try {
-            const est = await spawn({
-              name: "replicator",
-              projectDir,
-              templateVars: { ...mergedTemplateVars, QUANTITY_ID: decl.id, MODE: "estimate" },
-              prompt: blindEstimateTask(decl),
-              getApiKey,
-              parentAgentId: `${parentAgentId ?? "brain"}.blind-estimate-${decl.id}`,
-              depth: (depth ?? 0) + 1,
-              createSpawnTool: makeSpawnTool,
-            });
-            const raw = extractBlindEstimate(est.output ?? "", decl.id);
-            const line = raw ? stampBlindInputs(raw, decl.inputs) : null;
-            if (line) blindLines.push(line);
-            else claimNotes.push(`[blind estimator for ${decl.id} returned no ESTIMATE(blind) line]`);
-          } catch (err) { claimNotes.push(`[blind estimator for ${decl.id} failed: ${(err as Error).message.slice(0, 100)}]`); }
-        }
+        // Each estimator writes only blind/<slug>/ and may not name
+        // replication/ or another estimator's scratch, this round's or an
+        // earlier one's (replicatorEstimateDefinition). The slug keeps an id
+        // like "../replication" from becoming a path.
+        const slugOf = (id: string) => id.replace(/[^A-Za-z0-9_-]/g, "_") || "_";
+        let earlierScratch: string[] = [];
+        try {
+          earlierScratch = readdirSync(join(projectDir, "data", "experiments", String(experimentId), "blind"), { withFileTypes: true })
+            .filter((d) => d.isDirectory()).map((d) => d.name);
+        } catch { /* no estimate has run here yet */ }
+        const scratchSlugs = [...new Set([...chosen.map((d) => slugOf(d.id)), ...earlierScratch])];
+        // Isolated roots make the estimators independent, so they run at once:
+        // a round waits for its slowest estimate, not the sum (15–37 min each
+        // on Dy). Concurrency is the cap, so raising LUXAS_BLIND_ESTIMATE_CAP
+        // raises it too. The callback is async so that a synchronous throw
+        // (task text, scope set-up, a non-async spawner) rejects that estimate
+        // alone, not the review loop.
+        const estimates = await Promise.allSettled(chosen.map(async (decl) => {
+          const slug = slugOf(decl.id);
+          const siblings = scratchSlugs.filter((s) => s !== slug);
+          // The root replicatorEstimateDefinition enforces, from the same slug,
+          // so the task never names a dir the wrapper would refuse.
+          const scratchDir = `data/experiments/${experimentId}/blind/${slug}/`;
+          const est = await spawn({
+            name: "replicator",
+            projectDir,
+            templateVars: { ...mergedTemplateVars, QUANTITY_ID: decl.id, MODE: "estimate" },
+            prompt: blindEstimateTask(decl, scratchDir),
+            getApiKey,
+            parentAgentId: `${parentAgentId ?? "brain"}.blind-estimate-${decl.id}`,
+            depth: (depth ?? 0) + 1,
+            createSpawnTool: makeSpawnTool,
+            resolveDefinition: (n) => n === "replicator" ? replicatorEstimateDefinition(getDefinition("replicator"), slug, siblings) : getDefinition(n),
+          });
+          const raw = extractBlindEstimate(est.output ?? "", decl.id);
+          return raw ? stampBlindInputs(raw, decl.inputs) : null;
+        }));
+        // Read back in declaration order, whatever order they finished in.
+        estimates.forEach((s, i) => {
+          const id = chosen[i].id;
+          if (s.status === "rejected") {
+            const why = s.reason instanceof Error ? s.reason.message : String(s.reason);
+            claimNotes.push(`[blind estimator for ${id} failed: ${why.slice(0, 100)}]`);
+          } else if (s.value) fresh.set(id, s.value);
+          else claimNotes.push(`[blind estimator for ${id} returned no ESTIMATE(blind) line]`);
+        });
       }
+      // An earlier line made against inputs that have since moved is dropped
+      // once its id has a current line (reused or fresh); with none (failed,
+      // capped, settled, off) it stays, and the table calls it incomparable.
+      const declOf = new Map(headlineDecls.map((d) => [d.id, d] as const));
+      const blindLines: string[] = [
+        ...prior.filter((l) => {
+          const d = declOf.get(l.match(/^ESTIMATE\(blind\):\s*(\S+)/)?.[1] ?? "");
+          return !d || !(reused.has(d.id) || fresh.has(d.id)) || reusableBlindLine([l], d) !== null;
+        }),
+        ...fresh.values(),
+      ];
       let obligation = reviewerObligationBlock(headlineIds, blindLines);
       // MAX=0 short-circuits the loop body and falls through to return.
-      const firstRound = Math.max(1, Math.floor(ctx.startRound ?? 1));
+      const firstRound = Math.max(1, Math.floor(ctx.startRound ?? nextReviewRound(projectDir, experimentId)));
       const lastRound = firstRound + MAX_REVIEW_ITERATIONS - 1;
+      // A reviewer that gave no review is spawned once more (spawnAgent gives
+      // it a fresh id); a second silence is NOT REVIEWED below. Every reader
+      // below (no-review test, satisfied test, FEEDBACK, persisted verdict)
+      // sees the canonical labels.
+      const spawnReviewer = async (opts: SpawnAgentOptions) => {
+        const once = async () => { const r = await spawn(opts); return { ...r, output: canonicalReviewerReply(r.output ?? "") }; };
+        const first = await once();
+        return reviewerGaveNoReview(first) ? once() : first;
+      };
       for (let round = firstRound; round <= lastRound; round++) {
-        const reviewResult = await spawn({
+        const reviewResult = await spawnReviewer({
           name: "experiment_reviewer",
           projectDir,
           templateVars: { ...mergedTemplateVars },
@@ -424,13 +570,27 @@ export async function runExperimentReviewLoop<R extends { output: string; succes
         // An incomplete review keeps its VERDICT/FEEDBACK (a substantive
         // critique is never discarded for a missing ritual line) but its
         // attestations are withheld and the quantities are NO REVIEW.
+        const noReview = reviewerGaveNoReview(reviewResult);
         const reviewLines = extractReviewerLines(verdictText);
-        const missing = reviewCompleteness(reviewLines, headlineIds);
+        // No review covers no quantity, whatever lines a dying reply left.
+        const missing = noReview ? headlineIds : reviewCompleteness(reviewLines, headlineIds);
         const verdictLineMatch = verdictText.match(/^\s*#{0,6}\s*VERDICT:\s*\w+.*$/im);
         const feedbackForFile = (verdictText.match(/FEEDBACK:\s*([\s\S]*?)$/i) ?? [])[1];
-        try { persistReview(projectDir, experimentId, round, blindLines, reviewLines, verdictLineMatch ? verdictLineMatch[0].trim() : "VERDICT: (none)", missing, feedbackForFile); }
+        const verdictForFile = noReview ? `VERDICT: (none — reviewer gave no review: ${noReview})` : verdictLineMatch ? verdictLineMatch[0].trim() : "VERDICT: (none)";
+        try { persistReview(projectDir, experimentId, round, blindLines, reviewLines, verdictForFile, missing, feedbackForFile); }
         catch (err) { claimNotes.push(`[review persistence failed round ${round}: ${(err as Error).message.slice(0, 100)}]`); }
         if (missing.length > 0) claimNotes.push(`[experiment_reviewer round ${round}: NO REVIEW for ${missing.join(", ")} — DISCRIMINATOR/SCALING lines missing; attestations withheld]`);
+        // Nothing to revise against: re-running the experiment on "(no output)"
+        // would be paid for nothing, and the delivered result stands unreviewed.
+        if (noReview) {
+          result = {
+            ...result,
+            output:
+              result.output +
+              `\n\n---\n[experiment_reviewer round ${round}: NOT REVIEWED — the reviewer gave no review twice (${noReview}); the experiment was not re-run]` + (claimNotes.length ? `\n${claimNotes.join("\n")}` : ""),
+          };
+          break;
+        }
         // Anchor to a standalone verdict line — reviewer.md emits
         // "VERDICT: satisfied" as the LAST line. The old substring match
         // false-passed on prose like "I cannot return VERDICT: satisfied"
@@ -459,6 +619,17 @@ export async function runExperimentReviewLoop<R extends { output: string; succes
           };
           break;
         }
+        // The review above is persisted with its FEEDBACK, so the open issues
+        // reach the finish gate, and ledger_writer stays open in the freeze.
+        if (pastFreeze()) {
+          result = {
+            ...result,
+            output:
+              result.output +
+              `\n\n---\n[experiment_reviewer round ${round}: REVISE — not re-run: past the ${freezePct}% cost freeze; disclose or answer the open issues via ledger_writer]\n\nOutstanding reviewer feedback:\n${feedback}` + (claimNotes.length ? `\n${claimNotes.join("\n")}` : ""),
+          };
+          break;
+        }
 
         // Re-run the experiment with feedback as a follow-up task.
         // Tell the experiment agent explicitly to iterate on existing
@@ -470,8 +641,23 @@ export async function runExperimentReviewLoop<R extends { output: string; succes
           `artifacts (scripts, tests, runs/). Do NOT start from scratch; reuse or extend.\n\n` +
           `## Reviewer feedback\n\n${feedback}\n\n` +
           `## Original task (for reference)\n\n${initialTask}`;
+        const delivered = result;
         result = await spawn({ ...baseOpts, prompt: revisionTask, contextExtra: { task: revisionTask } });
-        if (!result.success) break;
+        // A provider error ends the agent gracefully (success:true,
+        // stopReason=error). Either way there is no new delivery to pay a
+        // reviewer round for, and its own text is only the failure: report it
+        // as failed with the last delivered output and the unanswered feedback.
+        if (!result.success || result.exit?.stopReason === "error") {
+          const why = (result.exit?.errorMessage || result.output.split("\n")[0]).slice(0, 200);
+          result = {
+            ...result,
+            success: false,
+            output:
+              delivered.output +
+              `\n\n---\n[experiment_reviewer round ${round}: REVISE — the revision run failed (stopReason=${result.exit?.stopReason}: ${why}); the output above is the last delivered run; artifacts on disk may be partly revised]\n\nOutstanding reviewer feedback:\n${feedback}` + (claimNotes.length ? `\n${claimNotes.join("\n")}` : ""),
+          };
+          break;
+        }
         // The revision may have re-declared quantities: recompute the
         // obligation scope for the next round (blind lines are reused).
         headlineDecls = scopeFor();
@@ -680,7 +866,7 @@ export function createSpawnAgentTool(
       // ── Background mode — independent process ──
       if (params.background) {
         const task = taskList[0];
-        const bgId = `bg-${++bgCounter}`;
+        const bgId = nextBackgroundId(agentDir);
         const taskPreview = task.slice(0, 80);
         const agentId = `${parentAgentId ?? "brain"}.${params.agent}-${bgId}`;
         const convFile = join(agentDir, "conversations", `${agentId}.jsonl`);

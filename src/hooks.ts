@@ -1,7 +1,7 @@
 /**
  * Layer 4: Hooks — runtime policies (safety guards + tracking).
  *
- * beforeToolCall: cost/time limits, file protection, rate limiting
+ * beforeToolCall: cost/time limits, file protection
  * afterToolCall: session logging, tmux logging, convergence tracking
  */
 
@@ -9,23 +9,32 @@ import { setExitReason } from "./exit-state.js";
 import { appendFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { readFileSafe, extractTextContent } from "./utils.js";
-import { readUsageTotals } from "./usage-log.js";
+import { readUsageTotals, SOFT_CAP_FRACTION } from "./usage-log.js";
 import { buildClaimTable } from "./claims-table.js";
 import { loadAgentDefinitions } from "./agents/registry.js";
+import { surfaceReturnedIsError } from "./agents/safety-wrappers.js";
 import type { ReminderRegistry } from "./reminders.js";
 import type { ExtensionBus } from "./extensions.js";
 
-/** Fraction of --max-cost at which the brain is told to wrap up (fix 4, 2026-09-01). */
-export const SOFT_CAP_FRACTION = 0.9;
+// Defined beside the cost cap so the review loop can share it without importing hooks.
+export { SOFT_CAP_FRACTION };
 
 // ── Finalization freeze policy ─────────────────────────────────────────────
 // One allow-list, two triggers: the PI's STOP verdict and the soft cost cap.
 // Both mean the same thing operationally — "land what exists, open nothing
 // new" — so they must not disagree about which tools are still legal.
+// They differ deliberately in one place, the dispute hatch: a STOP with a
+// DISPUTED/CONDITIONAL headline row still has budget for a settling
+// experiment, while the last 10% of the cap does not.
 
-/** Tools that remain available once a run is in finalization. */
+/**
+ * Tools that remain available once a run is in finalization. idle waits on
+ * landing agents with zero LLM turns; init_report is idempotent and never
+ * overwrites an existing report.tex — neither opens new work.
+ */
 export const FINALIZATION_TOOLS = new Set([
   "read", "write", "edit", "compile_latex", "request_pi_review", "escalate_authority_bound", "finish",
+  "idle", "init_report",
 ]);
 
 /**
@@ -48,12 +57,18 @@ export const FINALIZATION_SEED_AGENTS = [
   // only fix, but the freeze did not list it: blocker #4 of four unclearable
   // blockers in pp-vs-ss-gate-packing-20260826's finalization-blocked.md.
   "prior_art_auditor",
+  // Blocks the brain can hit while frozen name these: finish() check 1d
+  // (report-integrity.ts, missing claims.json) sends it to report_writer, as
+  // brain.md's report flow does; compile_latex's repeated-error footer
+  // (tools/report.ts) sends it to fixer. Both are leaves, so the closure grows
+  // by exactly these two.
+  "report_writer", "fixer",
 ];
 
 /** A blind replicate never opens new research, so it is always finalization. */
 export const SETTLING_SEED_AGENTS = ["replicator"];
 
-/** Finalization only while the claim table has a blocked headline row. */
+/** Finalization only under a PI STOP while the claim table has a blocked headline row. */
 export const DISPUTE_SEED_AGENTS = ["experiment"];
 
 /**
@@ -100,16 +115,26 @@ export function finalizationAllows(toolName: string, spawnTarget: string, claimB
   return finalizationAllowedAgents(claimBlocked).has(spawnTarget);
 }
 
-/** The block text both triggers share: what is still legal, and what was refused. */
-export function finalizationDenyText(toolName: string, spawnTarget: string, claimBlocked: boolean): string {
-  const agents = [...finalizationAllowedAgents(claimBlocked)].sort().join("/");
+/**
+ * The block text both triggers share: what is still legal, and what was
+ * refused. The cost trigger never opens the dispute hatch, so its text names
+ * the routes that fit in what is left instead of promising settling agents.
+ */
+export function finalizationDenyText(toolName: string, spawnTarget: string, claimBlocked: boolean, trigger: "pi_stop" | "cost" = "pi_stop"): string {
+  const hatch = claimBlocked && trigger === "pi_stop";
+  const agents = [...finalizationAllowedAgents(hatch)].sort().join("/");
   const what = toolName === "spawn_agent" ? `Tool "spawn_agent" (target: ${spawnTarget || "?"})` : `Tool "${toolName}"`;
   return (
     `Only finalization tools (${[...FINALIZATION_TOOLS].join(", ")}, and spawn_agent for ${agents}) are allowed. ` +
     `${what} is blocked. ` +
-    (claimBlocked
-      ? `A headline quantity is DISPUTED/CONDITIONAL, so settling work (replicator / experiment and the tools an experiment needs) is open.`
-      : `If a headline quantity is DISPUTED/CONDITIONAL the settling agents open automatically — check the claim table rather than working around this block.`)
+    (trigger === "cost"
+      ? `No new experiment starts in the last 10% of the cap, even while a headline quantity is DISPUTED/CONDITIONAL: one does not fit in what is left. ` +
+        `For such a row, abstain on it in the abstract (the claim table's [abstain] sentence), or CLAIM-DISCLOSE it for the PI or a reviewer to countersign — ` +
+        `at most one disclosed headline quantity; more than one is a notes/escalations/needs-operator.md escalation, not a report. ` +
+        `A replicator (replicate mode) settles only a disagreement between two producers, not a blind-estimate flag.`
+      : hatch
+        ? `A headline quantity is DISPUTED/CONDITIONAL, so settling work (replicator / experiment and the tools an experiment needs) is open.`
+        : `If a headline quantity is DISPUTED/CONDITIONAL the settling agents open automatically — check the claim table rather than working around this block.`)
   );
 }
 
@@ -167,14 +192,6 @@ export function buildResearchHooks(opts: ResearchOptions) {
   // The allow-list itself is module scope (FINALIZATION_TOOLS /
   // finalizationAllowedAgents) because the soft cost cap uses the same one.
   let piStopped = init?.piStopped ?? false;
-
-  // Simple rate limiters
-  const lastCallTime: Record<string, number> = {};
-  const rateLimits: Record<string, number> = {
-    search_papers: 300,    // 300ms between calls
-    get_citations: 300,
-    download_paper: 1100,  // 1.1s (arXiv rate limit)
-  };
 
   let logWriteFailures = 0;
   const MAX_LOG_FAILURES = 3;
@@ -256,7 +273,11 @@ export function buildResearchHooks(opts: ResearchOptions) {
       const target = String(args.agent ?? "");
       const claimBlocked = name === "spawn_agent" && claimTableBlocked(opts.projectDir);
       if (!finalizationAllows(name, target, claimBlocked)) {
-        return deny(name, args, `PI verdict is STOP. ${finalizationDenyText(name, target, claimBlocked)}`);
+        // Past the soft cap the cost freeze below shuts the dispute hatch, so
+        // this refusal must not promise it. The hatch's agents still fall
+        // through to that freeze, which refuses them and counts the refusal.
+        const atSoftCap = maxCost < Infinity && readUsageTotals(usageLogPath).cost >= maxCost * SOFT_CAP_FRACTION;
+        return deny(name, args, `PI verdict is STOP. ${finalizationDenyText(name, target, claimBlocked, atSoftCap ? "cost" : "pi_stop")}`);
       }
     }
 
@@ -289,12 +310,15 @@ export function buildResearchHooks(opts: ResearchOptions) {
       // So the last 10% is reserved for landing by the same mechanism the PI's
       // STOP verdict uses. Same allow-list, so the two triggers cannot
       // disagree: read/write/edit/compile_latex/finish stay open, new
-      // experiments and searches do not. The hard kill below stays as the
-      // backstop for a run that ignores the freeze.
+      // experiments and searches do not. The one deliberate difference is
+      // the dispute hatch, which stays shut here: a disputed headline row
+      // admitted a fresh experiment (and its tool_impl/tool_review) with
+      // under 10% left, which cannot finish in what remains. Abstention,
+      // CLAIM-DISCLOSE and a replicator still can. The hard kill below stays
+      // as the backstop for a run that ignores the freeze.
       if (totals.cost >= maxCost * SOFT_CAP_FRACTION) {
         const target = String(args.agent ?? "");
-        const claimBlocked = name === "spawn_agent" && claimTableBlocked(opts.projectDir);
-        if (!finalizationAllows(name, target, claimBlocked)) {
+        if (!finalizationAllows(name, target, false)) {
           if (++softCapDenials > MAX_SOFT_CAP_DENIALS) {
             console.error(
               `\n[FATAL] ${softCapDenials - 1} consecutive non-finalization tool calls after the ` +
@@ -308,8 +332,8 @@ export function buildResearchHooks(opts: ResearchOptions) {
           return deny(name, args,
             `Spend has passed ${Math.round(SOFT_CAP_FRACTION * 100)}% of this run's $${maxCost} cap ` +
             `($${totals.cost.toFixed(2)}), so the run is in finalization: what is left is reserved for landing. ` +
-            finalizationDenyText(name, target, claimBlocked) + " " +
-            `Write down anything held only in this conversation (notes/experiments.md, notes/memory.md), ` +
+            finalizationDenyText(name, target, false, "cost") + " " +
+            `Write down anything held only in this conversation (notes/memory.md), ` +
             `compile once, then finish() — DISCLOSING what is unresolved. A disclosed limitation is a ` +
             `finished report; an undisclosed one is the only real failure. If a gate blocks finish() and ` +
             `you cannot clear it within what is left, say so plainly and let the escalation hand the run ` +
@@ -319,36 +343,35 @@ export function buildResearchHooks(opts: ResearchOptions) {
       }
     }
 
-    // 4. Rate limiting for API tools
-    const rateLimit = rateLimits[name];
-    if (rateLimit) {
-      const lastCall = lastCallTime[name] ?? 0;
-      const timeSince = Date.now() - lastCall;
-      if (timeSince < rateLimit) {
-        await new Promise(resolve => setTimeout(resolve, rateLimit - timeSince));
-      }
-      lastCallTime[name] = Date.now();
-    }
-
     return undefined; // Allow
   };
 
   const after = async (ctx: any): Promise<any> => {
     const toolName = ctx.toolCall?.name ?? "unknown";
-    const errorText = extractErrorText(ctx);
-    const errorCategory = ctx.isError ? classifyError(errorText, toolName) : undefined;
+    // ctx.isError is set only for a thrown error; a safety block returns
+    // isError:true instead (see surfaceReturnedIsError).
+    const isError = ctx.isError === true || ctx.result?.isError === true;
+    const errorText = extractErrorText(ctx, isError);
+    const errorCategory = isError ? classifyError(errorText, toolName) : undefined;
+    // A gate-blocked finish returns plain content without details.success
+    // (src/tools/index.ts); it is not a fault, but it is not a finish either.
+    const finishNotDone = toolName === "finish" && !isError && ctx.result?.details?.success !== true;
 
     // 1. Log to JSONL (enriched with error info)
     const entry: Record<string, any> = {
       type: "tool_call",
       tool: toolName,
       args: summarizeArgs(ctx.args),
-      success: !ctx.isError,
+      success: !isError && !finishNotDone,
       timestamp: new Date().toISOString(),
     };
-    if (ctx.isError && errorCategory) {
+    if (isError && errorCategory) {
       entry.errorCategory = errorCategory;
       entry.errorMessage = errorText.slice(0, 300);
+    } else if (finishNotDone) {
+      const firstLine = (extractTextContent(ctx.result?.content ?? []).split("\n").find((l) => l.trim()) ?? "").trim();
+      entry.errorCategory = firstLine.startsWith("finish() deferred") ? "finish_deferred" : "finish_refused";
+      entry.errorMessage = firstLine.slice(0, 300);
     }
     try {
       appendFileSync(logFile, JSON.stringify(entry) + "\n");
@@ -361,7 +384,8 @@ export function buildResearchHooks(opts: ResearchOptions) {
       }
     }
 
-    // 2. Capture lessons from failures → notes/lessons.md
+    // 2. Capture lessons from failures → notes/lessons.md. Thrown errors only:
+    //    a safety block is policy working as intended, not a lesson to record.
     if (ctx.isError && errorText.length > 10) {
       captureLesson(opts.projectDir, toolName, errorCategory ?? "unknown", errorText, ctx.args);
       opts.bus?.emit({
@@ -376,20 +400,14 @@ export function buildResearchHooks(opts: ResearchOptions) {
     // 3. Set reminder flags — providers in reminders.ts render them on next turn
     const reminders = opts.reminders;
 
-    if (toolName === "run_experiment" && !ctx.isError && reminders) {
-      reminders.setFlag("experiment_completed", true);  // self-clears when notes updated
-    }
     if (toolName === "compile_latex" && reminders) {
       const existingContent: any[] = ctx.result?.content ?? [];
-      const hadErrors = ctx.isError || existingContent.some(
+      const hadErrors = isError || existingContent.some(
         (c: any) => typeof c.text === "string" && (c.text.includes("Error") || c.text.includes("Warning") || c.text.includes("Undefined"))
       );
       if (hadErrors) {
         reminders.setFlag("latex_had_errors", true, 5 * 60 * 1000);  // 5 min TTL
       }
-    }
-    if (toolName === "dispatch_workers" && !ctx.isError && reminders) {
-      reminders.setFlag("workers_completed", true);  // self-clears when notes updated
     }
 
     // 4. Notify on successful arXiv paper download so the caller (agent.ts) can
@@ -398,7 +416,7 @@ export function buildResearchHooks(opts: ResearchOptions) {
     //    Arxiv-only here: DOI/URL downloads have non-predictable filename
     //    derivation, and the <unprocessed_papers> fallback in the research
     //    snapshot catches them by scanning data/papers/ every turn.
-    if (toolName === "bash" && !ctx.isError && opts.onPaperDownloaded) {
+    if (toolName === "bash" && !isError && opts.onPaperDownloaded) {
       const cmd = String(ctx.args?.command ?? "");
       if (/\bsearch\s+download\b[^|&;]*?--arxiv\b/.test(cmd)) {
         // Primary: literal id directly after the flag, e.g. `--arxiv 2308.07915`
@@ -412,7 +430,10 @@ export function buildResearchHooks(opts: ResearchOptions) {
       }
     }
 
-    return undefined; // Don't modify tool results — reminders appear in snapshot
+    // Content is never modified (reminders appear in the snapshot); only a
+    // returned isError is carried onto the call. A refused finish has none,
+    // so it is logged as failed above but not sent to the provider as is_error.
+    return surfaceReturnedIsError(ctx);
   };
 
   // Update context token count for compaction triggers (called from agent event subscription).
@@ -461,14 +482,17 @@ function summarizeArgs(args: any): any {
 // ── Failure capture → notes/lessons.md ───────────────────────────────────────
 
 /** Extract error text from tool result. */
-function extractErrorText(ctx: any): string {
-  if (!ctx.isError) return "";
+function extractErrorText(ctx: any, isError: boolean): string {
+  if (!isError) return "";
   return extractTextContent(ctx.result?.content ?? []).slice(0, 1000);
 }
 
 /** Classify error into a category for structured logging. */
 function classifyError(errorText: string, toolName: string): string {
   const t = errorText.toLowerCase();
+  // Safety-wrapper refusals (blocked() in agents/safety-wrappers.ts) first:
+  // their text often quotes the offending command, which would match below.
+  if (t.startsWith("blocked:")) return "safety_block";
   // LaTeX
   if (t.includes("undefined control sequence") || t.includes("missing $")) return "latex_syntax";
   if (t.includes("file not found") && toolName === "compile_latex") return "latex_missing_file";

@@ -237,12 +237,24 @@ export function luxasSelfWriteReason(absPath: string, projectDir: string): strin
 }
 
 function blocked(reason: string) {
-  // isError so the harness records a failed tool call. Before this every
-  // safety block was logged `success: true` (hooks.ts reads `!ctx.isError`),
-  // which is why the y-magic run's four consecutive blocked `edit` calls
-  // read as four successes in .agent/log.jsonl and the edit defect below
-  // stayed invisible to offline postmortems for two runs.
+  // isError marks the call as failed, but the flag alone reaches nothing:
+  // pi-agent-core's executePreparedToolCall reports isError:false for any
+  // execute that resolves, so a returned isError gets to log.jsonl, the
+  // transcript and the provider only through afterToolCall →
+  // surfaceReturnedIsError below. Without that, the y-magic run's four
+  // consecutive blocked `edit` calls read as four successes in
+  // .agent/log.jsonl and the edit defect stayed invisible for two runs.
   return { ...errorContent(`BLOCKED: ${reason}`), isError: true as const };
+}
+
+/**
+ * afterToolCall that carries a tool's own `isError: true` return onto the
+ * call (the loop only marks thrown errors). Every Agent whose tools pass
+ * through this wrapper installs it, directly or via hooks.ts after(); async
+ * and loosely typed so it can be passed as afterToolCall as is.
+ */
+export async function surfaceReturnedIsError(ctx: { isError?: boolean; result?: unknown }): Promise<{ isError: true } | undefined> {
+  return ctx.isError !== true && (ctx.result as any)?.isError === true ? { isError: true } : undefined;
 }
 
 async function safeMtime(absPath: string): Promise<number | null> {
@@ -598,18 +610,7 @@ function wrapEdit(
         );
       }
       { const why = luxasSelfWriteReason(abs, projectDir); if (why) return blocked(why); }
-      if (protectedAbs.has(abs)) {
-        return blocked(
-          `${p} is protected by this agent's safety configuration ` +
-          `(frontmatter \`protectedFiles\`). The protection documents WHO owns ` +
-          `the write, not whether the write happens. To revise this file, ` +
-          `re-spawn the agent that owns it with a revision directive — e.g. for ` +
-          `experiment-authored files: \`spawn_agent(agent="experiment", ` +
-          `task="revise L2.X: <correction verbatim>", ` +
-          `templateVars={EXPERIMENT_ID: "E{N}_..."})\`. ` +
-          `Do not cite this block as a reason to skip the work.`
-        );
-      }
+      if (protectedAbs.has(abs)) return blocked(protectedFileMessage(p, abs, projectDir));
 
       if (allowedWriteAbs && !withinRoots(abs, allowedWriteAbs)) {
         return blocked(allowedWriteMessage(p, allowedWriteAbs, projectDir));
@@ -765,18 +766,7 @@ function wrapWrite(
         );
       }
       { const why = luxasSelfWriteReason(abs, projectDir); if (why) return blocked(why); }
-      if (protectedAbs.has(abs)) {
-        return blocked(
-          `${p} is protected by this agent's safety configuration ` +
-          `(frontmatter \`protectedFiles\`). The protection documents WHO owns ` +
-          `the write, not whether the write happens. To revise this file, ` +
-          `re-spawn the agent that owns it with a revision directive — e.g. for ` +
-          `experiment-authored files: \`spawn_agent(agent="experiment", ` +
-          `task="revise L2.X: <correction verbatim>", ` +
-          `templateVars={EXPERIMENT_ID: "E{N}_..."})\`. ` +
-          `Do not cite this block as a reason to skip the work.`
-        );
-      }
+      if (protectedAbs.has(abs)) return blocked(protectedFileMessage(p, abs, projectDir));
 
       if (allowedWriteAbs && !withinRoots(abs, allowedWriteAbs)) {
         return blocked(allowedWriteMessage(p, allowedWriteAbs, projectDir));
@@ -874,8 +864,8 @@ function notifyFileContextEntry(
 // but catches the straightforward evasion patterns LLMs reach for first.
 
 const BASH_WRITE_PATTERNS: Array<{ re: RegExp; kind: string }> = [
-  // Shell redirect: `> path`, `>> path`, `2> path` (group 1 = target)
-  { re: /(?:^|[\s;&|(`])\d*\s*>>?\s*['"]?([^\s'"<>;&|`()]+)/g, kind: "redirect" },
+  // Shell redirect: `> path`, `>> path`, `>| path`, `2> path` (group 1 = target)
+  { re: /(?:^|[\s;&|(`])\d*\s*>(?:>|\|)?\s*['"]?([^\s'"<>;&|`()]+)/g, kind: "redirect" },
   // tee / tee -a path
   { re: /\btee\b\s+(?:-[a-zA-Z]+\s+)*['"]?([^\s'"<>;&|`()]+)/g, kind: "tee" },
   // cp / mv / rsync — capture LAST positional arg (handles multi-source:
@@ -913,6 +903,21 @@ const BASH_WRITE_PATTERNS: Array<{ re: RegExp; kind: string }> = [
 const DESTRUCTIVE_VERB_RE = /\b(?:rm|rmdir|unlink|chflags\s+(?:no)?(?:u|s)appnd|chattr\s+[+-]a|find\b[^|;&\n]*?-delete)\b/;
 const AGENT_PATH_RE = /(?:^|[\s/="'`(:])\.agent(?:\/|$|[\s'"`)])/;
 
+// The redirect pattern also matches `a > b` comparisons inside awk / python -c
+// / heredoc bodies (31 of the Dy run's 36 bash blocks). A right operand that
+// starts with `=` (`>=`), is a number, or ends in `:` / `,` cannot name an
+// existing file, so it is not a write target. Anything containing `/`, `$` or
+// `\` still is: `${F}`, `RESEARCH\.md` and `scripts\/x.py` are real writes.
+// Still blocked by design: bare-identifier comparisons (`> thr`, 4 of the 36),
+// since `> thr` is also a real write; and LaTeX `\rm` read by the rm pattern
+// (5 of the 36), since `\rm` is also the alias-bypass spelling of rm.
+const NUMERIC_OPERAND_RE = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/;
+
+function isNonPathRedirectTarget(t: string): boolean {
+  if (/[/$\\]/.test(t)) return false;
+  return t.startsWith("=") || NUMERIC_OPERAND_RE.test(t) || t.endsWith(":") || t.endsWith(",");
+}
+
 function extractBashWriteTargets(cmd: string): Array<{ target: string; kind: string }> {
   const hits: Array<{ target: string; kind: string }> = [];
   for (const { re, kind } of BASH_WRITE_PATTERNS) {
@@ -926,6 +931,7 @@ function extractBashWriteTargets(cmd: string): Array<{ target: string; kind: str
       if (!target) continue;
       if (target.startsWith("/dev/")) continue;
       if (/^&\d+$/.test(target)) continue;
+      if (kind === "redirect" && isNonPathRedirectTarget(target)) continue;
       hits.push({ target, kind });
     }
   }
@@ -1160,6 +1166,29 @@ function resolveScopeRoots(
 ): string[] | null {
   if (!roots) return null;
   return roots.map((r) => resolve(projectDir, expandTemplate(r, templateVars)));
+}
+
+// The ledger has two writers. A finding or Limitations line is one cheap
+// ledger_writer spawn, which the finalization freeze admits; re-spawning
+// experiment for it is a full re-run plus a review loop, and past 90% of the
+// cap that spawn is refused.
+function protectedFileMessage(p: string, abs: string, projectDir: string): string {
+  const revise = `\`spawn_agent(agent="experiment", task="revise L2.X: <correction verbatim>", ` +
+    `templateVars={EXPERIMENT_ID: "E{N}_..."})\``;
+  const route = abs === resolve(projectDir, "notes", "experiments.md")
+    ? `To add a ledger line to ### Limitations (\`finding_answered: r<R> #<N> <clause> — <locator>\` for ` +
+      `work already done on Issue N of review round R, \`finding_open: "<≥8 words of Issue N, verbatim>"\` ` +
+      `otherwise), spawn \`spawn_agent(agent="ledger_writer", task="add to L2.X ### Limitations: ` +
+      `<line verbatim>; change nothing else", templateVars={EXPERIMENT_ID: "E{N}_..."})\` — it stays ` +
+      `open inside the finalization freeze. To revise the science, re-spawn the experiment: ${revise}. `
+    : `To revise this file, re-spawn the agent that owns it with a revision directive — e.g. for ` +
+      `experiment-authored files: ${revise}. `;
+  return (
+    `${p} is protected by this agent's safety configuration ` +
+    `(frontmatter \`protectedFiles\`). The protection documents WHO owns ` +
+    `the write, not whether the write happens. ` + route +
+    `Do not cite this block as a reason to skip the work.`
+  );
 }
 
 function allowedWriteMessage(p: string, roots: string[], projectDir: string): string {

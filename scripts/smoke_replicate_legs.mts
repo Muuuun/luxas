@@ -3,12 +3,14 @@
  * that differs from the producer's is an independent leg (converging without
  * an INDEPENDENT line); two replications on one route are one leg (wiring);
  * same model + same route is wiring; a replication with no route/script is
- * not a leg; replications count as "later" for supersession.
+ * not a leg; replications count as "later" for supersession. §C12: a
+ * replication/results.json written by an estimate-mode replicator is not a leg.
  */
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildClaimTable, relation } from "../src/claims-table.ts";
+import { Session } from "../src/session.ts";
 
 let fails = 0;
 function check(name: string, ok: boolean, detail = "") {
@@ -65,5 +67,63 @@ process.env.LUXAS_REPLICATE_LEGS = "0";
 r = row(project([{ exp: "E3_a", own: 24.65, value: 24.5, sigma: 0.35, route: "three-channel quadratic root fit", script: "replication/fit.py" }]));
 check("LUXAS_REPLICATE_LEGS=0 → replications attest nothing", r.status === "indicative");
 delete process.env.LUXAS_REPLICATE_LEGS;
+
+// §C12: an estimate-mode replicator wrote replication/results.json (Dy E2–E4:
+// the write scope allowed it) — that file is the blind estimate, not a second
+// leg. Transcript heads are written here because .agent/ is gitignored.
+console.log("\n§C12 estimate-mode replicator output is never a replication leg");
+const fg = (eid: string | undefined, q: string | undefined, mode: string | undefined) =>
+  JSON.stringify({ type: "spawn_init", agent: "replicator", task: "Blind order-of-magnitude estimate of ONE quantity.\n\nQUANTITY_ID: zero_angle", parentAgentId: "brain", templateVars: { PROJECT_DIR: "/p", ...(eid ? { EXPERIMENT_ID: eid } : {}), ...(q ? { QUANTITY_ID: q } : {}), ...(mode ? { MODE: mode } : {}) }, timestamp: 1 }) + "\n"
+  + JSON.stringify({ role: "user", content: [{ type: "text", text: "Blind order-of-magnitude estimate" }] }) + "\n";
+const bg = (eid: string, q: string, mode: string) =>
+  JSON.stringify({ type: "session", version: 1, id: "x" }) + "\n"
+  + JSON.stringify({ type: "message", message: { role: "system", content: `You estimate ONE quantity blind.\n<environment>\n<experiment_id>${eid}</experiment_id>\n<quantity_id>${q}</quantity_id>\n<mode>${mode}</mode>\n</environment>` } }) + "\n";
+function c12(transcripts: Record<string, string> | null, headerOnly: string[] = []) {
+  const dir = project([{ exp: "E3_a", own: 24.65, value: 24.5, sigma: 0.35, route: "three-channel quadratic root fit", script: "replication/fit.py" }]);
+  if (transcripts) {
+    const conv = join(dir, ".agent", "conversations");
+    mkdirSync(conv, { recursive: true });
+    for (const [name, body] of Object.entries(transcripts)) writeFileSync(join(conv, name), body);
+    // What subagent-runner leaves on disk from its start until the first turn_end.
+    for (const name of headerOnly) Session.open(join(conv, name), dir);
+  }
+  const x = row(dir);
+  return { ...x, legs: x.estimates.filter((e) => e.kind === "replication").length, say: `${x.status} (${x.estimates.filter((e) => e.kind === "replication").length} repl) :: ${x.reasons.join(" | ")}` };
+}
+const EST = { "review_experiment.E3_a.blind-estimate-zero_angle.replicator-abc123.jsonl": fg("E3_a", "zero_angle", "estimate") };
+let c = c12(EST);
+check("C12: estimate-only transcript → the replication file is not a leg", c.legs === 0 && c.status === "indicative", c.say);
+check("C12: the row says the blind estimator wrote it", c.reasons.some((x) => /^E3: replication\/results\.json written by the blind estimator — not a second leg$/.test(x)), c.say);
+c = c12({ "brain.experiment-x.blind-estimate-zero_angle.replicator-q9.jsonl": fg("E3_a", "zero_angle", undefined) });
+check("C12: '.blind-estimate-' in the filename marks estimate mode without MODE", c.legs === 0 && c.status === "indicative", c.say);
+c = c12({ "brain.replicator-bg-4.jsonl": bg("E3_a", "zero_angle", "estimate") });
+check("C12: background transcript with <mode>estimate</mode> → not a leg", c.legs === 0 && c.status === "indicative", c.say);
+c = c12({ ...EST, "brain.replicator-q1w2e3.jsonl": fg("E3_a", "zero_angle", "replicate") });
+check("C12: + foreground spawn_init MODE=replicate transcript → converging", c.status === "converging" && c.legs === 1, c.say);
+c = c12({ ...EST, "brain.replicator-bg-2.jsonl": bg("E3_a", "zero_angle", "replicate") });
+check("C12: + background <mode>replicate</mode> transcript → converging", c.status === "converging" && c.legs === 1, c.say);
+c = c12({ ...EST, "brain.replicator-bg-3.jsonl": bg("{{EXPERIMENT_ID}}", "{{QUANTITY_ID}}", "{{MODE}}") });
+check("C12: unrendered / missing MODE, EID, Q → replicate mode, wildcard → converging", c.status === "converging" && c.legs === 1, c.say);
+c = c12({ ...EST, "brain.replicator-r7.jsonl": fg(undefined, "zero_angle", "replicate") });
+check("C12: replicate transcript with no EXPERIMENT_ID matches every dir → converging", c.status === "converging" && c.legs === 1, c.say);
+c = c12({ ...EST, "brain.replicator-r8.jsonl": fg("E3_a", "other_q", "replicate") });
+check("C12: a replicate transcript for another quantity does not rescue this one", c.legs === 0 && c.status === "indicative", c.say);
+c = c12({ "review_experiment.E4_b.blind-estimate-zero_angle.replicator-x1.jsonl": fg("E4_b", "zero_angle", "estimate") });
+check("C12: an estimate transcript in a different experiment dir → converging", c.status === "converging" && c.legs === 1, c.say);
+c = c12({ "brain.replicator-bg-1.reader-z.jsonl": fg("E3_a", "zero_angle", "estimate"), "brain.experiment-y.jsonl": fg("E3_a", "zero_angle", "estimate") });
+check("C12: only replicator transcripts are read", c.status === "converging" && c.legs === 1, c.say);
+c = c12({});
+check("C12: empty conversations dir → unchanged (converging)", c.status === "converging" && c.legs === 1, c.say);
+// F1: a background replicator's transcript is the Session header alone until
+// its first turn_end (Dy bg-2: 99 s), and for good if the runner is killed in
+// that turn. It names no mode and no ids, so it must not rescue the
+// estimator's leg (Dy init_error: indicative → false converging).
+const blindReason = (x: { reasons: string[] }) => x.reasons.some((s) => /^E3: replication\/results\.json written by the blind estimator — not a second leg$/.test(s));
+c = c12(EST, ["brain.replicator-bg-9.jsonl"]);
+check("F1: + header-only background transcript → still not a leg", c.legs === 0 && c.status === "indicative" && blindReason(c), c.say);
+c = c12({ ...EST, "brain.replicator-bg-5.jsonl": "" });
+check("F1: + empty replicator transcript → still not a leg", c.legs === 0 && c.status === "indicative" && blindReason(c), c.say);
+c = c12({}, ["brain.replicator-bg-9.jsonl"]);
+check("F1: a header-only transcript alone marks nothing as estimated (converging)", c.status === "converging" && c.legs === 1, c.say);
 if (fails) { console.log(`\n${fails} FAILED`); process.exit(1); }
 console.log("\nALL PASS — computing replications on assigned routes settle rows; same route is one leg.");

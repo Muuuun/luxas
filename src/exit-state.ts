@@ -10,6 +10,8 @@
  * Writers (brain process only — a detached sub-agent runner must not overwrite
  * the run's record, so everything here is a no-op until beginRun is called):
  *   - index.ts run()          beginRun at launch; the normal end of the loop
+ *   - index.ts crash handler  run() itself threw; an exception the process
+ *                             survived is only noted (noteUncaught)
  *   - hooks.ts                cost cap, soft-cap denial limit
  *   - agent.ts                turn cap
  *   - usage-log.ts            cost cap at usage record, unfunded provider
@@ -70,6 +72,7 @@ export const EXIT_ACTION: Record<ExitKind, string> = {
 const FILE = "last_exit.json";
 let active: { projectDir: string; startedAt: number } | null = null;
 let reason: { kind: ExitKind; detail?: string } | null = null;
+let survived: string | null = null;
 let hooked = false;
 
 function write(projectDir: string, rec: ExitRecord): void {
@@ -101,6 +104,7 @@ export function beginRun(projectDir: string): ExitRecord | null {
   const previous = readLastExit(projectDir);
   active = { projectDir, startedAt: Date.now() };
   reason = null;
+  survived = null;
   record("running");
   if (!hooked) {
     hooked = true;
@@ -108,7 +112,7 @@ export function beginRun(projectDir: string): ExitRecord | null {
     process.on("exit", (code) => {
       if (!active) return;
       if (reason) record(reason.kind, reason.detail);
-      else record("crashed", `process exited with code ${code} without naming a reason`);
+      else record("crashed", survived ?? `process exited with code ${code} without naming a reason`);
     });
   }
   return previous;
@@ -125,8 +129,19 @@ export function setExitReason(kind: ExitKind, detail?: string): void {
   record(kind, detail);
 }
 
+/**
+ * An uncaught exception the process survived (the crash handler keeps it
+ * alive). That does not end the run, so it never names the ending and is not
+ * written: a later named reason still wins, and a SIGKILL still reads as
+ * killed. It becomes the detail only of an exit nobody named. First one wins.
+ */
+export function noteUncaught(detail: string): void {
+  if (!active || reason || survived) return;
+  survived = detail;
+}
+
 /** Gates only. */
-export function _resetExitStateForTest(): void { active = null; reason = null; }
+export function _resetExitStateForTest(): void { active = null; reason = null; survived = null; }
 
 function pidAlive(pid: number): boolean {
   try { process.kill(pid, 0); return true; } catch (e: any) { return e?.code === "EPERM"; }
@@ -150,6 +165,33 @@ export function readLastExit(projectDir: string): ExitRecord | null {
     return { ...rec, kind: "killed" };
   }
   return rec;
+}
+
+type FinishKind = Extract<ExitKind, "finished" | "forced_finish" | "needs_operator">;
+const FINISH_KINDS: readonly FinishKind[] = ["finished", "forced_finish", "needs_operator"];
+
+/**
+ * How the last successful finish() in a checkpoint tail ended, or null if
+ * there is none. A forced finish and an operator escalation also return
+ * details.success (Patch B exits the loop on it), so success alone does not
+ * mean the study is finished; only "finished" lets the next launch archive the
+ * checkpoint. Results written before the outcome field are told apart by the
+ * escalation flag and the force-exit text.
+ */
+export function finishOutcomeInCheckpoint(lines: string[]): FinishKind | null {
+  let outcome: FinishKind | null = null;
+  for (const line of lines) {
+    let m: any;
+    try { const entry = JSON.parse(line); m = entry?.message ?? entry; } catch { continue; }
+    if (m?.role !== "toolResult" || m?.toolName !== "finish" || m?.details?.success !== true) continue;
+    const d = m.details;
+    const firstText = Array.isArray(m.content) ? m.content.find((c: any) => c?.type === "text") : undefined;
+    outcome = FINISH_KINDS.includes(d.outcome) ? d.outcome
+      : d.escalated === true ? "needs_operator"
+      : String(firstText?.text ?? "").startsWith("Force-exit (") ? "forced_finish"
+      : "finished";
+  }
+  return outcome;
 }
 
 /** One line for a human or for the resuming brain. */

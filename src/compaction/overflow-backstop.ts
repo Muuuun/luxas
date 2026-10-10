@@ -63,6 +63,14 @@ function keyOf(m: any, i: number): string {
   return `${i}:${m?.role ?? "?"}:${msgChars(m)}`;
 }
 
+/**
+ * Only history may be cut. A role:"system" message is the system prompt plus
+ * the tool declarations (pi 0.87), or a later prompt/tool delta; cutting it
+ * sends the model a different prompt and rewrites the whole prompt cache. Its
+ * chars still count toward the budget — it is sent.
+ */
+const cuttable = (m: any) => m?.role !== "assistant" && m?.role !== "system";
+
 function truncateContent(m: any, keep: number): any {
   const cut = (t: string) => t.length <= keep ? t :
     t.slice(0, Math.floor(keep * 0.6)) +
@@ -147,22 +155,22 @@ export function applyOverflowBackstop(
   };
 
   // Pass 1: cap oversized unpinned tool-result/user messages (largest first).
-  const order = out.map((m, i) => ({ i, c: msgChars(m), role: m?.role }))
-    .filter((x) => x.c > BACKSTOP_MAX_MSG_CHARS && x.role !== "assistant" && !ledger.caps.has(keys[x.i]))
+  const order = out.map((m, i) => ({ i, c: msgChars(m) }))
+    .filter((x) => x.c > BACKSTOP_MAX_MSG_CHARS && cuttable(out[x.i]) && !ledger.caps.has(keys[x.i]))
     .sort((a, b) => b.c - a.c);
   for (const { i } of order) {
     pin(i, BACKSTOP_MAX_MSG_CHARS);
     if (total <= budgetChars) return { messages: out, active };
   }
 
-  // Pass 2: still over — cut UNPINNED non-assistant messages oldest-first at
+  // Pass 2: still over — cut UNPINNED cuttable messages oldest-first at
   // progressively smaller caps. Pinned messages keep their original cap
   // forever (that is the point); growth pressure lands on fresh messages.
   let cap = BACKSTOP_MAX_MSG_CHARS;
   while (total > budgetChars && cap > BACKSTOP_MIN_CAP) {
     cap = Math.floor(cap / 2);
     for (let i = 0; i < out.length && total > budgetChars; i++) {
-      if (out[i]?.role === "assistant") continue;
+      if (!cuttable(out[i])) continue;
       if (ledger.caps.has(keys[i])) continue;
       if (msgChars(out[i]) <= cap) continue;
       pin(i, cap);
@@ -195,7 +203,7 @@ export function applyOverflowBackstop(
   // Pass 4: safety valve. Pins are normally permanent (that is the cache
   // guarantee), but when every message is already pinned and the budget is
   // STILL unreachable, correctness beats cache stability: re-cut pinned
-  // non-assistant messages at progressively smaller caps, UPDATING their
+  // cuttable messages at progressively smaller caps, UPDATING their
   // pins — a one-time byte change per escalation, after which the new pins
   // are stable again. Without this the hard guarantee "overflow is
   // arithmetically impossible" would not survive pinning (N×50K pins can
@@ -204,7 +212,7 @@ export function applyOverflowBackstop(
   while (total > budgetChars && cap > 1_000) {
     cap = Math.floor(cap / 2);
     for (let i = 0; i < out.length && total > budgetChars; i++) {
-      if (out[i]?.role === "assistant") continue;
+      if (!cuttable(out[i])) continue;
       if (msgChars(out[i]) <= cap) continue;
       pin(i, cap);
     }

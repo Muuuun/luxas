@@ -93,7 +93,7 @@ than its evidence):
   with an unhedged abstract sentence is exactly the promotion leak this schema
   exists to close.
 
-**Claim status governs the abstract (claims-first, 2026-08-26).** Your context carries `<claim_status>`: one row per quantity id with a status computed from independent estimates. Render caps, enforced by the finish gate: CORROBORATED may headline unhedged; CONVERGING and INDICATIVE only with a one-clause hedge naming σ and the regime of validity (that IS the hedge — a number, an uncertainty, a regime; not the word "indicative"); DISPUTED and CONDITIONAL may not appear in the abstract or conclusion at all — move the sentence to the body with the dispute stated, or leave it out; DISCLOSED only with its countersigned hedge sentence verbatim. A number whose claim_key is declared under a quantity id must cite that id in `quantity_id` and inherit that row's cap.
+**Claim status governs the abstract (claims-first, 2026-08-26).** Your context carries `<claim_status>`: one row per quantity id with a status computed from independent estimates. Render caps, enforced by the finish gate: CONVERGING and INDICATIVE only with a one-clause hedge naming σ and the regime of validity (that IS the hedge — a number, an uncertainty, a regime; not the word "indicative"); DISPUTED and CONDITIONAL may not appear in the abstract or conclusion at all — move the sentence to the body with the dispute stated, or leave it out; DISCLOSED only with its countersigned hedge sentence verbatim. A number whose claim_key is declared under a quantity id must cite that id in `quantity_id` and inherit that row's cap.
 
 **claim_key discipline:** your context carries `<claim_registry>` — every
 structured value the experiments produced, one line per key, with its

@@ -20,7 +20,7 @@
  *                                       checks are `inputs` by VALUE and the
  *                                       verdict reads-diff
  *   H5 reviewers do not estimate     → ESTIMATE(blind)/SCALING/INDEPENDENT/
- *                                       ANCHOR-OK/DISCLOSE-OK lines parsed —
+ *                                       DISCLOSE-OK lines parsed —
  *                                       ONLY from harness-written files
  *                                       (reviews/experiment_review_*_r*.md,
  *                                       reviews/pi_feedback.md); any agent
@@ -53,10 +53,10 @@
  * "harness-written file"; transcript anchoring of limit_check.observed.
  */
 
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync } from "node:fs";
 import { join, basename } from "node:path";
 import { listExperimentDirs } from "./tools/report-integrity.js";
-import { openReviewFindings, routeConfessesDependence, sameRoute } from "./claims-review.js";
+import { openReviewFindings, reviewOpenIssues, routeConfessesDependence, sameRoute } from "./claims-review.js";
 import { listJobIds, readState } from "./jobs/registry.js";
 
 // ── types ──────────────────────────────────────────────────────────────────
@@ -95,6 +95,8 @@ export interface Estimate {
   model?: string;
   /** Executed-computation marker for replications: a script under replication/ or a job id. */
   job?: string;
+  /** Unit token written after a reviewer line's value or σ ("MHz", "s⁻¹"); shown, never compared. */
+  unit?: string;
 }
 
 // `corroborated` was removed 2026-09-04. It sat above `converging` and required
@@ -105,7 +107,9 @@ export interface Estimate {
 // read `disputed`/`conditional` — so it was an unreachable rung that nothing
 // consumed, shown to brain each turn as a goalpost it could not reach.
 // `converging` (agreeing pair + σ) is now the top status. Anchors still appear
-// in `reasons` as "(anchored)"; they no longer change status.
+// in `reasons` as "(anchored)"; they no longer change status. ANCHOR-OK itself
+// is no longer parsed: it decided nothing, and its limit_check nag was the
+// rendered reason of disputed rows, hiding the dispute.
 // NOTE: report/claims.json has its OWN unrelated `corroborated` grade, computed
 // by xvalVerdict from computed.cross_validation. That one is live — do not
 // conflate them.
@@ -117,6 +121,8 @@ export interface ClaimRow {
   headline: boolean;
   estimates: Estimate[];
   reasons: string[];
+  /** The reason that set `status` (a dispute, a cap, a conditional input); absent when nothing moved it off the default. Rendered and cited instead of the last reason, which is often a σ note. */
+  cause?: string;
   observable?: string;
   inputs: string[];
 }
@@ -139,6 +145,8 @@ export interface ClaimTable {
   /** v3 D4: frame headline ids that are disputed/conditional at this moment — the abstract must abstain on them ("we could not determine …"); `satisfied` = the sentence is present. */
   abstain: { id: string; observable: string; sentence: string; satisfied: boolean }[];
   malformed: string[];
+  /** ESTIMATE lines in harness review files that do not parse, as "reviews/<file>: <text>". Non-blocking: those files are write-protected and re-read every round, so one typo must not hold finish. */
+  unparsed: string[];
   /** Non-blocking notes (undeclared input keys, etc.). */
   notes: string[];
   readsDrops: string[];
@@ -150,6 +158,32 @@ export interface ClaimTable {
 }
 
 // ── parsing ────────────────────────────────────────────────────────────────
+
+/**
+ * A results.json as the harness reads it. Python's json.dump writes bare NaN,
+ * Infinity and -Infinity unless given allow_nan=False, and JSON.parse rejects
+ * them: 10 of 224 local experiments had no readable results.json for one
+ * non-finite field, so the claim table dropped the whole experiment and the
+ * review loop re-sent it as missing. Strict first; on failure those tokens,
+ * outside strings, read as null, so a declaration that points at one is named
+ * as not finite and the rest of the file counts. Still not JSON → throws the
+ * error of that second parse: it names what still blocks reading, not a NaN
+ * the harness would have accepted.
+ */
+export function parseResultsJson(text: string): any {
+  try { return JSON.parse(text); }
+  catch (err) {
+    // A string is matched whole, so a token inside one is left alone.
+    const tolerant = text.replace(/"(?:[^"\\]|\\.)*"|-?\b(?:NaN|Infinity)\b/g, (m) => (m[0] === '"' ? m : "null"));
+    if (tolerant === text) throw err;
+    return JSON.parse(tolerant);
+  }
+}
+
+/** parseResultsJson on a file; undefined when the file is missing or still not JSON. */
+export function readResultsJson(path: string): any {
+  try { return parseResultsJson(readFileSync(path, "utf-8")); } catch { return undefined; }
+}
 
 const num = (v: unknown): number | undefined =>
   typeof v === "number" && Number.isFinite(v) ? v : undefined;
@@ -187,7 +221,7 @@ function leafAt(obj: any, dotted: string): unknown {
   return cur;
 }
 
-interface Parsed { quantities: QuantityDecl[]; verdicts: VerdictDecl[]; estimates: Estimate[]; malformed: string[]; anchors: { key: string; value: number }[] }
+interface Parsed { quantities: QuantityDecl[]; verdicts: VerdictDecl[]; estimates: Estimate[]; malformed: string[]; anchors: { key: string; value: number }[]; instanceNotes: { quantity: string; text: string }[] }
 
 /** The report's abstract text (empty when no report.tex / no abstract environment). */
 export function readAbstract(projectDir: string): string {
@@ -219,6 +253,50 @@ export function experimentRanScripts(projectDir: string, expDirName: string): bo
   return false;
 }
 
+function fileHead(path: string, bytes: number): string {
+  let fd: number | undefined;
+  try {
+    fd = openSync(path, "r");
+    const buf = Buffer.alloc(bytes);
+    return buf.subarray(0, readSync(fd, buf, 0, bytes, 0)).toString("utf-8");
+  } catch { return ""; } finally { if (fd !== undefined) closeSync(fd); }
+}
+
+/**
+ * True for (experiment dir, quantity) when only an estimate-mode replicator
+ * ran there: its replication/results.json is the blind estimate, not a second
+ * leg. Dy E2–E4 estimators wrote that file (the write scope allowed it, and
+ * bash still can), and each read as an independent replication. Reads
+ * transcript heads only: foreground ones open with spawn_init.templateVars,
+ * background ones with the rendered system prompt's tags. A replicator not
+ * marked estimate is replicate mode, and an id it lacks is a wildcard, so
+ * doubt keeps the leg. A head with neither (empty, or the Session header a
+ * background runner holds until its first turn_end, for good if killed in
+ * that turn) names no mode at all and counts for neither side.
+ */
+function estimatorOnlyReplication(projectDir: string): (dir: string, quantity: string) => boolean {
+  const est = new Set<string>(), rep = new Set<string>();
+  const conv = join(projectDir, ".agent", "conversations");
+  let names: string[] = [];
+  try { names = readdirSync(conv).filter((n) => /(?:^|\.)replicator-[^.]+\.jsonl$/.test(n)); } catch { /* no conversations */ }
+  const rendered = (v: string | undefined) => (v && !v.includes("{{") ? v : undefined);
+  for (const n of names) {
+    const lines = fileHead(join(conv, n), 16384).split("\n");
+    let field: (key: "EXPERIMENT_ID" | "QUANTITY_ID" | "MODE") => string | undefined = () => undefined;
+    if (/"type"\s*:\s*"spawn_init"/.test(lines[0])) field = (k) => lines[0].match(new RegExp(`"${k}"\\s*:\\s*"([^"\\\\]*)"`))?.[1];
+    else {
+      const sys = lines.find((l) => /"role"\s*:\s*"system"/.test(l));
+      if (!sys) continue;
+      const tag = { EXPERIMENT_ID: "experiment_id", QUANTITY_ID: "quantity_id", MODE: "mode" } as const;
+      field = (k) => sys.match(new RegExp(`<${tag[k]}>([^<]*)</${tag[k]}>`))?.[1];
+    }
+    const eid = rendered(field("EXPERIMENT_ID")), q = rendered(field("QUANTITY_ID"));
+    if (field("MODE") === "estimate" || n.includes(".blind-estimate-")) { if (eid && q) est.add(`${eid}\u0000${q}`); }
+    else rep.add(`${eid ?? "*"}\u0000${q ?? "*"}`);
+  }
+  return (dir, q) => est.has(`${dir}\u0000${q}`) && ![`${dir}\u0000${q}`, `${dir}\u0000*`, `*\u0000${q}`, "*\u0000*"].some((k) => rep.has(k));
+}
+
 /** Numeric leaves under `invariants` (literature inputs), recursively, with their dotted keys. */
 function invariantLeaves(inv: unknown, prefix = "invariants"): { key: string; value: number }[] {
   const out: { key: string; value: number }[] = [];
@@ -232,7 +310,7 @@ function invariantLeaves(inv: unknown, prefix = "invariants"): { key: string; va
 }
 
 function parseExperiment(id: string, j: any): Parsed {
-  const out: Parsed = { quantities: [], verdicts: [], estimates: [], malformed: [], anchors: invariantLeaves(j?.invariants) };
+  const out: Parsed = { quantities: [], verdicts: [], estimates: [], malformed: [], anchors: invariantLeaves(j?.invariants), instanceNotes: [] };
   const computed = j?.computed;
   if (!computed || typeof computed !== "object") return out;
   const qs = computed.quantities;
@@ -331,12 +409,23 @@ function parseExperiment(id: string, j: any): Parsed {
   // Harvested cross_validation value_b: an estimate of whatever quantity the
   // claim_key belongs to. Deliberately reads a subtree the claim registry
   // excludes — bookkeeping as a CLAIM, evidence as an ESTIMATE (design §3.2).
-  const keyToId = new Map(out.quantities.map((q) => [q.key, q.id]));
+  // Only for the same instance, though: Dy E1 filed three other clock-point
+  // roots (value_a 19797.5 / 24866.8 / 48119.6) under the 3136.82 G root's
+  // key, and their value_b disputed it and everything it fed. Same instance =
+  // value_a within 1 % or within own σ, never the entry's tolerance_rel (the
+  // producer's own pass bar); an entry without value_a is legacy and counts.
+  const declByKey = new Map(out.quantities.map((q) => [q.key, q]));
   for (const x of (Array.isArray(computed.cross_validation) ? computed.cross_validation : [])) {
-    const qid = keyToId.get(String(x?.claim_key ?? ""));
-    if (!qid) continue;
+    const own = declByKey.get(String(x?.claim_key ?? ""));
+    if (!own) continue;
+    const qid = own.id;
     const b = num(x?.value_b);
     if (b === undefined) continue;
+    const va = num(x?.value_a);
+    if (own.value !== undefined && va !== undefined && relDiff(va, own.value) > INPUT_MATCH_REL && !(own.uncertainty !== undefined && Math.abs(va - own.value) <= own.uncertainty)) {
+      out.instanceNotes.push({ quantity: qid, text: `different instance: ${id}:xval:${String(x?.method_b ?? "?").slice(0, 40)} has value_a=${va}, not ${qid}'s own ${own.value} — its value_b=${b} is not an estimate of ${qid}` });
+      continue;
+    }
     out.estimates.push({
       quantity: qid, value: b, sigma: posNum(x?.sigma_b), kind: "xval",
       source: `${id}:xval:${String(x?.method_b ?? "?").slice(0, 40)}`, experiment: id,
@@ -350,8 +439,62 @@ function parseExperiment(id: string, j: any): Parsed {
 
 // Reviewer-line grammar. The separator must be whitespace-delimited so a
 // leading minus sign on the value is never eaten (505d006's lesson).
+//   <value> [unit] [± <σ> [unit] | (+a/−b) [unit]] [(qualifier)] [via <route>] [— inputs: [k=v, …]]
+// Units and asymmetric errors arrived with the Dy run: 11 of 28 lines failed
+// the unit-less grammar, among them E4's blind 207.82 MHz against the
+// producer's 65.68. A unit is whitespace-preceded and starts with a letter,
+// µ μ Ω Å ° or %, so a digit inside one (s^-1) is never read as σ and a
+// digit-led unit (1/s) stays unparsed. Only value and σ are numbers.
+// A σ in % (spaced, glued, or per side of (+a%/−b%)) is relative to a value
+// that is not itself in %: "0.01 ± 30 %" is 0.01 ± 0.003. Read as an absolute
+// 30 it was capped at 0.5·|v| and a 2× gap on an error rate "agreed".
 const NUM = String.raw`[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?`;
-export const ESTIMATE_LINE_RE = new RegExp(String.raw`^\s*ESTIMATE(\(blind\))?:\s*(\S+)\s+[—–-]+\s+(${NUM})(?:\s*(?:±|\+/-)\s*(${NUM}))?\s*(?:via\s+(.*?))?(?:\s+[—–-]+\s*inputs:\s*(.*))?\s*$`);
+const UNUM = String.raw`(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?`;
+const UNIT = String.raw`(?!via\b)[A-Za-zµμΩÅ°%](?:(?!\+/-)[^\s,;()±])*`;
+const ASYM = String.raw`\(\s*\+\s*(?<sigmaPlus>${UNUM})\s*(?<plusPct>%)?\s*/\s*[-−–]\s*(?<sigmaMinus>${UNUM})\s*(?<minusPct>%)?\s*\)`;
+export const ESTIMATE_LINE_RE = new RegExp(
+  String.raw`^\s*ESTIMATE(?<blind>\(blind\))?:\s*(?<id>\S+)\s+[—–-]+\s+(?<value>${NUM})(?:\s+(?<unit>${UNIT}))?` +
+  String.raw`(?:\s*(?:±|\+/-)\s*(?<sigma>${NUM})(?:\s+(?<sigmaUnit>${UNIT})|(?<sigmaPct>%))?|\s*${ASYM}(?:\s+(?<asymUnit>${UNIT}))?)?` +
+  // A qualifier opening with + or ± is a σ that did not parse; it must not be swallowed as prose.
+  String.raw`(?:\s+\((?![+±])[^)]*\))?\s*(?:via\s+(?<route>.*?))?(?:\s+[—–-]+\s*inputs:\s*(?<inputs>.*))?\s*$`,
+);
+
+export interface EstimateLine {
+  blind: boolean;
+  id: string;
+  value: number;
+  sigma?: number;
+  unit?: string;
+  route?: string;
+  inputs: Record<string, number>;
+  /** The inputs clause says "producer": the values were handed over, so the line is never a blind leg. */
+  producerSupplied: boolean;
+}
+
+const isPercent = (u: string | undefined) => u === "%" || /^percent$/i.test(u ?? "");
+
+/** One ESTIMATE / ESTIMATE(blind) line; null when it does not parse, including a value and σ in different units. */
+export function parseEstimateLine(line: string): EstimateLine | null {
+  const g = line.match(ESTIMATE_LINE_RE)?.groups;
+  if (!g) return null;
+  const sigmaUnit = g.sigmaUnit ?? g.asymUnit;
+  // A % σ is relative, so it never conflicts with the value's unit.
+  if (g.unit && sigmaUnit && g.unit !== sigmaUnit && !isPercent(sigmaUnit)) return null;
+  const value = Number(g.value);
+  const side = (s: string, pct: boolean) => (pct && !isPercent(g.unit) ? Math.abs(value) * Number(s) / 100 : Number(s));
+  const inputs: Record<string, number> = {};
+  let producerSupplied = false;
+  for (const tok of (g.inputs ?? "").split(/[,\s\[\]]+/).filter(Boolean)) {
+    const kv = tok.split("=");
+    if (kv.length === 2 && Number.isFinite(Number(kv[1]))) inputs[kv[0]] = Number(kv[1]);
+    if (/^producer$/i.test(tok)) producerSupplied = true;
+  }
+  const sigma = g.sigma !== undefined ? side(g.sigma, !!g.sigmaPct || isPercent(g.sigmaUnit))
+    : g.sigmaPlus !== undefined ? Math.max(side(g.sigmaPlus, !!g.plusPct || isPercent(g.asymUnit)), side(g.sigmaMinus, !!g.minusPct || isPercent(g.asymUnit))) : undefined;
+  // A σ-only unit labels the value, except a relative %.
+  return { blind: !!g.blind, id: g.id, value, sigma: posNum(sigma), unit: g.unit ?? (isPercent(sigmaUnit) ? undefined : sigmaUnit), route: g.route?.trim() || undefined, inputs, producerSupplied };
+}
+
 // Loosened after the 2026-08-26 live probe: reviewers write `expected 1/6 in C6
 // (r0 = ...)`, `observed ~11 from two-point ...`, `observed not swept (single
 // point)`. Fractions, a leading ~, a parenthesised parameter, and trailing
@@ -365,41 +508,56 @@ function fracNum(t: string): number {
 /** Only files the HARNESS writes carry attestations; any agent may create other files under reviews/. */
 export const HARNESS_REVIEW_FILE_RE = /^(experiment_review_[^/]+_r\d+\.md|pi_feedback\.md)$/;
 
+// INDEPENDENT is a closed form (C41): `— shared: none|inputs|model|code|values`.
+// The prefix alone used to attest, so Dy E4's "these are not independent:
+// method_b reuses five of the six solver channel values" lifted the pair to
+// converging. The answer list ends at end-of-line, a dash, ; . or (; anything
+// else after it ("none of the code") is prose, and prose is no answer.
+const INDEPENDENT_SHARED_RE = /[—–-]\s*shared:\s*([a-z]+(?:\s*,\s*[a-z]+)*)(?=\s*(?:$|[—–;.(])|\s+-(?:\s|$))/i;
+/** The lower-cased `shared:` answers on an INDEPENDENT line; empty for an open-form line. */
+export function independentShared(line: string): string[] {
+  const m = line.replace(/[*`]/g, "").match(INDEPENDENT_SHARED_RE);
+  return m ? m[1].toLowerCase().split(/\s*,\s*/) : [];
+}
+
 export interface ReviewerLines {
   blind: Estimate[];
   posthoc: Estimate[];
   scaling: { id: string; expected: number; observed?: number }[];
+  /** Ids attested by an INDEPENDENT line answering exactly "shared: none". */
   independent: Set<string>;
-  anchorOk: Set<string>;
+  /** Every INDEPENDENT line, attesting or not; `shared` is empty for an open-form line. */
+  independentLines: { id: string; shared: string[]; text: string }[];
   discloseOk: Set<string>;
   discriminators: { id: string; text: string }[];
   malformed: string[];
+  /** ESTIMATE lines that do not parse, kept as "reviews/<file>: <text>" (never malformed: see ClaimTable.unparsed). */
+  unparsed: string[];
 }
 
 /** Parse reviewer/PI lines from harness-written review files (design §3.5). */
 export function parseReviewerLines(projectDir: string): ReviewerLines {
-  const out: ReviewerLines = { blind: [], posthoc: [], scaling: [], independent: new Set(), anchorOk: new Set(), discloseOk: new Set(), discriminators: [], malformed: [] };
+  const out: ReviewerLines = { blind: [], posthoc: [], scaling: [], independent: new Set(), independentLines: [], discloseOk: new Set(), discriminators: [], malformed: [], unparsed: [] };
   const dir = join(projectDir, "reviews");
   if (!existsSync(dir)) return out;
   for (const f of readdirSync(dir).filter((f) => HARNESS_REVIEW_FILE_RE.test(f)).sort()) {
     let text = "";
     try { text = readFileSync(join(dir, f), "utf-8"); } catch (err) { out.malformed.push(`reviews/${f}: unreadable (${(err as Error).message.slice(0, 60)})`); continue; }
+    const harnessReview = f.startsWith("experiment_review_");
     for (const raw of text.split("\n")) {
+      // FEEDBACK is the reviewer's prose, persisted whole and last: a line in it
+      // that looks like an attestation was never extracted as one, and an
+      // incomplete review withholds exactly those (audit H5).
+      if (harnessReview && /^FEEDBACK:/.test(raw)) break;
       const line = raw.trim();
-      if (/^ESTIMATE(\(blind\))?:/.test(line)) {
-        const m = line.match(ESTIMATE_LINE_RE);
-        if (!m) { out.malformed.push(`reviews/${f}: unparseable estimate line "${line.slice(0, 80)}"`); continue; }
-        const inputs: Record<string, number> = {};
-        let producerSupplied = false;
-        if (m[6]) {
-          for (const tok of m[6].split(/[,\s\[\]]+/).filter(Boolean)) {
-            const kv = tok.split("=");
-            if (kv.length === 2 && Number.isFinite(Number(kv[1]))) inputs[kv[0]] = Number(kv[1]);
-            if (/^producer$/i.test(tok)) producerSupplied = true;
-          }
-        }
+      if (/^(?:MALFORMED-ESTIMATE:\s*)?ESTIMATE(\(blind\))?:/.test(line)) {
+        // MALFORMED-ESTIMATE: is the harness's mark for a line that failed at
+        // extraction; it stays text (an incomplete review persists only those,
+        // with its parseable lines withheld).
+        const p = line.startsWith("MALFORMED-") ? null : parseEstimateLine(line);
+        if (!p) { out.unparsed.push(`reviews/${f}: ${line.slice(0, 240)}`); continue; }
         // A blind line with no `via <route>` cannot be judged (v2 plan P0.6): recorded, never flags.
-        const e: Estimate = { quantity: m[2], value: Number(m[3]), sigma: m[4] ? posNum(Number(m[4])) : undefined, kind: m[1] && !producerSupplied && m[5]?.trim() ? "blind" : "posthoc", source: `review:${f}`, script: `review:${f}:${m[5] ?? ""}`, inputs, route: m[5]?.trim() || undefined };
+        const e: Estimate = { quantity: p.id, value: p.value, sigma: p.sigma, kind: p.blind && !p.producerSupplied && p.route ? "blind" : "posthoc", source: `review:${f}`, script: `review:${f}:${p.route ?? ""}`, inputs: p.inputs, route: p.route, ...(p.unit ? { unit: p.unit } : {}) };
         (e.kind === "blind" ? out.blind : out.posthoc).push(e);
         continue;
       }
@@ -421,8 +579,16 @@ export function parseReviewerLines(projectDir: string): ReviewerLines {
         out.malformed.push(`reviews/${f}: unparseable scaling line "${line.slice(0, 80)}"`); continue;
       }
       m = line.match(/^DISCRIMINATOR:\s*(\S+)/); if (m) { out.discriminators.push({ id: m[1], text: line }); continue; }
-      m = line.match(/^INDEPENDENT:\s*(\S+)/); if (m) { out.independent.add(m[1]); continue; }
-      m = line.match(/^ANCHOR-OK:\s*(\S+)/); if (m) { out.anchorOk.add(m[1]); continue; }
+      m = line.match(/^INDEPENDENT:\s*(\S+)/);
+      if (m) {
+        // Recorded always, attesting only on exactly "shared: none". Any other
+        // answer or open prose is recorded and never malformed: malformed blocks
+        // finish, and Dy carries ten legacy open-form lines.
+        const shared = independentShared(line);
+        out.independentLines.push({ id: m[1], shared, text: line });
+        if (shared.length === 1 && shared[0] === "none") out.independent.add(m[1]);
+        continue;
+      }
       m = line.match(/^DISCLOSE-OK:\s*(\S+)/); if (m) { out.discloseOk.add(m[1]); continue; }
     }
   }
@@ -532,6 +698,9 @@ const SIGMA_K = 2;
 const RATIO_VETO = 3;
 const SIGMA_CAP_FRAC = 0.5;
 const SCALING_TOL = 0.5;
+// Holds even when σ "agrees": the 50% σ cap let Dy κ532's 2.86× gap
+// (+7.3e-6 vs −2.56e-6) read as a sign convention.
+const SIGN_ONLY_MAX_RATIO = 1.1;
 
 function relDiff(a: number, b: number): number {
   const m = Math.max(Math.abs(a), Math.abs(b));
@@ -539,6 +708,19 @@ function relDiff(a: number, b: number): number {
 }
 
 export type PairRelation = "wiring" | "incomparable" | "comparable";
+
+/** Input keys both sides quote at values more than 1 % apart: the comparability rule, shared with the review loop's blind-line reuse. */
+export function differingInputs(a: Record<string, number> | undefined, b: Record<string, number> | undefined): string[] {
+  const differing: string[] = [];
+  if (!a || !b) return differing;
+  for (const k of Object.keys(a)) {
+    // Inputs are quoted, not computed: a blind line writes -0.152 for the
+    // producer's -0.151863. 1% is a rounding; the 5.6× between E4's and E5's
+    // blockade shift (297nm) is a different regime.
+    if (k in b && relDiff(a[k], b[k]) > INPUT_MATCH_REL) differing.push(k);
+  }
+  return differing;
+}
 
 export function relation(a: Estimate, b: Estimate): { rel: PairRelation; differing: string[]; why?: string } {
   const bothInt = Number.isInteger(a.value) && Number.isInteger(b.value);
@@ -550,19 +732,12 @@ export function relation(a: Estimate, b: Estimate): { rel: PairRelation; differi
   // not a second leg either. sameRoute (token-set equality) fired 0/64 on the
   // real corpus; this fires 4/64 with 0 false positives, 2 of them above the
   // numeric 1e-6 veto where nothing else looks. notes/route-confession-2026-09-22.md §2.
-  if (a.route && b.route && (a.kind !== "own" || b.kind !== "own")) {
+  // Words cannot outvote numbers: legs that disagree stay comparable, so the dispute shows.
+  if (a.route && b.route && (a.kind !== "own" || b.kind !== "own") && agreement(a, b) !== "disagree") {
     const confession = routeConfessesDependence(a.route, b.route);
     if (confession) return { rel: "wiring", differing: [], why: confession };
   }
-  const differing: string[] = [];
-  if (a.inputs && b.inputs) {
-    for (const k of Object.keys(a.inputs)) {
-      // Inputs are quoted, not computed: a blind line writes -0.152 for the
-      // producer's -0.151863. 1% is a rounding; the 5.6× between E4's and E5's
-      // blockade shift (297nm) is a different regime.
-      if (k in b.inputs && relDiff(a.inputs[k], b.inputs[k]) > INPUT_MATCH_REL) differing.push(k);
-    }
-  }
+  const differing = differingInputs(a.inputs, b.inputs);
   if (differing.length > 0) return { rel: "incomparable", differing };
   return { rel: "comparable", differing: [] };
 }
@@ -587,8 +762,8 @@ export function agreement(a: Estimate, b: Estimate): "agree" | "disagree" | "und
 }
 
 /**
- * A sign-only disagreement: the magnitudes agree (within 2σ, or within 10% when
- * a σ is missing) but the signs differ. Live run 2026-08-27: producer −138.86
+ * A sign-only disagreement: the magnitudes agree (within 10%, and within 2σ when
+ * both σ are given) but the signs differ. Live run 2026-08-27: producer −138.86
  * (attractive = negative) vs blind +140 "repulsive". Still a dispute — a
  * convention nobody pinned in `observable` is exactly what an unanswered flag
  * should surface — but the reason says what the one-round answer is.
@@ -602,10 +777,9 @@ export function signConventionStated(observable: string | undefined): boolean {
 export function signOnlyDisagreement(a: Estimate, b: Estimate): boolean {
   if (a.value === 0 || b.value === 0 || Math.sign(a.value) === Math.sign(b.value)) return false;
   const ma = { ...a, value: Math.abs(a.value) }, mb = { ...b, value: Math.abs(b.value) };
-  const ag = agreement(ma, mb);
-  if (ag === "agree") return true;
-  if (ag === "undecidable") { const hi = Math.max(ma.value, mb.value), lo = Math.min(ma.value, mb.value); return hi / lo <= 1.1; }
-  return false;
+  const hi = Math.max(ma.value, mb.value), lo = Math.min(ma.value, mb.value);
+  if (hi / lo > SIGN_ONLY_MAX_RATIO) return false;
+  return agreement(ma, mb) !== "disagree";
 }
 
 // ── the table ──────────────────────────────────────────────────────────────
@@ -618,23 +792,30 @@ export function buildClaimTable(projectDir: string): ClaimTable {
   const anchorsByExp = new Map<string, { key: string; value: number }[]>();
   const dirByExp = new Map<string, string>();
   const notes: string[] = [];
+  const instanceNotes: { quantity: string; text: string }[] = [];
   const dirs = [...listExperimentDirs(projectDir)].sort((x, y) => x.id.localeCompare(y.id, undefined, { numeric: true }));
   for (const e of dirs) {
     if (!e.latestResults) continue;
     let j: any;
-    try { j = JSON.parse(readFileSync(e.latestResults, "utf-8")); }
+    try { j = parseResultsJson(readFileSync(e.latestResults, "utf-8")); }
     catch (err) { malformed.push(`${e.id}: results.json unparseable (${(err as Error).message.slice(0, 60)})`); continue; }
     const p = parseExperiment(e.id, j);
-    decls.push(...p.quantities); verdicts.push(...p.verdicts); estimates.push(...p.estimates); malformed.push(...p.malformed); anchorsByExp.set(e.id, [...(anchorsByExp.get(e.id) ?? []), ...p.anchors]); dirByExp.set(e.id, basename(e.dir));
+    decls.push(...p.quantities); verdicts.push(...p.verdicts); estimates.push(...p.estimates); malformed.push(...p.malformed); instanceNotes.push(...p.instanceNotes); anchorsByExp.set(e.id, [...(anchorsByExp.get(e.id) ?? []), ...p.anchors]); dirByExp.set(e.id, basename(e.dir));
   }
   // Replicator results (design §3.6.2): data/experiments/<dir>/replication/results.json.
+  const byEstimator = estimatorOnlyReplication(projectDir);
+  const estimatorWrote = new Map<string, string[]>();
   for (const e of dirs) {
     const p = join(e.dir, "replication", "results.json");
     if (!existsSync(p)) continue;
     try {
-      const r = JSON.parse(readFileSync(p, "utf-8"));
+      const r = parseResultsJson(readFileSync(p, "utf-8"));
       const v = num(r?.value);
       if (typeof r?.quantity !== "string" || v === undefined) { malformed.push(`${e.id}: replication/results.json needs {quantity: string, value: number}`); continue; }
+      if (byEstimator(basename(e.dir), r.quantity)) {
+        estimatorWrote.set(r.quantity, [...(estimatorWrote.get(r.quantity) ?? []), `${e.id}: replication/results.json written by the blind estimator — not a second leg`]);
+        continue;
+      }
       const inputs: Record<string, number> = {};
       if (r?.inputs && typeof r.inputs === "object") for (const [k, x] of Object.entries(r.inputs)) { const n = num(x); if (n !== undefined) inputs[k] = n; }
       estimates.push({ quantity: r.quantity, value: v, sigma: posNum(r?.sigma), kind: "replication", source: `${e.id}:replication`, experiment: e.id, script: `replication:${e.id}:${String(r?.script ?? "")}`, inputs,
@@ -654,6 +835,7 @@ export function buildClaimTable(projectDir: string): ClaimTable {
   const declsById = new Map<string, QuantityDecl[]>();
   for (const d of decls) declsById.set(d.id, [...(declsById.get(d.id) ?? []), d]);
 
+  for (const [q, lines] of estimatorWrote) if (!known.has(q)) notes.push(...lines);
   // Undeclared input keys are noted, never grown into ids.
   for (const d of decls) for (const k of Object.keys(d.inputs)) if (!known.has(k)) notes.push(`${d.experiment}: ${d.id} reads input "${k}" which is not a declared quantity id — it takes part in no comparison or propagation`);
   // One number, two names: own estimates of DIFFERENT ids within wiring tolerance.
@@ -684,14 +866,18 @@ export function buildClaimTable(projectDir: string): ClaimTable {
     }
   }
 
-  type Intr = { status: ClaimStatus; reasons: string[]; propagate: string[] };
+  type Intr = { status: ClaimStatus; reasons: string[]; propagate: string[]; cause?: string };
   const intrinsic = new Map<string, Intr>();
   for (const id of ids) {
     const es = estimates.filter((e) => e.quantity === id);
-    const reasons: string[] = [];
+    // Instance notes first, so the rendered (last) reason stays the comparison's.
+    const reasons: string[] = [...instanceNotes.filter((n) => n.quantity === id).map((n) => n.text), ...(estimatorWrote.get(id) ?? [])];
     const propagate: string[] = [];
     let disputed = false, agreeingPair = false;
     let anchorExfil: string | null = null;
+    // Every dispute below is sufficient on its own; the last one found is the row's cause.
+    let cause: string | undefined;
+    const dispute = (why: string) => { disputed = true; cause = why; reasons.push(why); };
     // Supersession (claims v2 P1, 2026-08-29): a producer estimate is RETIRED
     // when at least two LATER experiments re-measured the id, agree with each
     // other, and each disagrees with it — the discriminators ran and settled
@@ -726,7 +912,7 @@ export function buildClaimTable(projectDir: string): ClaimTable {
         if (ag === "disagree") { const ups = differing.filter((u) => known.has(u)); propagate.push(...ups); if (ups.length) reasons.push(`dispute propagated to ${ups.join(",")}`); }
         continue;
       }
-      if (ag === "disagree") { disputed = true; reasons.push(signOnlyDisagreement(a, b) ? `sign convention: |${a.source}|=${Math.abs(a.value)} ≈ |${b.source}|=${Math.abs(b.value)} but signs differ — pin the convention in \`observable\` (e.g. "negative = attractive") and restate one estimate with a locator; a physics dispute only if the signs survive that` : `disagree: ${a.source}=${a.value} vs ${b.source}=${b.value}`); }
+      if (ag === "disagree") { dispute(signOnlyDisagreement(a, b) ? `sign convention: |${a.source}|=${Math.abs(a.value)} ≈ |${b.source}|=${Math.abs(b.value)} but signs differ — pin the convention in \`observable\` (e.g. "negative = attractive") and restate one estimate with a locator; a physics dispute only if the signs survive that` : `disagree: ${a.source}=${a.value} vs ${b.source}=${b.value}`); }
       else if (ag === "agree") {
         // v3 D2: a computing replication on an ASSIGNED route that differs from
         // its partner's is independent by construction (the harness chose the
@@ -743,7 +929,11 @@ export function buildClaimTable(projectDir: string): ClaimTable {
         if (attested) {
           agreeingPair = true;
           reasons.push(`agree: ${a.source} ~ ${b.source}${a.anchor || b.anchor ? " (anchored)" : ""}`);
-        } else reasons.push(`agree but unattested (no INDEPENDENT line${(a.kind === "replication" || b.kind === "replication") ? "; replication lacks a route/script or shares the producer's route" : ""}): ${a.source} ~ ${b.source}`);
+        } else {
+          const said = rev.independentLines.filter((l) => l.id === id);
+          const lacking = said.length ? `INDEPENDENT line does not answer "shared: none" (${said.map((l) => l.shared.join(",") || "open form").join("; ")})` : "no INDEPENDENT line";
+          reasons.push(`agree but unattested (${lacking}${(a.kind === "replication" || b.kind === "replication") ? "; replication lacks a route/script or shares the producer's route" : ""}): ${a.source} ~ ${b.source}`);
+        }
       } else reasons.push(`undecidable (missing σ): ${a.source} vs ${b.source}`);
     }
     // Blind estimates (design §3.5/§3.6.1, v2 plan P0.1 2026-08-28). A blind
@@ -756,27 +946,27 @@ export function buildClaimTable(projectDir: string): ClaimTable {
     // convention hint. Nothing here is written by a producer or the brain.
     const owns = producers.filter((e) => e.kind === "own");
     for (const bl of rev.blind.filter((e) => e.quantity === id)) {
+      // The unit is printed so the reviewer can see a units mismatch; the comparison stays numeric.
+      const blv = bl.unit ? `${bl.value} ${bl.unit}` : `${bl.value}`;
       const comparable = owns.filter((o) => relation(o, bl).rel !== "incomparable");
-      if (owns.length && comparable.length === 0) { reasons.push(`blind estimate ${bl.value} incomparable: its inputs (${Object.entries(bl.inputs ?? {}).map(([k, v]) => `${k}=${v}`).join(",") || "none"}) differ in value from the producer's — re-estimate against current inputs`); continue; }
+      if (owns.length && comparable.length === 0) { reasons.push(`blind estimate ${blv} incomparable: its inputs (${Object.entries(bl.inputs ?? {}).map(([k, v]) => `${k}=${v}`).join(",") || "none"}) differ in value from the producer's — re-estimate against current inputs`); continue; }
       const agreeingOwn = comparable.find((o) => agreement(o, bl) === "agree");
-      if (agreeingOwn) { reasons.push(`blind estimate ${bl.value} agrees with ${agreeingOwn.source}`); continue; }
+      if (agreeingOwn) { reasons.push(`blind estimate ${blv} agrees with ${agreeingOwn.source}`); continue; }
       const flagged = comparable[0];
       if (!flagged) continue;
       const answer = owns.find((o) => o !== flagged && o.experiment !== flagged.experiment && relation(o, flagged).rel === "comparable" && agreement(o, flagged) === "agree");
-      if (answer) { reasons.push(`blind estimate ${bl.value} disagreed with ${flagged.source}=${flagged.value}; answered by ${answer.source}=${answer.value} (independent experiment agrees with the producer)`); continue; }
+      if (answer) { reasons.push(`blind estimate ${blv} disagreed with ${flagged.source}=${flagged.value}; answered by ${answer.source}=${answer.value} (independent experiment agrees with the producer)`); continue; }
       if (signOnlyDisagreement(flagged, bl)) {
         // A sign-only disagreement is ANSWERED the moment the producer's
         // observable sentence pins the convention (design §3.5 "answer with a
         // locator"; 2026-08-28: two such rows were disclosed and escalated to
         // the operator although four routes agreed on the magnitude).
         const obs = (declsById.get(id) ?? []).map((d) => d.observable ?? "").join(" ");
-        if (signConventionStated(obs)) { reasons.push(`sign convention: blind estimate ${bl.value} vs ${flagged.source}=${flagged.value} agree in magnitude; convention stated in observable ("${obs.match(SIGN_CONVENTION_RE)?.[0]}") — answered`); continue; }
-        disputed = true;
-        reasons.push(`sign convention: blind estimate ${bl.value} vs ${flagged.source}=${flagged.value} agree in magnitude, differ in sign — state the convention in \`observable\` (e.g. "signed, negative = attractive" or "magnitude |C6|") and the flag is answered; a physics dispute only if the signs survive that (unanswered)`);
+        if (signConventionStated(obs)) { reasons.push(`sign convention: blind estimate ${blv} vs ${flagged.source}=${flagged.value} agree in magnitude; convention stated in observable ("${obs.match(SIGN_CONVENTION_RE)?.[0]}") — answered`); continue; }
+        dispute(`sign convention: blind estimate ${blv} vs ${flagged.source}=${flagged.value} agree in magnitude, differ in sign — state the convention in \`observable\` (e.g. "signed, negative = attractive" or "magnitude |C6|") and the flag is answered; a physics dispute only if the signs survive that (unanswered)`);
         continue;
       }
-      disputed = true;
-      reasons.push(`blind reviewer estimate ${bl.value} disagrees with ${flagged.source}=${flagged.value} (unanswered)`);
+      dispute(`blind reviewer estimate ${blv} disagrees with ${flagged.source}=${flagged.value} (unanswered)`);
     }
     // v3 D3: anchor exfiltration — a "computed" value equal to a literature
     // input to 1e-6, with no job that ran this experiment's scripts, is the
@@ -791,41 +981,37 @@ export function buildClaimTable(projectDir: string): ClaimTable {
       anchorExfil = `computed value ${own.value} equals literature input ${hit.key} to 1e-6 with no job that ran data/experiments/${dirName || own.experiment}/scripts — a literature number read back is not a computation; capped at indicative`;
     }
     for (const s of rev.scaling.filter((s) => s.id === id)) {
-      if (s.observed !== undefined && Math.abs(s.observed - s.expected) > SCALING_TOL) { disputed = true; reasons.push(`scaling: observed exponent ${s.observed} vs expected ${s.expected}`); }
+      if (s.observed !== undefined && Math.abs(s.observed - s.expected) > SCALING_TOL) dispute(`scaling: observed exponent ${s.observed} vs expected ${s.expected}`);
     }
     for (const d of declsById.get(id) ?? []) {
       if (d.uncertaintySource && d.uncertainty !== undefined) reasons.push(`σ ${d.uncertainty} (${d.uncertaintySource.slice(0, 60)})`);
-      if (d.limitCheck) {
-        const passes = d.limitCheck.expected === 0 ? Math.abs(d.limitCheck.observed) <= (d.uncertainty ?? 1e-9) : relDiff(d.limitCheck.expected, d.limitCheck.observed) <= 0.1;
-        if (rev.anchorOk.has(id) && passes) { reasons.push(`limit anchored (ANCHOR-OK): ${d.limitCheck.limit}`); }
-        else if (!rev.anchorOk.has(id)) reasons.push(`limit_check present but not attested (ANCHOR-OK missing)${d.limitCheck.expected === 0 ? " — zero-expected limit is wiring" : ""}`);
-      }
     }
     const anyOwnSigma = (declsById.get(id) ?? []).some((d) => d.uncertainty !== undefined);
     let status: ClaimStatus;
     if (disputed) status = disclosures.has(id) && rev.discloseOk.has(id) ? "disclosed" : "disputed";
     else if (agreeingPair && anyOwnSigma) status = "converging";
     else status = "indicative";
-    if (!anyOwnSigma && agreeingPair) reasons.push("no σ on own estimate: capped at indicative");
-    if (anchorExfil) { if (status === "converging") status = "indicative"; reasons.push(anchorExfil); }
-    intrinsic.set(id, { status, reasons: [...new Set(reasons)], propagate });
+    if (!anyOwnSigma && agreeingPair) { const cap = "no σ on own estimate: capped at indicative"; reasons.push(cap); if (!disputed) cause = cap; }
+    if (anchorExfil) { if (status === "converging") { status = "indicative"; cause = anchorExfil; } reasons.push(anchorExfil); }
+    intrinsic.set(id, { status, reasons: [...new Set(reasons)], propagate, cause });
   }
   for (const [id, intr] of intrinsic) for (const up of intr.propagate) {
     headline.add(up);
-    const t = intrinsic.get(up) ?? { status: "indicative", reasons: [], propagate: [] };
-    if (t.status !== "disputed" && t.status !== "disclosed") { t.status = "disputed"; t.reasons.push(`disputed by propagation from ${id}`); }
+    const t: Intr = intrinsic.get(up) ?? { status: "indicative", reasons: [], propagate: [] };
+    if (t.status !== "disputed" && t.status !== "disclosed") { t.status = "disputed"; t.cause = `disputed by propagation from ${id}`; t.reasons.push(t.cause); }
     intrinsic.set(up, t);
   }
   // v3 D1: quantities of an experiment whose latest review is `revise` with an
-  // unanswered finding are capped at indicative (the flaw is open).
+  // unanswered finding are capped at indicative (the flaw is open). Only an
+  // answer bound to that round's Issue 1 lifts it (C15); a quote does not.
   const openFindings = openReviewFindings(projectDir);
   for (const id of ids) {
     const cur = intrinsic.get(id)!;
     for (const d of declsById.get(id) ?? []) {
       const f = openFindings.get(d.experiment);
       if (f && !f.answered) {
-        if (cur.status === "converging") cur.status = "indicative";
-        const line = `reviewer finding open (${f.experiment} round ${f.round}): "${f.sentence.slice(0, 120)}" — answer it with finding_answered: <locator> in the ledger`;
+        const line = `reviewer finding open (${f.experiment} round ${f.round}): "${f.sentence.slice(0, 120)}" — answer it in the ledger with finding_answered: r${f.round} #1 <clause> — <locator>`;
+        if (cur.status === "converging") { cur.status = "indicative"; cur.cause = line; }
         if (!cur.reasons.includes(line)) cur.reasons.push(line);
         break;
       }
@@ -843,14 +1029,17 @@ export function buildClaimTable(projectDir: string): ClaimTable {
       const cur = intrinsic.get(id)!;
       if (cur.status === "disputed" || cur.status === "disclosed" || cur.status === "conditional") continue;
       const bad = inputsOf(id).filter((u) => { const s = intrinsic.get(u)?.status; return s === "disputed" || s === "disclosed" || s === "conditional"; });
-      if (bad.length > 0) { cur.status = "conditional"; cur.reasons.push(`conditional on ${bad.join(",")}`); changed = true; }
+      if (bad.length > 0) { cur.status = "conditional"; cur.cause = `conditional on ${bad.join(",")}`; cur.reasons.push(cur.cause); changed = true; }
     }
   }
-  const rows: ClaimRow[] = ids.map((id) => ({
-    id, status: intrinsic.get(id)!.status, headline: headline.has(id),
-    estimates: estimates.filter((e) => e.quantity === id),
-    reasons: intrinsic.get(id)!.reasons, observable: (declsById.get(id) ?? []).find((d) => d.observable)?.observable, inputs: inputsOf(id),
-  }));
+  const rows: ClaimRow[] = ids.map((id) => {
+    const { status, reasons, cause } = intrinsic.get(id)!;
+    return {
+      id, status, headline: headline.has(id),
+      estimates: estimates.filter((e) => e.quantity === id),
+      reasons, ...(cause ? { cause } : {}), observable: (declsById.get(id) ?? []).find((d) => d.observable)?.observable, inputs: inputsOf(id),
+    };
+  });
   const vRows = [...verdictById.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([vid, vs]) => {
     const reads = [...new Set(vs.flatMap((v) => v.reads))];
     let status: ClaimStatus = "converging";
@@ -887,7 +1076,7 @@ export function buildClaimTable(projectDir: string): ClaimTable {
     rows, verdicts: vRows, headline: [...headline].sort(), headlineDeclared: [...headlineDeclared].sort(), frameHeadline: frameParsed.ids,
     frameNonScalar: frameParsed.nonScalar, frameHeadlineSkipped: frameParsed.skipped,
     premisesUnused: parseFramePremises(projectDir).map((p) => p.id).filter((pid) => !known.has(pid) && !decls.some((d) => pid in d.inputs)),
-    malformed, notes, readsDrops, declared, decls, discriminators: rev.discriminators, disclosedHeadlineCount,
+    malformed, unparsed: rev.unparsed, notes, readsDrops, declared, decls, discriminators: rev.discriminators, disclosedHeadlineCount,
   };
 }
 
@@ -895,7 +1084,10 @@ export function buildClaimTable(projectDir: string): ClaimTable {
 
 export interface ClaimIssue { blocking: boolean; text: string }
 
-const LEGAL_MOVES = `Legal moves: run the discriminating computation (a comparable independent estimate under the same quantity id), a blind replication (spawn_agent(agent="replicator", MODE: "replicate")), or a countersigned disclosure (CLAIM-DISCLOSE in notes/memory.md + DISCLOSE-OK from a reviewer or the PI).`;
+// Static on purpose: a row's `cause` is only its last dispute, so a blind flag
+// can hide behind a later scaling line. Only another experiment's own estimate
+// answers a blind flag (buildClaimTable's blind loop); a replication never does.
+const LEGAL_MOVES = `Legal moves: run the discriminating computation (an experiment whose results.json declares a comparable estimate under the same quantity id — the only answer to a blind-estimate flag), a replicate-mode replicator (spawn_agent(agent="replicator", MODE: "replicate"); it settles a disagreement between two producers, never a blind-estimate flag), or a countersigned disclosure (CLAIM-DISCLOSE in notes/memory.md + DISCLOSE-OK from a reviewer or the PI).`;
 
 /** Finish-gate issues (design §3.4, §3.6, §3.9). Empty for legacy projects (no declarations). */
 export function claimTableIssues(projectDir: string, table: ClaimTable = buildClaimTable(projectDir)): ClaimIssue[] {
@@ -907,11 +1099,10 @@ export function claimTableIssues(projectDir: string, table: ClaimTable = buildCl
     issues.push({ blocking: true, text: `[abstain] ${a.id} is ${table.rows.find((r) => r.id === a.id)?.status} and is a frame headline quantity: the abstract must abstain on it in so many words — paste (no number for it anywhere in the abstract): "${a.sentence}" An abstention is derived from the table; it is neither a disclosure nor a claim, and with the sentence present the row no longer blocks the abstract.` });
   }
   // v3 D1: an open reviewer finding must reach the ledger before finish.
-  for (const f of openReviewFindings(projectDir).values()) {
-    if (f.answered || f.quoted) continue;
-    issues.push({ blocking: true, text: `[review-open] ${f.experiment}: the latest experiment_reviewer round (${f.round}) voted REVISE and its finding never reached the ledger: "${f.sentence.slice(0, 200)}". In the experiment's L2 section (### Limitations) add either \`finding_answered: <one clause> — <locator: path:line | job_id | results.json key>\` (then the quantities lift from indicative) or \`finding_open: "<the reviewer's sentence, verbatim>"\` (ships with the flaw disclosed). A diagnosed flaw that stays in a spawn result is the 82.5 % failure.` });
-  }
+  issues.push(...reviewOpenIssues(projectDir));
   if (table.malformed.length > 0) issues.push({ blocking: true, text: `Malformed quantity declarations:\n  - ${table.malformed.join("\n  - ")}` });
+  // Non-blocking: the files are write-protected and nobody can correct a line in them before finish.
+  if (table.unparsed.length > 0) issues.push({ blocking: false, text: `${table.unparsed.length} ESTIMATE line(s) in harness review files did not parse and take part in no comparison; listed so a dropped estimate is never silent (the grammar is one value per line: "<value> [unit] [± <σ> [unit] | (+a/−b) [unit]] via <route> — inputs: [k=v, …]"):\n  - ${table.unparsed.slice(0, 8).join("\n  - ")}${table.unparsed.length > 8 ? `\n  (+ ${table.unparsed.length - 8} more)` : ""}` });
   for (const d of table.readsDrops) issues.push({ blocking: true, text: `Verdict reads-diff: ${d}. Name the replacement in verdicts[].replaces (it must be a quantity this verdict reads) or restore the read.` });
   // Premises that never entered the evidence (non-blocking; v2 2026-08-29).
   // Consumer for parseFrameHeadlineDetailed().skipped: a headline bullet that
@@ -957,7 +1148,7 @@ export function claimTableIssues(projectDir: string, table: ClaimTable = buildCl
         continue;
       }
       if (!row.headline) issues.push({ blocking: true, text: `"${ctx}" cites ${row.id}, which is outside the headline set (${table.headline.join(", ") || "empty"}). Add it to notes/frame.md "Headline quantities" or mark headline:true — the set never widens silently.` });
-      if (bad.has(row.status)) issues.push({ blocking: true, text: `"${ctx}" cites ${row.id} whose status is ${row.status} (${row.reasons.slice(-2).join("; ")}). ${LEGAL_MOVES}` });
+      if (bad.has(row.status)) issues.push({ blocking: true, text: `"${ctx}" cites ${row.id} whose status is ${row.status} (${row.cause ?? row.reasons.slice(-2).join("; ")}). ${LEGAL_MOVES}` });
     }
     if (claims.length > 0 && table.headline.length === 0) issues.push({ blocking: true, text: `claims.json carries ${claims.length} entries but the headline set is empty — declare headline quantity ids in notes/frame.md.` });
   }
@@ -970,12 +1161,15 @@ export function renderClaimTable(table: ClaimTable, maxRows = 12): string {
   const fmt = (v: number) => (Math.abs(v) >= 1e4 || (Math.abs(v) < 1e-3 && v !== 0)) ? v.toExponential(3) : String(Number(v.toPrecision(5)));
   const rows = [...table.rows].sort((a, b) => Number(b.headline) - Number(a.headline) || a.id.localeCompare(b.id)).slice(0, maxRows);
   const lines = rows.map((r) => {
-    const ests = r.estimates.map((e) => `${e.source.split(":")[0]}${e.kind === "own" ? "" : ":" + e.kind}=${fmt(e.value)}${e.sigma !== undefined ? "±" + fmt(e.sigma) : ""}`).join(" ");
-    return `- ${r.id}${r.headline ? " [H]" : ""} ${r.status.toUpperCase()}  ${ests}${r.reasons.length ? `\n    ${r.reasons[r.reasons.length - 1]}` : ""}`;
+    const ests = r.estimates.map((e) => `${e.source.split(":")[0]}${e.kind === "own" ? "" : ":" + e.kind}=${fmt(e.value)}${e.unit ? " " + e.unit : ""}${e.sigma !== undefined ? "±" + fmt(e.sigma) : ""}`).join(" ");
+    const why = r.cause ?? r.reasons[r.reasons.length - 1];
+    return `- ${r.id}${r.headline ? " [H]" : ""} ${r.status.toUpperCase()}  ${ests}${why ? `\n    ${why}` : ""}`;
   });
   for (const v of table.verdicts) lines.push(`- verdict ${v.id} ${v.status.toUpperCase()} reads: ${v.reads.join(", ")}`);
   for (const d of table.readsDrops) lines.push(`- READS-DROP ${d}`);
   for (const m of table.malformed) lines.push(`- MALFORMED ${m}`);
+  for (const u of table.unparsed.slice(0, 3)) lines.push(`- UNPARSED ${u.slice(0, 200)}`);
+  if (table.unparsed.length > 3) lines.push(`- UNPARSED (+ ${table.unparsed.length - 3} more)`);
   for (const n of table.notes.slice(0, 4)) lines.push(`- NOTE ${n}`);
   const hidden = table.rows.length - rows.length;
   const satisfiedAbstain = new Set(table.abstain.filter((a) => a.satisfied).map((a) => a.id));

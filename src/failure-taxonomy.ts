@@ -3,14 +3,14 @@
  * string is.
  *
  * Before this file there were four classifiers that disagreed: TRANSIENT_RE in
- * spawn.ts, isTransientError in usage-log.ts (which knew about 503/504/timeouts),
+ * spawn.ts, usage-log.ts's own retry wrapper (which knew about 503/504/timeouts),
  * the regexes baked into the patched agent-loop.js (which did not), and
  * UNFUNDED_PROVIDER_RE (whose bare `402` matched any text containing that
  * number). A 5xx was retried by one layer and treated as fatal by the loop that
  * actually owns the turn, so a single gateway blip ended a multi-hour run.
  *
  * Readers:
- *   - usage-log.ts            isTransientError / isUnfundedProviderError
+ *   - usage-log.ts            isUnfundedProviderError
  *   - agents/spawn.ts         TRANSIENT_RE (streamWithRetry, index.ts exit record)
  *   - the patched agent loop  via globalThis.__luxasFailureTaxonomy (Patch E in
  *                             patches/pi-agent-core-no-tool-retry-guard.sh). The
@@ -23,8 +23,14 @@
 
 export type FailureClass = "unfunded" | "rate_limit" | "transient" | "fatal";
 
-/** An HTTP status that appears AS a status, not as any number in the text. */
-const status = (codes: string) => `(?:^|status(?: code)?[ :=]+|http[ /:]+)\\s*(?:${codes})\\b`;
+/**
+ * An HTTP status that appears AS a status, not as any number in the text. The
+ * second form is pi-ai's formatProviderError with a prefix ("OpenAI API error
+ * (503): …", openai-responses / azure-openai-responses): the colon is required,
+ * so a parenthesised number in prose ("must be <= (500)") stays a number.
+ */
+const status = (codes: string) =>
+  `(?:(?:^|status(?: code)?[ :=]+|http[ /:]+)\\s*(?:${codes})\\b|\\((?:${codes})\\)\\s*:)`;
 
 /**
  * The provider is out of money. Not retryable and not local: the whole run

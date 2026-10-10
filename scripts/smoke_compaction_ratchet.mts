@@ -13,6 +13,12 @@
  *   B  Ledger reset: a rebuilt (shrunk) array clears the pins.
  *   C  Pruner ratchet: the prune boundary advances only in batches, so
  *      between advances the pruned view is byte-identical across calls.
+ *   D  Trimming latch: once trimming starts it stays on, so the request does
+ *      not alternate between the trimmed and the full history.
+ *   S  Snip leaves the head: the task (or carry-forward note) and everything
+ *      before the first tool result are never replaced by the placeholder.
+ *   C77 DeepSeek sub-agents start trimming at 400K; every other provider and
+ *      the default plan stay at 160K.
  *
  * Run:  npx tsx scripts/smoke_compaction_ratchet.mts
  */
@@ -151,6 +157,104 @@ const model: any = { contextWindow: 1_048_576, maxTokens: 393_216 };
 	check("D3: trimming stays on for every later call", modes.every((m) => m === "trimmed"), modes.join(","));
 	check("D4: the request size never jumps back to the full history", Math.max(...sizes) < 160_000, `max ${Math.max(...sizes)}`);
 	check("D5: the old part of the context is the same bytes on consecutive calls (at most one ratchet advance in 12 steps)", new Set(heads).size <= 2, `${new Set(heads).size} distinct versions`);
+}
+
+// ── S: snip leaves the head (C16) ────────────────────────────
+// The first user message is the task (after a condense, the carry-forward
+// note), and what precedes the first tool result was handed to the agent, not
+// written by it. Snip replaced the brief with its placeholder on Dy solo agents
+// (2026-10-06, 10 requests) and changed the bytes in front of every later turn.
+{
+	const { snipHistoricText } = await import(join(ROOT, "src/compaction/snip.js"));
+	const { ContextPacker } = await import(join(ROOT, "src/compaction/engine.js"));
+	const adapter = createBlockConversationAdapter();
+	const TASK = "TASK-SENTINEL. Compute the 626 nm nuclear-spin flip probability per photon. " + big(2_200, "t");
+	const sys = { role: "system", content: "SYSTEM PROMPT " + big(5_000, "s"), timestamp: 1 };
+	const task = { role: "user", content: [{ type: "text", text: TASK }], timestamp: 2 };
+	const round = (k: number) => [
+		{ role: "assistant", content: [
+			{ type: "thinking", thinking: big(4_000, "r"), thinkingSignature: "sig" },
+			{ type: "toolCall", id: `c${k}`, name: "bash", arguments: { command: `step ${k}` } },
+		], timestamp: 3 + k },
+		{ role: "toolResult", toolCallId: `c${k}`, toolName: "bash", content: [{ type: "text", text: `out${k} ` + big(20_000) }], isError: false, timestamp: 3 + k },
+	];
+	const rounds = (n: number, from = 0) => Array.from({ length: n }, (_, k) => round(from + k)).flat();
+	const hist = (n: number) => [sys, task, ...rounds(n)];
+	const taskText = (msgs: any[]) => msgs.find((m: any) => m.role === "user")?.content?.[0]?.text;
+
+	for (const n of [14, 17, 20]) {
+		const out = snipHistoricText(hist(n), adapter);
+		check(`S1 n=${n}: the task is byte-identical after snipHistoricText`,
+			JSON.stringify(out.messages[1]) === JSON.stringify(task),
+			`task now: ${String(taskText(out.messages)).slice(0, 70)}… modified=${out.modified}`);
+	}
+
+	const packer = new ContextPacker({ adapter, thresholds: { windowLimit: 1_048_576 } } as any);
+	const cycled = await packer.runCycle({ messages: hist(14), usageTokens: 170_000 });
+	check("S2: through runCycle (14 rounds, 170K tokens, 1M window) the task survives",
+		taskText(cycled.messages) === TASK, `mode=${cycled.mode} task now: ${String(taskText(cycled.messages)).slice(0, 70)}…`);
+
+	// Control: long text the agent was given later is still history.
+	const followUp = { role: "user", content: [{ type: "text", text: "FOLLOWUP " + big(2_000, "f") }], timestamp: 50 };
+	const withFollowUp = [sys, task, ...round(0), followUp, ...rounds(10, 1)];
+	const snippedFollowUp = snipHistoricText(withFollowUp, adapter).messages[withFollowUp.indexOf(followUp)];
+	check("S3 control: a long user message after the first tool result, outside the last 12, is still snipped",
+		snippedFollowUp !== followUp && !JSON.stringify(snippedFollowUp).includes("FOLLOWUP"));
+
+	const note = { role: "user", content: [{ type: "text", text: "<carryforward_note>\n" + big(3_000, "n") + "\n</carryforward_note>" }], timestamp: 1 };
+	const preamble = { role: "assistant", content: [{ type: "text", text: "I have reviewed the carried-forward state and will continue from the latest preserved context." }], timestamp: 1 };
+	const attachment = { role: "user", content: [{ type: "text", text: "<attachment path=\"notes/plan.md\">" + big(4_000, "p") + "</attachment>" }], timestamp: 1 };
+	const condensed = snipHistoricText([sys, note, preamble, attachment, ...rounds(14)], adapter).messages;
+	check("S4 post-condense: the carry-forward note is unchanged", condensed[1] === note, String(adapter.getPlainText(condensed[1])).slice(0, 60));
+	check("S4 post-condense: an attachment before the first tool result is unchanged", condensed[3] === attachment, String(adapter.getPlainText(condensed[3])).slice(0, 60));
+}
+
+// ── C77: DeepSeek sub-agents trim at 400K, not 160K ──────────
+// DeepSeek bills nothing for cache writes, so every trim that moves the prefix
+// re-bills the whole context at the uncached price. The C77 replay of the Dy
+// transcripts measured DeepSeek E1 orchestrators 20% cheaper with the trim line
+// at 400K; the Opus solo agents and the brain measured cheaper at 160K.
+{
+	const { buildWindowPlan } = await import(join(ROOT, "src/compaction/thresholds.js"));
+	// Through the namespace, so a missing export is a counted failure, not an import crash.
+	const spawn: any = await import(join(ROOT, "src/agents/spawn.js"));
+
+	const base = buildWindowPlan({ windowLimit: 1_000_000 });
+	check("C77a: the default plan on a 1M window still trims at 160K", base.warningThreshold === 160_000, `got ${base.warningThreshold}`);
+
+	const raised = buildWindowPlan({ windowLimit: 1_000_000, microCompactionCap: 400_000 });
+	check("C77b: microCompactionCap 400K on a 1M window trims at 400K", raised.warningThreshold === 400_000, `got ${raised.warningThreshold}`);
+	check("C77b: the cap moves only the trim line, not condense or blocking",
+		raised.condenseThreshold === base.condenseThreshold && raised.blockingThreshold === base.blockingThreshold,
+		`condense ${raised.condenseThreshold} vs ${base.condenseThreshold}`);
+
+	for (const windowLimit of [200_000, 400_000]) {
+		const p = buildWindowPlan({ windowLimit, microCompactionCap: 400_000 });
+		const clamp = Math.floor(p.condenseThreshold * 0.85);
+		check(`C77c: on a ${windowLimit / 1000}K window the 400K cap is clamped to 85% of condense (${clamp})`,
+			p.warningThreshold === clamp && p.warningThreshold < p.condenseThreshold, `got ${p.warningThreshold}`);
+	}
+
+	const limitsFor = spawn.subAgentCompactionLimits;
+	check("C77d: spawn.ts exports subAgentCompactionLimits", typeof limitsFor === "function");
+	if (typeof limitsFor === "function") {
+		const trimLine = (key: string) => buildWindowPlan(limitsFor(spawn.resolveModelExact(key))).warningThreshold;
+		for (const key of ["deepseek-v4-pro", "deepseek-flash"]) {
+			check(`C77d: a ${key} sub-agent trims at 400K`, trimLine(key) === 400_000, `got ${trimLine(key)}`);
+		}
+		for (const key of ["claude-opus-5-5", "claude-fable-5-1", "glm-5.3", "gpt-6-astra"]) {
+			check(`C77d: a ${key} sub-agent stays at 160K`, trimLine(key) === 160_000, `got ${trimLine(key)}`);
+		}
+		const ds = spawn.resolveModelExact("deepseek-v4-pro");
+		check("C77d: the window limit is still the model's own", limitsFor(ds).windowLimit === ds.contextWindow,
+			`got ${limitsFor(ds).windowLimit}`);
+	}
+
+	// The helper is only worth testing if the spawn path actually passes it.
+	const { readFileSync } = await import("node:fs");
+	const src = readFileSync(join(ROOT, "src/agents/spawn.ts"), "utf8");
+	check("C77e: buildAgentFromDefinition hands the helper's limits to createCompactionTransform",
+		/createCompactionTransform\(\{[^}]*thresholds:\s*subAgentCompactionLimits\(model\)/.test(src));
 }
 
 console.log(failures === 0

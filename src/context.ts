@@ -10,12 +10,12 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { readFileSafe, smartTruncate, parseFollowUps } from "./utils.js";
 import { listExperimentDirs, xvalVerdict } from "./tools/report-integrity.js";
 import { buildClaimTable, renderClaimTable } from "./claims-table.js";
-import { buildPastResearchDigest, GLOBAL_MEMORY_PATH } from "./memory.js";
+import { buildPastResearchDigest } from "./memory.js";
 import { buildCareerBlock } from "./career.js";
-import { findUnprocessedPapers, methodologyPath } from "./methodology.js";
+import { findUnprocessedPapers } from "./methodology.js";
 import { join, dirname } from "node:path";
 import { compactNotesIfNeeded } from "./notes-compaction.js";
-import { resolveContextBuilder } from "./agents/context-builders.js";
+import { resolveContextBuilder, literaturePointers } from "./agents/context-builders.js";
 import { parseCompileVerdict, gateBlockingIssues } from "./tools/report.js";
 import { createCompactionTransform, getContextWindow } from "./compaction/create-transform.js";
 import type { TokenTap } from "./compaction/token-tap.js";
@@ -60,9 +60,9 @@ export function buildBudgetStatus(projectDir: string): string {
   if (!(spent >= maxCost * SOFT_CAP_FRACTION)) return "";
   return [
     `<budget_status priority="high">`,
-    `Spend has passed ${Math.round(SOFT_CAP_FRACTION * 100)}% of this run's $${maxCost} cost cap. The run is now in FINALIZATION: the hook blocks every non-finalization tool (new experiments, searches, readers), exactly as it does under a PI STOP verdict — read/write/edit/compile_latex/finish and the finalization agents stay open. The remaining cap is not a warning either: it SIGKILLs this process mid-tool-call, and anything not written to disk is lost. Spend what is left on landing, not on polish.`,
-    `1. Do not try to open new work — no new experiments, no new literature, no further figure-polish rounds. Those calls are now REFUSED by the hook, and each refused call is still a paid turn.`,
-    `2. Write down anything held only in this conversation (notes/experiments.md, notes/memory.md), so a resume starts informed.`,
+    `Spend has passed ${Math.round(SOFT_CAP_FRACTION * 100)}% of this run's $${maxCost} cost cap. The run is now in FINALIZATION: the hook blocks every non-finalization tool (new experiments, searches), exactly as it does under a PI STOP verdict — read/write/edit/compile_latex/finish and the finalization agents stay open. The remaining cap is not a warning either: it SIGKILLs this process mid-tool-call, and anything not written to disk is lost. Spend what is left on landing, not on polish.`,
+    `1. Do not try to open new work — no new experiments, no new literature searches. Those calls are now REFUSED by the hook, and each refused call is still a paid turn. No further figure-polish rounds either: the hook still admits them, but they are not landing.`,
+    `2. Write down anything held only in this conversation (notes/memory.md), so a resume starts informed.`,
     `3. Compile once, then finish() — DISCLOSING what is unresolved (disputed quantities, cosmetic figure defects, deferred computations). A disclosed limitation is a finished report; an undisclosed one is the only real failure.`,
     `4. If a gate blocks finish() and you cannot clear it within what is left, do not iterate against it — say so plainly and let the escalation hand the run to a person.`,
     `</budget_status>`,
@@ -155,10 +155,8 @@ Keep each section concise. Preserve exact file paths, formulas, and numerical va
 
 // ── Tool names eligible for micro-compaction ─────────
 
-const COMPACTABLE_TOOLS = new Set([
+export const COMPACTABLE_TOOLS = new Set([
   "read", "write", "edit", "bash",
-  "search_papers", "get_citations", "download_paper",
-  "grep", "glob", "web_search", "web_fetch",
   // Job-control results are re-readable from .agent/jobs/<id>/output.log, so
   // their (often bulky) transcripts are safe to prune like bash output.
   "job_status", "job_output", "job_wait", "job_kill",
@@ -517,7 +515,7 @@ function buildResearchSnapshot(opts: ContextTransformerOptions): string {
   // Claim status (claims-first design §3.7, 2026-08-26): quantity-level
   // state — headline rows first, bounded, deterministic. Replaces the
   // run-level dynamics blocks (stopping / anomalies / lineage): stopping is
-  // "every headline quantity corroborated or disclosed", an anomaly is a
+  // "every headline quantity converging or disclosed", an anomaly is a
   // DISPUTED row, lineage is the estimates column. Empty for legacy projects.
   try {
     const table = buildClaimTable(projectDir);
@@ -538,25 +536,20 @@ function buildResearchSnapshot(opts: ContextTransformerOptions): string {
     if (brainBlock) parts.push(brainBlock);
   }
 
-  // Literature state
-  const lit = readFileSafe(join(projectDir, "notes", "literature.md"));
-  if (lit) {
-    parts.push(`<literature_notes>\n${smartTruncate(lit, 3000)}\n</literature_notes>`);
-  } else {
-    parts.push("<literature_notes>(empty — no literature review yet)</literature_notes>");
-  }
+  // Literature and field methodology: pointers, not file tails. The tail of
+  // either file is the last paper's Limitations or the reader ledger, and its
+  // size grew with the corpus; see literaturePointers.
+  const pointers = literaturePointers(projectDir);
+  parts.push(pointers.literature
+    ? `<literature_notes>\n${pointers.literature}\n</literature_notes>`
+    : "<literature_notes>(empty — no literature review yet)</literature_notes>");
 
   // Field methodology standard — auto-extracted by reader on paper download.
   // Brain should compare its own experiments/report against these standards.
-  const method = readFileSafe(methodologyPath(projectDir));
-  if (method && method.trim().length > 40) {
+  if (pointers.methodology) {
     parts.push(`<field_methodology_standard>
-Auto-extracted from the literature you have downloaded. This is a map of what
-this field considers STANDARD methodology (what to compute, what to demo, what
-rigor bar to meet, what goes in figures). Before claiming a milestone, verify
-that your actual work covers these points. If there is a gap, address it — do
-not paper over methodology gaps in the report.
-${smartTruncate(method, 3000)}
+The field's standard methodology: check your work against it before claiming a
+milestone, and close a gap rather than paper over it in the report. ${pointers.methodology}
 </field_methodology_standard>`);
   }
 
@@ -648,10 +641,6 @@ export function buildSemiStaticSystemLayer(projectDir: string): string {
   // Cross-project memory. Built once per session (this layer is frozen into
   // the cache-pinned system block at agent creation), so it cannot vary
   // per-turn. Claim-free by construction — see buildPastResearchDigest.
-  const globalMem = readFileSafe(GLOBAL_MEMORY_PATH);
-  if (globalMem.trim().length > 20) {
-    parts.push(`<global_memory>\n${truncateGlobalMemory(globalMem, 4000)}\n</global_memory>`);
-  }
   const pastResearch = buildPastResearchDigest(projectDir);
   if (pastResearch) parts.push(pastResearch);
 
@@ -685,32 +674,6 @@ function tailWholeReviews(feedback: string, budget: number): string {
   const omitted = sections.length - keep.length;
   return (omitted > 0 ? `(${omitted} older review(s) truncated — full history in reviews/pi_feedback.md)\n\n---\n\n` : "")
     + keep.join("\n\n---\n\n");
-}
-
-/**
- * Truncate ~/.sisyphus/memory.md at entry boundaries (`- **[project, date]**`
- * bullets), keeping the preamble and the NEWEST whole entries that fit.
- * smartTruncate would cut mid-entry and strip provenance tags — an untagged
- * half-claim in the cache-pinned system block is exactly what the
- * contamination rules forbid.
- */
-function truncateGlobalMemory(mem: string, budget: number): string {
-  if (mem.length <= budget) return mem;
-  const blocks = mem.split(/\n(?=- \*\*\[)/);
-  if (blocks.length === 1) return smartTruncate(mem, budget); // no entry markers — fall back
-  const preamble = blocks[0].slice(0, budget);
-  let used = preamble.length;
-  const entries = blocks.slice(1);
-  const keep: string[] = [];
-  for (let i = entries.length - 1; i >= 0; i--) { // entries append at the end — newest last
-    const cost = entries[i].length + 1;
-    if (used + cost > budget) break;
-    keep.unshift(entries[i]);
-    used += cost;
-  }
-  const omitted = entries.length - keep.length;
-  return [preamble, ...keep].join("\n") +
-    (omitted > 0 ? `\n(… ${omitted} older entries omitted — read ~/.sisyphus/memory.md for the rest)` : "");
 }
 
 // ── Report status ──────────────────────────────

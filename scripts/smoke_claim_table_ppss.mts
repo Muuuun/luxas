@@ -27,6 +27,28 @@ check("min|C6|: one later disagreeing route is a dispute, not a supersession", r
 // sign-convention rows: observables now state the convention → answered, not disclosed (option 2 executed by the brain)
 check("sign-convention rows answered via the stated convention (not disclosed)", ["c6_ss_60", "c6_pp_theta0_60_diag"].every((id) => row(id).status !== "disputed" && row(id).status !== "disclosed"), `${row("c6_ss_60").status}/${row("c6_pp_theta0_60_diag").status}`);
 check("packing_gain_2d: producer, xval and blind agree (no dispute)", row("packing_gain_2d").status !== "disputed" && row("packing_gain_2d").reasons.some((x) => /blind estimate 1.38 agrees/.test(x)), row("packing_gain_2d").reasons.join(" | "));
+// §C10: E6 and E7 filed the full-cell cross-check (value_a ≈ 1, a ratio) under
+// the density key (own 0.013911); its value_b is another instance, not a leg.
+{
+  const dens = row("pp_interaction_gate_density_per_um2");
+  check("§C10 pp_interaction_gate_density_per_um2 is not disputed by the other-instance xval entries", dens.status !== "disputed", dens.status + " :: " + dens.reasons.join(" | "));
+  check("§C10 pp_interaction_gate_density_per_um2 carries 2 'different instance' reasons (E6, E7)", dens.reasons.filter((x) => /^different instance: E[67]:xval:/.test(x)).length === 2, dens.reasons.join(" | "));
+  check("§C10 c6_total_zero_angle_deg and interaction_gate_packing_gain_2d keep their statuses", row("c6_total_zero_angle_deg").status === "indicative" && row("interaction_gate_packing_gain_2d").status === "indicative", `${row("c6_total_zero_angle_deg").status}/${row("interaction_gate_packing_gain_2d").status}`);
+}
+
+// §C76: every disputed row renders the reason that disputes it. The rendered
+// line used to be the row's last reason, which for these rows was a σ note.
+{
+  const CAUSE = /^(disagree:|sign convention:.*(unanswered|signs differ)|blind reviewer estimate .*\(unanswered\)|scaling: observed exponent|disputed by propagation)/;
+  const lines = renderClaimTable(t, t.rows.length).split("\n");
+  const disputed = t.rows.filter((r) => r.status === "disputed").map((r) => r.id);
+  check("§C76 c6_diag_min_abs_ghz_um6_in_20_26 and max_gain_over_orientation are disputed", ["c6_diag_min_abs_ghz_um6_in_20_26", "max_gain_over_orientation"].every((id) => disputed.includes(id)), disputed.join(","));
+  for (const id of disputed) {
+    const i = lines.findIndex((l) => l.startsWith(`- ${id} `));
+    const shown = i < 0 ? "" : (lines[i + 1] ?? "").trim();
+    check(`§C76 disputed ${id} renders a disagree/blind/scaling/propagation cause, not a σ note`, CAUSE.test(shown), shown);
+  }
+}
 
 // P0.2 obligation scope
 const e4 = headlineDeclsFor(t, "E4_verify_c6_zero_physical_gain").map((d) => d.id);

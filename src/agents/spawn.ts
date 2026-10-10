@@ -13,11 +13,12 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createCompactionTransform, getContextWindow } from "../compaction/create-transform.js";
 import type { TokenTap } from "../compaction/token-tap.js";
+import type { PackingLimits } from "../compaction/types.js";
 import { extractTextContent } from "../utils.js";
 import { getDefinition, loadAgentDefinitions, resolvePrompt, type AgentDefinition } from "./registry.js";
 import { resolveToolSets } from "./tool-sets.js";
 import { resolveContextBuilder } from "./context-builders.js";
-import { buildSafetyWrapper, type SafetyRuntimeHooks } from "./safety-wrappers.js";
+import { buildSafetyWrapper, surfaceReturnedIsError, type SafetyRuntimeHooks } from "./safety-wrappers.js";
 import { jobOwnerAls } from "../jobs/als.js";
 import { recordAgentOutcome } from "../agent-liveness.js";
 import { addAgent, removeAgent, classifyThrownStopReason, type SubAgentExit, type SubAgentStopReason, type FileTouchRecord } from "../active-agents.js";
@@ -720,20 +721,58 @@ function modelFromEntry(entry: [string, string] | InlineModel) {
  * profile override).
  */
 export function listRoutedModels(): { provider: string; id: string; usedBy: string[] }[] {
-  const byId = new Map<string, { provider: string; id: string; usedBy: string[] }>();
   let defs: Map<string, AgentDefinition>;
   try { defs = loadAgentDefinitions(); } catch { return []; }
+  return routeAllAgents(defs).rows;
+}
+
+/**
+ * Every agent whose route does not resolve: resolveModel throws, or the entry
+ * names an id pi-ai's catalog lacks. listRoutedModels leaves these out, so
+ * nothing downstream of it (liveness check, canary) can see them; every spawn
+ * of one throws. `luxas run` refuses on a non-empty list.
+ */
+export function unresolvedRoutes(): { agent: string; error: string }[] {
+  let defs: Map<string, AgentDefinition>;
+  try { defs = loadAgentDefinitions(); } catch (e: any) {
+    return [{ agent: "(definitions)", error: String(e?.message ?? e) }];
+  }
+  return routeAllAgents(defs).unresolved;
+}
+
+/** Each definition routed exactly as a spawn of it would be (buildAgentFromDefinition). */
+export function routeAllAgents(defs: Map<string, AgentDefinition> = loadAgentDefinitions()): {
+  rows: { provider: string; id: string; usedBy: string[] }[];
+  unresolved: { agent: string; error: string }[];
+} {
+  const byId = new Map<string, { provider: string; id: string; usedBy: string[] }>();
+  const unresolved: { agent: string; error: string }[] = [];
   for (const [name, def] of defs) {
+    const key = definitionTier(def.model);
     let m: any;
-    try { m = resolveModel(def.model, name); } catch { continue; }
+    try { m = resolveModel(key, name); } catch (e: any) {
+      unresolved.push({ agent: name, error: String(e?.message ?? e) });
+      continue;
+    }
     const id = String(m?.id ?? m?.model?.id ?? "");
     const provider = String(m?.provider ?? "anthropic");
-    if (!id) continue;
+    if (!id) {
+      const effective = applyProfile(key, name);
+      const via = effective === key ? "" : ` (routed from "${key}")`;
+      unresolved.push({ agent: name, error: `hollow model (undefined id) for key "${effective}"${via}` });
+      continue;
+    }
     const row = byId.get(id) ?? { provider, id, usedBy: [] };
     row.usedBy.push(name);
     byId.set(id, row);
   }
-  return [...byId.values()].sort((a, b) => a.provider.localeCompare(b.provider) || a.id.localeCompare(b.id));
+  const rows = [...byId.values()].sort((a, b) => a.provider.localeCompare(b.provider) || a.id.localeCompare(b.id));
+  return { rows, unresolved };
+}
+
+/** A definition without `model:` is "inherit" (registry.ts) and spawns on the sonnet tier. */
+function definitionTier(modelKey: string): string {
+  return modelKey === "inherit" ? "sonnet" : modelKey;
 }
 
 export function pickRequireToolChoice(model: any): "any" | "required" | "auto" {
@@ -750,6 +789,14 @@ export function pickRequireToolChoice(model: any): "any" | "required" | "auto" {
   if (model?.provider === "anthropic") return "any";
   if (model?.reasoning) return "auto";
   return "required";
+}
+
+// DeepSeek bills no cache writes, so each trim re-bills the moved prefix uncached; the C77 replay
+// measured its sub-agents 11–20% cheaper trimming at 400K. Anthropic bills writes and stays at 160K.
+export function subAgentCompactionLimits(model: any): PackingLimits {
+  const limits: PackingLimits = { windowLimit: getContextWindow(model) };
+  if (model?.provider === "deepseek") limits.microCompactionCap = 400_000;
+  return limits;
 }
 
 // ── Max spawn depth ──────────────────────────────────
@@ -783,6 +830,11 @@ export interface SpawnAgentOptions {
   parentAgentId?: string;
   /** Instance index (for parallel spawning, e.g., worker-0, worker-1). */
   instanceIndex?: number;
+  /**
+   * Id allocated by the caller: the background runner builds its agent under
+   * the bg id its registry entry, heartbeat and transcript already carry.
+   */
+  agentId?: string;
   /**
    * Factory for the spawn_agent tool — injected by spawn-agent.ts to avoid circular imports.
    * Only used when `def.spawn.enabled` is true.
@@ -873,7 +925,8 @@ export function buildAgentFromDefinition(opts: SpawnAgentOptions): BuiltAgent {
 
   // Continue-mode reuses the prior agentId verbatim so the resumed run
   // appends to the same conv jsonl — one tool ↔ one jsonl ↔ one logical
-  // agent. instanceIndex makes parallel batches predictable (-0, -1, …);
+  // agent. A caller-allocated id (background runner) is used as given.
+  // instanceIndex makes parallel batches predictable (-0, -1, …);
   // otherwise we want a random suffix so independent foreground spawns of
   // the same agent type (one reader per paper) don't collide on a shared
   // conversation file.
@@ -881,6 +934,7 @@ export function buildAgentFromDefinition(opts: SpawnAgentOptions): BuiltAgent {
     ? `-${opts.instanceIndex}`
     : `-${Math.random().toString(36).slice(2, 8)}`;
   const agentId = opts.resume?.agentId
+    ?? opts.agentId
     ?? (opts.parentAgentId
       ? `${opts.parentAgentId}.${opts.name}${suffix}`
       : `${opts.name}${suffix}`);
@@ -888,8 +942,7 @@ export function buildAgentFromDefinition(opts: SpawnAgentOptions): BuiltAgent {
 
   // 1. Resolve model
   const modelKey = opts.modelOverride ?? def.model;
-  const model = opts.exactModel ? resolveModelExact(opts.exactModel)
-    : modelKey === "inherit" ? resolveModel("sonnet", opts.name) : resolveModel(modelKey, opts.name);
+  const model = opts.exactModel ? resolveModelExact(opts.exactModel) : resolveModel(definitionTier(modelKey), opts.name);
 
   // 2. Resolve system prompt with template variables
   // Inject SPAWN_ID = agentId so prompts can include the spawn-unique id in
@@ -929,11 +982,13 @@ export function buildAgentFromDefinition(opts: SpawnAgentOptions): BuiltAgent {
     tools = [...tools, spawnTool];
   }
 
-  // 7. Build dynamic context if context builder is defined
+  // 7. Build dynamic context if context builder is defined. Builders also get
+  // the resolved templateVars: the experiment builder scopes its file listing
+  // to EXPERIMENT_ID.
   let fullPrompt = systemPrompt;
   const contextBuilder = resolveContextBuilder(def.contextBuilder);
   if (contextBuilder) {
-    const context = contextBuilder(opts.projectDir, opts.contextExtra);
+    const context = contextBuilder(opts.projectDir, { ...opts.contextExtra, templateVars: templateVarsWithSpawn });
     if (context) {
       fullPrompt += "\n\n" + context;
     }
@@ -953,7 +1008,7 @@ export function buildAgentFromDefinition(opts: SpawnAgentOptions): BuiltAgent {
   const { transformContext, tokenTap } = createCompactionTransform({
     model,
     getApiKey: opts.getApiKey,
-    thresholds: { windowLimit: getContextWindow(model) },
+    thresholds: subAgentCompactionLimits(model),
     attachmentProviders: [
       createRecentFilesProvider(fileContextCache, {
         projectDir: opts.projectDir,
@@ -984,6 +1039,8 @@ export function buildAgentFromDefinition(opts: SpawnAgentOptions): BuiltAgent {
     },
     getApiKey: opts.getApiKey,
     transformContext,
+    // A safety block returns isError:true; without this the loop sends it as a success.
+    afterToolCall: surfaceReturnedIsError,
     streamFn: (m, ctx, streamOpts) => {
       const cap = opts.lengthRecovery?.state.maxTokensCap;
       const merged: any = { ...streamOpts, toolChoice: pickRequireToolChoice(m) };
@@ -1371,6 +1428,10 @@ export async function spawnAgent(opts: SpawnAgentOptions): Promise<SpawnAgentRes
         parentAgentId: opts.parentAgentId,
         templateVars: opts.templateVars,
         timestamp: Date.now(),
+        // A continue rebuilds the prompt from the task (it selects the methods
+        // sheet), so a long task is kept whole. Last, so readers of the line's
+        // head still find templateVars.
+        ...(opts.prompt.length > 2000 ? { contextTask: opts.prompt } : {}),
       }) + "\n");
     }
 
@@ -1409,6 +1470,10 @@ export async function spawnAgent(opts: SpawnAgentOptions): Promise<SpawnAgentRes
         mode: opts.instanceIndex !== undefined ? "parallel" : "foreground",
         startedAt: Date.now(),
         conversationFile: convPath,
+        // No pid or heartbeat of its own: it lives as long as this process,
+        // which is not always the brain (a runner, review_experiment.mts).
+        hostPid: process.pid,
+        hostPpid: process.ppid,
         status: "running",
       });
       registered = true;
@@ -1422,8 +1487,14 @@ export async function spawnAgent(opts: SpawnAgentOptions): Promise<SpawnAgentRes
         provider: currentModel?.provider,
         id: currentModel?.id,
       });
-      agent.state.messages = cleaned;
+      // pi 0.87 keeps the prompt and tool declarations in the leading
+      // role:"system" message the Agent was built with; the transcript never
+      // stores it. Keep it, and drop the empty tool re-declarations that
+      // earlier continues wrote into the transcript.
+      const head = (agent.state.messages as any[]).filter((m) => m.role === "system");
+      agent.state.messages = [...head, ...cleaned.filter((m: any) => m.role !== "system")];
     }
+    // Counted after the restore so neither the head nor the history is re-appended.
     let lastSavedMsgCount = (agent.state.messages as any[]).length;
 
     agent.subscribe((event: any) => {

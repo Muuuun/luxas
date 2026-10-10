@@ -21,7 +21,8 @@ const calls: string[] = [];
 const fake = (name: string) => ({ name, execute: async (_id: string, params: any) => { calls.push(`${name}:${params.path ?? params.command}`); return { content: [{ type: "text", text: "ok" }] }; } });
 const wrap = buildSafetyWrapper({ figureSpecOnly: true, writeOnExistingPolicy: "allow_as_read" })!;
 const [w, b] = wrap([fake("write"), fake("bash")], dir, { EXPERIMENT_ID: "E1_x" });
-// blocked() returns plain content prefixed "BLOCKED:" (no isError flag) — that prefix is the refusal signal.
+// blocked() returns content prefixed "BLOCKED:" with isError:true (the loop surfaces the flag via
+// afterToolCall → surfaceReturnedIsError); this wrapper-level check keys on the prefix.
 const run = async (tool: any, params: any) => { const r = await tool.execute("t", params); const t = String(r?.content?.[0]?.text ?? ""); return /^BLOCKED:/.test(t) ? t : ""; };
 
 const plot = "import matplotlib.pyplot as plt\nfig, ax = plt.subplots()\nfig.savefig('report/figures/x.pdf')\n";

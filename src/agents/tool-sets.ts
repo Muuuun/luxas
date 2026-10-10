@@ -6,7 +6,7 @@ import { createReadTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai/compat";
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
-import { createCodingToolsForProject } from "../tools/coding.js";
+import { createCodingToolsForProject, pdfTextReadOptions, withPdfReadNote } from "../tools/coding.js";
 import { createReportTools } from "../tools/report.js";
 import { createWolframTool } from "../tools/wolfram.js";
 import { createFigureGenTools } from "../tools/figure-gen.js";
@@ -27,8 +27,9 @@ const TOOL_SETS: Record<string, ToolSetFactory> = {
   // PI gets read + grep but stays write-less by design: it audits, it does
   // not produce. Without grep, PI reviewers spawned illustrator agents just
   // to run file-location errands (observed: 6 of 16 illustrator spawns in
-  // one session were grep/ls runs).
-  pi: (dir) => [createReadTool(dir), createGrepTool(dir)],
+  // one session were grep/ls runs). Having no bash, it also cannot extract a
+  // PDF's text itself, so read does it.
+  pi: (dir) => [withPdfReadNote(createReadTool(dir, pdfTextReadOptions())), createGrepTool(dir)],
   wolfram: () => [createWolframTool()],
   "figure-gen": (dir) => createFigureGenTools(dir),
   // "exit" gives a sub-agent the `finish` tool. Required for typesetter /

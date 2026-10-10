@@ -121,7 +121,9 @@ export function parseExperimentSections(text: string): ExperimentSection[] {
   // Treat h2 headers starting with L2.N or E_N as experiment sections; other
   // h2s (like "Overview") are narrative and exempt from the status contract.
   const headerRE = /^##\s+((?:L2\.\d+|E\d+)\b.*)$/;
-  const statusRE = /^\*\*Status:\*\*\s*(Pending|Complete)\b/im;
+  // Ledgers often write the status as a list item ("- **Status:** Complete");
+  // the marker is formatting, so it counts. Prose mid-line still does not.
+  const statusRE = /^\s*(?:[-*+]\s+)?\*\*Status:\*\*\s*(Pending|Complete)\b/im;
 
   const sections: ExperimentSection[] = [];
   let curHeader: string | null = null;
@@ -383,6 +385,8 @@ export function buildResearchTools(
   getApiKey: (provider: string) => Promise<string | undefined> | string | undefined,
   callbacks?: ToolCallbacks,
   directiveGate?: DirectiveGateConfig,
+  /** The brain's prompt-cache lifetime (agent.ts BRAIN_CACHE_RETENTION); bounds idle. */
+  brainCacheRetention: "short" | "long" = "long",
 ): { tools: any[]; setParentAgent: (agent: Agent) => void } {
   // Brain coding tools are wrapped with read-tracking + edit safety guards
   // declared in brain.md. The wrapper is load-bearing (RESEARCH.md protection,
@@ -509,7 +513,7 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
       // then the harvest returns to the brain so results round-trip through the
       // ledger before the gates run. Dead agents get stale-swept inside the wait
       // (zombie deadlock structurally impossible); an alive-but-hung agent costs
-      // one cheap turn per 10-min timeout, bounded by the wall-clock cap in hooks.
+      // one cheap turn per 10-min timeout, bounded by the turn and cost caps.
       const active = getActiveBackgroundAgents(projectDir);
       if (active.length > 0) {
         const blob = await waitAndHarvestBackground(projectDir, 600_000);
@@ -534,8 +538,15 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
           `typesetter cycle (every recompile makes report.pdf newer than the last PI review, ` +
           `re-blocking finish). Shipping current artifacts as-is so a gate livelock cannot burn ` +
           `the budget.` }],
-          details: { success: true } };
+          details: { success: true, outcome: "forced_finish" } };
       }
+
+      // The finish gate chain starts here. No new blocking finish() gate until
+      // the offline finish-gate replay (C78). A predicate repair inside an
+      // existing gate is not a new gate. Any new gate: first line starts with
+      // "Cannot finish:" and varies only in digits; names an in-freeze clearing
+      // route in literal spawn_agent(agent="X") form; no waiver; its firing
+      // count goes in the commit.
 
       // Fix δ — Directive-implication gate. See directiveImpliesNewWork above
       // for the rationale and known limitations. Only fires when this session
@@ -786,7 +797,7 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
               `Force-exit (runaway-cost backstop): 3 consecutive blocked finish() calls with open frontier leads. ` +
               `Shipping current artifacts. Leads left UNDISPOSED (not declined): ${undisposed.map(l => l.leadId).join(", ")}. ` +
               `Dispose properly next time via finish(decline:[{leadId,reason}]) or by running the leads.`
-            }], details: { success: true } };
+            }], details: { success: true, outcome: "forced_finish" } };
           }
           const list = undisposed.map(l =>
             `  - ${l.leadId} (from ${l.sourceSection})` +
@@ -1054,8 +1065,8 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
         if (digestNow !== sfm.sources_md5) {
           return { content: [{ type: "text" as const, text:
             `Cannot finish: reviews/contradiction_sweep.md swept different source files ` +
-            `(recorded sources_md5 ${sfm.sources_md5.slice(0, 12)}…, current ` +
-            `${digestNow.slice(0, 12)}…) — report.tex, notes/experiments.md or a ` +
+            `(recorded sources_md5 ${sfm.sources_md5} does not match the current ` +
+            `sources) — report.tex, notes/experiments.md or a ` +
             `results.json changed since the sweep. Re-spawn contradiction_auditor.`
           }] };
         }
@@ -1116,10 +1127,14 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
         const rasterMatch = digestNow !== null && fm.pages_digest !== undefined &&
           digestNow === fm.pages_digest;
         if (!rasterMatch) {
+          // The recorded hash in full and the current one not at all. Printing a
+          // 12-char prefix of both made a forged audit that copied the prefix
+          // read as a match, and the brain retried unchanged (C78, rb87);
+          // printing the current hash in full would hand a forger the value.
           return { content: [{ type: "text" as const, text:
             `Cannot finish: reviews/typesetter_notes.md audited a different ` +
-            `report.pdf (recorded md5 ${fm.report_pdf_md5.slice(0, 12)}…, ` +
-            `current ${currentPdfMd5.slice(0, 12)}…` +
+            `report.pdf (recorded md5 ${fm.report_pdf_md5} does not match ` +
+            `the current report.pdf` +
             (fm.pages_digest ? `; page rasters also differ` : ``) +
             `). Re-spawn typesetter to audit the current PDF — it will use ` +
             `diff_pdf_pages to re-read only the pages that visually changed.`
@@ -1264,7 +1279,10 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
       // keys the agent-loop exit off this flag, so a gate-blocked finish()
       // leaves the loop running instead of shipping a corpse. Same shape as
       // sub-agent-exit.ts so both finish tools converge on one contract.
-      return { content: [{ type: "text" as const, text: `Research complete: ${args.summary}` }], details: { success: true } };
+      // The two force-exit backstops and the operator escalation return
+      // success too; outcome is what tells the archive, the registry and the
+      // career harvest that only this one finished the study.
+      return { content: [{ type: "text" as const, text: `Research complete: ${args.summary}` }], details: { success: true, outcome: "finished" } };
     },
   };
 
@@ -1282,7 +1300,7 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
           `Escalated to the operator: the same finish gate blocked ${escalation.count} consecutive finish() calls, ` +
           `so iterating is not reducing the issue. Wrote ${path.replace(projectDir + "/", "")} with the gate text; ` +
           `the run exits cleanly with its artifacts as they stand. A person decides the next move.` }],
-          details: { success: true, escalated: true } };
+          details: { success: true, escalated: true, outcome: "needs_operator" } };
       }
       return r;
     };
@@ -1305,18 +1323,25 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
       "with zero LLM cost during the wait. Harness polls the registry every 2s " +
       "and returns all completions as this tool's output in one blob. Call this " +
       "after `spawn_agent(background=true)` when you have no foreground work " +
-      "to do. Returns immediately if no background agents are running.",
+      "to do. Returns immediately if no background agents are running. " +
+      "If it times out with agents still running, call idle again.",
     parameters: {
       type: "object" as const,
       properties: {
         timeout_ms: {
           type: "number" as const,
-          description: "Max wait duration before giving up. Default 600000 (10 minutes). On timeout, any still-running agents are listed; they remain in the registry for next-turn harvest.",
+          description: "Max wait duration before giving up. Default 600000 (10 minutes). Honoured up to 3000000 (50 minutes) and capped above it: a request more than ~60 minutes after your previous one rewrites your whole context. On timeout, any still-running agents are listed; they remain in the registry for next-turn harvest.",
         },
       },
     },
     execute: async (_toolCallId: string, args: { timeout_ms?: number }) => {
-      const body = await waitAndHarvestBackground(projectDir, args.timeout_ms ?? 600_000);
+      const timeout = idleTimeoutMs(args.timeout_ms, brainCacheRetention);
+      let body = await waitAndHarvestBackground(projectDir, timeout);
+      const capped = typeof args.timeout_ms === "number" && timeout < args.timeout_ms;
+      if (capped && loadRegistry(join(projectDir, ".agent")).some(a => a.status === "running")) {
+        body += "\n\nidle is capped at 50 min so the wake stays inside your 1-hour cache; " +
+          "the agents above are still running — call idle again.";
+      }
       return { content: [{ type: "text" as const, text: body }] };
     },
   };
@@ -1335,6 +1360,24 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
     tools,
     setParentAgent: (agent: Agent) => { parentAgentRef = agent; },
   };
+}
+
+/**
+ * Longest idle wait under the brain's 1-hour cache. The TTL runs from the
+ * previous request's START; generation, poll and grace time can add ~10 min
+ * before idle's own clock starts, so a 60-min idle wakes to a cold cache and
+ * rewrites the whole context.
+ */
+export const IDLE_CAP_LONG_CACHE_MS = 3_000_000;
+
+/**
+ * The wait idle actually performs for a requested timeout_ms. Anything that is
+ * not a finite number gets the 10-min default; <= 0 still returns at once. The
+ * 5-min cache is already cold after any real wait, so it is not capped.
+ */
+export function idleTimeoutMs(requested: unknown, retention: "short" | "long"): number {
+  const ms = typeof requested === "number" && Number.isFinite(requested) ? requested : 600_000;
+  return retention === "long" ? Math.min(ms, IDLE_CAP_LONG_CACHE_MS) : ms;
 }
 
 /**

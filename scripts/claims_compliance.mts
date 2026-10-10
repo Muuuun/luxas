@@ -11,7 +11,7 @@
  *   experiment  — results.json computed.quantities[] {id,key,headline,observable,
  *                 uncertainty,uncertainty_source,limit_check,inputs}; verdicts[] {id,reads,replaces}
  *   reviewer    — reviews/experiment_review_*_r*.md DISCRIMINATOR / ESTIMATE(blind) /
- *                 SCALING / INDEPENDENT / ANCHOR-OK per headline quantity in scope
+ *                 SCALING / INDEPENDENT per headline quantity in scope
  *   PI          — reviews/pi_feedback.md ESTIMATE / DISCRIMINATOR lines
  *   brain       — notes/frame.md "## Headline quantities" (present, 1..N ids)
  *
@@ -132,8 +132,9 @@ export function measureCompliance(projectDir: string): ComplianceReport {
       scope.filter((id) => lines.blind.some((e) => e.quantity === id && e.sigma !== undefined)).length),
     fr("SCALING per headline id", scope.filter((id) => lines.scaling.some((s) => s.id === id)).length, scope.length,
       scope.filter((id) => lines.scaling.some((s) => s.id === id && s.observed !== undefined)).length),
-    fr("INDEPENDENT per headline id", scope.filter((id) => has(lines.independent, id)).length, scope.length),
-    fr("ANCHOR-OK per headline id", scope.filter((id) => has(lines.anchorOk, id)).length, scope.length),
+    // Filled = any INDEPENDENT line; valid = one answering "shared: none" (the only form that attests).
+    fr("INDEPENDENT per headline id", scope.filter((id) => lines.independentLines.some((l) => l.id === id)).length, scope.length,
+      scope.filter((id) => has(lines.independent, id)).length),
     fr("review files with ≥1 DISCRIMINATOR", reviewFiles.filter((f) => /^DISCRIMINATOR:/m.test(readFileSync(join(reviewsDir, f), "utf-8"))).length, reviewFiles.length),
   ];
 

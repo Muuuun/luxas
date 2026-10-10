@@ -22,7 +22,7 @@ import {
   existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync,
 } from "node:fs";
 import { join, resolve, basename } from "node:path";
-import { loadRegistry, isAlive as heartbeatFresh, parseConvJsonl } from "../active-agents.js";
+import { loadRegistry, describeInFlight, parseConvJsonl } from "../active-agents.js";
 import { readUsageTotals } from "../usage-log.js";
 import { extractTextContent, pidAlive } from "../utils.js";
 
@@ -207,13 +207,12 @@ export function summarizeRunStatus(projectDir: string): string {
     lines.push("sub-agents: none registered (brain is working alone, or between spawns)");
   } else {
     lines.push(`sub-agents (${agents.length}):`);
+    // Same labels as `luxas status`: in-process work is judged by its host
+    // process, since it has no pid or heartbeat of its own.
+    const inFlight = new Map(describeInFlight(projectDir).map((e) => [e.agent.id, e.label]));
     for (const a of agents) {
-      const hb = heartbeatFresh(agentDir, a.id);
-      const procAlive = typeof a.pid === "number" ? pidAlive(a.pid) : undefined;
       const state = a.status ?? "running";
-      const liveness = state === "running"
-        ? (hb ? "heartbeat fresh" : procAlive ? "heartbeat stale but process alive" : "NO heartbeat, process gone — likely dead")
-        : state;
+      const liveness = state === "running" ? (inFlight.get(a.id) ?? state) : state;
       lines.push(`  - ${a.id} [${a.mode}] ${liveness}; running ${fmtDuration(Date.now() - a.startedAt)}; task: ${a.task.slice(0, 160).replace(/\s+/g, " ")}` +
         (a.expected_artifact ? `; expects → ${a.expected_artifact}` : ""));
     }

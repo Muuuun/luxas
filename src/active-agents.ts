@@ -8,9 +8,9 @@
  * Maintained by harness code only (not LLM).
  */
 
-import { readFileSync, statSync, mkdirSync, closeSync, openSync, unlinkSync, utimesSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync, statSync, mkdirSync, closeSync, openSync, unlinkSync, utimesSync } from "node:fs";
 import { join, dirname, relative } from "node:path";
-import { atomicWriteJson, extractTextContent } from "./utils.js";
+import { atomicWriteJson, extractTextContent, pidAlive } from "./utils.js";
 
 /**
  * Normalized stop reason across sub-agent completion paths.
@@ -97,6 +97,19 @@ export interface ActiveAgent {
   startedAt: number;
   conversationFile: string;
   pid?: number;           // independent process PID
+  /**
+   * In-process entries only: the process the spawn runs in (spawn.ts addAgent)
+   * — the brain, a background runner, or scripts/review_experiment.mts. Such
+   * an entry has no pid or heartbeat of its own; it lives as long as this
+   * process does. Absent on legacy entries.
+   */
+  hostPid?: number;
+  /**
+   * The host's parent. A studio launch writes run.pid as the tsx wrapper's
+   * pid and the brain runs in tsx's inner process, so the brain's own work
+   * is known by run.pid === hostPpid.
+   */
+  hostPpid?: number;
   status?: "running" | "done" | "failed";
   result?: string;        // frozen result text (written by sub-agent on completion)
   /**
@@ -341,36 +354,247 @@ export function touchHeartbeat(agentDir: string, agentId: string): void {
   }
 }
 
-/** Check if a sub-agent's heartbeat is fresh (default threshold: 60s). */
-export function isAlive(agentDir: string, agentId: string, thresholdMs = 60_000): boolean {
-  try {
-    const st = statSync(heartbeatPath(agentDir, agentId));
-    return Date.now() - st.mtimeMs < thresholdMs;
-  } catch {
-    return false;
-  }
+/**
+ * In-process work hosted by another live process (a review_experiment, or a
+ * background runner's revision and review loop): in flight, though it writes
+ * no heartbeat. The caller's own in-process work is left out: a leaked entry
+ * of a live process could never be swept — the 2026-07-09 immortal entries
+ * that blocked finish() 357 times.
+ */
+function hostedElsewhere(a: ActiveAgent | undefined): boolean {
+  return !!a && typeof a.pid !== "number" && typeof a.hostPid === "number"
+    && a.hostPid !== process.pid && pidAlive(a.hostPid);
 }
 
 /**
- * Try to extract a result from a sub-agent's conversation file.
- * Reads the last assistant message's text content.
+ * Whether a sub-agent is alive: its heartbeat is fresh (default threshold:
+ * 60s), or it is in-process work hosted by another live process. Both zombie
+ * sweeps (getActiveBackgroundAgents, waitAndHarvestBackground) judge every
+ * running entry by this, and in-process work never beats.
+ */
+export function isAlive(agentDir: string, agentId: string, thresholdMs = 60_000): boolean {
+  try {
+    if (Date.now() - statSync(heartbeatPath(agentDir, agentId)).mtimeMs < thresholdMs) return true;
+  } catch { /* no heartbeat file */ }
+  return hostedElsewhere(loadRegistry(agentDir).find((a) => a.id === agentId));
+}
+
+export interface InFlightAgent {
+  agent: ActiveAgent;
+  /** The process it depends on answers (heartbeat or pid). */
+  alive: boolean;
+  /** Liveness, and for in-process work the process it lives in. */
+  label: string;
+}
+
+/**
+ * Every registry entry still marked running, labelled by the process it
+ * depends on. Read-only: no sweep, no registry write.
+ *
+ *   background — its own runner process: heartbeat and pid.
+ *   in-process — no pid, no heartbeat: it lives inside the process that
+ *                spawned it (hostPid). A reader fan-out lives in the brain, so
+ *                stopping the brain kills it; reading its missing heartbeat
+ *                as death made a mid fan-out restart look free. A runner's
+ *                revision or a review_experiment's reviewer lives elsewhere;
+ *                judged by run.pid, a live review read "died with the brain".
+ *                The brain's own: hostPid or, under a studio launch, hostPpid
+ *                is run.pid's pid.
+ *                A legacy entry (no hostPid): its nearest registered ancestor
+ *                with a pid, else the brain named by run.pid.
+ */
+export function describeInFlight(projectDir: string): InFlightAgent[] {
+  const agentDir = join(projectDir, ".agent");
+  let brainPid: number | undefined;
+  try {
+    const pid = JSON.parse(readFileSync(join(agentDir, "run.pid"), "utf-8"))?.pid;
+    if (typeof pid === "number" && pid > 0) brainPid = pid;
+  } catch { /* no run.pid */ }
+  const agents = loadRegistry(agentDir);
+  return agents.filter((a) => (a.status ?? "running") === "running").map((a) => {
+    if (typeof a.pid === "number" || a.mode === "background") {
+      const hb = isAlive(agentDir, a.id);
+      const proc = typeof a.pid === "number" && pidAlive(a.pid);
+      const label = hb ? "heartbeat fresh" : proc ? "heartbeat stale but process alive" : "NO heartbeat, process gone — likely dead";
+      return { agent: a, alive: hb || proc, label };
+    }
+    // A registered runner is named: `luxas stop` reaches it, a brain restart does not.
+    const host = typeof a.hostPid === "number"
+      ? agents.find((h) => h.pid === a.hostPid)
+      : agents
+        .filter((h) => typeof h.pid === "number" && a.id.startsWith(h.id + "."))
+        .sort((x, y) => y.id.length - x.id.length)[0];
+    const hostPid = a.hostPid ?? host?.pid ?? brainPid;
+    if (hostPid === undefined) return { agent: a, alive: false, label: "in-process with the brain; no run.pid to say whether it lives" };
+    const alive = pidAlive(hostPid);
+    // The brain is the run.pid process, or its child under a studio launch's
+    // tsx wrapper. A runner is the brain's child too, hence the registered
+    // runner first; and a dead host under a live brain was not the brain.
+    const inBrain = brainPid !== undefined && (hostPid === brainPid
+      || (a.hostPpid === brainPid && (alive || !pidAlive(brainPid))));
+    const label = host
+      ? alive ? `in-process in ${host.id} pid ${hostPid}, in flight` : `died with ${host.id} (pid ${hostPid} gone)`
+      : inBrain
+        ? alive ? `in-process with brain pid ${brainPid}, in flight; a restart kills it` : `died with the brain (pid ${brainPid} gone)`
+        : alive ? `in-process in pid ${hostPid} (not the brain), in flight; a brain restart or luxas stop does not stop it` : `died with its host pid ${hostPid}`;
+    return { agent: a, alive, label };
+  });
+}
+
+// Support both raw messages (role at top level) and Session MessageEntry wrapper
+function unwrapMessage(entry: any): any {
+  return entry?.type === "message" && entry.message ? entry.message : entry;
+}
+
+/**
+ * Entries of the conversation file's last run. One file can hold several: a
+ * foreground continue appends after a continue_init, and a background spawn
+ * once appended to a previous brain process's Session file (Dy bg-1,
+ * 2026-10-06: its E2 run inherited the E1 run's last text). A run starts at a
+ * Session header, a spawn_init, a continue_init, or a role:"system" message.
+ */
+function lastSegment(conversationFile: string): any[] {
+  let raw: string;
+  try { raw = readFileSync(conversationFile, "utf-8"); } catch { return []; }
+  let seg: any[] = [];
+  for (const line of raw.split("\n")) {
+    if (!line) continue;
+    let entry: any;
+    try { entry = JSON.parse(line); } catch { continue; }
+    if (entry?.type === "session" || entry?.type === "spawn_init" || entry?.type === "continue_init"
+      || unwrapMessage(entry)?.role === "system") seg = [];
+    seg.push(entry);
+  }
+  return seg;
+}
+
+/**
+ * Try to extract a result from a sub-agent's conversation file: the last
+ * assistant text of its last run, never an earlier run's.
  */
 export function tryExtractResult(conversationFile: string): string | null {
-  try {
-    const lines = readFileSync(conversationFile, "utf-8").trim().split("\n");
-    for (let i = lines.length - 1; i >= 0; i--) {
-      try {
-        const entry = JSON.parse(lines[i]);
-        // Support both raw messages (role at top level) and Session MessageEntry wrapper
-        const msg = entry.type === "message" && entry.message ? entry.message : entry;
-        if (msg.role === "assistant" && Array.isArray(msg.content)) {
-          const text = extractTextContent(msg.content);
-          if (text.length > 0) return text.slice(0, 30_000);
-        }
-      } catch { /* skip malformed line */ }
-    }
-  } catch { /* file not found or read error */ }
+  const seg = lastSegment(conversationFile);
+  for (let i = seg.length - 1; i >= 0; i--) {
+    try {
+      const msg = unwrapMessage(seg[i]);
+      if (msg?.role === "assistant" && Array.isArray(msg.content)) {
+        const text = extractTextContent(msg.content);
+        if (text.length > 0) return text.slice(0, 30_000);
+      }
+    } catch { /* skip malformed entry */ }
+  }
   return null;
+}
+
+/** The id experiment.md names in its prompt: "Your `EXPERIMENT_ID` (`E2_x`) names exactly ONE sub-question." */
+export function experimentIdFromPrompt(text: string): string | null {
+  return text.match(/EXPERIMENT_ID` \(`([^`]+)`\)/)?.[1] ?? null;
+}
+
+// A foreground experiment keeps its templateVars on spawn_init; a background
+// one only in the system prompt that opens its Session run. Either way the id
+// is only used if it names an existing directory under data/experiments/.
+function experimentIdOf(a: ActiveAgent, projectDir: string): string | null {
+  const accept = (id: unknown): string | null =>
+    typeof id === "string" && /^[A-Za-z0-9_.-]+$/.test(id) && !/^\.+$/.test(id)
+      && existsSync(join(projectDir, "data", "experiments", id)) ? id : null;
+  const fromInit = accept(parseConvJsonl(a.conversationFile).spawnInit?.templateVars?.EXPERIMENT_ID);
+  if (fromInit) return fromInit;
+  const head = unwrapMessage(lastSegment(a.conversationFile)[0]);
+  if (head?.role !== "system") return null;
+  let text = "";
+  try { text = typeof head.content === "string" ? head.content : extractTextContent(head.content); } catch { /* malformed content */ }
+  return accept(experimentIdFromPrompt(text));
+}
+
+// Newest run_N that holds a results.json, and the highest review round.
+function experimentOnDisk(projectDir: string, eid: string) {
+  let run: { name: string; n: number; mtimeMs: number } | null = null;
+  const runsDir = join(projectDir, "data", "experiments", eid, "runs");
+  try {
+    for (const name of readdirSync(runsDir)) {
+      const m = /^run_(\d+)$/.exec(name);
+      if (!m) continue;
+      let mtimeMs: number;
+      try { mtimeMs = statSync(join(runsDir, name, "results.json")).mtimeMs; } catch { continue; }
+      if (!run || +m[1] > run.n) run = { name, n: +m[1], mtimeMs };
+    }
+  } catch { /* no runs/ */ }
+  let review: { k: number; verdict: string; mtimeMs: number } | null = null;
+  const reviewsDir = join(projectDir, "reviews");
+  const prefix = `experiment_review_${eid}_r`;
+  try {
+    for (const f of readdirSync(reviewsDir)) {
+      const k = f.startsWith(prefix) && f.endsWith(".md") ? f.slice(prefix.length, -3) : "";
+      if (!/^\d+$/.test(k) || (review && +k <= review.k)) continue;
+      const path = join(reviewsDir, f);
+      let text: string, mtimeMs: number;
+      try { text = readFileSync(path, "utf-8"); mtimeMs = statSync(path).mtimeMs; } catch { continue; }
+      const v = text.match(/^\s*#{0,6}\s*VERDICT:\s*(satisfied|revise)\b/im);
+      review = { k: +k, verdict: v ? v[1].toUpperCase() : "NO VERDICT", mtimeMs };
+    }
+  } catch { /* no reviews/ */ }
+  return { run, review };
+}
+
+// Same bar as the zombie sweep: the runner beats every 30 s.
+const LIVE_HEARTBEAT_MS = 5 * 60_000;
+
+/**
+ * Settle the registry when a brain resumes, and say what became of each entry.
+ *
+ *   done/failed — not an orphan: left for the per-turn harvest, which delivers
+ *                 the frozen result with its exit hint.
+ *   live        — a background runner that outlived the brain (pid answers,
+ *                 heartbeat fresh): kept, so its completion is harvested.
+ *   hosted      — in-process work whose host (hostPid) is another live
+ *                 process: a review_experiment's reviewer, a runner's
+ *                 revision. Kept and said to be running; reported Lost, it
+ *                 invited a second producer while the first kept writing.
+ *   experiment  — whose results.json is newer than the spawn: reported as
+ *                 completed on disk with its last review, whatever the
+ *                 transcript ends with. Resuming Dy (2026-10-07) would have
+ *                 reported its three finished experiments as Recovered with
+ *                 another run's text, or Lost — an invitation to re-dispatch.
+ *   otherwise   — Recovered (last-run text) or Lost, as before; an experiment
+ *                 whose newest results.json predates the spawn (a killed
+ *                 revision) says so, and is never reported completed.
+ *
+ * Every entry not kept is removed.
+ */
+export function reconcileOrphans(projectDir: string, agentDir: string): string[] {
+  const lines: string[] = [];
+  const agents = loadRegistry(agentDir);
+  for (const a of agents) {
+    if (a.status === "done" || a.status === "failed") continue;
+    if (a.pid && pidAlive(a.pid) && isAlive(agentDir, a.id, LIVE_HEARTBEAT_MS)) {
+      lines.push(`[Still running: ${a.name}] ${a.id}, pid ${a.pid} — its result will arrive as a Background Agent Complete message.`);
+      continue;
+    }
+    if (hostedElsewhere(a)) {
+      const runner = agents.find((h) => h.pid === a.hostPid);
+      lines.push(`[Still running in pid ${a.hostPid}: ${a.name}] ${a.id}${runner ? `, inside ${runner.id}` : ""} — in flight in that process, not in this brain; its result goes to that process, not to you, and re-dispatching it would run it twice. Task: "${a.task}"`);
+      continue;
+    }
+    const eid = a.name === "experiment" ? experimentIdOf(a, projectDir) : null;
+    const { run, review } = eid ? experimentOnDisk(projectDir, eid) : { run: null, review: null };
+    if (eid && run && run.mtimeMs >= a.startedAt) {
+      const rv = review
+        ? `last review r${review.k} ${review.verdict}${review.mtimeMs < run.mtimeMs ? ` (older than ${run.name})` : ""}`
+        : "unreviewed";
+      lines.push(`[Completed on disk: ${eid} — ${run.name}/results.json, ${rv}] Task: "${a.task}"`);
+    } else {
+      const stale = eid && run
+        ? ` Its newest results.json (${run.name}) predates this spawn; files under data/experiments/${eid}/ may be newer than that run.`
+        : "";
+      const result = tryExtractResult(a.conversationFile);
+      lines.push(result
+        ? `[Recovered: ${a.name}] Task: "${a.task}"\n${result.slice(0, 5000)}${stale}`
+        : `[Lost: ${a.name}] Task "${a.task}" was interrupted. Decide whether to retry.${stale}`);
+    }
+    removeAgent(agentDir, a.id);
+  }
+  return lines;
 }
 
 // agentId is NOT stored on either marker — the conv jsonl filename IS the
@@ -383,6 +607,8 @@ interface SpawnInitMeta {
   parentAgentId?: string;
   templateVars?: Record<string, string>;
   timestamp: number;
+  /** The whole task, present only when `task` was cut at 2000 characters. */
+  contextTask?: string;
 }
 
 interface ContinueInitMeta {

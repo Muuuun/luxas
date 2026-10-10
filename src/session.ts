@@ -247,23 +247,6 @@ export class Session {
     };
   }
 
-  /** Check if the agent is stuck repeating the same failed action pattern. */
-  isStuck(pattern: string, threshold = 4): boolean {
-    const recent = this.getRecentEntries(threshold * 2)
-      .filter((e) => e.type === "action") as ActionEntry[];
-    if (recent.length < threshold) return false;
-
-    let consecutiveFailedSame = 0;
-    for (let i = recent.length - 1; i >= 0; i--) {
-      if (recent[i].action === pattern && recent[i].result === "failed") {
-        consecutiveFailedSame++;
-      } else {
-        break;
-      }
-    }
-    return consecutiveFailedSame >= threshold;
-  }
-
   /** Number of entries since last compaction (to decide when to compact). */
   entriesSinceCompaction(): number {
     return this.getRecentEntries(1000).length;

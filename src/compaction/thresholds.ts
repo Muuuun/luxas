@@ -34,8 +34,10 @@ export function buildWindowPlan(
 
   // Condense at 60% of effective window
   const condenseThreshold = Math.floor(effectiveWindow * CONDENSE_RATIO);
-  // Micro-compaction: fixed 160K cap, but never above 85% of condense threshold
-  const warningThreshold = Math.min(MICRO_COMPACTION_CAP, Math.floor(condenseThreshold * 0.85));
+  // Micro-compaction: fixed cap (160K unless the caller sets one), but never
+  // above 85% of condense threshold
+  const microCap = limits.microCompactionCap ?? MICRO_COMPACTION_CAP;
+  const warningThreshold = Math.min(microCap, Math.floor(condenseThreshold * 0.85));
 
   return {
     windowLimit,

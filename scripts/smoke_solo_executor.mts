@@ -4,13 +4,17 @@
  * EXECUTION (one strong agent instead of orchestrator + tool_impl + tool_review)
  * and nothing else: same agent name, same output contract, same review loop.
  * And an experiment that returns without results.json is sent back once before
- * any review money is spent.
+ * any review money is spent. §6: scripts/solo_trial.mts, the harness that
+ * measures this executor against claude -p (C64), refuses an unfair pair.
  *
  *   npx tsx scripts/smoke_solo_executor.mts
  */
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
 
 let failures = 0;
 function check(label: string, cond: boolean, detail?: string) {
@@ -45,6 +49,22 @@ check("cannot spawn tool_impl / tool_review", !solo.spawn.allowedTypes.includes(
 check("can still spawn ledger_writer and reader", ["ledger_writer", "reader"].every((t) => solo.spawn.allowedTypes.includes(t)));
 check("the cached orchestrator definition was not mutated", (() => { delete process.env.LUXAS_EXPERIMENT_MODE; const again: any = getDefinition("experiment"); process.env.LUXAS_EXPERIMENT_MODE = "solo"; return /<role_separation/.test(again.systemPromptTemplate) && again.spawn.allowedTypes.includes("tool_impl") && again.safety.blockedBashWriteRoots.length === 2; })());
 check("an experiment.md without the block is a hard error, not a silent orchestrator-without-helpers", (() => { try { soloExperimentDefinition({ ...orch, systemPromptTemplate: "no such block" }); return false; } catch (e: any) { return /role_separation/.test(String(e.message)); } })());
+// [C43] Nobody independent writes the solo executor's tests, so the tests it
+// writes cannot be what clears its own completion gate (<solo_mode> already calls
+// them hygiene, not evidence). The pipeline keeps tool_review's tests as evidence.
+{
+  const BULLET_RE = /^- \*\*Passing tests\*\*[^\n]*$/m, STATUS = "all tools pass pytest, results.json exists";
+  const gateBlock = (s: string) => s.match(/<evidence_completion_gate strict="true">[\s\S]*?<\/evidence_completion_gate>/)?.[0] ?? "";
+  const soloGate = gateBlock(solo.systemPromptTemplate), orchGate = gateBlock(orch.systemPromptTemplate);
+  const xval = (s: string) => (s.match(/cross_validation/g) ?? []).length;
+  check("[C43] solo: the completion gate asks for an executed computation, not passing tests", !!soloGate && !/Passing tests/.test(soloGate) && soloGate.includes("executed computation"), soloGate ? (soloGate.match(/^- \*\*[^*]+\*\*/gm) ?? []).join(" | ") : "no gate block");
+  check("[C43] solo: the Status line does not make pytest the completion signal", !/pass pytest/.test(solo.systemPromptTemplate));
+  check("[C43] off: the pipeline's gate bullet and Status line are unchanged", /Passing tests/.test(orchGate) && orch.systemPromptTemplate.includes(STATUS));
+  check("[C43] solo: no cross_validation obligation is added to the gate", xval(soloGate) === xval(orchGate), `${xval(soloGate)} vs ${xval(orchGate)}`);
+  const drifted = (template: string, names: RegExp) => { try { soloExperimentDefinition({ ...orch, systemPromptTemplate: template }); return false; } catch (e: any) { return names.test(String(e.message)); } };
+  check("[C43] a moved 'Passing tests' bullet is a hard error naming it", drifted(orch.systemPromptTemplate.replace(BULLET_RE, ""), /Passing tests/));
+  check("[C43] a moved Status phrase is a hard error naming it", drifted(orch.systemPromptTemplate.replace(STATUS, ""), /all tools pass pytest/));
+}
 
 console.log("\n3. write permissions follow the role");
 {
@@ -101,6 +121,130 @@ async function loop(eid: string, onRespawn: () => void) {
   check("an experiment that delivered is not re-run", fine.prompts.length === 0, `${fine.prompts.length} spawns`);
 }
 rmSync(tmp, { recursive: true, force: true });
+
+console.log("\n6. [C64] solo_trial: a recorded, refusable two-arm harness");
+{
+  const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+  const TRIAL = join(ROOT, "scripts", "solo_trial.mts"), TSX = join(ROOT, "node_modules", ".bin", "tsx");
+  // A namespace import: before C64 the module ran its main on import (and threw on the missing --dir).
+  let T: any = {}, importErr = "";
+  try { T = await import("./solo_trial.mts"); } catch (e: any) { importErr = String(e?.code ?? e?.message ?? e).slice(0, 120); }
+  check("importing solo_trial runs nothing (main is behind the argv guard)", !importErr, importErr);
+  const fn = (k: string) => (...a: any[]) => { try { return typeof T[k] === "function" ? T[k](...a) : undefined; } catch { return undefined; } };
+  const sha = (b: string | Buffer) => createHash("sha256").update(b).digest("hex");
+  const readJson = (p: string) => { try { return JSON.parse(readFileSync(p, "utf-8")); } catch { return null; } };
+  const root = mkdtempSync(join(tmpdir(), "luxas-c64-gate-"));
+  const PROMPT = "Read TASK.md. It's all there: `results.json` and REPORT.md, no $HOME paths.\n";
+  const task = (name: string, extra: (d: string) => void = () => {}) => {
+    const d = join(root, name); mkdirSync(join(d, "refs"), { recursive: true });
+    writeFileSync(join(d, "TASK.md"), "Do X.\n"); writeFileSync(join(d, "PROMPT.txt"), PROMPT); extra(d); return d;
+  };
+  const cli = (args: string[]) => spawnSync(TSX, [TRIAL, ...args], { encoding: "utf-8", timeout: 60_000 });
+  const child = (name: string, body: string) => {
+    const script = join(root, `${name}.mts`);
+    writeFileSync(script, `import { mkdirSync } from "node:fs";\nconst T = await import(${JSON.stringify(TRIAL)});\nconst U = await import(${JSON.stringify(join(ROOT, "src", "usage-log.ts"))});\n${body}\n`);
+    return spawnSync(TSX, [script], { encoding: "utf-8", timeout: 60_000 });
+  };
+
+  // (1) Only task inputs: a dir an earlier arm worked in starts the next arm with its outputs.
+  const fresh = fn("freshDirProblems");
+  const clean = task("clean");
+  check("fresh: TASK.md + PROMPT.txt + refs/ passes", JSON.stringify(fresh(clean)) === "[]", JSON.stringify(fresh(clean)));
+  for (const [what, mk] of [
+    ["results.json", (d: string) => writeFileSync(join(d, "results.json"), "{}")],
+    ["REPORT.md", (d: string) => writeFileSync(join(d, "REPORT.md"), "# done")],
+    ["scripts", (d: string) => mkdirSync(join(d, "scripts"))],
+    [".agent/usage.log", (d: string) => { mkdirSync(join(d, ".agent")); writeFileSync(join(d, ".agent", "usage.log"), "1\tm\tp\t1\t1\t0\t0\t9.99\n"); }],
+  ] as const) {
+    const p = fresh(task(`used-${what.replace(/\W/g, "")}`, mk));
+    check(`fresh: a dir holding ${what} is refused`, Array.isArray(p) && p.some((x: string) => x.includes(what)), JSON.stringify(p));
+  }
+  check("fresh: a dir without PROMPT.txt is refused", (fresh(task("noprompt", (d) => rmSync(join(d, "PROMPT.txt")))) ?? []).some((x: string) => x.includes("PROMPT.txt")));
+  check("fresh: --print-cc's own record does not make a dir used", JSON.stringify(fresh(task("armed", (d) => { mkdirSync(join(d, ".agent")); writeFileSync(join(d, ".agent", "cc_arm.json"), "{}"); }))) === "[]");
+  // An unknown model cannot reach a provider: if a refusal below regressed, the child dies on resolveModelExact, not on a bill.
+  const used = cli(["--dir", join(root, "used-resultsjson"), "--model", "no-such-model", "--cap", "1"]);
+  check("CLI: a used dir is refused with exit 2, naming what is there", used.status === 2 && /results\.json/.test(used.stderr), `exit ${used.status}: ${used.stderr.slice(-160)}`);
+  const nocap = cli(["--dir", task("nocap"), "--model", "no-such-model"]);
+  check("CLI: --cap is required (no silent $3)", nocap.status === 2 && /--cap/.test(nocap.stderr), `exit ${nocap.status}: ${nocap.stderr.slice(-160)}`);
+  const parsed = fn("parseTrialArgs")(["--dir", clean, "--model", "claude-opus-5-5", "--cap", "9"]);
+  check("defaults: --thinking high (today's value), --turns 400", parsed?.thinking === "high" && parsed?.turns === 400 && parsed?.cap === 9, JSON.stringify(parsed));
+
+  // (2) What the arm ran under is on record, not reconstructed afterwards.
+  const rec = fn("newTrialRecord")(clean, { arm: "solo", model: "claude-opus-5-5", thinking: "medium", cap: 9, turns: 400, systemPrompt: "SYSTEM" });
+  check("record: thinking, cap and turns as given", rec?.thinking === "medium" && rec?.cap === 9 && rec?.turns === 400, JSON.stringify(rec));
+  check("record: the Luxas commit and a dirty flag", /^[0-9a-f]{40}$/.test(rec?.commit ?? "") && typeof rec?.dirty === "boolean");
+  check("record: sha256 of the PROMPT.txt bytes and of the system prompt", rec?.promptSha === sha(readFileSync(join(clean, "PROMPT.txt"))) && rec?.systemSha === sha("SYSTEM"));
+  check("record: the fresh check it passed", JSON.stringify(rec?.fresh) === "[]");
+  const def = fn("soloDefinition")("medium", 400);
+  check("--thinking becomes the definition's thinkingLevel, --turns its maxTurns", def?.thinkingLevel === "medium" && def?.maxTurns === 400);
+
+  // (3) The claude -p arm: same prompt bytes, effort and cap.
+  const cc: string[] = fn("ccArmArgs")(PROMPT, { thinking: "high", cap: 9 }) ?? [];
+  const after = (f: string) => cc.includes(f) ? cc[cc.indexOf(f) + 1] : undefined;
+  check("cc: -p carries the PROMPT.txt bytes with no preamble", cc[0] === "-p" && cc[1] === PROMPT);
+  check("cc: --model claude-opus-5-5, --effort and --max-budget-usd from the solo arm's settings", after("--model") === "claude-opus-5-5" && after("--effort") === "high" && after("--max-budget-usd") === "9", cc.slice(2).join(" "));
+  check("cc: stream-json + --verbose, acceptEdits, no MCP, the six tools", after("--output-format") === "stream-json" && cc.includes("--verbose") && after("--permission-mode") === "acceptEdits" && cc.includes("--strict-mcp-config") && cc.slice(cc.indexOf("--allowedTools") + 1).join(" ") === "Bash Read Write Edit Glob Grep");
+  const sh = spawnSync("/bin/sh", ["-c", `set -- ${fn("shellCommand")(cc) ?? ""}; printf %s "$2"`], { encoding: "utf-8" });
+  check("cc: the printed command gives the shell the same prompt bytes", sh.stdout === PROMPT, JSON.stringify(sh.stdout.slice(0, 60)));
+
+  // (4) The usage tracker ends a trial with process.exit; trial.json must survive it.
+  const killed = task("capkill"), klog = join(killed, ".agent", "usage.log");
+  const k = child("capkill", [
+    `const rec = T.newTrialRecord(${JSON.stringify(killed)}, { arm: "solo", model: "claude-opus-5-5", thinking: "high", cap: 1, turns: 400 });`,
+    `mkdirSync(${JSON.stringify(join(killed, ".agent"))}, { recursive: true }); U.setCostCap(${JSON.stringify(klog)}, 1);`,
+    `T.armTrialRecord(${JSON.stringify(killed)}, rec);`,
+    `U.appendUsage(${JSON.stringify(klog)}, { timestamp: Date.now(), model: "claude-opus-5-5", provider: "anthropic", input: 3, output: 5, cacheRead: 7, cacheWrite: 11, cost: 2.5 });`,
+    `U.enforceCostCap(${JSON.stringify(klog)});`, `console.log("SURVIVED");`,
+  ].join("\n"));
+  const kt = readJson(join(killed, "trial.json"));
+  check("cap kill: the real enforceCostCap exits 1", k.status === 1 && /Cost limit exceeded/.test(k.stderr) && !/SURVIVED/.test(k.stdout), `exit ${k.status}: ${k.stderr.slice(-160)}`);
+  check("cap kill: trial.json is still written, stopReason budget_exhausted", kt?.stopReason === "budget_exhausted", JSON.stringify(kt));
+  check("cap kill: …with the usage.log totals by class", kt?.cost === 2.5 && kt?.calls === 1 && JSON.stringify(kt?.tokens) === JSON.stringify({ input: 3, output: 5, cacheRead: 7, cacheWrite: 11 }), JSON.stringify(kt?.tokens));
+  const broke = task("unfunded"), blog = join(broke, ".agent", "usage.log");
+  child("unfunded", [
+    `const rec = T.newTrialRecord(${JSON.stringify(broke)}, { arm: "solo", model: "claude-opus-5-5", thinking: "high", cap: 1, turns: 400 });`,
+    `mkdirSync(${JSON.stringify(join(broke, ".agent"))}, { recursive: true }); T.armTrialRecord(${JSON.stringify(broke)}, rec);`,
+    `U.writeUnfundedSentinel(${JSON.stringify(blog)}, "anthropic", "Your credit balance is too low"); process.exit(1);`,
+  ].join("\n"));
+  const bt = readJson(join(broke, "trial.json"));
+  check("unfunded exit: trial.json says provider_unfunded and is marked aborted", bt?.stopReason === "provider_unfunded" && /credit balance/.test(bt?.aborted ?? ""), JSON.stringify(bt));
+
+  // (5) A pair is compared only when nothing but the arm differs.
+  const pair = fn("pairProblems");
+  const tokens = { input: 1_000_000, output: 1_000_000, cacheRead: 1_000_000, cacheWrite: 1_000_000 };
+  const a = { arm: "solo", model: "claude-opus-5-5", thinking: "high", cap: 9, promptSha: "a".repeat(64), fresh: [], tokens, cost: 1, elapsedMs: 60_000, delivered: true };
+  const b = { ...a, arm: "claude-p", cost: 3 };
+  check("pair: matched arms pass", JSON.stringify(pair(a, b)) === "[]", JSON.stringify(pair(a, b)));
+  for (const [label, patch] of [["effort", { thinking: "xhigh" }], ["cap", { cap: 5 }], ["PROMPT.txt", { promptSha: "b".repeat(64) }], ["model", { model: "claude-fable-5-1" }]] as const)
+    check(`pair: refused when the ${label} differs`, (pair(a, { ...b, ...patch }) ?? []).some((x: string) => x.includes(label)), JSON.stringify(pair(a, { ...b, ...patch })));
+  check("pair: refused when a dir failed the fresh check, or has none on record", (pair(a, { ...b, fresh: ["results.json"] }) ?? []).length > 0 && (pair({ ...a, fresh: undefined }, b) ?? []).length > 0);
+  check("pair: an arm the provider aborted is not a measurement", (pair(a, { ...b, aborted: "Credit balance is too low" }) ?? []).length > 0);
+  check("pair: costs repriced from token counts with one table (billed $1 vs $3, same tokens → 1.00x)", (fn("pairReport")(a, b, { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 }) ?? []).some((l: string) => /\$29\.20/.test(l)) && (fn("pairReport")(a, b, { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 }) ?? []).some((l: string) => /1\.00x/.test(l)));
+
+  // (6) Delivered = a results.json object and a non-empty REPORT.md, in the task dir itself.
+  const flat = fn("deliveredFlat");
+  const out = (name: string, results: string | null, report: string | null) => task(name, (d) => { if (results !== null) writeFileSync(join(d, "results.json"), results); if (report !== null) writeFileSync(join(d, "REPORT.md"), report); });
+  check("delivered: a torn results.json is not", flat(out("torn", "{ torn", "# r")) === false);
+  check("delivered: a results.json that is not an object is not", flat(out("list", "[]", "# r")) === false);
+  check("delivered: an empty REPORT.md is not", flat(out("emptyreport", "{}", "  \n")) === false);
+  check("delivered: an object and a report are", flat(out("ok", "{\"x\":1}", "# r")) === true);
+
+  // (9) --ingest-cc: the same record from the stream-json result line; a provider abort is not a success.
+  const pre = { arm: "claude-p", model: "claude-opus-5-5", thinking: "high", cap: 9, promptSha: "a".repeat(64), fresh: [] };
+  const result = (o: object) => [JSON.stringify({ type: "system", subtype: "init", model: "claude-opus-5-5" }), "{ not json", JSON.stringify({ type: "result", subtype: "success", is_error: false, duration_ms: 60_000, num_turns: 12, total_cost_usd: 1.5,
+    modelUsage: { "claude-opus-5-5": { inputTokens: 10, outputTokens: 20, cacheReadInputTokens: 30, cacheCreationInputTokens: 40, costUSD: 1.4 }, "claude-haiku-4-5": { inputTokens: 1, outputTokens: 2, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, costUSD: 0.1 } }, ...o })].join("\n");
+  const ing = fn("ccTrialRecord")(pre, result({}), out("ingested", "{}", "# r"));
+  check("ingest: stop reason, wall time, billed cost, tokens by class across models", ing?.stopReason === "success" && !ing?.aborted && ing?.elapsedMs === 60_000 && ing?.cost === 1.5 && ing?.calls === 12 && JSON.stringify(ing?.tokens) === JSON.stringify({ input: 11, output: 22, cacheRead: 30, cacheWrite: 40, cacheWrite1h: 0 }) && ing?.delivered === true, JSON.stringify(ing));
+  const abortedCc = fn("ccTrialRecord")(pre, result({ is_error: true, terminal_reason: "api_error", result: "Credit balance is too low" }), clean);
+  check("ingest: a provider abort reported as subtype success is error:api_error, aborted", abortedCc?.stopReason === "error:api_error" && /Credit balance/.test(abortedCc?.aborted ?? ""), JSON.stringify(abortedCc));
+  // The CLI can report the abort with result: "" — an empty reason must still mark the run aborted, or it is paired as a measurement.
+  const abortedEmpty = fn("ccTrialRecord")(pre, result({ is_error: true, terminal_reason: "api_error", result: "" }), clean);
+  check("ingest: a provider abort with an empty result string is still aborted", !!abortedEmpty?.aborted && (pair(a, { ...b, ...abortedEmpty }) ?? []).some((x: string) => /aborted by the provider/.test(x)), JSON.stringify(abortedEmpty));
+  const torn = fn("ccTrialRecord")(pre, "{\"type\":\"system\"}\n", clean);
+  check("ingest: a transcript with no result line is not a success", !!torn && torn.stopReason !== "success", JSON.stringify(torn));
+  check("ingest: 1-hour cache writes (TTL not pinned) make the pair refuse", (pair(a, fn("ccTrialRecord")(pre, result({ usage: { cache_creation: { ephemeral_1h_input_tokens: 500 } } }), clean) ?? {}) ?? []).some((x: string) => /1-hour/.test(x)));
+  rmSync(root, { recursive: true, force: true });
+}
 
 console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");
 process.exit(failures ? 1 : 0);

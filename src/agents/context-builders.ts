@@ -17,6 +17,7 @@ import {
 import { loadRegistry, type ActiveAgent } from "../active-agents.js";
 import { parseCompileVerdict } from "../tools/report.js";
 import { buildClaimTable, renderClaimTable } from "../claims-table.js";
+import { methodologyPath, parseLiteratureCiteKeys } from "../methodology.js";
 
 export type ContextBuilder = (projectDir: string, extra?: Record<string, any>) => string;
 
@@ -182,7 +183,7 @@ function buildReportWriterContext(projectDir: string): string {
   // Claim status (claims-first §3.4 render caps): what the abstract may carry.
   try {
     const rendered = renderClaimTable(buildClaimTable(projectDir));
-    if (rendered) parts.push(rendered + "\nRender caps: CORROBORATED may headline unhedged; CONVERGING / INDICATIVE only with a one-clause hedge naming σ and regime; DISPUTED and CONDITIONAL may not appear in the abstract or conclusion; DISCLOSED only with its countersigned hedge sentence.");
+    if (rendered) parts.push(rendered + "\nRender caps: CONVERGING / INDICATIVE only with a one-clause hedge naming σ and regime; DISPUTED and CONDITIONAL may not appear in the abstract or conclusion; DISCLOSED only with its countersigned hedge sentence.");
   } catch (err) {
     parts.push(`<claim_status>\n- MALFORMED table could not be built: ${(err as Error).message.slice(0, 120)} — treat every number as INDICATIVE and hedge it\n</claim_status>`);
   }
@@ -253,6 +254,59 @@ function buildReportWriterContext(projectDir: string): string {
   return parts.join("\n\n");
 }
 
+// ── Literature / methodology pointers (C27) ──
+//
+// The brain trailer, the experiment context and the PI context used to carry
+// smartTruncate(literature.md / methodology.md): a TOC of every header plus
+// the file's TAIL, i.e. the last-merged paper's Limitations and the "Papers
+// processed" ledger. That is the least load-bearing text in either file, and
+// the TOC grew with every paper read. A pointer says where the notes live and
+// how to search them. It is deterministic and depends on the paper count only
+// through the digits of N, so the per-turn trailer stays cache-stable as
+// readers land. Section names match merge-notes' headings, so they grep.
+const METHODOLOGY_SECTIONS =
+  "## A. Theoretical quantities computed · ## B. Experimental / simulation demonstrations · " +
+  "## C. Figure content inventory · ## D. Rigor thresholds observed";
+
+function countFragments(dir: string): number {
+  try { return readdirSync(dir).filter((f) => f.endsWith(".md")).length; } catch { return 0; }
+}
+
+export interface LiteraturePointers {
+  /** null when there is no literature yet (no literature.d/ entry, no literature.md content). */
+  literature: string | null;
+  /** null when there is no methodology map yet. */
+  methodology: string | null;
+}
+
+export function literaturePointers(projectDir: string): LiteraturePointers {
+  const notes = join(projectDir, "notes");
+  const litN = countFragments(join(notes, "literature.d"));
+  const litMd = readFileSafe(join(notes, "literature.md")).trim();
+  let literature: string | null = null;
+  if (litN > 0) {
+    literature = `notes/literature.d/<cite_key>.md: one entry per paper read (${litN} entries)` +
+      (litMd ? ", merged into notes/literature.md" : "") +
+      ". grep them for a claim, quantity or cite key; read the full entry before relying on or citing it.";
+  } else if (litMd.length > 20) {
+    // Legacy projects: the merged file is the only copy.
+    literature = `notes/literature.md: one "### <cite_key>" entry per paper read ` +
+      `(${parseLiteratureCiteKeys(litMd).size} entries). grep it for a claim, quantity or cite key; ` +
+      "read the full entry before relying on or citing it.";
+  }
+
+  const methN = countFragments(join(notes, "methodology.d"));
+  const merged = readFileSafe(methodologyPath(projectDir)).trim().length > 40;
+  let methodology: string | null = null;
+  if (merged || methN > 0) {
+    const perPaper = `notes/methodology.d/<paper-id>.md (${methN} papers)`;
+    methodology = `${merged ? "notes/methodology.md" : perPaper}, sections ${METHODOLOGY_SECTIONS}` +
+      (merged && methN > 0 ? `; per paper: ${perPaper}` : "") +
+      ". grep the heading of the section you are checking, then read that section.";
+  }
+  return { literature, methodology };
+}
+
 export function resolveContextBuilder(name: string | undefined): ContextBuilder | undefined {
   if (!name) return undefined;
   return CONTEXT_BUILDERS[name];
@@ -264,6 +318,50 @@ export function registerContextBuilder(name: string, builder: ContextBuilder): v
 
 // ── Experiment context (extracted from experiment.ts) ──
 
+// The experiment's file listing (C28). Listing everything put one line per
+// downloaded paper and every pytest/pycache file in front of the few files
+// the experiment works with, and grew with the corpus. Papers collapse to a
+// count; another experiment keeps only what this one may build on, its
+// run results.json files and the modules directly under scripts/ (all three
+// Dy executors imported E1's scripts/). Without a resolved EXPERIMENT_ID,
+// every experiment's files stay listed.
+const CACHE_SEGMENT = /(^|\/)(__pycache__|\.pytest_cache)\//;
+const UPSTREAM_INPUT = /^(runs\/[^/]+\/results\.json|scripts\/[^/]+)$/;
+
+function experimentFileTree(projectDir: string, experimentId: unknown): string[] {
+  const eid = typeof experimentId === "string" && experimentId && !experimentId.includes("{{")
+    ? experimentId : undefined;
+  const files = listFilesRecursive(projectDir)
+    .map(f => f.replace(projectDir + "/", ""))
+    .filter(f => !f.startsWith(".agent/") && !f.includes("node_modules") && !CACHE_SEGMENT.test(f));
+  const out: string[] = [];
+  let papers = 0, papersAt = -1, hidden = 0, hiddenAt = -1;
+  for (const f of files) {
+    if (f.startsWith("data/papers/")) {
+      if (papers++ === 0) papersAt = out.length;
+      continue;
+    }
+    const m = eid ? f.match(/^data\/experiments\/([^/]+)\/(.+)$/) : null;
+    if (m && m[1] !== eid && !UPSTREAM_INPUT.test(m[2])) {
+      if (hidden++ === 0) hiddenAt = out.length;
+      continue;
+    }
+    out.push(f);
+  }
+  // Each summary line goes where its first omitted file was; the later
+  // position is spliced first so the earlier index stays valid.
+  const summaries: Array<[number, string]> = [];
+  if (papers > 0) {
+    const find = countFragments(join(projectDir, "notes", "literature.d")) > 0
+      ? "each notes/literature.d/<cite_key>.md names its source file; use ls/grep to find others"
+      : "use ls/grep to find them";
+    summaries.push([papersAt, `${papers} files under data/papers/ — ${find}`]);
+  }
+  if (hidden > 0) summaries.push([hiddenAt, `${hidden} other files in other experiments' directories not listed`]);
+  for (const [at, line] of summaries.sort((a, b) => b[0] - a[0])) out.splice(at, 0, line);
+  return out;
+}
+
 function buildExperimentContext(projectDir: string, extra?: Record<string, any>): string {
   const parts: string[] = [];
 
@@ -272,9 +370,7 @@ function buildExperimentContext(projectDir: string, extra?: Record<string, any>)
   if (registry) parts.push(registry);
 
   // 1. Project file tree
-  const allFiles = listFilesRecursive(projectDir)
-    .map(f => f.replace(projectDir + "/", ""))
-    .filter(f => !f.startsWith(".agent/") && !f.includes("node_modules"));
+  const allFiles = experimentFileTree(projectDir, extra?.templateVars?.EXPERIMENT_ID);
   parts.push(`<project_structure>\n${allFiles.join("\n")}\nYou can read any of these files with the read tool.\n</project_structure>`);
 
   // 2. RESEARCH.md
@@ -300,10 +396,10 @@ function buildExperimentContext(projectDir: string, extra?: Record<string, any>)
     parts.push(`<claim_status>\n- MALFORMED: ${(err as Error).message.slice(0, 120)}\n</claim_status>`);
   }
 
-  // 4. Literature notes
-  const litNotes = readFileSafe(join(projectDir, "notes", "literature.md"));
-  if (litNotes && litNotes.trim().length > 20) {
-    parts.push(`<literature_notes readonly="true">\n${smartTruncate(litNotes, 2000)}\n</literature_notes>`);
+  // 4. Literature notes: a pointer, not the file's tail (see literaturePointers).
+  const litPointer = literaturePointers(projectDir).literature;
+  if (litPointer) {
+    parts.push(`<literature_notes readonly="true">\n${litPointer}\n</literature_notes>`);
   }
 
   // 5. Agent memory
@@ -532,9 +628,10 @@ function buildPIContext(projectDir: string, extra?: Record<string, any>): string
   // Field methodology standard — auto-extracted from downloaded literature by
   // the reader agent. Lets the PI compare the project's actual work against
   // what standard papers in the field do, instead of judging only by report
-  // completeness.
-  const method = readFileSafe(join(projectDir, "notes", "methodology.md"));
-  if (method && method.trim().length > 40) {
+  // completeness. The tag stays (PI_RESEARCH_MODE and <project_code> name it);
+  // its body is a pointer, since the file's tail was the reader ledger.
+  const methodPointer = literaturePointers(projectDir).methodology;
+  if (methodPointer) {
     parts.push(`<field_methodology_standard>
 This was extracted from the papers the project has downloaded into
 data/papers/. Treat it as a REVIEW BASELINE for judging methodology rigor —
@@ -547,7 +644,8 @@ request is open-ended (design / feasibility / investigate without a narrow
 target), the field standard is load-bearing — the agent is implicitly on the
 hook for what competent work in the field looks like, and you should call
 out methodology gaps even when the written report looks complete.
-${smartTruncate(method, 4000)}
+It is not inlined here; it lives in
+${methodPointer}
 </field_methodology_standard>`);
   }
 

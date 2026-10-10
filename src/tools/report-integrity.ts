@@ -430,22 +430,22 @@ export function reportIntegrityIssues(projectDir: string): IntegrityIssue[] {
   // whitespace-normalized. Agent-unwritable ground truth — the execution
   // anchor for verbatim errors (5c) and cross-validation values (5d).
   const normText = (t: string) => t.replace(/\s+/g, " ").trim().toLowerCase();
+  const jobsDir = join(projectDir, ".agent", "jobs");
+  const jobTails: Array<{ id: string; tail: string }> = [];
   let _jobsCorpus: string | null = null;
   const jobsCorpus = (): string => {
     if (_jobsCorpus !== null) return _jobsCorpus;
-    const chunks: string[] = [];
     try {
-      const jobsDir = join(projectDir, ".agent", "jobs");
       for (const id of readdirSync(jobsDir)) {
         try {
           const p2 = join(jobsDir, id, "output.log");
           const sz = statSync(p2).size;
           const raw = readFileSync(p2, "utf-8");
-          chunks.push(sz > 262_144 ? raw.slice(-262_144) : raw);
+          jobTails.push({ id, tail: sz > 262_144 ? raw.slice(-262_144) : raw });
         } catch { /* job without log */ }
       }
     } catch { /* no jobs dir — legacy project */ }
-    _jobsCorpus = normText(chunks.join("\n"));
+    _jobsCorpus = normText(jobTails.map((j) => j.tail).join("\n"));
     return _jobsCorpus;
   };
   // Numeric view of the transcripts, for value anchoring (a needle-in-text
@@ -457,10 +457,28 @@ export function reportIntegrityIssues(projectDir: string): IntegrityIssue[] {
     _jobsNumbers = extractNumbers(jobsCorpus());
     return _jobsNumbers;
   };
+  const anchoredIn = (v: number, nums: number[]): boolean => nums.some((e) => v === e ||
+    Math.abs(v - e) <= 0.001 * Math.max(Math.abs(v), Math.abs(e)));
   const valueAnchored = (v: number): boolean => {
     if (jobsCorpus() === "") return true; // legacy project without job logs
-    return jobsNumbers().some((e) => v === e ||
-      Math.abs(v - e) <= 0.001 * Math.max(Math.abs(v), Math.abs(e)));
+    return anchoredIn(v, jobsNumbers());
+  };
+  // The same tails minus jobs a verifier owns. A reviewer or replicator that
+  // cats results.json anchors every value in it, so the full corpus cannot
+  // tell "the producer computed this" from "a verifier read it back" (C40).
+  // Deny-list: no state.json or owner "unknown" (logs from before job owners
+  // were recorded) counts as producer, so old projects never gain a disclosure.
+  let _producerNumbers: number[] | null = null;
+  const producerNumbers = (): number[] => {
+    if (_producerNumbers !== null) return _producerNumbers;
+    jobsCorpus();
+    const kept = jobTails.filter(({ id }) => {
+      let owner = "";
+      try { owner = String(JSON.parse(readFileSync(join(jobsDir, id, "state.json"), "utf-8"))?.ownerAgentType ?? ""); } catch { /* producer */ }
+      return !/^(experiment_reviewer|replicator|reviewer)$|auditor$/.test(owner);
+    });
+    _producerNumbers = extractNumbers(normText(kept.map((j) => j.tail).join("\n")));
+    return _producerNumbers;
   };
   let tex = "";
   try { tex = readFileSync(join(projectDir, "report", "report.tex"), "utf-8"); } catch { return issues; }
@@ -958,12 +976,15 @@ export function reportIntegrityIssues(projectDir: string): IntegrityIssue[] {
     {
       const problems: string[] = [];
       const disputes: string[] = [];
+      const verifierOnly: string[] = [];
       for (const e of experiments) {
         if (!e.latestResults) continue;
         let j: any;
         try { j = JSON.parse(readFileSync(e.latestResults, "utf-8")); } catch { continue; }
         const xv = j?.computed?.cross_validation;
         if (!Array.isArray(xv) || xv.length === 0) continue;
+        let producerHits = 0;
+        const unseen: string[] = [];
         for (const x of xv) {
           const key = String(x?.claim_key ?? "?");
           const verdict = xvalVerdict(x);
@@ -987,10 +1008,23 @@ export function reportIntegrityIssues(projectDir: string): IntegrityIssue[] {
               continue;
             }
           }
+          if (jobsCorpus() !== "") {
+            for (const v of [Number(x.value_a), Number(x.value_b)]) {
+              if (anchoredIn(v, producerNumbers())) producerHits++;
+              else unseen.push(`${e.id}/${key}: value ${v} appears only in verifier output (e.g. a reviewer ` +
+                `printing results.json), not evidence that the producer computed it`);
+            }
+          }
           if (verdict === "discrepant") {
             disputes.push(`${e.id}/${key}: ${x.value_a} (${String(x?.method_a ?? "?").slice(0, 40)}) vs ` +
               `${x.value_b} (${String(x?.method_b ?? "?").slice(0, 40)})`);
           }
+        }
+        if (unseen.length > 0 && producerHits === 0) {
+          verifierOnly.push(`${e.id}: cross_validation values not transcript-anchored by any producer job: ` +
+            `executed outside Luxas or narrated`);
+        } else {
+          verifierOnly.push(...unseen);
         }
       }
       // Disputes are facts, not formatting issues (claims-first design §3.6,
@@ -1006,6 +1040,18 @@ export function reportIntegrityIssues(projectDir: string): IntegrityIssue[] {
             `\nA disputed number may headline only at grade "disputed" with a hedge in its sentence, or leave ` +
             `the abstract. cross_validation_resolved does not settle a dispute; only a third independent ` +
             `estimate or a non-producer adjudication with a locator does.`,
+        });
+      }
+      // Non-blocking: the value may be right, but nothing the producer ran
+      // printed it, so the transcript is no evidence of how it was computed.
+      if (verifierOnly.length > 0) {
+        issues.push({
+          kind: "disclosure", blocking: false,
+          text: `Cross-validation values anchored only by verifier output:\n  - ` +
+            verifierOnly.slice(0, 8).join("\n  - ") +
+            (verifierOnly.length > 8 ? `\n  ... and ${verifierOnly.length - 8} more` : "") +
+            `\nRe-run the producing computation through bash so its output is on record, or say in the ` +
+            `report where these values were computed.`,
         });
       }
       if (problems.length > 0) {
@@ -1207,8 +1253,8 @@ export function reportIntegrityIssues(projectDir: string): IntegrityIssue[] {
         } else {
           const now = priorArtSourcesDigest(projectDir);
           if (now !== afm.sources_md5) {
-            blockers.push(`reviews/prior_art.md audited different sources (recorded ${afm.sources_md5.slice(0, 12)}…, current ` +
-              `${now.slice(0, 12)}…) — report.tex or references.bib changed since. Re-spawn prior_art_auditor.`);
+            blockers.push(`reviews/prior_art.md audited different sources (recorded ${afm.sources_md5} does not match ` +
+              `the current sources) — report.tex or references.bib changed since. Re-spawn prior_art_auditor.`);
           } else {
             // Every cited prior must resolve to a bib key: an uncitable prior
             // is not prior art, and a `known` verdict the report cannot cite

@@ -114,20 +114,30 @@ export function getDefinition(name: string): AgentDefinition {
 // experiment_reviewer loop, the claims table and the finish gates read the same
 // files as before.
 //
-// Why (measured 2026-10-06, four past experiments, verbatim task text, one run
-// each): a single Opus 5.5 agent was right and complete on 3 of 4 against 1 of
-// 4 for the orchestrated pipeline's first pass, in 175 turns / 24 M input /
-// 0.39 M output tokens against 1,132 calls / 116 M / 2.6 M. Across six real
-// runs the pipeline averaged ~300 calls and ~$10 per experiment, and on the Dy
-// run its 147 blind tests passed while four errors sat in the integration step
-// the orchestrator does alone. What caught those was the replicator and the
-// reviewer, which stay. The same single-agent shape on deepseek-v4-pro
-// delivered nothing in 200 steps: this mode is for a strong executor model
-// (spawn.ts routes it to claude-opus-5-5; LUXAS_EXECUTOR_MODEL overrides).
+// Why, and how far the evidence goes (2026-10-06, four past experiments,
+// verbatim task text, one run each): bare `claude -p` on Opus 5.5 with a short
+// PROMPT.txt — not this definition — was right and complete on 3 of 4 against
+// 1 of 4 for the orchestrated pipeline's first pass, in 175 turns / 24 M input
+// / 0.39 M output tokens against 1,132 calls / 116 M / 2.6 M. Prompt, harness
+// and loop all differ from this mode, so that is confounded, and this
+// definition's in-loop runs so far (Dy E2-E4) were stopped by the operator at
+// ~23 min, before delivering. The paired test in scripts/solo_trial.mts (C64)
+// decides whether the mode stays. Across six real runs the pipeline averaged
+// ~300 calls and ~$10 per experiment, and on the Dy run its 147 blind tests
+// passed while four errors sat in the integration step the orchestrator does
+// alone. What caught those was the replicator and the reviewer, which stay. The
+// same single-agent shape on deepseek-v4-pro delivered nothing in 200 steps:
+// this mode is for a strong executor model (spawn.ts routes it to
+// claude-opus-5-5; LUXAS_EXECUTOR_MODEL overrides).
 //
 // It is derived from experiment.md rather than written as a second file so the
 // Evidence Contract and the results.json contract cannot drift apart between
-// the two modes; only the role block and the write/spawn permissions change.
+// the two modes. What changes: the role block, the write/spawn permissions, and
+// the two experiment.md phrases that make passing pytest the completion signal
+// (SOLO_COMPLETION_SUBSTITUTIONS: the <evidence_completion_gate> "Passing
+// tests" bullet and the Status line's "all tools pass pytest, results.json
+// exists"). Those tests are evidence when tool_review writes them blind; here
+// the executor writes its own.
 
 export function soloExperimentEnabled(): boolean {
   return process.env.LUXAS_EXPERIMENT_MODE === "solo";
@@ -145,11 +155,32 @@ What replaces the independent test author: after you return, your result is chec
 Do not end your work while a computation you started is still running: wait for it, read its output, then write. You are done only when \`data/experiments/{{EXPERIMENT_ID}}/runs/run_1/results.json\` exists, every headline value in it is the number your final computation produced, and your ledger section is filled in. An experiment that returns without results.json is sent straight back.
 </solo_mode>`;
 
+const SOLO_COMPLETION_SUBSTITUTIONS: ReadonlyArray<{ anchor: string; re: RegExp; text: string }> = [
+  {
+    anchor: "the <evidence_completion_gate> \"- **Passing tests**\" bullet",
+    re: /^- \*\*Passing tests\*\*[^\n]*$/m,
+    text: "- **An executed computation** behind each commitment, run at the regime the contract names, whose output is what `runs/run_N/` and `results.json.computed.*` record. For example, BP-OSD-class decoding means the code actually decoded and the logical error rate is in results.json, not that a `decode()` call returns the right shape. Tests you wrote yourself satisfy no commitment (see `<solo_mode>`).",
+  },
+  {
+    anchor: "the Status line's \"all tools pass pytest, results.json exists\"",
+    re: /all tools pass pytest, results\.json exists/,
+    text: "results.json exists and every headline value in it came from your final executed computation",
+  },
+];
+
 export function soloExperimentDefinition(base: AgentDefinition): AgentDefinition {
   // An anchor that no longer matches must fail loudly: a silent no-op would
-  // run the orchestrator prompt with the sub-agents it needs taken away.
+  // run the orchestrator prompt with the sub-agents it needs taken away, or
+  // tell the solo executor its own tests complete its evidence.
   if (!ROLE_SEPARATION_RE.test(base.systemPromptTemplate)) {
     throw new Error("solo executor: experiment.md no longer has a <role_separation strict=\"true\"> block to replace — update soloExperimentDefinition");
+  }
+  let systemPromptTemplate = base.systemPromptTemplate.replace(ROLE_SEPARATION_RE, SOLO_ROLE_BLOCK);
+  for (const { anchor, re, text } of SOLO_COMPLETION_SUBSTITUTIONS) {
+    if (!re.test(systemPromptTemplate)) {
+      throw new Error(`solo executor: experiment.md no longer has ${anchor} to replace — update SOLO_COMPLETION_SUBSTITUTIONS`);
+    }
+    systemPromptTemplate = systemPromptTemplate.replace(re, () => text);
   }
   const safety: any = { ...(base.safety ?? {}) };
   const roots = ["data/experiments/{{EXPERIMENT_ID}}/scripts/", "data/experiments/{{EXPERIMENT_ID}}/tests/"];
@@ -160,14 +191,62 @@ export function soloExperimentDefinition(base: AgentDefinition): AgentDefinition
   return {
     ...base,
     description: "Research experiment, solo executor: one agent writes the code, runs it and writes results.json + its ledger section.",
-    systemPromptTemplate: base.systemPromptTemplate.replace(ROLE_SEPARATION_RE, SOLO_ROLE_BLOCK),
+    systemPromptTemplate,
     safety,
     spawn,
   };
 }
 
+// ── Blind estimator scope (replicator, MODE=estimate) ─────────────────────────
+//
+// replicator.md's scope is replicate mode's: write and read replication/. Under
+// it the harness's blind estimators wrote replication/results.json, which the
+// claim table counts as a second leg, overwrote a brain-dispatched replication,
+// and read each other's files (Dy: 8 of 11 estimators wrote it, 5 of those
+// were overwritten). Each estimator gets its own scratch root instead and may
+// not name replication/ or a sibling estimator's scratch in bash. Still open:
+// bash via cd/relative paths or globs, and a scratch .py that writes
+// replication/ (claims-table.ts drops an estimate-mode replication/results.json
+// as a leg).
+
+const BLIND_SLUG_RE = /^[A-Za-z0-9_-]+$/;
+
+export function replicatorEstimateDefinition(base: AgentDefinition, slug: string, siblingSlugs: string[]): AgentDefinition {
+  // The slug becomes a path segment: "..", "/" or "" would put the scratch
+  // root over replication/ or over every sibling at once.
+  if (!BLIND_SLUG_RE.test(slug)) throw new Error(`blind estimator: scratch slug ${JSON.stringify(slug)} must match ${BLIND_SLUG_RE}`);
+  const replication = "data/experiments/{{EXPERIMENT_ID}}/replication";
+  const scratch = `data/experiments/{{EXPERIMENT_ID}}/blind/${slug}`;
+  const safety: SafetyConfig = { ...(base.safety ?? {}) };
+  // Never empty: an empty write list turns the bash write allowlist off.
+  safety.allowedWriteRoots = [`${scratch}/`];
+  safety.allowedReadRoots = [scratch, ...(safety.allowedReadRoots ?? []).filter((r) => r.replace(/\/$/, "") !== replication)];
+  safety.blockedBashPathMentions = [
+    ...(safety.blockedBashPathMentions ?? []),
+    replication,
+    // Trailing slash, so a sibling "kappa" does not block "kappa_532".
+    ...siblingSlugs.filter((s) => s && s !== slug).map((s) => `data/experiments/{{EXPERIMENT_ID}}/blind/${s}/`),
+  ];
+  return { ...base, safety };
+}
+
+// The harness spawns the replicator in estimate mode without a ROUTE; rendering
+// the replicate block too handed the estimator a literal {{ROUTE}} and an order
+// to write replication/results.json. Replicate mode keeps both blocks (it reuses
+// the estimate block's ESTIMATE(blind) line format).
+const REPLICATE_MODE_RE = /\n*<replicate_mode>[\s\S]*?<\/replicate_mode>/;
+
 export function resolvePrompt(def: AgentDefinition, vars: Record<string, string>): string {
-  return expandTemplate(def.systemPromptTemplate, vars);
+  let template = def.systemPromptTemplate;
+  if (def.name === "replicator" && vars.MODE === "estimate") {
+    // Same fail-loud rule as soloExperimentDefinition: a renamed block would
+    // silently put the replicate instructions back into every blind estimate.
+    if (!REPLICATE_MODE_RE.test(template)) {
+      throw new Error("replicator: replicator.md no longer has a <replicate_mode> block to drop in estimate mode — update resolvePrompt");
+    }
+    template = template.replace(REPLICATE_MODE_RE, "");
+  }
+  return expandTemplate(template, vars);
 }
 
 export function listAgentDescriptions(): Array<{ name: string; description: string; canSpawn: boolean }> {

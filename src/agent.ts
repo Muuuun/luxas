@@ -36,7 +36,7 @@ import { convertToLlm } from "./messages.js";                    // #7: custom m
 import { cleanMessagesForModel } from "./transform.js";           // #6: cross-model compatibility
 import { ExtensionBus } from "./extensions.js";                   // #8: extension system
 import { Session, buildSessionContext, deriveState } from "./session.js"; // #5: session DAG
-import { loadRegistry, removeAgent, tryExtractResult, formatExitHint } from "./active-agents.js";
+import { loadRegistry, removeAgent, reconcileOrphans, formatExitHint } from "./active-agents.js";
 import { installUsageTracking, readUsageTotals } from "./usage-log.js";
 
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
@@ -143,9 +143,9 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
     EXTRACT_FIGURES: EXTRACT_FIGURES_PATH,
     MERGE_NOTES: MERGE_NOTES_PATH,
     VENUE_SPECIFIC_DIR: VENUE_SPECIFIC_DIR,
-    // Cross-project memory writes (brain.md allowedWriteRoots) resolve
-    // against this — write/edit to ~/.sisyphus/memory.md and archive/ are
-    // whitelisted; auth.json stays credential-blocked unconditionally.
+    // Cross-project archive writes (brain.md allowedWriteRoots) resolve
+    // against this — write/edit to ~/.sisyphus/archive/ is whitelisted;
+    // auth.json stays credential-blocked unconditionally.
     SISYPHUS_DIR: join(homedir(), ".sisyphus"),
   };
 
@@ -286,6 +286,7 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
     projectDir, templateVars, getApiKey,
     { onFinish: (outcome = "finished") => { finishSucceeded = true; finishOutcome = outcome; finishCallback?.(); } },
     directiveGate,
+    BRAIN_CACHE_RETENTION,
   );
 
   const piMonitorOpts = {
@@ -562,18 +563,9 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
       if (messages.length > 0) {
         const cleaned = cleanMessagesForModel(messages, currentModel);
 
-        // Recover orphaned sub-agent results from active-agents registry
-        const orphans = loadRegistry(agentDir);
-        const recoveryLines: string[] = [];
-        for (const orphan of orphans) {
-          const result = tryExtractResult(orphan.conversationFile);
-          if (result) {
-            recoveryLines.push(`[Recovered: ${orphan.name}] Task: "${orphan.task}"\n${result.slice(0, 5000)}`);
-          } else {
-            recoveryLines.push(`[Lost: ${orphan.name}] Task "${orphan.task}" was interrupted. Decide whether to retry.`);
-          }
-          removeAgent(agentDir, orphan.id);
-        }
+        // Settle the sub-agent registry against the disk: finished experiments,
+        // runners that outlived the brain, and what is really lost.
+        const recoveryLines = reconcileOrphans(projectDir, agentDir);
 
         const resumeParts = [
           `[SESSION RESUMED] You have been restored from a checkpoint with ${cleaned.length} messages.`,
@@ -593,9 +585,18 @@ export function createResearchAgent(opts: ResearchAgentOptions) {
           content: resumeParts.join("\n"),
           timestamp: Date.now(),
         });
-        agent.state.messages = cleaned;
-        lastCheckpointedMsgCount = cleaned.length;
-        return cleaned.length;
+        // pi 0.87 keeps the prompt and tool declarations in the leading
+        // role:"system" message the Agent was just built with. The stored one
+        // is the first launch's (its brain.md, <past_research>, memory), and
+        // stored tool deltas describe tools since redeclared: keep the fresh
+        // head, drop them all. The stored head stays in the checkpoint; it is
+        // never re-persisted and every resume replaces it again.
+        const head = (agent.state.messages as any[]).filter((m) => m.role === "system");
+        agent.state.messages = [...head, ...cleaned.filter((m: any) => m.role !== "system")];
+        // Not cleaned.length: the dropped system messages would shift the
+        // turn_end slice and skip the first new message.
+        lastCheckpointedMsgCount = agent.state.messages.length;
+        return agent.state.messages.length;
       }
     } catch {}
     return 0;

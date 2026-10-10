@@ -8,7 +8,7 @@
  * calls, per the producer-consumer rule.
  *
  *  - Reviewer obligation lines (DISCRIMINATOR / ESTIMATE / SCALING /
- *    INDEPENDENT / ANCHOR-OK / DISCLOSE-OK) are extracted from a reviewer's
+ *    INDEPENDENT / DISCLOSE-OK) are extracted from a reviewer's
  *    text return and PERSISTED BY THE HARNESS to reviews/experiment_review_*.md
  *    — the reviewer itself has no write tool, and claims-table.ts reads only
  *    files. A review that lacks a DISCRIMINATOR for a headline quantity in its
@@ -27,9 +27,10 @@
 
 import { existsSync, mkdirSync, writeFileSync , readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseFrameHeadline, buildClaimTable, ESTIMATE_LINE_RE, type ClaimTable, type QuantityDecl } from "./claims-table.js";
+import { buildBudgetStatus } from "./context.js";
+import { parseFrameHeadline, buildClaimTable, differingInputs, parseEstimateLine, type ClaimIssue, type ClaimTable, type QuantityDecl } from "./claims-table.js";
 
-export const REVIEW_LINE_RE = /^\s*(DISCRIMINATOR|ESTIMATE(?:\(blind\))?|SCALING|INDEPENDENT|ANCHOR-OK|DISCLOSE-OK):\s*(\S+)/;
+export const REVIEW_LINE_RE = /^\s*(DISCRIMINATOR|ESTIMATE(?:\(blind\))?|SCALING|INDEPENDENT|DISCLOSE-OK):\s*(\S+)/;
 
 export interface ReviewLine { kind: string; quantity: string; text: string }
 
@@ -40,9 +41,10 @@ export function extractReviewerLines(text: string): ReviewLine[] {
     const m = raw.match(REVIEW_LINE_RE);
     if (!m) continue;
     const kind = m[1].replace("(blind)", "");
-    // ESTIMATE lines must parse under the strict grammar the table uses;
+    // ESTIMATE lines must parse under the strict grammar the table uses
+    // (parseEstimateLine, which also rejects a value and σ in different units);
     // otherwise they are recorded as MALFORMED rather than silently dropped.
-    if (kind === "ESTIMATE" && !ESTIMATE_LINE_RE.test(raw)) { out.push({ kind: "MALFORMED", quantity: m[2], text: `MALFORMED-ESTIMATE: ${raw.trim()}` }); continue; }
+    if (kind === "ESTIMATE" && !parseEstimateLine(raw)) { out.push({ kind: "MALFORMED", quantity: m[2], text: `MALFORMED-ESTIMATE: ${raw.trim()}` }); continue; }
     out.push({ kind, quantity: m[2], text: raw.trim() });
   }
   return out;
@@ -129,8 +131,13 @@ export function selectBlindEstimateDecls<T extends { id: string }>(decls: T[], f
   return { chosen: ordered.slice(0, cap), skipped };
 }
 
-/** The task handed to a blind `replicator` in estimate mode — observable and input VALUES only (design §3.5). */
-export function blindEstimateTask(decl: QuantityDecl): string {
+/**
+ * The task handed to a blind `replicator` in estimate mode — observable and input VALUES only (design §3.5).
+ * `scratchDir` is the one root its definition lets it write (the spawn site
+ * passes the same path); the estimate render names no writable dir, so
+ * without it the first script write is spent learning the root from a BLOCKED.
+ */
+export function blindEstimateTask(decl: QuantityDecl, scratchDir?: string): string {
   const inputs = Object.entries(decl.inputs).map(([k, v]) => `${k}=${v}`).join(", ");
   return [
     `Blind order-of-magnitude estimate of ONE quantity. You are not shown the producer's number, script, or narrative — that is the point.`,
@@ -142,16 +149,67 @@ export function blindEstimateTask(decl: QuantityDecl): string {
     `Produce your estimate by a route you choose (closed form, limiting case, scaling from a known benchmark, a short script). Run at least one bash/python line so the number is transcript-anchored.`,
     `State, in one sentence before the last line, the DEFINITION you assumed: the observable, its units, its sign convention (e.g. "negative = attractive") and the fixed parameters — a definitional mismatch is the most common reason two correct routes disagree, and the reviewer needs it to tell that case from a physics dispute.`,
     `A toy or napkin route is welcome (it can flag and it can converge) but say so in the route text; it is never an anchor.`,
+    `A σ written with % is read as relative to the value (0.01 ± 30 % = 0.01 ± 0.003); a value that is itself a percentage carries the % on both numbers (1.2 % ± 0.3 %).`,
+    ...(scratchDir ? [`Scratch files: ${scratchDir} is the only place you can write; python3 -c or a heredoc needs no file.`] : []),
     `Your LAST line must be exactly:`,
     `ESTIMATE(blind): ${decl.id} — <value> ± <sigma> via <route in ≤12 words> — inputs: [${Object.keys(decl.inputs).map((k) => `${k}=${decl.inputs[k]}`).join(", ")}]`,
   ].join("\n");
 }
 
-/** Pull the ESTIMATE(blind) line out of a replicator's return (last match wins). */
+/**
+ * Pull the ESTIMATE(blind) line out of a replicator's return (last match wins).
+ * With no parseable one, the last unparseable one comes back MALFORMED-marked
+ * instead of null: the reviewer still sees the estimator's number, the review
+ * file keeps it, and the claim table lists it as UNPARSED.
+ */
 export function extractBlindEstimate(text: string, quantityId: string): string | null {
   let found: string | null = null;
-  for (const l of extractReviewerLines(text)) if (l.kind === "ESTIMATE" && l.quantity === quantityId && /ESTIMATE\(blind\)/.test(l.text)) found = l.text;
-  return found;
+  let malformed: string | null = null;
+  for (const l of extractReviewerLines(text)) {
+    if (l.quantity !== quantityId) continue;
+    if (l.kind === "ESTIMATE" && /ESTIMATE\(blind\)/.test(l.text)) found = l.text;
+    else if (l.kind === "MALFORMED" && /^MALFORMED-ESTIMATE: ESTIMATE\(blind\):/.test(l.text)) malformed = l.text;
+  }
+  return found ?? malformed;
+}
+
+/** Next review round for this experiment: one past the highest persisted `_r<N>.md`. */
+export function nextReviewRound(projectDir: string, experimentId: string): number {
+  let max = 0;
+  try {
+    for (const f of readdirSync(join(projectDir, "reviews"))) {
+      const m = f.match(/^experiment_review_(.+)_r(\d+)\.md$/);
+      if (m && m[1] === experimentId) max = Math.max(max, Number(m[2]));
+    }
+  } catch { /* no reviews/ yet → round 1 */ }
+  return max + 1;
+}
+
+/** ESTIMATE(blind) lines persisted by this experiment's earlier review rounds, in order, without repeats. */
+export function priorBlindLines(projectDir: string, experimentId: string): string[] {
+  const out: string[] = [];
+  for (let n = 1; n < nextReviewRound(projectDir, experimentId); n++) {
+    try {
+      for (const line of readFileSync(join(projectDir, "reviews", `experiment_review_${experimentId}_r${n}.md`), "utf-8").split("\n"))
+        if (/^ESTIMATE\(blind\):/.test(line) && !out.includes(line.trim())) out.push(line.trim());
+    } catch { /* a missing round file contributes nothing */ }
+  }
+  return out;
+}
+
+/**
+ * The latest earlier blind line for `decl.id` that the claim table would still
+ * count as a blind leg (route given, inputs not producer-supplied) and compare
+ * with the current declaration (its stamped inputs within the table's 1 % of
+ * the declared ones); null when there is none, i.e. this id needs an estimate.
+ */
+export function reusableBlindLine(lines: string[], decl: { id: string; inputs: Record<string, number> }): string | null {
+  for (const line of [...lines].reverse()) {
+    const e = parseEstimateLine(line);
+    if (!e || !e.blind || e.producerSupplied || !e.route || e.id !== decl.id) continue;
+    if (differingInputs(e.inputs, decl.inputs).length === 0) return line;
+  }
+  return null;
 }
 
 /** Write reviews/experiment_review_<EID>_r<round>.md — the file claims-table.ts reads. */
@@ -160,7 +218,7 @@ export function persistReview(projectDir: string, experimentId: string, round: n
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   const path = join(dir, `experiment_review_${experimentId}_r${round}.md`);
   // An incomplete review persists ONLY the blind lines and the marker — its
-  // attestations (INDEPENDENT / ANCHOR-OK / DISCLOSE-OK) must not unlock
+  // attestations (INDEPENDENT / DISCLOSE-OK) must not unlock
   // anything (audit H5).
   const persisted = missing.length ? reviewerLines.filter((l) => l.kind === "MALFORMED") : reviewerLines;
   const body = [
@@ -177,7 +235,9 @@ export function persistReview(projectDir: string, experimentId: string, round: n
     // v3 D1 (2026-08-29): the reviewer's feedback used to live only in the
     // spawn result the brain read once; at the iteration cap it vanished.
     // Persisted here so finish() can require the flaw to reach the ledger.
-    ...(feedback && feedback.trim() ? [``, `FEEDBACK:`, feedback.trim().slice(0, 1200)] : []),
+    // Whole: 9 of 10 REVISE blocks ran past the old 1200-char cut, and the
+    // issues past it could not be bound to anything.
+    ...(feedback && feedback.trim() ? [``, `FEEDBACK:`, feedback.trim()] : []),
     ``,
   ].join("\n");
   writeFileSync(path, body);
@@ -192,7 +252,14 @@ export function persistReview(projectDir: string, experimentId: string, round: n
 // cap went into a spawn result, the ledger stayed `Complete`. Now: the flaw
 // must reach the artifact the referee reads — the L2 section quotes it
 // (`finding_open:`) or answers it with a locator (`finding_answered:`).
-export interface OpenFinding { experiment: string; round: number; sentence: string; feedback: string; answered: boolean; quoted: boolean }
+//
+// C15: per issue, per round. Any `finding_answered` line with a locator used
+// to answer the whole review, so Dy E1's round-1/round-2 lines "answered" its
+// three round-3 issues (an omitted clock, a wrong 277 s floor, a missing
+// shielding correction), and only Issue 1's first sentence was ever bound.
+export interface ReviewIssue { n: number; text: string; answered: boolean; quoted: boolean }
+/** `answered`/`quoted`/`sentence` describe Issue 1 — the one that blocks finish(). */
+export interface OpenFinding { experiment: string; experimentId: string; round: number; sentence: string; feedback: string; answered: boolean; quoted: boolean; issues: ReviewIssue[] }
 
 const LOCATOR_RE = /(?:[\w./-]+\.(?:py|json|csv|npz|tex|md):\d+|job_[0-9a-f]{6,}|results\.json|runs\/run_\d+|computed\.[\w.]+)/;
 function firstSentence(text: string): string {
@@ -210,7 +277,53 @@ export function quotesSentence(haystack: string, needle: string, window = 8): bo
   return false;
 }
 
-/** Experiments whose latest review is `revise` with a FEEDBACK block, and how the ledger/results answered it. */
+// "- Issue 2:" / "**Issue 2.**" is the reviewer's contract (experiment_reviewer.md);
+// a bare numbered list is the fallback; anything else is one issue.
+const ISSUE_MARKER_RES = [/^\s*[-*]?\s*\**Issue\s+(\d+)\**\s*[:.]/, /^\s*(\d+)[.)]\s/];
+
+/** FEEDBACK split into its numbered issues, text without the marker. Always has Issue 1. */
+export function splitFeedbackIssues(feedback: string): { n: number; text: string }[] {
+  // A trailing lone bullet is what the old 1200-char cut left behind.
+  const clean = (s: string) => s.replace(/^\s*\**\s*/, "").replace(/\s+/g, " ").replace(/(?:\s+[-*])+\s*$/, "").trim();
+  const lines = feedback.split("\n");
+  for (const re of ISSUE_MARKER_RES) {
+    const starts: { at: number; n: number; skip: number }[] = [];
+    for (let i = 0; i < lines.length; i++) {
+      const m = lines[i].match(re);
+      // First occurrence per number: a repeated "Issue 2" stays inside the issue it appears in.
+      if (m && !starts.some((s) => s.n === Number(m[1]))) starts.push({ at: i, n: Number(m[1]), skip: m[0].length });
+    }
+    if (!starts.some((s) => s.n === 1)) continue;
+    return starts.map((s, k) => ({
+      n: s.n,
+      text: clean([lines[s.at].slice(s.skip), ...lines.slice(s.at + 1, starts[k + 1]?.at ?? lines.length)].join("\n")),
+    })).sort((a, b) => a.n - b.n);
+  }
+  return [{ n: 1, text: clean(feedback) }];
+}
+
+// "#2", "issue 2", "issues 1–3", "issues 1, 2 and 4" within ~15 chars after the round token.
+// An em dash is the locator separator, never a range.
+const ISSUE_NUM = String.raw`#?\s*\d+(?:\s?[-–]\s?#?\d+|\s+to\s+#?\d+|\.\.#?\d+)?`;
+const ISSUE_REF_RE = new RegExp(String.raw`^[^\n]{0,15}?(?:#|\bissues?\b\s*)(${ISSUE_NUM}(?:\s*(?:,|&|\+|\/|\band\b)\s*(?:and\s+)?${ISSUE_NUM})*)`, "i");
+
+/** Round → issue numbers a `finding_answered` line binds ("r3 #1", "round-3 issues 1–3"). */
+export function roundBoundIssues(line: string): Map<number, Set<number>> {
+  const out = new Map<number, Set<number>>();
+  for (const m of line.matchAll(/\b(?:r|round)[\s_\-–]*(\d+)\b/gi)) {
+    const ref = line.slice(m.index! + m[0].length).match(ISSUE_REF_RE);
+    if (!ref) continue;
+    const issues = out.get(Number(m[1])) ?? new Set<number>();
+    for (const x of ref[1].matchAll(/(\d+)(?:(?:\s?[-–]\s?|\s+to\s+|\.\.)#?(\d+))?/g)) {
+      const a = Number(x[1]), b = x[2] ? Number(x[2]) : a;
+      for (let n = a; n <= Math.max(a, Math.min(b, a + 50)); n++) issues.add(n);
+    }
+    out.set(Number(m[1]), issues);
+  }
+  return out;
+}
+
+/** Experiments whose latest voting review (satisfied or revise) is `revise` with a FEEDBACK block, and how the ledger/results answered each of its issues. */
 export function openReviewFindings(projectDir: string): Map<string, OpenFinding> {
   const out = new Map<string, OpenFinding>();
   if (process.env.LUXAS_REVISE_BINDING === "0") return out;
@@ -222,7 +335,11 @@ export function openReviewFindings(projectDir: string): Map<string, OpenFinding>
     if (!m) continue;
     const r = parseInt(m[2], 10);
     const cur = latest.get(m[1]);
-    if (!cur || r > cur.round) latest.set(m[1], { round: r, file: join(dir, f) });
+    if (cur && r <= cur.round) continue;
+    // A round that did not vote (the reviewer gave no review) must not hide an earlier REVISE.
+    let voted = false;
+    try { voted = /^\s*#{0,6}\s*VERDICT:\s*(satisfied|revise)\b/im.test(readFileSync(join(dir, f), "utf-8")); } catch { /* unreadable: no vote */ }
+    if (voted) latest.set(m[1], { round: r, file: join(dir, f) });
   }
   let ledger = "";
   try { ledger = readFileSync(join(projectDir, "notes", "experiments.md"), "utf-8"); } catch { /* none */ }
@@ -233,23 +350,62 @@ export function openReviewFindings(projectDir: string): Map<string, OpenFinding>
     const fb = text.match(/^FEEDBACK:\s*\n([\s\S]*)$/m);
     if (!fb || !fb[1].trim()) continue;
     const feedback = fb[1].trim();
-    const sentence = firstSentence(feedback);
     const e = experimentNumberOf(eid) ?? eid;
     // The ledger section for this experiment (## L2.N …) and results.json open-issues.
     const n = e.replace(/^E/, "");
     const sec = ledger.match(new RegExp(`(?:^|\\n)##\\s+L2\\.${n}\\b[\\s\\S]*?(?=\\n##\\s|$)`));
-    let section = sec ? sec[0] : "";
-    try {
-      const runs = join(projectDir, "data", "experiments", eid, "runs");
-      for (const r of readdirSync(runs)) {
-        const j = JSON.parse(readFileSync(join(runs, r, "results.json"), "utf-8"));
-        const ro = j?.computed?.reviewer_open_issues;
-        if (Array.isArray(ro)) section += "\n" + ro.map((x: unknown) => typeof x === "string" ? x : JSON.stringify(x)).join("\n");
-      }
-    } catch { /* no runs */ }
-    const answered = [...section.matchAll(/finding_answered:\s*([^\n]*)/gi)].some((m) => LOCATOR_RE.test(m[1]));
-    const quoted = [...section.matchAll(/finding_open:\s*([^\n]*)/gi)].some((m) => quotesSentence(m[1], sentence));
-    out.set(e, { experiment: e, round, sentence, feedback, answered, quoted });
+    const openIssues: string[] = [];
+    let runs: string[] = [];
+    try { runs = readdirSync(join(projectDir, "data", "experiments", eid, "runs")); } catch { /* no runs */ }
+    for (const r of runs) {
+      try {
+        const ro = JSON.parse(readFileSync(join(projectDir, "data", "experiments", eid, "runs", r, "results.json"), "utf-8"))?.computed?.reviewer_open_issues;
+        if (Array.isArray(ro)) for (const x of ro) openIssues.push(typeof x === "string" ? x : JSON.stringify(x));
+      } catch { /* a run without a readable results.json */ }
+    }
+    const section = [sec ? sec[0] : "", ...openIssues].join("\n");
+    const answers = [...section.matchAll(/finding_answered:\s*([^\n]*)/gi)].map((m) => m[1]).filter((l) => LOCATOR_RE.test(l)).map((l) => ({ l, bound: roundBoundIssues(l) }));
+    const opens = [...section.matchAll(/finding_open:\s*([^\n]*)/gi)].map((m) => m[1]);
+    // No fallback to "any line with a locator": a line written for an earlier
+    // round, or for no round, answers nothing in this one. A quote answers too,
+    // unless the line is labelled for another round (a reviewer repeating an
+    // unfixed issue verbatim must not inherit the old answer).
+    const issues: ReviewIssue[] = splitFeedbackIssues(feedback).map(({ n: k, text: t }) => ({
+      n: k, text: t,
+      answered: answers.some(({ l, bound }) => bound.get(round)?.has(k) || (quotesSentence(l, t) && [...bound.keys()].every((r) => r === round))),
+      quoted: [...opens, ...openIssues].some((l) => quotesSentence(l, t)),
+    }));
+    const first = issues.find((i) => i.n === 1)!;
+    out.set(e, { experiment: e, experimentId: eid, round, sentence: firstSentence(first.text), feedback, answered: first.answered, quoted: first.quoted, issues });
+  }
+  return out;
+}
+
+function clip(s: string, max: number): string { return s.length > max ? `${s.slice(0, max - 1).trimEnd()}…` : s; }
+
+/**
+ * Finish-gate issues for open reviewer findings (claimTableIssues is the
+ * consumer). Issue 1 blocks until the ledger answers it for THIS round or
+ * quotes it; Issues 2..N are listed, not blocking — the debate settled on
+ * repairing the existing Issue-1 gate, not on adding new blocking gates.
+ */
+export function reviewOpenIssues(projectDir: string): ClaimIssue[] {
+  const out: ClaimIssue[] = [];
+  for (const f of openReviewFindings(projectDir).values()) {
+    const r = f.round, sec = `L2.${f.experiment.replace(/^E/, "")}`;
+    const tag = `[review-open] ${f.experiment} (${f.experimentId})`;
+    const one = f.issues.find((i) => i.n === 1);
+    if (one && !one.answered && !one.quoted) {
+      // The brain cannot edit notes/experiments.md; ledger_writer can, and the freeze lets it through.
+      out.push({ blocking: true, text: `${tag}: round ${r} Issue 1 of the latest experiment_reviewer REVISE is neither answered nor disclosed in the ledger: "${clip(one.text, 400)}". ` +
+        `In ${sec} ### Limitations add either \`finding_answered: r${r} #1 <one clause> — <locator: path:line | job_id | results.json key>\` (then the quantities lift from indicative) or \`finding_open: "<≥8 words of Issue 1, verbatim>"\` (ships with the flaw disclosed); a line written for an earlier round, or for no round, does not count. ` +
+        `Route, also inside the finalization freeze: spawn_agent(agent="ledger_writer", templateVars={EXPERIMENT_ID:"${f.experimentId}"}, task="add to ${sec} ### Limitations: <that line>; change nothing else"). A diagnosed flaw that stays in a spawn result is the 82.5 % failure.` });
+    }
+    const rest = f.issues.filter((i) => i.n !== 1 && !i.answered && !i.quoted);
+    if (rest.length > 0) {
+      out.push({ blocking: false, text: `${tag}: round ${r} has ${rest.length} more issue(s) neither answered nor disclosed in ${sec} — ${rest.map((i) => `Issue ${i.n}: "${clip(i.text, 160)}"`).join("; ")}. ` +
+        `Answer each with \`finding_answered: r${r} #<N> <clause> — <locator>\` or disclose it with \`finding_open: "<≥8 words of it, verbatim>"\`; these do not block finish().` });
+    }
   }
   return out;
 }
@@ -265,7 +421,10 @@ export function reviewerObligationBlock(headlineIds: string[], blindLines: strin
     `For EACH, your response MUST contain (anywhere, one per line, exact prefixes):`,
     `  DISCRIMINATOR: <id> — if right: <prediction>; if wrong: <prediction>; computation: <what would tell them apart>`,
     `  SCALING: <id> — expected <exponent> in <parameter>; observed <exponent> from <artifact>   (or "observed not swept")`,
-    `Optionally: INDEPENDENT: <id> <a> vs <b> — <why the routes differ>;  ANCHOR-OK: <id> — <why competing observables differ at this limit>;  ESTIMATE: <id> — <value> ± <sigma> via <route>  (post-hoc; the blind one below is the one that can flag).`,
+    `Optionally: ESTIMATE: <id> — <value> ± <sigma> via <route>  (post-hoc; the blind one below is the one that can flag).`,
+    `Optionally: INDEPENDENT: <id> <a> vs <b> — shared: none|inputs|model|code|values — <why>   (one answer; only "shared: none" counts as an attestation)`,
+    `  none: different formalism or approximation AND separately written code, neither route reuses the other's output (shared declared input VALUES and generic numeric libraries do not count)`,
+    `  inputs: an undeclared upstream drives the result;  model: the same formalism, separately coded;  code: the same script or function;  values: one route reuses the other's numbers`,
     `A response missing a DISCRIMINATOR or a SCALING line for a headline quantity is recorded as NO REVIEW for it, and none of its attestation lines count.`,
     blindLines.length ? `Blind estimates already recorded by the harness (do not re-derive; compare):\n${blindLines.join("\n")}` : `No blind estimate was available for these quantities.`,
     `</claim_obligation>`,
@@ -428,6 +587,11 @@ export function quantityDeclarationProblems(projectDir: string, experimentId: st
     if (d.uncertainty === undefined) problems.push(`${e}: headline quantity "${d.id}" has no \`uncertainty\` — without σ it can never reach converging (caps at indicative).`);
     if (!d.observable) problems.push(`${e}: headline quantity "${d.id}" has no \`observable\` sentence — the reviewer's discriminator and the contradiction auditor read it.`);
   }
+  // A cross-check of another instance filed under this quantity's key counts
+  // for nothing (claims-table parseExperiment); say where it belongs.
+  for (const r of table.rows) for (const x of r.reasons) {
+    if (x.startsWith(`different instance: ${e}:`)) problems.push(`${x} — file that instance under its own computed.* key (with its own quantities[] id) so its cross-check counts.`);
+  }
   return problems;
 }
 
@@ -449,8 +613,13 @@ export function cosmeticSpawnNotice(projectDir: string, agent: string): { notice
   const blocked = table.rows.filter((r) => r.headline && (r.status === "disputed" || r.status === "conditional")).map((r) => `${r.id} (${r.status})`);
   if (blocked.length === 0) return { notice: "", refuse: false };
   const refuse = process.env.LUXAS_COSMETIC_WHILE_DISPUTED === "0";
+  // Past the soft cap the hook refuses new experiments (hooks.ts), so the
+  // notice must not advise one; buildBudgetStatus is the same test the brain's
+  // <budget_status> block is shown under.
   const notice = `[claim gate] ${blocked.length} headline quantit${blocked.length === 1 ? "y is" : "ies are"} disputed/conditional — the abstract cannot ship and figures/report text built now will be redrawn: ${blocked.join(", ")}. ` +
-    `Legal moves: run the reviewer's DISCRIMINATOR as an experiment, spawn a replicator (replicate mode) on the highest-load disputed id, or propose CLAIM-DISCLOSE for a non-producer to countersign. ` +
+    (buildBudgetStatus(projectDir) !== ""
+      ? `Legal moves in finalization (no new experiment fits in what is left): abstain on it in the abstract (the claim table's [abstain] sentence), or propose CLAIM-DISCLOSE for a non-producer to countersign (more than one disclosed headline quantity is a needs-operator escalation); a replicator (replicate mode) settles only a disagreement between two producers, not a blind-estimate flag. `
+      : `Legal moves: run the reviewer's DISCRIMINATOR as an experiment that declares the same quantity id (the only answer to a blind-estimate flag), spawn a replicator (replicate mode) on the highest-load disputed id — it settles a disagreement between two producers, never a blind-estimate flag — or propose CLAIM-DISCLOSE for a non-producer to countersign. `) +
     (refuse ? `Refused (LUXAS_COSMETIC_WHILE_DISPUTED=0). Spawn "${agent}" once the ship line is clean.` : `Spawning "${agent}" anyway — the dollars are yours to spend; the ship line is not.`);
   return { notice, refuse };
 }
@@ -497,6 +666,9 @@ export function routeTokens(method: string): Set<string> {
  * keeps. Every text rule has that flaw (sameRoute included). If producers are
  * ever seen avoiding these words, replace this with provenance — who produced
  * the artifact — not wording. See notes/route-confession-2026-09-22.md §2.
+ *
+ * A confession may remove a credit, never a numeric disagreement (review f3):
+ * relation() only reads it for a pair whose numbers do not disagree.
  *
  * Returns the reason (for the claim table's `reasons` line), or null.
  */

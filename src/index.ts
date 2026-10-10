@@ -10,7 +10,8 @@
  *   luxas init [project-dir] --prompt "..." Generate RESEARCH.md from a topic
  *   luxas init [project-dir] --prompt-file <path> Read prompt from a file (use this for multi-line input)
  *   luxas list                           List all projects
- *   luxas stop [project-dir]             Stop a running project (run.pid + every process naming the dir)
+ *   luxas stop <project-dir>             Stop a running project (run.pid + every process naming the dir);
+ *                                        refuses a dir with no RESEARCH.md or .agent/run.pid
  *   luxas figures [project-dir]          Re-audit and re-render figures
  *          [--figure NAME]               Target one figure only (e.g. --figure 1)
  *          [--audit-only]                Audit existing figures, no regeneration
@@ -50,8 +51,9 @@ import { harvestCareer } from "./career.js";
 import { readUsageTotals, archiveUnfundedSentinel } from "./usage-log.js";
 import { applyDualProfileEnv } from "./profiles.js";
 import { classifyProviderError } from "./failure-taxonomy.js";
-import { beginRun, setExitReason, readLastExit, describeExit, type ExitRecord } from "./exit-state.js";
+import { beginRun, setExitReason, noteUncaught, readLastExit, describeExit, finishOutcomeInCheckpoint, type ExitRecord } from "./exit-state.js";
 import { ORIGINAL_REQUEST_HEADER, deriveProjectTitle } from "./utils.js";
+import { describeInFlight } from "./active-agents.js";
 
 // F2 — process-level crash handlers. Without these, Node's default behavior on
 // `unhandledRejection` is to terminate the process (Node ≥15) AND on
@@ -60,14 +62,28 @@ import { ORIGINAL_REQUEST_HEADER, deriveProjectTitle } from "./utils.js";
 // call (or mid-anything-async), no `Done in Xs` line, no error in log.jsonl,
 // the user just sees "frozen" and has to manually `luxas run` again. These
 // handlers convert every silent death into a logged `process_crash` event that
-// studio renders + the resume path sees. They do NOT prevent the death itself
-// (that's F5's job for network errors); they make every death visible.
+// studio renders + the resume path sees. Installing them also keeps the
+// process alive: Node no longer exits on either event, so a stray callback
+// error is survived and the run goes on.
 //
 // Best-effort: handler swallows its own throws, uses sync I/O, never awaits.
 // Tries to write to .agent/log.jsonl of the project being run (resolved from
 // process.argv if available; otherwise stderr-only).
+//
+// Once the reader of a piped stderr goes away, every write to it fails later
+// with EPIPE, which arrives here as one more uncaughtException. Reporting that
+// on stderr re-arms it (one stray throw became 162,756 log lines in 8 s), and
+// every progress line raises another, so pipe errors skip stderr and only the
+// first one per process is logged.
+let _pipeErrorLogged = false;
 function _crashLog(kind: "unhandledRejection" | "uncaughtException", err: unknown): void {
   try {
+    const code = (err as any)?.code;
+    const pipeError = code === "EPIPE" || code === "ERR_STREAM_DESTROYED";
+    if (pipeError) {
+      if (_pipeErrorLogged) return;
+      _pipeErrorLogged = true;
+    }
     const msg = (err as any)?.message ?? String(err);
     const stack = (err as any)?.stack;
     const entry = {
@@ -77,7 +93,9 @@ function _crashLog(kind: "unhandledRejection" | "uncaughtException", err: unknow
       message: msg.slice(0, 500),
       stack: typeof stack === "string" ? stack.slice(0, 4000) : undefined,
     };
-    try { process.stderr.write(`\n[${kind}] ${entry.message}\n${entry.stack ?? ""}\n`); } catch { /* */ }
+    if (!pipeError) {
+      try { process.stderr.write(`\n[${kind}] ${entry.message}\n${entry.stack ?? ""}\n`); } catch { /* */ }
+    }
     // Try to resolve the project dir from argv so we can write to log.jsonl
     const argv = process.argv.slice(2);
     let pd: string | undefined;
@@ -93,13 +111,16 @@ function _crashLog(kind: "unhandledRejection" | "uncaughtException", err: unknow
   } catch { /* handler must never throw */ }
 }
 process.on("unhandledRejection", (reason) => _crashLog("unhandledRejection", reason));
-process.on("uncaughtException", (err) => {
+process.on("uncaughtException", (err, origin) => {
   _crashLog("uncaughtException", err);
-  // Name the ending before Node exits (no-op outside a run / in sub-agents).
-  setExitReason("crashed", `uncaughtException: ${String((err as any)?.message ?? err).slice(0, 300)}`);
+  const detail = `uncaughtException: ${String((err as any)?.message ?? err).slice(0, 300)}`;
+  // With the listener above, the only rejection Node still raises here is this
+  // module's own top-level `await run()`: the run is over, so name it now (a
+  // no-op outside a run / in sub-agents). Anything else is a callback the
+  // process survives, and names the ending only if nothing else does.
+  if (origin === "unhandledRejection") setExitReason("crashed", detail);
+  else noteUncaught(detail);
   process.exitCode = 1;
-  // Node's default after uncaughtException is to exit with code 1 anyway. Let
-  // the runtime do it so finalizers (other handlers, exit hooks) still fire.
 });
 
 const args = process.argv.slice(2);
@@ -161,6 +182,9 @@ for (let i = 1; i < args.length; i++) {
   }
 }
 
+// `luxas stop` judges the dir as typed: an empty "$DIR" must refuse, not
+// become the cwd.
+const projectDirArg = projectDir;
 projectDir = resolve(projectDir);
 
 // Declared anchor for downstream CLI tools invoked via bash (e.g.
@@ -317,6 +341,16 @@ async function checkRoutedModels() {
   return findings;
 }
 
+/** The agents `unresolvedRoutes()` names, as `luxas run` and `luxas models` print them. */
+function formatUnresolvedRoutes(unresolved: { agent: string; error: string }[]): string {
+  return [
+    `✗ ${unresolved.length} agent(s) cannot be routed — every spawn of them would fail:`,
+    ...unresolved.map((u) => `  ${u.agent}: ${u.error}`),
+    `  Check LUXAS_READER_MODEL, LUXAS_TOOL_REVIEW_MODEL, LUXAS_EXECUTOR_MODEL, LUXAS_BRAIN_MODEL and`,
+    `  LUXAS_VISION_*_PROFILE against the MODEL_MAP keys in src/agents/spawn.ts.`,
+  ].join("\n");
+}
+
 /**
  * Try to rescue every dead pin by finding and PROVING its successor.
  * Returns the ones still dead afterwards — the caller refuses on those.
@@ -373,11 +407,14 @@ if (command === "models") {
   if (profile === "dual") applyDualProfileEnv({ setBrain: true });
   const { formatFindings } = await import("./model-check.js");
   console.error(`◈ profile: ${profile}`);
-  const { listRoutedModels } = await import("./agents/spawn.js");
+  const { listRoutedModels, unresolvedRoutes } = await import("./agents/spawn.js");
   console.log("Models this profile routes to:\n");
   for (const r of listRoutedModels()) {
     console.log(`  ${r.provider.padEnd(13)} ${r.id.padEnd(32)} ${r.usedBy.join(", ")}`);
   }
+  // The table above cannot show an agent with no route, and `luxas run` refuses on one.
+  const unresolved = unresolvedRoutes();
+  if (unresolved.length) console.log("\n" + formatUnresolvedRoutes(unresolved));
   console.log("\nChecking each provider's catalog...\n");
   const findings = await checkRoutedModels();
   const providers = [...new Set(listRoutedModels().map((r) => r.provider))];
@@ -410,7 +447,7 @@ if (command === "models") {
   } else if (dead.length) {
     console.log(`\n  Run \`luxas models --fix\` to search each provider's catalog for a proven replacement.`);
   }
-  process.exit(dead.length ? 1 : 0);
+  process.exit(dead.length || unresolved.length ? 1 : 0);
 }
 
 if (command === "status") {
@@ -430,8 +467,8 @@ if (command === "list") {
 
 if (command === "stop") {
   const { stopRun } = await import("./stop-run.js");
-  const r = stopRun(projectDir);
-  process.exit(r.survivors.length === 0 ? 0 : 1);
+  const r = stopRun(projectDirArg);
+  process.exit(r.refused ? 2 : r.survivors.length === 0 ? 0 : 1);
 }
 
 if (command === "run") {
@@ -493,6 +530,19 @@ async function run(dir: string, modelName: string, userDirective?: string, maxCo
       console.error(`  Set the corresponding env var (e.g. ${provider.toUpperCase()}_API_KEY) or`);
       console.error(`  add a key to ~/.sisyphus/auth.json:`);
       console.error(`    { "${provider === "kimi-coding" ? "kimi" : provider}": "sk-..." }`);
+      process.exit(1);
+    }
+  }
+
+  // Every agent must have a route. One that does not (a typo'd LUXAS_*_MODEL,
+  // or a catalog id pi-ai lacks) is invisible to the liveness check below and to
+  // autofix, and the run would lose that role for its whole length. Offline and
+  // deterministic, so LUXAS_SKIP_MODEL_CHECK does not skip it.
+  {
+    const { unresolvedRoutes } = await import("./agents/spawn.js");
+    const unresolved = unresolvedRoutes();
+    if (unresolved.length) {
+      console.error(formatUnresolvedRoutes(unresolved));
       process.exit(1);
     }
   }
@@ -678,7 +728,7 @@ async function run(dir: string, modelName: string, userDirective?: string, maxCo
   if (previousExit && previousExit.kind !== "finished" && previousExit.kind !== "running") {
     console.error(`↺ Previous session ended: ${describeExit(previousExit)}`);
   }
-  const { agent, hooks, restore, usageLogPath, didFinishSucceed, finishOutcome } = createResearchAgent({
+  const { agent, hooks, restore, usageLogPath, finishOutcome } = createResearchAgent({
     projectDir: dir,
     model: modelName,
     directive: userDirective,
@@ -722,7 +772,7 @@ async function run(dir: string, modelName: string, userDirective?: string, maxCo
           // killed at the cost cap and one that paused cleanly restore the same
           // checkpoint. Harness voice, one line, only when it was not a finish.
           const exitNote = previousExit && previousExit.kind !== "finished" && previousExit.kind !== "running"
-            ? `\n\n[harness] The previous session did not end through finish(). It ended as: ${describeExit(previousExit)} Anything that was in flight then (a tool call, a background agent) did not complete — check for its artifact before relying on it.`
+            ? `\n\n[harness] The previous session did not end through a gated finish(). It ended as: ${describeExit(previousExit)} Anything that was in flight then (a tool call, a background agent) did not complete — check for its artifact before relying on it.`
             : "";
           await agent.followUp({
             role: "user",
@@ -751,11 +801,12 @@ async function run(dir: string, modelName: string, userDirective?: string, maxCo
   const totalTokens = totals.inputTokens + totals.outputTokens;
   const cost = totals.cost.toFixed(4);
   // A live process exit is NOT the same as a finished study: the loop also
-  // ends on a gate-blocked finish, a maxTurns/budget cap, or a graceful
-  // stopReason=error. Only didFinishSucceed() means the brain's gated finish
-  // passed. Say which one happened so the registry and any inbox dispatcher
-  // reading stdout don't treat a blocked run as complete.
-  const finished = didFinishSucceed();
+  // ends on a gate-blocked finish, a maxTurns/budget cap, a graceful
+  // stopReason=error, a force-exit backstop or an operator escalation. Only the
+  // "finished" outcome means the brain's gated finish passed. Say which one
+  // happened so the registry, the career ledger and any inbox dispatcher
+  // reading stdout don't treat a blocked or forced run as complete.
+  const finished = finishOutcome() === "finished";
   // Exit signal for the external supervisor (sisyphus-inbox): distinguish a
   // clean finish from a death the run can recover from. lastErrTransient=true
   // means the brain loop exhausted the in-loop transient-retry (6/~61s) on a
@@ -775,11 +826,16 @@ async function run(dir: string, modelName: string, userDirective?: string, maxCo
   else if (errClass === "unfunded") setExitReason("provider_unfunded", lastErr!.slice(0, 300));
   else if (errClass === "fatal") setExitReason("provider_error", lastErr!.slice(0, 300));
   else setExitReason("stopped_unfinished", "the loop ended with no successful finish() and no provider error");
-  if (finished && outcome !== "finished") {
+  // A forced finish or an escalation did reach finish(), so it names its
+  // outcome instead of printing the "Exited WITHOUT a successful finish()" line
+  // that sisyphus-inbox greps. Its checkpoint is not archived on the next
+  // launch (archiveIfFinished), so the resume picks up where it stopped.
+  if (finished) {
+    console.log(`\n✓ Done in ${elapsed}s | $${cost} | ${totalTokens} tokens`);
+  } else if (outcome) {
     console.log(`\n⚠ Stopped as ${outcome} in ${elapsed}s | $${cost} | ${totalTokens} tokens — this is NOT a gated finish.`);
     console.log(`  ${describeExit(readLastExit(dir)!)}`);
-  } else if (finished) {
-    console.log(`\n✓ Done in ${elapsed}s | $${cost} | ${totalTokens} tokens`);
+    console.log(`  The checkpoint is live — resume with: luxas run ${dir}`);
   } else {
     console.log(`\n⚠ Exited WITHOUT a successful finish() in ${elapsed}s | $${cost} | ${totalTokens} tokens`);
     console.log(`  The checkpoint is live — resume with: luxas run ${dir}`);
@@ -909,6 +965,20 @@ function showStatus(dir: string) {
   const lastExit = readLastExit(dir);
   if (lastExit) console.log(`Last session: ${describeExit(lastExit)}\n`);
 
+  // What stopping the run now would cost: in-process work has no pid of its
+  // own and dies with its host, so look here before a restart.
+  const entries = describeInFlight(dir);
+  const show = ({ agent: a, label }: (typeof entries)[number]) => console.log(
+    `  - ${a.id} [${a.mode}] ${label}; running ${Math.round((Date.now() - a.startedAt) / 60_000)} min; task: ${a.task.slice(0, 100).replace(/\s+/g, " ")}`);
+  const live = entries.filter((e) => e.alive), gone = entries.filter((e) => !e.alive);
+  console.log(live.length ? `In flight (${live.length}):` : "In flight: nothing");
+  live.forEach(show);
+  if (gone.length) {
+    console.log(`Registered as running, but gone (${gone.length}):`);
+    gone.forEach(show);
+  }
+  console.log();
+
   const files: [string, string][] = [
     ["notes/literature.md", "Literature notes"],
     ["notes/experiments.md", "Experiment notes"],
@@ -976,20 +1046,15 @@ function archiveIfFinished(dir: string): string | undefined {
   // unfinished checkpoint and forced a from-scratch restart — which then
   // cold-start-wiped the notes ledger (experiments.md → 0 bytes) and broke every
   // subsequent resume. The authoritative "finish succeeded" signal is the
-  // checkpoint toolResult's details.success.
+  // checkpoint toolResult's details.success, and of those only the gated
+  // finish counts: a force-exit or an operator escalation also returns success,
+  // and archiving after one would start the resume cold, without the
+  // checkpoint and the PI feedback the run stopped over.
   let finished = false;
   if (existsSync(checkpointFile)) {
     try {
       const lines = readFileSync(checkpointFile, "utf-8").trim().split("\n");
-      for (const line of lines.slice(-12)) {
-        try {
-          const entry = JSON.parse(line);
-          const m: any = (entry as any)?.message ?? entry;
-          if (m?.role === "toolResult" && m?.toolName === "finish" && m?.details?.success === true) {
-            finished = true;
-          }
-        } catch { /* skip unparseable lines */ }
-      }
+      finished = finishOutcomeInCheckpoint(lines.slice(-12)) === "finished";
     } catch { /* ignore */ }
   }
 
