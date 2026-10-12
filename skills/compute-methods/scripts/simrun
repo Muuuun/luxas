@@ -1,0 +1,2237 @@
+#!/usr/bin/env python3
+"""simrun — run a prepared job directory with a named program on the machine that has it.
+
+One file, two roles: the client on the caller's machine and the host-side part on the
+machine that owns the software (`_host ...`, `_supervise ...`). Standard library only,
+Python >= 3.8, and no syntax newer than 3.6 so an old host Python can still say its version.
+
+Why it exists (2026-10-09): Luxas kills every bash command at 30 minutes and hands the call
+back after 90 s, and Windows sshd kills every child when the ssh command returns. So a job is
+run by a detached supervisor on the host; `start` returns at once, `wait` returns within its
+timeout and is safe to repeat, and the licence seat is held on the host for exactly as long as
+the program runs. simrun checks no result: a simulator's exit code is not a success signal.
+
+It is not a security boundary. The launcher list guards against mistakes and shell quoting;
+a launcher such as `python` runs whatever the job directory holds, as the host's user.
+
+Exit codes of run and wait: 0 the job exited 0 and no fail pattern matched; 1 the job ended
+otherwise; 3 not finished here when --timeout elapsed (still waiting for a seat or running, or
+ended while another simrun call held its directory). Of every verb: 4 refused, nothing was
+started; 5 ssh, scp or a file operation on this machine failed. status, log and cancel exit 0
+when the call worked. Specification: notes/sim-2026-10-09/spec-simrun.md (v2).
+"""
+import difflib, hashlib, json, os, re, shlex, shutil, signal, subprocess, sys, tempfile, time, traceback, unicodedata, uuid, zipfile
+
+# ── start-up: the only places the environment is read ─────────────────────────────────────
+# LUXAS_SOFTWARE_FILE  the operator file (default ~/.sisyphus/software.json); simrun never writes it
+# SIMRUN_STATE_DIR     doctor.json and the default workdir of a local host (default ~/.sisyphus/simrun)
+# SIMRUN_SSH           argv prefix used instead of "ssh" (space-separated); the gates point it at a loopback sshd
+# SIMRUN_SCP           argv prefix used instead of "scp"
+# SIMRUN_BEAT_S        gates only: heartbeat period in seconds (default 15)
+# SIMRUN_STALE_S       gates only: age at which a silent seat or supervisor counts as dead (default 90)
+# The two periods travel to the host inside the request file, never as environment: Windows
+# sshd accepts no environment from the client.
+SOFTWARE_FILE = os.environ.get("LUXAS_SOFTWARE_FILE") or os.path.join(os.path.expanduser("~"), ".sisyphus", "software.json")
+STATE_DIR = os.environ.get("SIMRUN_STATE_DIR") or os.path.join(os.path.expanduser("~"), ".sisyphus", "simrun")
+SSH = (os.environ.get("SIMRUN_SSH") or "ssh").split()
+SCP = (os.environ.get("SIMRUN_SCP") or "scp").split()
+BEAT_S = float(os.environ.get("SIMRUN_BEAT_S") or 15)
+STALE_S = float(os.environ.get("SIMRUN_STALE_S") or 90)
+
+# Bump when the remote command line, the Windows block or the host layout changes in a way a
+# doctor pass made earlier no longer covers: a doctor.json entry made under another number no
+# longer proves the host. src/software.ts pins the same number. Not bumped by the review of
+# 2026-10-09: what it added to the layout (after.json, the seat guard, `prog`, `boot`) is
+# written and read by one version, the command line after the target is unchanged, and every
+# earlier entry lacks the `host` fingerprint and is no pass for that reason alone.
+PROTOCOL = 1
+SELF = os.path.abspath(__file__)
+LIVE = ("waiting_seat", "running")
+UNWATCHED = ("supervisor_gone", "no_supervisor_answered_and_no_pid_was_killed")     # nothing watches the program any more: it may still run
+TAIL_LINES = 80
+# Default --timeout of run and wait. Below 90 s on purpose: Luxas hands a foreground bash call
+# back at 90 s while it keeps running, and with the old 100 the caller never saw simrun's own
+# exit 3 and next= line, typed `simrun wait` and ran two collections at once.
+WAIT_S = 75
+MAX_PUSH_BYTES = 200 * 1024 * 1024
+KEEP_DAYS = 7
+SKIP_DIRS = ("__pycache__", ".pytest_cache")
+PROJECT_MARKS = (".agent", ".git", ".ssh", "RESEARCH.md")
+PRIVATE_DIRS = (".ssh", ".agent", ".git", ".sisyphus")     # a job directory is never one of these, nor inside one
+
+LABEL = re.compile(r"[a-z0-9][a-z0-9_-]{0,31}\Z")
+LAUNCHER = re.compile(r"[A-Za-z0-9_.-]{1,48}\Z")
+PATHTOK = re.compile(r"[A-Za-z0-9_.:/\\-]+\Z")       # python tokens and workdir: nothing a remote shell would reinterpret
+SSHTARGET = re.compile(r"[A-Za-z0-9_.@:-]+\Z")
+SMALLARG = re.compile(r"[A-Za-z0-9_.:/-]+\Z")        # everything after `_host` on the remote command line
+JOBID = re.compile(r"\d{8}T\d{6}Z-[0-9a-f]{8}\Z")
+# One path component a Windows host changes or loses without an error: "a:b" becomes a data stream
+# of "a", NUL / CON / ... go to a device, a trailing dot or space is dropped (research notes §4, pitfall 6).
+WIN_BAD = re.compile(r'[<>:"|?*\x00-\x1f]|[. ]\Z|\A(con|prn|aux|nul|com[1-9]|lpt[1-9])(\.[^/]*)?\Z', re.I)
+HOST_KEYS = ("transport", "ssh", "os", "python", "workdir", "software")
+SW_KEYS = ("launchers", "check", "expect", "check_timeout_s", "seats", "max_minutes", "fail_patterns", "desktop")
+
+USAGE = """usage: simrun <verb> ...
+  simrun hosts [--json]                what is registered: hosts, software, launcher names
+  simrun doctor <host>                 prove a host end to end; an ssh host runs no job before this has passed
+  simrun run    <dir> --software <id> [--host <label>] [--timeout %(wait)d] [--max-minutes N] [--seat-wait-minutes 10] [--pull-limit-mb 200] -- <launcher> [args...]
+  simrun start  <dir> --software <id> [--host <label>] [--max-minutes N] [--seat-wait-minutes 10] -- <launcher> [args...]
+  simrun wait   <dir> [--timeout %(wait)d] [--pull-limit-mb 200]
+  simrun status <dir>
+  simrun log    <dir> [--tail 100]
+  simrun fetch  <dir> <relative path> [...]
+  simrun cancel <dir>     |     simrun cancel --host <label> --job <id>
+  simrun ps     [<host>]
+
+A job is a directory you prepared for this one job. Its files go to the host that has the software, the
+command after "--" runs there with that directory as cwd and without a shell (no globbing, && or
+redirection), and the files the job created or changed come back into the same directory. The first word
+of the command is a launcher name from 'simrun hosts', never a path.
+
+'run' returns after --timeout seconds even when the job is still going (exit 3): the job keeps running on
+the host and holds its licence seat; call 'simrun wait <dir>' again until it ends.
+
+The last line of run, wait and status is  SIMRUN state=... exit=... host=... software=... job=... elapsed=...s
+and the job's last log lines are printed above it, each after "| ". <dir>/simrun.json records what ran and
+lists the files that came back with their sha256. simrun checks no result: exit 0 from a simulator is not
+a success signal. Print the numbers you will report from the fetched files in the same bash call.
+
+exit codes of run and wait: 0 the job exited 0 and no fail pattern matched; 1 the job ended otherwise; 3 not
+finished here when --timeout elapsed: still waiting for a seat or running, or ended while another simrun call held
+the directory (the last line ends with next=). Of every verb: 4 refused, nothing was started; 5 ssh, scp or a file
+operation on this machine failed (the job may still be running on the host). status, log and cancel exit 0 when
+the call itself worked, whatever state the job is in: read the state line.""" % {"wait": WAIT_S}
+
+
+class Refuse(Exception):
+    """Nothing was started; exit 4."""
+
+
+class Transport(Exception):
+    """ssh or scp failed; exit 5. `rc` is the program's exit code when it ran at all."""
+    def __init__(self, msg, rc=None):
+        Exception.__init__(self, msg)
+        self.rc = rc
+
+
+class HostError(Exception):
+    """A typed refusal from the host side; reaches the client as {"ok": false, "error": ...}."""
+
+
+# ── small file helpers (both sides) ───────────────────────────────────────────────────────
+def write_atomic(path, obj):
+    """tmp + os.replace in a short bounded retry. On Windows a reader that has the destination
+    open makes the replace fail with PermissionError for a moment (research notes §5.5), and the
+    client polls status files while the supervisor rewrites them."""
+    tmp = "%s.%s.tmp" % (path, uuid.uuid4().hex[:8])
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(obj if isinstance(obj, str) else json.dumps(obj, ensure_ascii=True, indent=1))
+    try:
+        for attempt in range(10):
+            try:
+                os.replace(tmp, path)
+                return
+            except PermissionError:
+                if attempt == 9:
+                    raise
+                time.sleep(0.02 * (attempt + 1))
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+
+
+def read_json(path, default=None):
+    for attempt in range(5):
+        try:
+            with open(path, encoding="utf-8") as f:
+                return json.load(f)
+        except FileNotFoundError:
+            return default
+        except (PermissionError, ValueError):
+            time.sleep(0.02 * (attempt + 1))
+    return default
+
+
+def sha256_file(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def sha12():
+    return sha256_file(SELF)[:12]
+
+
+def utc(ts=None):
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ts))
+
+
+def walk(root):
+    """-> (files, dirs, links): relative posix paths under root, minus simrun's own records and
+    Python caches. Symlinks are reported, never followed and never counted as files. The record
+    names are compared without case: this Mac's disk and NTFS fold it, so `.SIMRUN` is `.simrun`
+    (casefold, not lower: this Mac's disk folds the long s too)."""
+    files, dirs, links = [], [], []
+    for cur, subdirs, names in os.walk(root):
+        top = os.path.samefile(cur, root)
+        keep = []
+        for d in sorted(subdirs):
+            rel = os.path.relpath(os.path.join(cur, d), root).replace(os.sep, "/")
+            if d in SKIP_DIRS or (top and d.casefold() == ".simrun"):
+                continue
+            if os.path.islink(os.path.join(cur, d)):
+                links.append(rel)
+                continue
+            keep.append(d)
+            dirs.append(rel)
+        subdirs[:] = keep
+        for name in sorted(names):
+            if top and name.casefold() == "simrun.json":
+                continue
+            full = os.path.join(cur, name)
+            rel = os.path.relpath(full, root).replace(os.sep, "/")
+            if os.path.islink(full):
+                links.append(rel)
+            elif os.path.isfile(full):
+                files.append(rel)
+    return files, dirs, links
+
+
+def snapshot(root):
+    out = {}
+    for rel in walk(root)[0]:
+        try:
+            st = os.stat(os.path.join(root, rel))
+        except OSError:
+            continue        # gone between the listing and the stat: a temporary file of a process still running
+        out[rel] = [st.st_size, st.st_mtime_ns]
+    return out
+
+
+def changed_files(root, manifest):
+    """Files that are new or whose (size, mtime) differs from the manifest taken before the job."""
+    files, _, links = walk(root)
+    out = []
+    for rel in files:
+        st = os.stat(os.path.join(root, rel))
+        if manifest.get(rel) != [st.st_size, st.st_mtime_ns]:
+            out.append({"path": rel, "bytes": st.st_size})
+    return out, links
+
+
+def make_zip(root, zpath, files, dirs=()):
+    tmp = zpath + ".part"
+    with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED, strict_timestamps=False) as zf:
+        for rel in dirs:
+            zf.write(os.path.join(root, rel), rel + "/")
+        for rel in files:
+            zf.write(os.path.join(root, rel), rel)
+    os.replace(tmp, zpath)
+
+
+def folds_case(directory):
+    """Does this directory hold one file for two names that differ only by letter case? Asked of
+    the disk with a probe file: it is a property of the volume, not of the operating system."""
+    name = ".simrun-Probe-%s" % uuid.uuid4().hex[:8]
+    try:
+        with open(os.path.join(directory, name), "w"):
+            pass
+    except OSError:
+        return False
+    try:
+        return os.path.exists(os.path.join(directory, name.lower()))
+    finally:
+        try:
+            os.remove(os.path.join(directory, name))
+        except OSError:
+            pass
+
+
+def case_twins(names):
+    """-> the first two of `names` that differ only by letter case, or None."""
+    spelled = {}
+    for name in names:
+        if spelled.setdefault(name.casefold(), name) != name:
+            return spelled[name.casefold()], name
+    return None
+
+
+def safe_unpack(zpath, dest):
+    """Unpack into dest, or raise ValueError saying how far it got. Every member is inspected
+    before the first byte is written: an archive is data from the other machine, and one
+    `../x` member would otherwise land in the caller's project. A member refused on inspection
+    means nothing was written; a member that then cannot be written (a full disk, a read-only
+    directory) is reported as such, with the members before it in place.
+    -> notes for the caller to print: the names that were written onto an entry the directory
+    already held under another letter case (only on a disk that holds one name for both). When a
+    member cannot be written, the error carries the notes of the members written before it."""
+    dest = os.path.realpath(dest)
+    held = {}
+
+    def fold(n):        # without letter case and in one composition of accents
+        return unicodedata.normalize("NFD", unicodedata.normalize("NFD", n).casefold())
+
+    def spelling(parent, name):
+        """The name `parent` already holds for `name` when the two differ by letter case. Accents are
+        compared in one composition: this Mac's disk holds one file for `É` and for `e` followed by
+        the accent, so that pair went onto the caller's file with no note. Two spellings of one
+        visible name (composition alone) are not a pair to report."""
+        if parent not in held:
+            try:
+                held[parent] = dict((fold(n), n) for n in os.listdir(parent))
+            except OSError:
+                held[parent] = {}
+        have = held[parent].get(fold(name))
+        return have if have is not None and unicodedata.normalize("NFC", have) != unicodedata.normalize("NFC", name) else None
+
+    def refused(why):
+        return ValueError("archive member %r %s; nothing was unpacked" % (info.filename, why))
+    with zipfile.ZipFile(zpath) as zf:
+        plan, onto = [], {}
+        for info in zf.infolist():
+            name = info.filename.replace("\\", "/")
+            parts = [p for p in name.split("/") if p not in ("", ".")]
+            is_dir = name.endswith("/")
+            if name.startswith("/") or re.match(r"[A-Za-z]:", name) or ".." in parts or not parts:
+                raise refused("has an absolute path or '..'")
+            if (info.external_attr >> 16) & 0o170000 == 0o120000:
+                raise refused("is a symlink")
+            # casefold, not lower: this Mac's disk also folds the long s, so `.ſimrun` is `.simrun` on it.
+            if parts[0].casefold() == ".simrun" or (len(parts) == 1 and parts[0].casefold() == "simrun.json"):
+                raise refused("would overwrite simrun's own records")
+            target = dest
+            for i, p in enumerate(parts):
+                target = os.path.join(target, p)
+                if os.path.islink(target):
+                    raise refused("passes through the symlink %s" % target)
+                # What the directory holds in this place already decides whether the member can be
+                # written at all. Found here, nothing is unpacked; found at the write, half was.
+                if (i < len(parts) - 1 or is_dir) and os.path.isfile(target):
+                    raise refused("needs %s to be a directory, and it is a file here" % target)
+                if i == len(parts) - 1 and not is_dir and os.path.isdir(target):
+                    raise refused("is a file, and %s is a directory here" % target)
+                have = spelling(os.path.dirname(target), p)
+                if have and (os.path.dirname(target), have) not in onto:
+                    onto[(os.path.dirname(target), have)] = p
+            plan.append((info, target, is_dir))
+        files = set(target for _, target, is_dir in plan if not is_dir)
+        spelled, twins = {}, None
+        for info, target, is_dir in plan:
+            up = os.path.dirname(target)
+            while len(up) > len(dest):
+                if up in files:
+                    raise refused("lies under %s, which the archive also holds as a file" % up)
+                up = os.path.dirname(up)
+            up = target
+            while len(up) > len(dest):
+                twins = twins or (spelled.setdefault(up.casefold(), up) != up and (spelled[up.casefold()], up))
+                up = os.path.dirname(up)
+        if twins and folds_case(dest):
+            # Two names from a disk that tells them apart, onto one that does not: the second write
+            # replaced the first, the sha256 comparison then failed, and scp was blamed on every wait.
+            raise ValueError("archive members %r and %r differ only by letter case, and the disk of %s holds one name for both; nothing was unpacked"
+                             % (os.path.relpath(twins[0], dest), os.path.relpath(twins[1], dest), dest))
+        # One of such a pair in the archive and the other already here (the caller's input Mesh.dat, the
+        # job's own mesh.dat from a host that tells them apart): on a disk with one name for both the
+        # member is written onto the caller's file. That is not refused (the job's other results would
+        # stay uncollected with it), and it is not silent: the next job would be sent that file as its input.
+        landed, written = [], []
+        if onto and folds_case(dest):
+            for (parent, have), p in sorted(onto.items()):
+                landed.append((os.path.join(parent, p), "%r from the archive was written onto %r, which %s already held: the two names differ only by letter case, and the disk of %s holds one name for both"
+                               % (os.path.relpath(os.path.join(parent, p), dest), os.path.relpath(os.path.join(parent, have), dest), dest, dest)))
+        for info, target, is_dir in plan:
+            # The temporary name does not grow with the member's: a name of 243 to 255 bytes is legal and could not be unpacked.
+            tmp = os.path.join(os.path.dirname(target), ".simrun-%s.tmp" % uuid.uuid4().hex[:8])
+            try:
+                if is_dir:
+                    os.makedirs(target, exist_ok=True)
+                    written.append(target)
+                    continue
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                # tmp + replace, never open(target): a job may rewrite an input the caller has
+                # write-protected, and opening that file failed half-way through the pull, for every later wait too.
+                with zf.open(info) as src, open(tmp, "wb") as out:
+                    shutil.copyfileobj(src, out)
+                exec_bits = (info.external_attr >> 16) & 0o111     # a job may ship a script it runs
+                if exec_bits:
+                    os.chmod(tmp, os.stat(tmp).st_mode | exec_bits)
+                os.replace(tmp, target)
+                written.append(target)
+            except OSError as e:
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
+                # The members before it are in place, one of them perhaps on the caller's file of another
+                # spelling: said here, because the call that would have printed the note is refused instead.
+                said = [text for path, text in landed if any(w == path or w.startswith(path + os.sep) for w in written)]
+                raise ValueError("archive member %r could not be written (%s); the members before it were unpacked%s" % (info.filename, e, "".join("; " + text for text in said)))
+    return [text for _, text in landed]
+
+
+def log_tail(path, n):
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            f.seek(max(0, size - 512 * 1024))
+            data = f.read()
+    except OSError:
+        return []
+    return [line[:4000] for line in data.decode("utf-8", "replace").splitlines()[-n:]]
+
+
+# ── process primitives: POSIX bodies ──────────────────────────────────────────────────────
+def _posix_alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True      # it exists and is not ours
+    return True
+
+
+def _posix_spawn_kwargs(detached):
+    # A new session leaves the caller's process group (Luxas kills that group at 30 minutes) and
+    # makes the child a group leader, so one killpg reaches everything it started.
+    return {"start_new_session": True}, "start_new_session"
+
+
+def _posix_kill_tree(pid, gone):
+    for sig, grace in ((signal.SIGTERM, 2.0), (signal.SIGKILL, 5.0)):
+        try:
+            os.killpg(pid, sig)
+        except ProcessLookupError:
+            try:
+                os.kill(pid, sig)
+            except OSError:
+                pass
+        except OSError:
+            pass         # macOS answers EPERM for a group that holds only a zombie
+        end = time.time() + grace
+        while time.time() < end and not gone():
+            time.sleep(0.05)
+
+
+def _posix_boot_time():
+    try:
+        with open("/proc/stat") as f:
+            for line in f:
+                if line.startswith("btime "):
+                    return float(line.split()[1])
+    except OSError:
+        pass
+    for exe in ("/usr/sbin/sysctl", "sysctl"):
+        try:
+            out = subprocess.run([exe, "-n", "kern.boottime"], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                 stderr=subprocess.DEVNULL, timeout=10).stdout.decode("ascii", "replace")
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        m = re.search(r"sec = (\d+)", out)
+        if m:
+            return float(m.group(1))
+    raise HostError("cannot read this host's boot time (no /proc/stat btime, no sysctl kern.boottime), so a seat's owner cannot be told from a pre-reboot one")
+
+
+# ══ WINDOWS-ONLY BLOCK ════════════════════════════════════════════════════════════════════
+# Nothing between this line and the end of the block has ever run on Windows. It was written
+# from sources (notes/sim-2026-10-09/research-windows-runner.md §2.2, §2.3, §5.3, §5.4), not
+# from a machine. It is safe to ship only because no job is started on an ssh host until
+# `simrun doctor` has passed on it, and doctor exercises each of these four functions (detached
+# spawn that survives the ssh command, liveness, tree kill, boot time through the seat lock).
+# Deletion rule: if no Windows host has passed doctor by 2027-01-31, remove this block and the
+# "windows" value of `os` with it.
+# Left out on purpose (review of 2026-10-09), because doctor could not exercise it: a process's
+# creation time beside its pid (Windows reuses pids quickly; a recorded pid is trusted only while
+# its beat is fresh, and after that only the deadline frees a seat); and any way to ask whether a
+# launcher left processes behind (there is no process group to ask: a launcher on a Windows
+# host must block until the solver has ended).
+WIN_PY_FLAGS = ["-X", "utf8", "-u"]     # over ssh stdout is a pipe: without UTF-8 mode Python encodes with the ANSI code page
+
+
+def _win_kernel32():
+    import ctypes
+    from ctypes import wintypes as wt
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.OpenProcess.argtypes = (wt.DWORD, wt.BOOL, wt.DWORD)
+    k32.OpenProcess.restype = wt.HANDLE
+    k32.WaitForSingleObject.argtypes = (wt.HANDLE, wt.DWORD)
+    k32.WaitForSingleObject.restype = wt.DWORD
+    k32.CloseHandle.argtypes = (wt.HANDLE,)
+    k32.CloseHandle.restype = wt.BOOL
+    k32.GetTickCount64.argtypes = ()
+    k32.GetTickCount64.restype = ctypes.c_ulonglong
+    return ctypes, k32
+
+
+def _win_alive(pid):
+    # Never os.kill(pid, 0) here: on Windows signal 0 is CTRL_C_EVENT and any other value
+    # terminates the process. And never GetExitCodeProcess == 259 alone: 259 is also a legal exit code.
+    ctypes, k32 = _win_kernel32()
+    PROCESS_QUERY_LIMITED_INFORMATION, SYNCHRONIZE, WAIT_TIMEOUT, ERROR_ACCESS_DENIED = 0x1000, 0x00100000, 0x102, 5
+    h = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, False, pid)
+    if not h:
+        return ctypes.get_last_error() == ERROR_ACCESS_DENIED    # it exists and is not ours
+    try:
+        return k32.WaitForSingleObject(h, 0) == WAIT_TIMEOUT
+    finally:
+        k32.CloseHandle(h)
+
+
+def _win_spawn_kwargs(detached):
+    # sshd puts the command's shell in a job object with KILL_ON_JOB_CLOSE | BREAKAWAY_OK; only
+    # a child created with CREATE_BREAKAWAY_FROM_JOB outlives the ssh command.
+    if detached:
+        flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_BREAKAWAY_FROM_JOB
+        return {"creationflags": flags}, "CREATE_BREAKAWAY_FROM_JOB"
+    return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW}, "CREATE_NEW_PROCESS_GROUP"
+
+
+def _win_kill_tree(pid, gone):
+    subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                   stderr=subprocess.DEVNULL, timeout=30)
+    end = time.time() + 5.0
+    while time.time() < end and not gone():
+        time.sleep(0.05)
+
+
+def _win_boot_time():
+    return time.time() - _win_kernel32()[1].GetTickCount64() / 1000.0
+# ══ END OF WINDOWS-ONLY BLOCK ═════════════════════════════════════════════════════════════
+
+
+# The one place the platform is chosen. Callers use these four names and nothing else.
+if os.name == "nt":
+    alive, spawn_kwargs, kill_tree, _boot_time = _win_alive, _win_spawn_kwargs, _win_kill_tree, _win_boot_time
+else:
+    alive, spawn_kwargs, kill_tree, _boot_time = _posix_alive, _posix_spawn_kwargs, _posix_kill_tree, _posix_boot_time
+_BOOT = []
+
+
+def boot_time():
+    if not _BOOT:
+        _BOOT.append(_boot_time())
+    return _BOOT[0]
+
+
+# ── host side: seats ──────────────────────────────────────────────────────────────────────
+def seat_stale(seat_dir, owner, stale_s):
+    """A seat is dead when it was taken before the last reboot, or when it has been silent for
+    stale_s and its owner is gone or past its own deadline. Silence alone is not enough: a
+    machine that slept would otherwise lose a seat its job still uses. The owner is two
+    processes: the supervisor (`pid`) and the program it started (`prog`). The program is the
+    one that holds the real licence, and it outlives a supervisor that was killed."""
+    t = time.time()
+    try:
+        if abs(float(owner["boot"]) - boot_time()) > 120:
+            return True
+        silent = t - float(owner["beat"]) > stale_s
+        gone = not alive(int(owner["pid"])) and not (owner.get("prog") and alive(int(owner["prog"])))
+        return silent and (gone or t > float(owner["deadline"]) + stale_s)
+    except (KeyError, TypeError, ValueError):
+        # No readable owner.json: the taker is between mkdir and its first write, or died there.
+        try:
+            return t - os.stat(seat_dir).st_mtime > stale_s
+        except OSError:
+            return False
+
+
+def break_seat(seat_dir, still):
+    """Remove a seat if `still(owner)` holds for the owner.json read under a guard. -> removed?
+    The guard is what ties the removal to the owner that was judged: two waiters both read the
+    same dead owner, the first broke the seat and took it, and the second then renamed the
+    first one's fresh seat away, so several programs ran on a one-seat licence.
+    Rename to a unique name, then remove: rmtree followed by mkdir would let two breakers win."""
+    guard = seat_dir + ".breaking"
+    for _ in range(60):
+        try:
+            os.mkdir(guard)
+            break
+        except FileExistsError:
+            try:
+                if time.time() - os.stat(guard).st_mtime > 30:      # its maker died between mkdir and rmdir
+                    os.rmdir(guard)
+                    continue
+            except OSError:
+                pass
+            time.sleep(0.05)
+        except OSError:
+            return False
+    else:
+        return False
+    try:
+        if not still(read_json(os.path.join(seat_dir, "owner.json"))):
+            return False
+        dead = "%s.gone.%s" % (seat_dir, uuid.uuid4().hex)
+        for attempt in range(10):       # the same bounded retry as write_atomic: on Windows a waiter that has owner.json open blocks the rename for a moment
+            try:
+                os.rename(seat_dir, dead)
+                break
+            except PermissionError:
+                time.sleep(0.02 * (attempt + 1))
+            except OSError:
+                return False
+        else:
+            return False
+        shutil.rmtree(dead, ignore_errors=True)
+        return True
+    finally:
+        try:
+            os.rmdir(guard)
+        except OSError:
+            pass
+
+
+def take_seat(lockdir, seats, jid, max_s, stale_s):
+    """-> (seat directory, None) or (None, the first holder's owner.json)."""
+    holder = None
+    for k in range(1, seats + 1):
+        seat_dir = os.path.join(lockdir, "seat-%d" % k)
+        for attempt in (0, 1):
+            try:
+                os.mkdir(seat_dir)
+            except FileNotFoundError:
+                return None, holder or {}       # the lock directory went between the caller's makedirs and here; the caller makes it again
+            except FileExistsError:
+                owner = read_json(os.path.join(seat_dir, "owner.json"))
+                if attempt == 0 and seat_stale(seat_dir, owner, stale_s):
+                    # Judged again under the guard: a seat another waiter has taken since (or is
+                    # taking: no owner.json yet, a fresh directory) is not stale and stays.
+                    break_seat(seat_dir, lambda o: seat_stale(seat_dir, o, stale_s))
+                    continue
+                holder = holder or owner or {}
+                break
+            t = time.time()
+            write_atomic(os.path.join(seat_dir, "owner.json"),
+                         {"job": jid, "pid": os.getpid(), "prog": None, "started": t, "beat": t, "deadline": t + max_s, "boot": boot_time()})
+            return seat_dir, None
+    return None, holder
+
+
+def beat_seat(seat_dir, jid, prog=None):
+    """Re-read the seat before writing the beat: if another job broke it, this one must stop.
+    `prog` is recorded once, when the program has been started."""
+    path = os.path.join(seat_dir, "owner.json")
+    owner = read_json(path)
+    if not owner or owner.get("job") != jid:
+        return False
+    owner["beat"] = time.time()
+    if prog:
+        owner["prog"] = prog
+    try:
+        write_atomic(path, owner)
+    except OSError:
+        return False
+    return True
+
+
+def release_seat(lockdir, jid):
+    try:
+        names = os.listdir(lockdir)
+    except OSError:
+        return
+
+    def mine(owner):
+        return (owner or {}).get("job") == jid
+    for name in names:
+        seat_dir = os.path.join(lockdir, name)
+        path = os.path.join(seat_dir, "owner.json")
+        if re.match(r"seat-\d+\Z", name) and mine(read_json(path)):
+            if not break_seat(seat_dir, mine) and mine(read_json(path)):
+                # A release that fails must not be silent (it was: one rename, `except OSError: return`).
+                # Readers: <jid>.sup.log when the supervisor releases, the caller's terminal for a
+                # local cancel. Over ssh a cancel shows only the JSON reply, so there it is not seen.
+                print("simrun: %s of job %s could not be released; it stays held until it counts as stale" % (name, jid))
+
+
+# ── host side: the supervisor ─────────────────────────────────────────────────────────────
+def jp(wd, jid, suffix):
+    return os.path.join(wd, "jobs", jid + suffix)
+
+
+def scan_fail(log_path, patterns):
+    if not patterns:
+        return None
+    try:
+        with open(log_path, "rb") as f:
+            for raw in f:
+                line = raw.decode("utf-8", "replace")
+                for pat in patterns:
+                    if pat in line:
+                        return pat
+    except OSError:
+        pass
+    return None
+
+
+def supervise(wd, jid):
+    """Detached. Holds the seat, runs the command, enforces the time limit, writes the final status."""
+    req = read_json(jp(wd, jid, ".req.json")) or {}
+    status_path = jp(wd, jid, ".status.json")
+    st = read_json(status_path) or {}
+    lockdir = os.path.join(wd, "locks", str(req.get("software")))
+    owns_seat = False
+
+    def put(**fields):
+        st.update(fields)
+        st["beat"] = time.time()
+        write_atomic(status_path, st)
+
+    def cancelled():
+        return os.path.exists(jp(wd, jid, ".cancel"))
+
+    try:
+        put(sup_pid=os.getpid())
+        beat_s, stale_s = float(req["beat_s"]), float(req["stale_s"])
+        seat_dir = None
+        if req.get("seats"):
+            give_up, last = time.time() + float(req["seat_wait_s"]), 0.0
+            while True:
+                if cancelled():
+                    put(state="cancelled", ended=time.time())
+                    return
+                # Made again on every round: prune removes an empty locks/doctor-* directory, and a
+                # start on the host between doctor's two one-seat jobs took it from under the one
+                # that was waiting, which died with FileNotFoundError and failed the doctor run.
+                os.makedirs(lockdir, exist_ok=True)
+                seat_dir, holder = take_seat(lockdir, int(req["seats"]), jid, float(req["max_s"]), stale_s)
+                if seat_dir:
+                    owns_seat = True
+                    break
+                if time.time() >= give_up:
+                    put(state="timeout", reason="no_seat", ended=time.time())
+                    return
+                seen = {"job": holder.get("job"), "since": holder.get("started")}
+                if seen != st.get("holder") or time.time() - last >= beat_s:
+                    put(state="waiting_seat", holder=seen)
+                    last = time.time()
+                time.sleep(0.25)
+
+        argv = list(req["argv"])
+        if argv[0] == "@python":       # doctor's own jobs: the interpreter that is running this file
+            argv[0] = sys.executable
+        cwd = req.get("cwd") or jp(wd, jid, "")
+        if req.get("cwd") and req.get("seats"):
+            # A local job runs in the caller's directory, and it may have waited minutes for its
+            # seat. The "before" picture is taken again now: with the one from the start, every
+            # file the caller wrote during the wait was recorded as an output of the job.
+            write_atomic(jp(wd, jid, ".manifest.json"), snapshot(cwd))
+        kwargs, _ = spawn_kwargs(False)
+        t0 = time.time()
+        with open(jp(wd, jid, ".log"), "ab") as log:
+            try:
+                proc = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+                                        env=dict(os.environ, PYTHONUNBUFFERED="1"), **kwargs)
+            except OSError as e:
+                put(state="failed", reason="could not start launcher %s: %s" % (req["command"][0], e), ended=time.time())
+                return
+        if seat_dir:
+            beat_seat(seat_dir, jid, proc.pid)      # before anything else: from here on the seat is the program's too
+        put(state="running", holder=None, started=t0, pid=proc.pid, seat=os.path.basename(seat_dir) if seat_dir else None)
+
+        why, last = None, time.time()
+        while True:
+            try:
+                proc.wait(timeout=0.2)
+                break
+            except subprocess.TimeoutExpired:
+                pass
+            if cancelled():
+                why = ("cancelled", None)
+            elif time.time() - t0 > float(req["max_s"]):
+                why = ("timeout", "max_minutes")
+            elif time.time() - last >= beat_s:
+                last = time.time()
+                if seat_dir and not beat_seat(seat_dir, jid):
+                    why, owns_seat = ("lost", "seat_taken"), False
+                else:
+                    put()
+            if why:
+                kill_tree(proc.pid, lambda: proc.poll() is not None)
+                break
+        if why is None and cancelled():
+            why = ("cancelled", None)
+        left = False
+        if why is None and os.name != "nt":
+            # The launcher led its own process group, so whatever is still in the group is what it
+            # started and left running. Said, not waited for: a licence helper or a solver server
+            # that stays by design would otherwise turn every job into a timeout.
+            try:
+                os.killpg(proc.pid, 0)
+                left = True
+            except OSError:
+                pass                    # ESRCH: nobody. macOS answers EPERM for a group that holds only a zombie
+        if req.get("cwd"):
+            # A local host runs in the caller's directory, and `wait` may come much later. What
+            # is in the directory now is the job's; what the caller writes from here on is not.
+            write_atomic(jp(wd, jid, ".after.json"), snapshot(cwd))
+        hit = scan_fail(jp(wd, jid, ".log"), req.get("fail_patterns"))
+        st["left_running"] = left
+        if why:
+            put(state=why[0], reason=why[1], exit=None, ended=time.time())
+        elif hit:
+            put(state="failed", reason="fail_pattern:" + hit, exit=proc.returncode, ended=time.time())
+        else:
+            put(state="exited", exit=proc.returncode, ended=time.time())
+    except Exception as e:      # a supervisor that dies silently leaves "running" on disk for stale_s
+        traceback.print_exc()
+        try:
+            put(state="lost", reason=("supervisor_error: %s: %s" % (type(e).__name__, e))[:300], ended=time.time())
+        except Exception:
+            traceback.print_exc()
+    finally:
+        if owns_seat:
+            release_seat(lockdir, jid)
+
+
+# ── host side: verbs ──────────────────────────────────────────────────────────────────────
+def view_of(wd, jid, st, tail=True):
+    """The status as a caller should read it. A live status whose supervisor is gone and whose
+    beat is old is reported as lost; nothing is written, the supervisor's own file stays the record.
+    sup_pid alone cannot say the supervisor lives: after a reboot, or once the number has been
+    reused, it names somebody else, and such a job read "running" for ever. So a status from
+    before the last boot is lost at once, and a silent one is lost when its supervisor's pid is
+    gone or when the job is past everything it was allowed (seat wait + time limit + stale period)."""
+    if st is None:
+        return {"ok": True, "job": jid, "state": "lost", "reason": "unknown_on_host", "exit": None, "elapsed": 0, "software": None, "tail": []}
+    req = read_json(jp(wd, jid, ".req.json")) or {}
+    v = dict(st, ok=True)
+    t = time.time()
+    sup, stale_s = st.get("sup_pid"), float(req.get("stale_s") or 90)
+    if st.get("state") in LIVE:
+        rebooted = st.get("boot") is not None and abs(float(st["boot"]) - boot_time()) > 120
+        allowed = (float(req.get("seat_wait_s") or 0) if req.get("seats") else 0) + float(req.get("max_s") or 0)
+        overdue = t > float(st.get("created") or 0) + allowed + stale_s
+        if rebooted or (t - float(st.get("beat") or 0) > stale_s and (overdue or not (sup and alive(int(sup))))):
+            v.update(state="lost", reason="supervisor_gone")
+    v["elapsed"] = int((st.get("ended") if v["state"] not in LIVE and st.get("ended") else t) - float(st.get("created") or t))
+    v["beat_age"] = int(t - float(st.get("beat") or t))
+    if tail and v["state"] not in LIVE:
+        v["tail"] = log_tail(jp(wd, jid, ".log"), TAIL_LINES)
+    return v
+
+
+def h_hello(wd, jid, args):
+    probe = os.path.join(wd, "jobs", ".probe")
+    write_atomic(probe, "x")
+    os.remove(probe)
+    return {"ok": True, "python": "%d.%d.%d" % tuple(sys.version_info[:3]), "os": os.name, "protocol": PROTOCOL, "sha12": sha12()}
+
+
+def forget(wd, jid):
+    """Remove one job's host-side files. Never the cwd of a local job: that is the caller's directory."""
+    jobs = os.path.join(wd, "jobs")
+    for name in os.listdir(jobs):
+        if name == jid:
+            shutil.rmtree(os.path.join(jobs, name), ignore_errors=True)
+        elif name.startswith(jid + "."):
+            try:
+                os.remove(os.path.join(jobs, name))
+            except OSError:
+                pass
+
+
+def prune(wd):
+    jobs, locks = os.path.join(wd, "jobs"), os.path.join(wd, "locks")
+    for name in os.listdir(jobs):
+        jid = name[:-len(".status.json")] if name.endswith(".status.json") else ""
+        if not JOBID.match(jid):
+            continue
+        v = view_of(wd, jid, read_json(os.path.join(jobs, name)), tail=False)
+        if v["state"] not in LIVE and time.time() - float(v.get("ended") or v.get("beat") or 0) > KEEP_DAYS * 86400:
+            forget(wd, jid)
+    for name in os.listdir(jobs):
+        # What a start that failed after its upload left behind: an archive (up to 200 MB), a
+        # request, a half-made directory. It never got a status, so the loop above never sees
+        # it. A day, not at once: an upload in progress has no status yet either.
+        jid, full = name[:25], os.path.join(jobs, name)
+        try:
+            orphan = JOBID.match(jid) and name[25:26] in ("", ".") and not os.path.exists(jp(wd, jid, ".status.json")) \
+                and time.time() - os.stat(full).st_mtime > 86400
+        except OSError:
+            continue
+        if orphan:
+            forget(wd, jid)
+    for name in os.listdir(locks):      # doctor's one-seat test software leaves an empty directory per run
+        if name.startswith("doctor-"):
+            try:
+                os.rmdir(os.path.join(locks, name))
+            except OSError:
+                pass
+
+
+def h_start(wd, jid, args):
+    req = read_json(jp(wd, jid, ".req.json"))
+    if not req:
+        raise HostError("no request file for job %s arrived on the host" % jid)
+    if os.path.exists(jp(wd, jid, ".status.json")):
+        return view_of(wd, jid, read_json(jp(wd, jid, ".status.json")))
+    cwd = req.get("cwd")
+    if not cwd:
+        zpath = jp(wd, jid, ".in.zip")
+        if not os.path.exists(zpath) or sha256_file(zpath) != req.get("zip_sha256"):
+            raise HostError("the input archive of job %s did not arrive intact (sha256 differs from the request); nothing was started" % jid)
+        cwd = jp(wd, jid, "")
+        os.mkdir(cwd)
+        try:
+            safe_unpack(zpath, cwd)
+        except ValueError as e:
+            shutil.rmtree(cwd, ignore_errors=True)       # refused on inspection it is empty; failed while writing it is not
+            raise HostError("the input archive of job %s was refused: %s" % (jid, e))
+        os.remove(zpath)
+    write_atomic(jp(wd, jid, ".manifest.json"), snapshot(cwd))
+    prune(wd)
+    t = time.time()
+    st = {"job": jid, "software": req["software"], "state": "waiting_seat" if req.get("seats") else "running", "exit": None,
+          "reason": None, "created": t, "started": None, "ended": None, "beat": t, "boot": boot_time(), "sup_pid": None, "pid": None,
+          "holder": None, "seat": None}
+    write_atomic(jp(wd, jid, ".status.json"), st)
+    kwargs, flag = spawn_kwargs(True)
+    try:
+        # stdio to a file, never the ssh pipes: ssh would not return until the supervisor exits.
+        with open(jp(wd, jid, ".sup.log"), "ab") as suplog:
+            subprocess.Popen([sys.executable, SELF, "_supervise", wd, jid], cwd=wd, stdin=subprocess.DEVNULL, stdout=suplog,
+                             stderr=subprocess.STDOUT, close_fds=True, **kwargs)
+    except OSError as e:
+        st.update(state="lost", reason="spawn_refused", ended=time.time())
+        write_atomic(jp(wd, jid, ".status.json"), st)
+        raise HostError("the host refused to start a detached process (%s: %s); without it the job would die with this command, so nothing was started" % (flag, e))
+    return view_of(wd, jid, st)
+
+
+def h_status(wd, jid, args):
+    return view_of(wd, jid, read_json(jp(wd, jid, ".status.json")))
+
+
+def h_wait(wd, jid, args):
+    end = time.time() + float(args[0])
+    while True:
+        v = h_status(wd, jid, ())
+        if v["state"] not in LIVE or time.time() >= end:
+            return v
+        time.sleep(0.2)
+
+
+def h_cancel(wd, jid, args):
+    v = h_status(wd, jid, ())
+    if v["state"] not in LIVE:
+        return v
+    req = read_json(jp(wd, jid, ".req.json")) or {}
+    with open(jp(wd, jid, ".cancel"), "w"):
+        pass
+    end = time.time() + 5.0          # the supervisor sees the flag within 0.25 s, kills the job and writes the status
+    st = read_json(jp(wd, jid, ".status.json")) or {}
+    while st.get("state") in LIVE and time.time() < end:
+        time.sleep(0.1)
+        st = read_json(jp(wd, jid, ".status.json")) or {}
+    fresh = True
+    if st.get("state") in LIVE:
+        # No supervisor answered: do its work, supervisor first so it cannot write after us.
+        # A pid on record is killed only while the beat is fresh. A silent status can still read
+        # "running" here (the number is in use, the job is inside its limits), and then the
+        # number may be somebody else's: an unrelated process was killed this way in the review of 2026-10-09.
+        fresh = time.time() - float(st.get("beat") or 0) <= float(req.get("stale_s") or 90)
+        for pid in (st.get("sup_pid"), st.get("pid")) if fresh else ():
+            if pid and alive(int(pid)):
+                kill_tree(int(pid), lambda: not alive(int(pid)))
+        st.update(state="cancelled", exit=None, ended=time.time(), beat=time.time(),
+                  reason=None if fresh else "no_supervisor_answered_and_no_pid_was_killed")
+        write_atomic(jp(wd, jid, ".status.json"), st)
+    # Cancel returns with the seat free, whoever had to free it. Not when nothing was killed:
+    # the program may still run and hold the licence, and its seat then ends by the stale rule.
+    if req.get("seats") and fresh:
+        lockdir = os.path.join(wd, "locks", req["software"])
+        end = time.time() + 2.0
+        while time.time() < end and any((read_json(os.path.join(lockdir, n, "owner.json")) or {}).get("job") == jid
+                                        for n in (os.listdir(lockdir) if os.path.isdir(lockdir) else [])):
+            time.sleep(0.05)
+        release_seat(lockdir, jid)
+    return h_status(wd, jid, ())
+
+
+def h_ps(wd, jid, args):
+    jobs = os.path.join(wd, "jobs")
+    rows = []
+    for name in sorted(os.listdir(jobs)) if os.path.isdir(jobs) else []:
+        j = name[:-len(".status.json")] if name.endswith(".status.json") else ""
+        if not JOBID.match(j):
+            continue
+        v = view_of(wd, j, read_json(os.path.join(jobs, name)), tail=False)
+        holder = v.get("holder") or {}
+        rows.append({"job": j, "software": v.get("software"), "state": v["state"], "age": int(time.time() - float(v.get("created") or 0)),
+                     "seat": v.get("seat"), "holder": holder.get("job"),
+                     "holder_since": int(time.time() - float(holder["since"])) if holder.get("since") else None, "beat_age": v["beat_age"]})
+    return {"ok": True, "jobs": rows}
+
+
+def h_log(wd, jid, args):
+    return {"ok": True, "lines": log_tail(jp(wd, jid, ".log"), min(int(args[0]), 5000))}
+
+
+def h_delta(wd, jid, args):
+    """A local job's outputs: the files it created or changed, as they were when the program
+    ended (the supervisor's .after.json). One that has been changed or removed since is
+    reported apart, as `touched`: its bytes are no longer the job's. What the caller wrote
+    while the program was still running cannot be told from the job's own files."""
+    req = read_json(jp(wd, jid, ".req.json")) or {}
+    root = req.get("cwd") or jp(wd, jid, "")
+    before, after = read_json(jp(wd, jid, ".manifest.json")) or {}, read_json(jp(wd, jid, ".after.json"))
+    if after is None:       # a job supervised by a simrun from before 2026-10-09: the directory as it is now
+        files, links = changed_files(root, before)
+        return {"ok": True, "changed": files, "touched": [], "links": links}
+    changed, touched = [], []
+    for rel in sorted(after):
+        if before.get(rel) == after[rel]:
+            continue
+        try:
+            st = os.stat(os.path.join(root, rel))
+            same = [st.st_size, st.st_mtime_ns] == after[rel]
+        except OSError:
+            same = False
+        (changed if same else touched).append({"path": rel, "bytes": after[rel][0]})
+    return {"ok": True, "changed": changed, "touched": touched, "links": walk(root)[2]}
+
+
+def h_pack(wd, jid, args):
+    """Zip what the job created or changed, smallest first, up to the limit in total and half of
+    it per file. What does not fit stays, is listed with its size, and `fetch` brings it back."""
+    limit = int(args[0])
+    root = jp(wd, jid, "")
+    if not os.path.isdir(root):
+        raise HostError("job %s has no directory on the host any more (jobs are kept %d days after they end)" % (jid, KEEP_DAYS))
+    files, links = changed_files(root, read_json(jp(wd, jid, ".manifest.json")) or {})
+    included, left, total = [], [], 0
+    for f in sorted(files, key=lambda f: (f["bytes"], f["path"])):
+        if limit > 0 and f["bytes"] * 2 <= limit and total + f["bytes"] <= limit:      # limit 0 is "nothing": an empty file fits every other test
+            total += f["bytes"]
+            included.append(dict(f, sha256=sha256_file(os.path.join(root, f["path"]))))
+        else:
+            left.append(f)
+    out = {"ok": True, "included": included, "left": left, "links": links, "sha256": None}
+    if included:
+        make_zip(root, jp(wd, jid, ".out.zip"), [f["path"] for f in included])
+        out["sha256"] = sha256_file(jp(wd, jid, ".out.zip"))
+    return out
+
+
+def h_fetchzip(wd, jid, args):
+    """The paths arrive in a file, not on the command line: a file name may hold characters the
+    remote shell would reinterpret."""
+    root = os.path.realpath(jp(wd, jid, ""))
+    want = (read_json(jp(wd, jid, ".fetch.json")) or {}).get("paths") or []
+    files, missing = [], []
+    for rel in want:
+        full = os.path.realpath(os.path.join(root, rel))
+        inside = full.startswith(root + os.sep)
+        if inside and os.path.isfile(full) and not os.path.islink(os.path.join(root, rel)):
+            files.append({"path": os.path.relpath(full, root).replace(os.sep, "/"), "bytes": os.path.getsize(full), "sha256": sha256_file(full)})
+        else:
+            missing.append(rel)
+    out = {"ok": True, "files": files, "missing": missing, "sha256": None}
+    if files:
+        make_zip(root, jp(wd, jid, ".fetch.zip"), [f["path"] for f in files])
+        out["sha256"] = sha256_file(jp(wd, jid, ".fetch.zip"))
+    return out
+
+
+def h_forget(wd, jid, args):
+    v = h_status(wd, jid, ())
+    if v["state"] in LIVE:
+        raise HostError("job %s is still %s; cancel it first" % (jid, v["state"]))
+    forget(wd, jid)
+    return {"ok": True}
+
+
+HOST_VERBS = {"hello": h_hello, "start": h_start, "status": h_status, "wait": h_wait, "cancel": h_cancel, "ps": h_ps,
+              "log": h_log, "delta": h_delta, "pack": h_pack, "fetchzip": h_fetchzip, "forget": h_forget}
+
+
+def host_dispatch(wd, verb, jid, args):
+    """One JSON-able document per call; the same function serves a local host in-process and an
+    ssh host through `_host`."""
+    try:
+        if verb not in HOST_VERBS or not (jid == "-" or JOBID.match(jid)) or not all(SMALLARG.match(a) for a in args):
+            raise HostError("malformed host call: %s %s" % (verb, jid))
+        if verb not in ("hello", "ps") and jid == "-":
+            raise HostError("host verb %s needs a job id" % verb)
+        for sub in ("jobs", "locks"):
+            os.makedirs(os.path.join(wd, sub), exist_ok=True)
+        return HOST_VERBS[verb](wd, jid, list(args))
+    except HostError as e:
+        return {"ok": False, "error": str(e)}
+    except Exception as e:
+        return {"ok": False, "error": "host side error in %s: %s: %s" % (verb, type(e).__name__, e)}
+
+
+# ── client: operator file ─────────────────────────────────────────────────────────────────
+def _unknown(where, key, legal, problems):
+    near = difflib.get_close_matches(key, legal, n=1, cutoff=0.5)
+    hint = 'nearest legal key: "%s"' % near[0] if near else "legal keys: " + ", ".join(legal)
+    problems.append('%s: unknown key "%s" (%s)' % (where, key, hint))
+
+
+def _pos_int(v):
+    return isinstance(v, int) and not isinstance(v, bool) and v > 0
+
+
+def load_operator():
+    """-> (hosts by label, problems, file exists). Strict here and nowhere else: a key simrun
+    ignored silently would be a setting the operator believes is in force."""
+    hosts, problems = {}, []
+    if not os.path.exists(SOFTWARE_FILE):
+        return hosts, problems, False
+    try:
+        with open(SOFTWARE_FILE, encoding="utf-8") as f:
+            doc = json.load(f)
+    except (OSError, ValueError) as e:
+        return hosts, ["the file is not readable JSON: %s" % e], True
+    if not isinstance(doc, dict):
+        return hosts, ['the top level must be an object with one key "hosts"'], True
+    for key in doc:
+        if key != "hosts":
+            _unknown("top level", key, ["hosts"], problems)
+    raw_hosts = doc.get("hosts", {})
+    if not isinstance(raw_hosts, dict):
+        return hosts, problems + ['"hosts" must be an object'], True
+    for label, raw in raw_hosts.items():
+        where = "hosts.%s" % label
+        if not LABEL.match(label):
+            problems.append("%s: a host label must match [a-z0-9][a-z0-9_-]{0,31}" % where)
+            continue
+        if not isinstance(raw, dict):
+            problems.append("%s: must be an object" % where)
+            continue
+        for key in raw:
+            if key not in HOST_KEYS:
+                _unknown(where, key, HOST_KEYS, problems)
+        h = {"label": label, "transport": raw.get("transport"), "os": raw.get("os", "posix"), "ssh": raw.get("ssh"),
+             "workdir": raw.get("workdir"), "software": {}}
+        if h["transport"] not in ("local", "ssh"):
+            problems.append('%s: "transport" must be "local" or "ssh"' % where)
+        if h["os"] not in ("posix", "windows"):
+            problems.append('%s: "os" must be "posix" or "windows"' % where)
+        if h["transport"] == "ssh" or h["ssh"] is not None:
+            if not isinstance(h["ssh"], str) or not SSHTARGET.match(h["ssh"]) or h["ssh"].startswith("-"):
+                problems.append('%s: "ssh" must be an ssh config alias or user@host made of [A-Za-z0-9_.@:-] and not start with "-" (keys and options belong in ~/.ssh/config)' % where)
+        python = raw.get("python", "py -3" if h["os"] == "windows" else "python3")
+        h["python"] = python.split() if isinstance(python, str) else []
+        if not h["python"] or not all(PATHTOK.match(tok) for tok in h["python"]):
+            problems.append('%s: "python" must be space-separated tokens of [A-Za-z0-9_.:/\\-] (no quotes, no shell characters): it is typed on the remote command line' % where)
+        if h["workdir"] is None and h["transport"] == "ssh":
+            problems.append('%s: "workdir" is required for an ssh host (an absolute directory on that host, created by the operator)' % where)
+        elif isinstance(h["workdir"], str) and "\\" in h["workdir"]:
+            # Uploads kept the backslash and went to the right place; every download (results, fetch)
+            # then asked the host for "C:luxas/jobs/...", so doctor failed at its first pull.
+            problems.append('%s: "workdir" must use forward slashes (C:/luxas): scp drops a backslash from a path it downloads' % where)
+        elif h["workdir"] is not None and not (isinstance(h["workdir"], str) and PATHTOK.match(h["workdir"])
+                                               and re.match(r"(/|[A-Za-z]:/)", h["workdir"])):
+            problems.append('%s: "workdir" must be an absolute path made of [A-Za-z0-9_.:/-] (no spaces): it is typed on the remote command line' % where)
+        software = raw.get("software", {})
+        if not isinstance(software, dict):
+            problems.append('%s: "software" must be an object' % where)
+            software = {}
+        for sid, entry in software.items():
+            sw = "%s.software.%s" % (where, sid)
+            if not LABEL.match(sid):
+                problems.append("%s: a software id must match [a-z0-9][a-z0-9_-]{0,31}" % sw)
+                continue
+            if not isinstance(entry, dict):
+                problems.append("%s: must be an object" % sw)
+                continue
+            for key in entry:
+                if key not in SW_KEYS:
+                    _unknown(sw, key, SW_KEYS, problems)
+            launchers = entry.get("launchers")
+            if not isinstance(launchers, dict) or not launchers:
+                problems.append('%s: "launchers" is required: at least one "<name>": "<absolute path or bare command on that host>"' % sw)
+                launchers = {}
+            for name, path in launchers.items():
+                if not LAUNCHER.match(name):
+                    problems.append('%s: launcher name "%s" must match [A-Za-z0-9_.-]{1,48}' % (sw, name))
+                if not isinstance(path, str) or not path.strip():
+                    problems.append('%s: launcher "%s" must be a non-empty path or command' % (sw, name))
+            check = entry.get("check")
+            if check is not None:
+                if not isinstance(check, list) or not check or not all(isinstance(c, str) and c for c in check):
+                    problems.append('%s: "check" must be a non-empty list of strings' % sw)
+                    check = None
+                elif check[0] not in launchers:
+                    problems.append('%s: "check" must start with a declared launcher name (%s)' % (sw, ", ".join(sorted(launchers)) or "none declared"))
+                if not isinstance(entry.get("expect"), str) or not entry.get("expect"):
+                    problems.append('%s: "expect" is required with "check": a command that only exits 0 proves nothing about the licence' % sw)
+            for key in ("check_timeout_s", "seats"):
+                if key in entry and not _pos_int(entry[key]):
+                    problems.append('%s: "%s" must be a positive integer' % (sw, key))
+            mm = entry.get("max_minutes", 30)
+            if isinstance(mm, bool) or not isinstance(mm, (int, float)) or mm <= 0:
+                problems.append('%s: "max_minutes" must be a positive number' % sw)
+                mm = 30
+            pats = entry.get("fail_patterns", [])
+            if not isinstance(pats, list) or not all(isinstance(p, str) and p for p in pats):
+                problems.append('%s: "fail_patterns" must be a list of non-empty strings' % sw)
+                pats = []
+            if h["os"] == "windows" and any(ord(c) > 126 for pat in pats for c in pat):
+                problems.append('%s: "fail_patterns" on a Windows host must be plain ASCII: the log is in the machine\'s code page there, and a pattern in other characters would never match' % sw)
+            if not isinstance(entry.get("desktop", False), bool):
+                problems.append('%s: "desktop" must be true or false' % sw)
+            h["software"][sid] = {"launchers": {k: v for k, v in launchers.items() if isinstance(v, str)}, "check": check,
+                                  "expect": entry.get("expect"), "check_timeout_s": entry.get("check_timeout_s", 120) if _pos_int(entry.get("check_timeout_s", 120)) else 120,
+                                  "seats": entry.get("seats") if _pos_int(entry.get("seats")) else None, "max_minutes": mm,
+                                  "fail_patterns": pats, "desktop": entry.get("desktop") is True}
+        hosts[label] = h
+    return hosts, problems, True
+
+
+def operator_hosts():
+    hosts, problems, _ = load_operator()
+    if problems:
+        raise Refuse("the operator file %s has %d problem(s); no job runs until the operator fixes them:\n%s"
+                     % (SOFTWARE_FILE, len(problems), "\n".join("  " + p for p in problems)))
+    return hosts
+
+
+def workdir_of(host):
+    return host["workdir"] or os.path.join(STATE_DIR, "hosts", host["label"])
+
+
+def host_print(host):
+    """What a doctor pass was made against: the first 16 hex of the sha256 of transport, ssh,
+    os, python (its tokens joined by one space) and workdir, joined by newlines. A label
+    re-pointed at another machine, another os or another Python is a host doctor never touched.
+    The rule is in the specification (section 1) so that a second reader can compute it."""
+    def text(v):       # an entry with a problem may hold a number or an object here; `hosts` still has to print it
+        return v if isinstance(v, str) else ""
+    fields = [text(host.get("transport")), text(host.get("ssh")), text(host.get("os")), " ".join(host.get("python") or []), text(host.get("workdir"))]
+    return hashlib.sha256("\n".join(fields).encode("utf-8")).hexdigest()[:16]
+
+
+def doctor_entry(host):
+    book = read_json(os.path.join(STATE_DIR, "doctor.json"))
+    ent = book.get(host["label"]) if isinstance(book, dict) else None
+    return ent if isinstance(ent, dict) else {}
+
+
+def doctor_state(host):
+    if host.get("transport") != "ssh":
+        return "n/a"
+    ent = doctor_entry(host)
+    if ent.get("protocol") != PROTOCOL or ent.get("host") != host_print(host):
+        return "never"
+    return "passed" if ent.get("ok") is True else "failed"
+
+
+def require_doctor(host, sw_id=None):
+    """A pass covers the host entry it was made against and the software whose check it ran.
+    A check added (or first made to pass) after that run has proven nothing yet."""
+    state = doctor_state(host)
+    if state not in ("n/a", "passed"):
+        raise Refuse("host \"%s\" has not passed 'simrun doctor %s' yet; jobs are refused until it has" % (host["label"], host["label"]))
+    if state == "passed" and sw_id and host["software"][sw_id]["check"]:
+        # Read here and not above: a local host needs no record, and a doctor.json that could not be opened ended its jobs.
+        checked = doctor_entry(host).get("checked")     # a list, or it proves nothing: a number ended `hosts` in a traceback, "solver-old" checked "solver"
+        if sw_id not in (checked if isinstance(checked, list) else []):
+            raise Refuse("software \"%s\" on host \"%s\" declares a check that the last 'simrun doctor %s' did not run; run doctor again before using it"
+                         % (sw_id, host["label"], host["label"]))
+
+
+def require_known(host):
+    """For wait, status, log, fetch, cancel and ps: they reach jobs that were accepted earlier,
+    under a pass of this host entry. They are refused only when no record exists for the entry
+    as it is now (none, another protocol, another fingerprint). ok:false for this entry is a
+    doctor that is running or one that failed, and neither may hide a job that is on the host
+    and holds a licence seat: with require_doctor here, a doctor run made every wait and cancel
+    exit 4, and one that failed because that job held the seat its check needed could not pass
+    until the job had ended on its own."""
+    if doctor_state(host) == "never":
+        raise Refuse("host \"%s\" has not passed 'simrun doctor %s' yet; jobs are refused until it has" % (host["label"], host["label"]))
+
+
+def would_run(host, sw_id):
+    """Would a job of this software be accepted on this host now, as far as the host entry and
+    its doctor record decide? Printed by `hosts --json` as "runs". Reader: scripts/smoke_sim_wiring.mts,
+    which holds src/software.ts to it: the line an agent is given says RUNS ON exactly when this is true."""
+    try:
+        require_doctor(host, sw_id)
+    except Refuse:
+        return False
+    return not host["software"][sw_id]["desktop"]
+
+
+# ── client: transports ────────────────────────────────────────────────────────────────────
+def _one_line(data):
+    lines = [l.strip() for l in data.decode("utf-8", "replace").splitlines() if l.strip()]
+    return lines[-1][:240] if lines else "no message"
+
+
+def ssh_call(host, verb, jid="-", args=(), timeout=60):
+    """The one remote command line. Every word after the target is from a safe charset, so
+    neither cmd.exe nor PowerShell nor sh has anything to reinterpret; data travels in files."""
+    words = host["python"] + (WIN_PY_FLAGS if host["os"] == "windows" else []) + \
+        [host["workdir"].rstrip("/\\") + "/.simrun/" + sha12() + "/simrun", "_host", verb, jid] + [str(a) for a in args]
+    if not all(PATHTOK.match(w) for w in words) or not all(SMALLARG.match(w) for w in words[words.index("_host"):]):
+        raise Refuse("internal: a word of the remote command line is outside the safe charset: %r" % (words,))
+    # ForwardAgent=no here and not in a config file: ssh takes the first value it obtains, and the
+    # command line comes first. The machine that drives this may hold keys to other servers, and
+    # scripts written by an agent run on the host as the logged-on account.
+    argv = SSH + ["-T", "-o", "BatchMode=yes", "-o", "ForwardAgent=no", "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=15",
+                  "-o", "ServerAliveCountMax=2", "--", host["ssh"]] + words
+    try:
+        r = subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise Transport('ssh to host "%s" did not answer within %d s' % (host["label"], timeout))
+    except OSError as e:
+        raise Transport('ssh could not be started for host "%s" (%s)' % (host["label"], e))
+    doc = None
+    for line in reversed(r.stdout.decode("utf-8", "replace").splitlines()):    # a login script may print before us
+        if line.startswith("{"):
+            try:
+                doc = json.loads(line)
+            except ValueError:
+                doc = None
+            break
+    if r.returncode == 255 or not isinstance(doc, dict):
+        raise Transport('ssh to host "%s" failed (exit %d: %s)' % (host["label"], r.returncode, _one_line(r.stderr or r.stdout)), r.returncode)
+    return doc
+
+
+def scp(host, sources, dest, recursive=False):
+    argv = SCP + ["-q", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10"] + (["-r"] if recursive else []) + ["--"] + sources + [dest]
+    try:
+        r = subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=900)
+    except subprocess.TimeoutExpired:
+        raise Transport('scp with host "%s" did not finish within 900 s' % host["label"])
+    except OSError as e:
+        raise Transport('scp could not be started for host "%s" (%s)' % (host["label"], e))
+    if r.returncode != 0:
+        raise Transport('scp with host "%s" failed (exit %d: %s)' % (host["label"], r.returncode, _one_line(r.stderr)), r.returncode)
+
+
+def remote(host, rel):
+    return "%s:%s/%s" % (host["ssh"], host["workdir"].rstrip("/\\"), rel)
+
+
+def call(host, verb, jid="-", args=(), timeout=60):
+    if host["transport"] == "local":
+        doc = host_dispatch(workdir_of(host), verb, jid, [str(a) for a in args])
+    else:
+        try:
+            doc = ssh_call(host, verb, jid, args, timeout)
+        except Transport as e:
+            # ssh itself fails with 255. Any other code is the remote command's, and the usual one
+            # is "no such file": this client was edited after the job started (a pull, a fix), so
+            # its <sha12>/ is not on the host. Only start and doctor installed it; every wait,
+            # status and cancel of a running job answered exit 5 and blamed ssh. `hello` is the
+            # call ensure_host_copy itself makes, so it is not retried here.
+            if verb == "hello" or e.rc in (None, 255):
+                raise
+            ensure_host_copy(host)
+            doc = ssh_call(host, verb, jid, args, timeout)
+    if not doc.get("ok"):
+        raise Refuse(doc.get("error") or "the host side refused %s" % verb)
+    return doc
+
+
+def ensure_host_copy(host):
+    """The host part lives at <workdir>/.simrun/<sha12>/simrun and is never replaced: a new
+    version gets a new directory, so a supervisor that is running keeps the code it started with."""
+    if host["transport"] == "local":
+        return call(host, "hello")
+    try:
+        return call(host, "hello")
+    except Transport as e:
+        if e.rc in (None, 255):      # unreachable, not "no such file"
+            raise
+    stage = tempfile.mkdtemp(prefix="simrun-stage-")
+    try:
+        os.makedirs(os.path.join(stage, ".simrun", sha12()))
+        shutil.copyfile(SELF, os.path.join(stage, ".simrun", sha12(), "simrun"))
+        try:
+            # Copying the staged ".simrun" into the workdir means the same whether or not the
+            # host already has one: only <sha12>/ is new, other versions are not touched.
+            scp(host, [os.path.join(stage, ".simrun")], remote(host, ""), recursive=True)
+        except Transport as e:
+            raise Transport('%s; the host part could not be copied into the workdir of host "%s": the operator creates that directory once and it must be writable' % (e, host["label"]), e.rc)
+    finally:
+        shutil.rmtree(stage, ignore_errors=True)
+    try:
+        return call(host, "hello")
+    except Transport as e:
+        raise Transport('%s; the host part is in place but did not answer: check "python" for host "%s" in %s' % (e, host["label"], SOFTWARE_FILE), e.rc)
+
+
+# ── client: jobs ──────────────────────────────────────────────────────────────────────────
+def check_job_dir(dir_arg):
+    d = os.path.abspath(dir_arg)
+    if not os.path.isdir(d):
+        raise Refuse("%s is not a directory; a job is a directory you prepared with the job's input files" % d)
+    real, home = os.path.realpath(d), os.path.realpath(os.path.expanduser("~"))
+    if os.path.commonpath([real, home]) == real:
+        raise Refuse("%s is the home directory or contains it; a job directory holds one job's files and nothing else" % d)
+    # Compared without letter case: realpath keeps the case that was typed, and on this Mac's disk
+    # ~/.SSH is ~/.ssh, so the keys directory typed that way was accepted and sent to the host.
+    parts = [p.casefold() for p in real.split(os.sep)]
+    private = sorted(set(parts) & set(PRIVATE_DIRS))
+    if private == [".sisyphus"]:
+        # A bench run is a project like any other and its directory is ~/.sisyphus/bench-runs/<run>/
+        # (scripts/bench_run.mts). A directory inside one holds that project's files and none of
+        # Luxas's own state; refusing it refused every job of every bench run.
+        at = parts.index(".sisyphus")
+        if parts.count(".sisyphus") == 1 and parts[at + 1:at + 2] == ["bench-runs"] and len(parts) > at + 3:
+            private = []
+    if private:
+        raise Refuse("%s is inside %s; a job directory is sent whole to the host, so it cannot be one of %s or lie in one"
+                     % (d, private[0], ", ".join(PRIVATE_DIRS)))
+    for mark in PROJECT_MARKS:
+        if os.path.lexists(os.path.join(d, mark)):
+            raise Refuse("%s contains %s: that is a project root, not a job directory; prepare a directory that holds only this job's files" % (d, mark))
+    links = walk(d)[2]
+    if links:
+        raise Refuse("%s contains a symlink (%s); symlinks are refused, not followed: copy the file in" % (d, links[0]))
+    return d
+
+
+def job_file(d):
+    return os.path.join(d, ".simrun", "job.json")
+
+
+def take_claim(d, name):
+    """-> None when this process now holds <dir>/.simrun/<name>, else the pid written by the
+    call that does (-1 when it has not written one yet). job.json is read and rewritten seconds
+    apart (an upload sits between), so two calls in one directory both passed "is a job active"
+    and both started a program; two waits both pulled into the same files.
+    A claim left by a killed call does not block the directory: it is removed when its pid is
+    gone, or when it is older than any start or pull can take (the number is somebody else's)."""
+    path = os.path.join(d, ".simrun", name)
+    for attempt in (0, 1):
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            try:
+                with open(path) as f:
+                    pid = int(f.read().strip() or 0)
+                age = time.time() - os.stat(path).st_mtime
+            except (OSError, ValueError):
+                pid, age = 0, 0
+            if attempt == 0 and ((pid and not alive(pid)) or (not pid and age > 10) or age > 3600):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+                continue
+            return pid or -1
+        os.write(fd, str(os.getpid()).encode("ascii"))
+        os.close(fd)
+        return None
+
+
+def drop_claim(d, name):
+    try:
+        os.remove(os.path.join(d, ".simrun", name))
+    except OSError:
+        pass
+
+
+def load_job(dir_arg):
+    d = os.path.abspath(dir_arg)
+    job = read_json(job_file(d))
+    if not job:
+        raise Refuse("no simrun job was started in %s" % d)
+    if not isinstance(job, dict) or not all(isinstance(job.get(k), str) for k in ("job", "host", "software")) or not JOBID.match(job["job"]):
+        # The id is typed on the remote command line and inside scp's remote path (fetch put it
+        # there before any other check saw it), so it is checked here, where it is read.
+        raise Refuse("%s does not hold a job record simrun wrote (its job id is not one); nothing is sent to a host from it" % job_file(d))
+    return d, job
+
+
+def host_of(job):
+    host = operator_hosts().get(job["host"])
+    if not host:
+        raise Refuse('job %s ran on host "%s", which is no longer in %s' % (job["job"], job["host"], SOFTWARE_FILE))
+    require_known(host)
+    return host
+
+
+def start_job(dir_arg, host, sw_id, entry, argv, names, max_s, seat_wait_s):
+    """-> (directory, job record, first status). Raises before anything exists on the host
+    unless the last step (the remote start) is the one that fails. The whole of it runs under
+    the directory's "starting" claim: "one active job per directory" was a read and, an upload
+    later, a write, and a second start typed in between ran a second program."""
+    d = check_job_dir(dir_arg)
+    os.makedirs(os.path.join(d, ".simrun", "history"), exist_ok=True)
+    holder = take_claim(d, "starting")
+    if holder:
+        raise Refuse("another simrun call (%s) is starting a job in %s (one job per directory); when it has returned: simrun status %s"
+                     % ("pid %d" % holder if holder > 0 else "begun this moment", d, shlex.quote(d)))
+    try:
+        return _start_job(d, host, sw_id, entry, argv, names, max_s, seat_wait_s)
+    finally:
+        drop_claim(d, "starting")
+
+
+def _start_job(d, host, sw_id, entry, argv, names, max_s, seat_wait_s):
+    prev = read_json(job_file(d))
+    if prev and not prev.get("final"):
+        raise Refuse("job %s is still active in %s (one job per directory); run 'simrun wait %s' or 'simrun cancel %s' first"
+                     % (prev["job"], d, shlex.quote(d), shlex.quote(d)))
+    jid = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-" + uuid.uuid4().hex[:8]
+    req = {"job": jid, "software": sw_id, "argv": argv, "command": names, "max_s": max_s, "seat_wait_s": seat_wait_s,
+           "seats": entry.get("seats"), "fail_patterns": entry.get("fail_patterns") or [], "beat_s": BEAT_S, "stale_s": STALE_S}
+    job = {"job": jid, "host": host["label"], "software": sw_id, "command": names, "created": utc(), "final": None}
+    if host["transport"] == "local":
+        wd = workdir_of(host)
+        os.makedirs(os.path.join(wd, "jobs"), exist_ok=True)
+        write_atomic(jp(wd, jid, ".req.json"), dict(req, cwd=d))
+    else:
+        files, dirs, _ = walk(d)
+        if host["os"] == "windows":
+            odd = sorted(f for f in dirs + files if any(WIN_BAD.search(part) for part in f.split("/")))
+            if odd:
+                raise Refuse('%d name(s) in %s cannot exist on the Windows host "%s" and would be changed or lost there without an error: %s; rename them'
+                             % (len(odd), d, host["label"], ", ".join(odd[:5])))
+            twins = case_twins(dirs + files)
+            if twins:
+                raise Refuse('%s and %s in %s differ only by letter case, and the Windows host "%s" holds one name for both: one would replace the other there without an error; rename one'
+                             % (twins[0], twins[1], d, host["label"]))
+        sizes = sorted(((os.path.getsize(os.path.join(d, f)), f) for f in files), reverse=True)
+        if sum(s for s, _ in sizes) > MAX_PUSH_BYTES:
+            raise Refuse("%s holds %d MB; more than 200 MB is not sent to a host. Largest files: %s"
+                         % (d, sum(s for s, _ in sizes) >> 20, ", ".join("%s (%d MB)" % (f, s >> 20) for s, f in sizes[:5])))
+        ensure_host_copy(host)
+        zpath = os.path.join(d, ".simrun", "in.zip")
+        try:
+            make_zip(d, zpath, files, dirs)
+        except OSError as e:        # a file this user cannot read: nothing was started, so exit 4 and no half-made archive
+            if os.path.exists(zpath + ".part"):
+                os.remove(zpath + ".part")
+            raise Refuse("%s could not be packed for the host: %s" % (d, e))
+        try:
+            req_path = os.path.join(d, ".simrun", "req.json")
+            write_atomic(req_path, dict(req, zip_sha256=sha256_file(zpath)))
+            scp(host, [zpath], remote(host, "jobs/%s.in.zip" % jid))
+            scp(host, [req_path], remote(host, "jobs/%s.req.json" % jid))
+        finally:
+            os.remove(zpath)         # up to 200 MB; the host has it or the start failed
+    write_atomic(job_file(d), job)       # before the remote start: if that call is cut off, status can still ask the host
+    try:
+        st = call(host, "start", jid, timeout=300)
+    except Refuse:
+        os.remove(job_file(d))
+        raise
+    return d, job, st
+
+
+def claim_within(d, name, patience):
+    """Take the claim, waiting for it at most `patience` seconds (None: as long as it takes).
+    -> None when this process holds it now, else the pid of the call that still does (-1: unknown)."""
+    end = None if patience is None else time.time() + patience
+    while True:
+        holder = take_claim(d, name)
+        if holder is None or (end is not None and time.time() >= end):
+            return holder
+        time.sleep(0.3)
+
+
+def finalize(d, job, host, st, pull_limit, patience=None):
+    """The job has ended: bring back what it made, write simrun.json, mark the directory free.
+    Until this has completed the job stays active, so a repeated `wait` pulls again.
+    One call at a time, under the directory's "collecting" claim: two waits on one ended job
+    packed into the same archive on the host and unpacked into the same files here, and one of
+    them then blamed scp. The second now lets the first finish and reports what it recorded.
+    It does not wait for the claim longer than `patience` seconds: a fetch holds the same claim
+    for its whole transfer, and a run or wait behind one printed nothing until it was done,
+    past its own --timeout and past the 90 s at which Luxas hands a call back. When the time is
+    up the host's view comes back marked "uncollected", with who holds the directory."""
+    holder = claim_within(d, "collecting", patience)
+    if holder:
+        # Not collected by this call. The records may settle it all the same: the call that holds the
+        # claim, or one before it, collected this job, and the directory may be on its next job by now.
+        # Without this the note below said "not collected yet" of a job collected long ago, and its
+        # next= pointed the caller at the wait of another job.
+        view = recorded(d, job, st)
+        if view is not None:
+            return view
+        return dict(st, uncollected=True, notes=["job %s %s and is not collected into %s yet (no simrun.json for it): another simrun call (%s) is collecting or fetching in this directory"
+                                                 % (job["job"], stands(st), d, "pid %d" % holder if holder > 0 else "begun this moment")])
+    try:
+        view = recorded(d, job, st)
+        return view if view is not None else _finalize(d, job, host, st, pull_limit)
+    finally:
+        drop_claim(d, "collecting")
+
+
+def stands(st):
+    """How a job that is not live stands on the host, for the sentences that send the caller to
+    `simrun wait`. Not "has ended" for all of them: a job whose supervisor is gone was said to have
+    ended while the program it started could still be running and holding its licence seat."""
+    return ("is no longer watched on the host (the program it started may still be running there)" if st.get("reason") in UNWATCHED
+            else "is lost on the host" if st["state"] == "lost" else "has ended on the host")
+
+
+def recorded(d, job, st):
+    """What the directory's own records already say of this job. It only reads (both files are
+    written by rename), so it is asked under the claim and also when another call keeps the claim.
+    -> the view to report, or None when the job is still this directory's to collect."""
+    done = read_json(job_file(d))
+    done = done if isinstance(done, dict) else {}
+    if done.get("job") == job["job"]:
+        if not done.get("final"):
+            return None                 # an interrupted collection is redone
+        job["final"] = done["final"]
+        return job["final"]
+    # job.json no longer names this job. A wait holds no claim while it is inside its host
+    # wait, so `cancel` and `start` typed after it collected this job and recorded the next
+    # one; the wait then came back, wrote this job's record over the next job's, and the
+    # directory accepted a third start beside a running job (over ssh it also pulled this
+    # job's files again, over what the caller had edited since). So: when the directory names
+    # another job, or holds no job record while this job is already in the history, nothing is
+    # written and nothing is pulled; the job is reported from its history record.
+    hist_path = os.path.join(d, ".simrun", "history", job["job"] + ".json")
+    hist, now = read_json(hist_path), done.get("job")
+    if not isinstance(hist, dict):
+        if not now:
+            return None                 # job.json was removed by hand and nobody collected this job
+        hist = {}
+    note = "job %s %s; %s; this call wrote nothing and pulled nothing" % (
+        job["job"],
+        "was collected by another call and its record is %s" % hist_path if hist else "was never collected (its record was removed while it ran)",
+        "the job of %s is now %s" % (d, now) if now else "%s holds no job record now" % d)
+    return {"state": hist.get("state", st["state"]), "exit": hist.get("exit", st.get("exit")), "reason": hist.get("reason", st.get("reason")),
+            "elapsed": st.get("elapsed", 0), "tail": st.get("tail") or [], "notes": [note]}
+
+
+def _finalize(d, job, host, st, pull_limit):
+    jid, ok = job["job"], st["state"] == "exited" and st.get("exit") == 0
+    outputs, left, notes = [], [], []
+    if host["transport"] == "local":
+        if ok:
+            delta = call(host, "delta", jid)
+            outputs = [dict(f, sha256=sha256_file(os.path.join(d, f["path"]))) for f in delta["changed"]]
+            if delta["links"]:
+                notes.append("%d symlink(s) the job created are not listed as outputs: %s" % (len(delta["links"]), ", ".join(delta["links"][:5])))
+            if delta.get("touched"):
+                notes.append("%d file(s) the job wrote were changed or removed after it ended and are not listed as outputs: %s"
+                             % (len(delta["touched"]), ", ".join(f["path"] for f in delta["touched"][:5])))
+    elif st.get("reason") != "unknown_on_host":
+        # A job that did not end well brings nothing back: its files stay on the host, listed, for `fetch`.
+        pk = call(host, "pack", jid, [pull_limit if ok else 0], timeout=600)
+        left = pk["left"]
+        if pk["links"]:
+            notes.append("%d symlink(s) the job created were left on the host: %s" % (len(pk["links"]), ", ".join(pk["links"][:5])))
+        if pk["included"]:
+            part = os.path.join(d, ".simrun", "out.zip.part")
+            scp(host, [remote(host, "jobs/%s.out.zip" % jid)], part)
+            if sha256_file(part) != pk["sha256"]:
+                raise Transport('the results archive from host "%s" arrived damaged (sha256 differs); scp is the suspect, the files are still on the host' % host["label"])
+            zpath = os.path.join(d, ".simrun", "out.zip")
+            os.replace(part, zpath)
+            try:
+                notes.extend(safe_unpack(zpath, d))
+            except ValueError as e:
+                raise Refuse('the results archive from host "%s" was refused: %s' % (host["label"], e))
+            os.remove(zpath)
+            for f in pk["included"]:
+                if sha256_file(os.path.join(d, f["path"])) != f["sha256"]:
+                    raise Transport('%s differs from the copy on host "%s" after unpacking; scp is the suspect' % (f["path"], host["label"]))
+            outputs = pk["included"]
+    if st.get("left_running"):
+        notes.append('the launcher of job %s exited while processes it started were still running on host "%s": files they write from now on are not in simrun.json, and they may still hold the licence seat this job has released'
+                     % (jid, job["host"]))
+    if st.get("reason") in UNWATCHED:
+        notes.append('the supervisor of job %s is gone or does not answer, so nothing watches the program it started (pid %s when last seen): it may still be running on host "%s" and holding a licence seat; look on the host'
+                     % (jid, st.get("pid") or "unknown", job["host"]))
+    record = {"job": jid, "host": job["host"], "software": job["software"], "command": job["command"],
+              "started": utc(st.get("started") or st.get("created")), "ended": utc(st.get("ended")), "state": st["state"],
+              "exit": st.get("exit"), "reason": st.get("reason"), "outputs": sorted(outputs, key=lambda f: f["path"]),
+              "left_on_host": sorted(left, key=lambda f: f["path"])}
+    write_atomic(os.path.join(d, ".simrun", "history", jid + ".json"), record)
+    write_atomic(os.path.join(d, "simrun.json"), record)
+    job["final"] = {"state": st["state"], "exit": st.get("exit"), "reason": st.get("reason"), "elapsed": st.get("elapsed", 0),
+                    "tail": st.get("tail") or [], "notes": notes, "outputs": len(outputs), "left": len(left)}
+    write_atomic(job_file(d), job)
+    return job["final"]
+
+
+def state_line(job, v, next_dir=None):
+    reason = v.get("reason")
+    if v["state"] == "waiting_seat" and (v.get("holder") or {}).get("job"):
+        reason = "seat_held_by:" + v["holder"]["job"]
+    line = "SIMRUN state=%s exit=%s host=%s software=%s job=%s elapsed=%ds" % (
+        v["state"], "-" if v.get("exit") is None else v["exit"], job["host"], job["software"], job["job"], int(v.get("elapsed") or 0))
+    if reason:
+        line += " reason=" + (reason if SMALLARG.match(reason) else json.dumps(reason, ensure_ascii=False))
+    if next_dir:
+        line += ' next="simrun wait %s"' % shlex.quote(next_dir)
+    return line
+
+
+def report(d, job, v, timed_out=False):
+    """Log tail, notes, then the state line last. Log lines are echoed after "| " so a job can
+    neither forge a SIMRUN line nor start an output line with a word a gate runner reads as a verdict."""
+    if v["state"] not in LIVE:
+        for line in v.get("tail") or []:
+            print("| " + line)
+        for note in v.get("notes") or []:
+            print("simrun: " + note)
+        if "outputs" in v:
+            print("simrun: %d file(s) the job created or changed are listed in %s%s" % (
+                v["outputs"], os.path.join(d, "simrun.json"),
+                "; %d file(s) stayed on the host (left_on_host): simrun fetch %s <path>" % (v["left"], shlex.quote(d)) if v["left"] else ""))
+    print(state_line(job, v, d if timed_out else None))
+    if timed_out:       # still live on the host, or ended and not collected here: either way `simrun wait` is next
+        return 3
+    if v["state"] in LIVE:
+        return 0
+    return 0 if v["state"] == "exited" and v.get("exit") == 0 else 1
+
+
+def follow(d, job, host, timeout, pull_limit):
+    """One wait on the host, then the pull. -> (the view to report, is `simrun wait` to be called again?).
+    The claim on the directory gets what is left of the caller's timeout."""
+    if job.get("final"):
+        return job["final"], False
+    began = time.time()
+    v = call(host, "wait", job["job"], ["%.1f" % timeout], timeout=timeout + 30)
+    if v["state"] in LIVE:
+        return v, True
+    v = finalize(d, job, host, v, pull_limit, max(0.0, timeout - (time.time() - began)))
+    return v, bool(v.get("uncollected"))
+
+
+# ── client: verbs ─────────────────────────────────────────────────────────────────────────
+def resolve(opts, command):
+    hosts = operator_hosts()
+    sw_id = opts.get("--software")
+    if not sw_id:
+        raise Refuse("--software <id> is required; 'simrun hosts' lists what is registered")
+    have = sorted(label for label, h in hosts.items() if sw_id in h["software"])
+    if not have:
+        raise Refuse('software "%s" is not available: no host in %s provides it' % (sw_id, SOFTWARE_FILE))
+    label = opts.get("--host")
+    if label is None:
+        if len(have) > 1:
+            raise Refuse('software "%s" is on more than one host; choose one with --host (candidates: %s)' % (sw_id, ", ".join(have)))
+        label = have[0]
+    elif label not in hosts:
+        raise Refuse('host "%s" is not registered in %s (hosts: %s)' % (label, SOFTWARE_FILE, ", ".join(sorted(hosts)) or "none"))
+    elif label not in have:
+        raise Refuse('host "%s" does not provide software "%s" (hosts that do: %s)' % (label, sw_id, ", ".join(have)))
+    host = hosts[label]
+    entry = host["software"][sw_id]
+    # The desktop refusal comes first, whatever the doctor record says: doctor never runs a
+    # desktop entry's check, so "its check was not run; run doctor again" was an instruction
+    # nobody could meet. When a desktop worker exists and this refusal goes, require_doctor
+    # applies to such an entry again as it stands, check included.
+    if entry["desktop"]:
+        raise Refuse('software "%s" on host "%s" needs the logged-on desktop session; this build has no desktop worker, so it cannot be started' % (sw_id, label))
+    require_doctor(host, sw_id)
+    legal = ", ".join(sorted(entry["launchers"]))
+    if not command or command[0] not in entry["launchers"]:
+        raise Refuse('the command after "--" must start with a launcher name declared for software "%s" on host "%s" (legal: %s); got %s. A path or a shell line is never accepted'
+                     % (sw_id, label, legal, '"%s"' % command[0] if command else "nothing"))
+    max_m = float(entry["max_minutes"])
+    if "--max-minutes" in opts:
+        if opts["--max-minutes"] > max_m:
+            print('simrun: --max-minutes %g is above the limit of %g the operator set for "%s"; using %g' % (opts["--max-minutes"], max_m, sw_id, max_m))
+        max_m = min(max_m, opts["--max-minutes"])
+    if max_m <= 0 or opts.get("--seat-wait-minutes", 10) <= 0:
+        raise Refuse("--max-minutes and --seat-wait-minutes must be positive")
+    argv = [entry["launchers"][command[0]]] + command[1:]
+    return host, sw_id, entry, argv, list(command), max_m * 60.0, float(opts.get("--seat-wait-minutes", 10)) * 60.0
+
+
+def cmd_start(pos, opts, command, and_wait):
+    if len(pos) != 1:
+        raise Refuse("give one job directory: simrun %s <dir> --software <id> -- <launcher> [args...]" % ("run" if and_wait else "start"))
+    host, sw_id, entry, argv, names, max_s, seat_wait_s = resolve(opts, command)
+    try:
+        d, job, st = start_job(pos[0], host, sw_id, entry, argv, names, max_s, seat_wait_s)
+    except Transport as e:
+        d = os.path.abspath(pos[0])
+        asked = read_json(job_file(d))       # written just before the remote start: only that call leaves it unfinished
+        if asked and not asked.get("final"):
+            raise Transport("%s; the start of job %s was cut off and it may be running on the host: simrun status %s" % (e, asked["job"], shlex.quote(d)), e.rc)
+        raise Transport("%s; nothing was started on the host" % e, e.rc)
+    if not and_wait:
+        print("simrun: job %s was started on host \"%s\" and this call returns now; the job keeps running: simrun wait %s" % (job["job"], host["label"], shlex.quote(d)))
+        return report(d, job, st)
+    try:
+        v, running = follow(d, job, host, opts.get("--timeout", float(WAIT_S)), int(opts.get("--pull-limit-mb", 200.0) * 1024 * 1024))
+    except Transport as e:
+        raise Transport("%s; job %s was started and may still be running on the host: simrun wait %s" % (e, job["job"], shlex.quote(d)), e.rc)
+    return report(d, job, v, running)
+
+
+def cmd_wait(pos, opts):
+    if len(pos) != 1:
+        raise Refuse("give the job directory: simrun wait <dir>")
+    d, job = load_job(pos[0])
+    if job.get("final"):
+        return report(d, job, job["final"])
+    try:
+        v, running = follow(d, job, host_of(job), opts.get("--timeout", float(WAIT_S)), int(opts.get("--pull-limit-mb", 200.0) * 1024 * 1024))
+    except Transport as e:
+        raise Transport("%s; job %s may still be running on the host: simrun wait %s" % (e, job["job"], shlex.quote(d)), e.rc)
+    return report(d, job, v, running)
+
+
+def cmd_status(pos):
+    if len(pos) != 1:
+        raise Refuse("give the job directory: simrun status <dir>")
+    d, job = load_job(pos[0])
+    if job.get("final"):
+        report(d, job, job["final"])
+        return 0
+    v = call(host_of(job), "status", job["job"])
+    for line in v.get("tail") or []:
+        print("| " + line)
+    if v["state"] not in LIVE:
+        print("simrun: job %s %s and is not collected into %s yet: simrun wait %s" % (job["job"], stands(v), d, shlex.quote(d)))
+    print(state_line(job, v))
+    return 0
+
+
+def cmd_log(pos, opts):
+    if len(pos) != 1:
+        raise Refuse("give the job directory: simrun log <dir> [--tail 100]")
+    d, job = load_job(pos[0])
+    for line in call(host_of(job), "log", job["job"], [int(opts.get("--tail", 100))])["lines"]:
+        print("| " + line)
+    return 0
+
+
+def cmd_fetch(pos):
+    if len(pos) < 2:
+        raise Refuse("give the job directory and at least one path from left_on_host: simrun fetch <dir> <relative path> [...]")
+    d, job = load_job(pos[0])
+    host, jid, paths = host_of(job), job["job"], pos[1:]
+    for p in paths:
+        if os.path.isabs(p) or ".." in p.replace("\\", "/").split("/"):
+            raise Refuse("%s is not a path relative to the job directory" % p)
+    if not job.get("final"):
+        raise Refuse("job %s has not been waited for yet; a file is fetched after the job ended: simrun wait %s" % (jid, shlex.quote(d)))
+    if host["transport"] == "local":
+        absent = [p for p in paths if not os.path.isfile(os.path.join(d, p))]
+        if absent:
+            raise Refuse("%s: no such file in %s (a local host runs the job in place, there is nothing to fetch)" % (", ".join(absent), d))
+        print("simrun: host \"%s\" is this machine; the job ran in %s and the file(s) are already there" % (host["label"], d))
+        return 0
+    # One transfer at a time in a directory, under the same claim as the collection: the request
+    # and the archive have one name each on both sides, so of two fetches typed at once one failed
+    # and the other reported the first one's file while its own never arrived.
+    while take_claim(d, "collecting"):
+        time.sleep(0.3)
+    said = []
+    try:
+        # The job was read before that wait, and the wait can be long (another fetch's whole transfer).
+        # Meanwhile the next job may have been started and collected here: the fetch then brought the
+        # earlier job's file over the newer job's result, under the newer job's record, and exited 0.
+        held = read_json(job_file(d))
+        held = held.get("job") if isinstance(held, dict) else None
+        if held != jid:
+            raise Refuse("job %s is no longer the job of %s (%s); nothing was fetched: fetch reaches the files of a directory's current job only"
+                         % (jid, d, "it holds job %s now" % held if isinstance(held, str) and JOBID.match(held) else "it holds no job record now"))
+        req_path = os.path.join(d, ".simrun", "fetch.json")
+        write_atomic(req_path, {"paths": paths})
+        scp(host, [req_path], remote(host, "jobs/%s.fetch.json" % jid))
+        fz = call(host, "fetchzip", jid, timeout=600)
+        if fz["files"]:
+            part = os.path.join(d, ".simrun", "fetch.zip.part")
+            scp(host, [remote(host, "jobs/%s.fetch.zip" % jid)], part)
+            if sha256_file(part) != fz["sha256"]:
+                raise Transport('the archive from host "%s" arrived damaged (sha256 differs); scp is the suspect, nothing was unpacked' % host["label"])
+            try:
+                said = safe_unpack(part, d)
+            except ValueError as e:
+                raise Refuse('the archive from host "%s" was refused: %s' % (host["label"], e))
+            finally:
+                os.remove(part)
+            record = read_json(os.path.join(d, "simrun.json")) or {}
+            # The record follows the file, but only for a job that ended well: `outputs` of any
+            # other job stays [], because its reader takes outputs as the products of a good run.
+            if record.get("job") == jid and record.get("state") == "exited" and record.get("exit") == 0:
+                got = {f["path"]: f for f in fz["files"]}
+                record["left_on_host"] = [f for f in record.get("left_on_host", []) if f["path"] not in got]
+                record["outputs"] = sorted([f for f in record.get("outputs", []) if f["path"] not in got] + list(got.values()), key=lambda f: f["path"])
+                write_atomic(os.path.join(d, ".simrun", "history", jid + ".json"), record)
+                write_atomic(os.path.join(d, "simrun.json"), record)
+    finally:
+        drop_claim(d, "collecting")
+    for f in fz["files"]:
+        print("simrun: fetched %s (%d bytes, sha256 %s)" % (f["path"], f["bytes"], f["sha256"]))
+    for note in said:
+        print("simrun: " + note)
+    if fz["missing"]:
+        print("simrun: not on the host under job %s: %s (jobs are kept %d days after they end)" % (jid, ", ".join(fz["missing"]), KEEP_DAYS))
+    return 1 if fz["missing"] else 0
+
+
+def cmd_cancel(pos, opts):
+    if "--host" in opts or "--job" in opts:
+        if pos or not ("--host" in opts and "--job" in opts) or not JOBID.match(opts["--job"]):
+            raise Refuse("use either  simrun cancel <dir>  or  simrun cancel --host <label> --job <id>  (the id as 'simrun ps' prints it)")
+        host = operator_hosts().get(opts["--host"])
+        if not host:
+            raise Refuse('host "%s" is not registered in %s' % (opts["--host"], SOFTWARE_FILE))
+        require_known(host)
+        v = call(host, "cancel", opts["--job"])
+        print('simrun: job %s on host "%s" is %s%s' % (opts["--job"], host["label"], v["state"], " (%s)" % v["reason"] if v.get("reason") else ""))
+        return 0
+    if len(pos) != 1:
+        raise Refuse("give the job directory: simrun cancel <dir>")
+    d, job = load_job(pos[0])
+    if job.get("final"):
+        print("simrun: job %s had already ended; nothing to cancel" % job["job"])
+        report(d, job, job["final"])
+        return 0
+    host = host_of(job)
+    v = call(host, "cancel", job["job"])
+    # cancel has no --timeout; the claim on the directory gets the default one (see finalize).
+    fin = finalize(d, job, host, v, 200 * 1024 * 1024, float(WAIT_S))
+    behind = bool(fin.get("uncollected"))
+    if v["state"] == "lost":
+        # Its supervisor is gone, so there was nobody to tell: the program may still be running.
+        # This used to read "had already ended on its own; its results are collected instead".
+        print("simrun: job %s is lost (%s): this cancel stopped nothing, and nothing is collected from a job that did not end well"
+              % (job["job"], v.get("reason") or "no reason on record"))
+    elif v["state"] != "cancelled":
+        # Results come back from a job that exited 0 and from no other (see _finalize): "collected" was said of a
+        # job that had exited 3, two lines above "0 file(s) ... are listed" and "2 file(s) stayed on the host".
+        well = v["state"] == "exited" and v.get("exit") == 0
+        print("simrun: job %s had already ended on its own (%s)%s" % (job["job"], v["state"], "" if behind
+              else "; its results are collected instead" if well else "; it is recorded instead, and nothing is collected from a job that did not end well"))
+    report(d, job, fin, behind)
+    return 0
+
+
+def cmd_ps(pos):
+    hosts = operator_hosts()
+    if len(pos) > 1 or (pos and pos[0] not in hosts):
+        raise Refuse('simrun ps [<host>]: "%s" is not a registered host (hosts: %s)' % (" ".join(pos), ", ".join(sorted(hosts)) or "none"))
+    rows, rc = [("host", "job", "software", "state", "age", "seat", "beat")], 0
+    for label in (pos or sorted(hosts)):
+        host = hosts[label]
+        if doctor_state(host) == "never":       # the same rule as require_known: a failed or running doctor does not hide the jobs on the host
+            print('simrun: host "%s" is not asked: it has not passed \'simrun doctor %s\'' % (label, label))
+            continue
+        try:
+            jobs = call(host, "ps")["jobs"]
+        except Transport as e:
+            print("simrun: %s" % e)
+            rc = 5
+            continue
+        for j in jobs:
+            live = j["state"] in LIVE       # an ended job holds no seat and waits for none, whatever its last status said
+            seat = j["seat"] or ("waits for %s (holding %ds)" % (j["holder"], j["holder_since"] or 0) if j["holder"] else "-")
+            rows.append((label, j["job"], j["software"] or "-", j["state"], "%ds" % j["age"], seat if live else "-",
+                         "%ds" % j["beat_age"] if live else "-"))
+    widths = [max(len(str(r[i])) for r in rows) for i in range(len(rows[0]))]
+    for r in rows:
+        print("  ".join(str(c).ljust(w) for c, w in zip(r, widths)).rstrip())
+    if len(rows) == 1:
+        print("simrun: no jobs on record (a job is forgotten %d days after it ends)" % KEEP_DAYS)
+    return rc
+
+
+def cmd_hosts(opts):
+    hosts, problems, exists = load_operator()
+    listing = []
+    for label in sorted(hosts):
+        h = hosts[label]
+        # "print" is what a doctor pass on this entry is recorded against (doctor.json "host"); "runs" is
+        # false for every software while the file has a problem, because then no job is accepted at all.
+        listing.append({"label": label, "transport": h["transport"], "os": h["os"], "doctor": doctor_state(h), "print": host_print(h),
+                        "software": [{"id": sid, "launchers": sorted(e["launchers"]), "seats": e["seats"], "max_minutes": e["max_minutes"],
+                                      "desktop": e["desktop"], "runs": not problems and would_run(h, sid)} for sid, e in sorted(h["software"].items())]})
+    if "--json" in opts:
+        print(json.dumps({"file": SOFTWARE_FILE, "exists": exists, "problems": problems, "hosts": listing}, indent=1))
+        return 4 if problems else 0
+    if not exists:
+        print("simrun: no operator file at %s, so no host and no software is registered" % SOFTWARE_FILE)
+    rows = [("host", "transport", "os", "doctor", "software (launchers)")]
+    for h in listing:
+        sw = "; ".join("%s%s%s%s (%s)" % (s["id"], " seats=%d" % s["seats"] if s["seats"] else "",
+                                          " desktop: cannot be started by this build" if s["desktop"] else "",
+                                          " check not run by the last doctor: run doctor again" if h["doctor"] == "passed" and not s["desktop"] and not s["runs"] and not problems else "",
+                                          ", ".join(s["launchers"]))
+                       for s in h["software"]) or "none"
+        rows.append((h["label"], str(h["transport"]), str(h["os"]), h["doctor"], sw))
+    if listing:
+        widths = [max(len(r[i]) for r in rows) for i in range(len(rows[0]))]
+        for r in rows:
+            print("  ".join(c.ljust(w) for c, w in zip(r, widths)).rstrip())
+    for p in problems:
+        print("problem: %s: %s" % (SOFTWARE_FILE, p))
+    return 4 if problems else 0
+
+
+# ── client: doctor ────────────────────────────────────────────────────────────────────────
+def cmd_doctor(pos):
+    """Prove one host end to end with jobs that need no simulator: the host's own Python. The
+    checks are the properties a first job would otherwise discover the expensive way."""
+    hosts = operator_hosts()
+    if len(pos) != 1 or pos[0] not in hosts:
+        raise Refuse('simrun doctor <host>: "%s" is not a registered host (hosts: %s)' % (" ".join(pos), ", ".join(sorted(hosts)) or "none"))
+    host = hosts[pos[0]]
+    label, bad, checked, scratch = host["label"], [], [], tempfile.mkdtemp(prefix="simrun-doctor-")
+    path = os.path.join(STATE_DIR, "doctor.json")
+    tok = "simrun-doctor-" + uuid.uuid4().hex[:10]
+    seat_sw = "doctor-" + uuid.uuid4().hex[:8]
+
+    def ok(msg):
+        print("ok " + msg)
+
+    def problem(msg):
+        bad.append(msg)
+        print("problem: " + msg)
+
+    def job(name, code, seats=None, entry=None, argv=None, sw="doctor", max_s=120.0, blob=0):
+        d = os.path.join(scratch, name)
+        os.makedirs(d)
+        if blob:
+            with open(os.path.join(d, "blob.bin"), "wb") as f:
+                f.write(os.urandom(blob))
+        e = entry or {"seats": seats, "fail_patterns": []}
+        d, rec, st = start_job(d, host, sw, e, argv or ["@python", "-c", code], ["python", "-c", "<doctor>"] if not argv else ["check"], max_s, 60.0)
+        return d, rec
+
+    def end(d, rec, timeout):
+        v, running = follow(d, rec, host, timeout, 16 * 1024 * 1024)
+        return dict(v, state="still " + v["state"]) if running else v
+
+    def checks():
+        if host["os"] == "windows":
+            print("note: the Windows branches of simrun (detached start, liveness, tree kill, boot time) have never run before this host; every check below is their first proof")
+        try:
+            hello = ensure_host_copy(host)
+        except Transport as e:
+            problem("transport: %s" % e)
+            return
+        ok("transport reachable (%s)" % host["transport"])
+        if tuple(int(x) for x in hello["python"].split(".")[:2]) < (3, 8):
+            problem("Python on the host is %s; simrun needs 3.8 or newer: point \"python\" at one" % hello["python"])
+            return
+        ok("Python %s on the host; workdir writable" % hello["python"])
+
+        slow = job("detach", "import time; time.sleep(20); print(%r)" % (tok + "-late"))
+        first = call(host, "status", slow[1]["job"])
+
+        d, rec = job("roundtrip", "import shutil; shutil.copyfile('blob.bin', 'blob.out'); print(%r)" % tok, blob=1 << 20)
+        v = end(d, rec, 30)
+        if v["state"] == "exited" and v.get("exit") == 0 and any(tok in line for line in v["tail"]):
+            ok("a job ran with the host's own Python: its token came back in the log tail and the state line says exited 0")
+        else:
+            problem("the no-op job ended %s exit=%s and its token %s in the log tail" % (v["state"], v.get("exit"), "is" if any(tok in l for l in v.get("tail", [])) else "is not"))
+        out = os.path.join(d, "blob.out")
+        if os.path.isfile(out) and sha256_file(out) == sha256_file(os.path.join(d, "blob.bin")):
+            ok("a 1 MB file went to the host and its copy came back with the same sha256")
+        else:
+            problem("the 1 MB round trip failed: blob.out %s" % ("differs from blob.bin" if os.path.isfile(out) else "did not come back"))
+
+        stamp = "import time; print('T0=%r' % time.time(), flush=True); time.sleep(1.5); print('T1=%r' % time.time())"
+        a, b = job("seat-a", stamp, seats=1, sw=seat_sw), job("seat-b", stamp, seats=1, sw=seat_sw)
+        spans = []
+        for d, rec in (a, b):
+            text = "\n".join(end(d, rec, 30).get("tail", []))
+            m0, m1 = re.search(r"T0=([0-9.]+)", text), re.search(r"T1=([0-9.]+)", text)
+            spans.append((float(m0.group(1)), float(m1.group(1))) if m0 and m1 else None)
+        if None in spans:
+            problem("the two one-seat jobs did not both run to the end, so the seat lock is unproven")
+        elif spans[0][1] <= spans[1][0] or spans[1][1] <= spans[0][0]:
+            ok("two jobs on a one-seat software did not overlap (a person using the program at the desktop holds the same licence seat and is invisible to this lock)")
+        else:
+            problem("two jobs on a one-seat software ran at the same time: the seat lock does not hold on this host")
+
+        d, rec = job("cancel", "import time; time.sleep(60)", seats=1, sw=seat_sw)
+        t_end = time.time() + 15
+        while call(host, "status", rec["job"])["state"] != "running" and time.time() < t_end:
+            time.sleep(0.3)
+        v = finalize(d, rec, host, call(host, "cancel", rec["job"]), 0)
+        d2, rec2 = job("after-cancel", "print(%r)" % tok, seats=1, sw=seat_sw)
+        v2 = end(d2, rec2, 20)
+        if v["state"] == "cancelled" and v2["state"] == "exited" and v2.get("exit") == 0:
+            ok("cancel ended a sleeping job and freed its seat for the next one")
+        else:
+            problem("cancel left the job %s and the next job on the same seat %s" % (v["state"], v2["state"]))
+
+        for sid, entry in sorted(host["software"].items()):
+            if entry["desktop"]:
+                ok('software "%s": needs the desktop session, not checked (this build has no desktop worker)' % sid)
+            elif not entry["check"]:
+                ok('software "%s": declared without a "check", so nothing here proves it starts' % sid)
+            else:
+                secs = float(entry["check_timeout_s"])
+                d, rec = job("check-" + sid, None, entry=entry, argv=[entry["launchers"][entry["check"][0]]] + entry["check"][1:], sw=sid, max_s=secs)
+                v = end(d, rec, secs + 75)
+                seen = "\n".join(call(host, "log", rec["job"], [5000])["lines"])
+                if v["state"] == "exited" and v.get("exit") == 0 and entry["expect"] in seen:
+                    checked.append(sid)
+                    ok('software "%s": its check exited 0 and printed the expected text' % sid)
+                elif v["state"] == "timeout" and v.get("reason") == "no_seat":
+                    # Not the program's fault and not the licence's: a job started through the runner held the seat.
+                    problem('software "%s": its check never started, because every seat of "%s" was held for the 60 s doctor waits; see who holds it with \'simrun ps %s\', and run doctor again when that job has ended'
+                            % (sid, sid, label))
+                else:
+                    problem('software "%s": its check ended %s exit=%s%s and the expected text %s in its output' % (
+                        sid, v["state"], v.get("exit"), " (%s)" % v["reason"] if v.get("reason") else "", "is" if entry["expect"] in seen else "is not"))
+
+        v = end(slow[0], slow[1], 45)
+        late = any(tok + "-late" in line for line in v.get("tail", []))
+        if first["state"] == "running" and v["state"] == "exited" and v.get("exit") == 0 and late and v.get("elapsed", 0) >= 19:
+            ok("a 20 s job kept running after the command that started it had returned, and ended on its own")
+        else:
+            problem("detachment: the 20 s job was %s after its start command returned and ended %s exit=%s after %ss; a job on this host dies with the command that starts it"
+                    % (first["state"], v["state"], v.get("exit"), v.get("elapsed")))
+
+    def record(passed):
+        """`ok` and `protocol` are read by src/software.ts as they are; `host` and `checked` say
+        what the pass covers (the host entry it was made against, the software whose check ran)."""
+        os.makedirs(STATE_DIR, exist_ok=True)
+        book = read_json(path)
+        if not isinstance(book, dict):
+            book = {}
+        book[label] = {"ok": passed, "at": utc(), "simrun": sha12(), "os": host["os"], "protocol": PROTOCOL,
+                       "host": host_print(host), "checked": sorted(checked)}
+        write_atomic(path, book)
+
+    # Before the first check, and a pass only after the last: the verdict used to be written in
+    # `finally` as "no problem was printed", so a doctor stopped by Ctrl-C at a first contact
+    # that hung (or by any crash) recorded ok:true and jobs were accepted on the host.
+    record(False)
+    try:
+        checks()
+    except (Transport, Refuse) as e:
+        problem("doctor stopped: %s" % e)
+    finally:
+        # Every job this run started, read from the record start_job writes before the remote
+        # start: a run interrupted inside a start has that record and no return value.
+        for name in sorted(os.listdir(scratch)):
+            jid = (read_json(os.path.join(scratch, name, ".simrun", "job.json")) or {}).get("job")
+            try:
+                if jid and JOBID.match(str(jid)):
+                    st = call(host, "status", jid)
+                    if st["state"] in LIVE:
+                        call(host, "cancel", jid)
+                    call(host, "forget", jid)
+            except (Transport, Refuse):
+                pass
+        shutil.rmtree(scratch, ignore_errors=True)
+    record(not bad)      # reached only when checks() returned or stopped on a typed problem
+    if bad:
+        print('problem: host "%s" did not pass doctor (%d problem(s) above); jobs stay refused on it; recorded in %s' % (label, len(bad), path))
+    else:
+        print('ok host "%s" passed doctor; recorded in %s' % (label, path))
+    return 1 if bad else 0
+
+
+# ── entry ─────────────────────────────────────────────────────────────────────────────────
+OPTIONS = {"--software": str, "--host": str, "--job": str, "--timeout": float, "--max-minutes": float,
+           "--seat-wait-minutes": float, "--pull-limit-mb": float, "--tail": int, "--json": None}
+ALLOWED = {"hosts": ("--json",), "doctor": (), "status": (), "fetch": (), "ps": (), "log": ("--tail",),
+           "run": ("--software", "--host", "--timeout", "--max-minutes", "--seat-wait-minutes", "--pull-limit-mb"),
+           "start": ("--software", "--host", "--max-minutes", "--seat-wait-minutes"),
+           "wait": ("--timeout", "--pull-limit-mb"), "cancel": ("--host", "--job")}
+
+
+def parse(verb, words):
+    command = None
+    if "--" in words:
+        cut = words.index("--")
+        words, command = words[:cut], words[cut + 1:]
+    pos, opts, i = [], {}, 0
+    while i < len(words):
+        w = words[i]
+        if w.startswith("--"):
+            if w not in ALLOWED[verb]:
+                near = difflib.get_close_matches(w, ALLOWED[verb], n=1, cutoff=0.5)
+                raise Refuse("simrun %s has no option %s (%s)" % (verb, w, "nearest: " + near[0] if near else "options: " + (", ".join(ALLOWED[verb]) or "none")))
+            kind = OPTIONS[w]
+            if kind is None:
+                opts[w] = True
+            else:
+                if i + 1 >= len(words):
+                    raise Refuse("%s needs a value" % w)
+                try:
+                    opts[w] = kind(words[i + 1])
+                except ValueError:
+                    raise Refuse("%s needs a %s, got %r" % (w, "number" if kind is not str else "word", words[i + 1]))
+                i += 1
+        else:
+            pos.append(w)
+        i += 1
+    for key in ("--timeout", "--pull-limit-mb", "--tail"):
+        if key in opts and opts[key] < 0:
+            raise Refuse("%s must not be negative" % key)
+    if command is not None and verb not in ("run", "start"):
+        raise Refuse('only run and start take a command after "--"')
+    return pos, opts, command or []
+
+
+def client_main(argv):
+    if len(argv) < 2 or argv[1] in ("-h", "--help", "help"):
+        print(USAGE)
+        return 0 if len(argv) >= 2 else 4
+    verb = argv[1]
+    try:
+        if verb not in ALLOWED:
+            near = difflib.get_close_matches(verb, list(ALLOWED), n=1, cutoff=0.5)
+            raise Refuse("unknown verb %r (%s); 'simrun --help' prints the usage" % (verb, "nearest: " + near[0] if near else "verbs: " + ", ".join(sorted(ALLOWED))))
+        pos, opts, command = parse(verb, argv[2:])
+        if verb == "hosts":
+            return cmd_hosts(opts)
+        if verb == "doctor":
+            return cmd_doctor(pos)
+        if verb in ("run", "start"):
+            return cmd_start(pos, opts, command, verb == "run")
+        if verb == "wait":
+            return cmd_wait(pos, opts)
+        if verb == "status":
+            return cmd_status(pos)
+        if verb == "log":
+            return cmd_log(pos, opts)
+        if verb == "fetch":
+            return cmd_fetch(pos)
+        if verb == "cancel":
+            return cmd_cancel(pos, opts)
+        return cmd_ps(pos)
+    except Refuse as e:
+        print("simrun: %s" % e)
+        return 4
+    except Transport as e:
+        print("simrun: %s" % e)
+        return 5
+    except OSError as e:
+        # Never a traceback: Python would exit 1, and 1 means "the job ended otherwise". 5 in every
+        # case, because from here nobody can tell whether a job exists on the host.
+        print("simrun: a file operation on this machine failed (%s: %s); this says nothing about a job: simrun status <dir>" % (type(e).__name__, e))
+        return 5
+
+
+def main(argv):
+    for stream in (sys.stdout, sys.stderr):     # a job's log may hold bytes the caller's locale cannot print
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="backslashreplace")
+    if len(argv) >= 4 and argv[1] == "_host":
+        # <workdir>/.simrun/<sha12>/simrun: the workdir is where this copy sits, never an argument.
+        wd = os.path.dirname(os.path.dirname(os.path.dirname(SELF)))
+        print(json.dumps(host_dispatch(wd, argv[2], argv[3], argv[4:]), ensure_ascii=True))
+        return 0
+    if len(argv) == 4 and argv[1] == "_supervise":
+        supervise(argv[2], argv[3])
+        return 0
+    if len(argv) == 4 and argv[1] == "_unpack":     # gate only: the client's unpack routine, fed a hostile archive
+        try:
+            for note in safe_unpack(argv[2], argv[3]):
+                print("simrun: " + note)
+        except (ValueError, OSError, zipfile.BadZipFile) as e:
+            print("simrun: refused: %s" % e)      # the message says whether anything was unpacked
+            return 4
+        return 0
+    return client_main(argv)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

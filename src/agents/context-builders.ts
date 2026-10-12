@@ -18,6 +18,7 @@ import { loadRegistry, type ActiveAgent } from "../active-agents.js";
 import { parseCompileVerdict } from "../tools/report.js";
 import { buildClaimTable, renderClaimTable } from "../claims-table.js";
 import { methodologyPath, parseLiteratureCiteKeys } from "../methodology.js";
+import { availabilityLine, namesKeyword, reachable, softwareMeta, whereIs, type SoftwareMeta } from "../software.js";
 
 export type ContextBuilder = (projectDir: string, extra?: Record<string, any>) => string;
 
@@ -67,6 +68,7 @@ const CONTEXT_BUILDERS: Record<string, ContextBuilder> = {
   typesetter: buildTypesetterContext,
   report_writer: buildReportWriterContext,
   tool_impl: buildToolImplContext,
+  tool_review: buildToolReviewContext,
 };
 
 // ── Compute-methods registry injection (2026-07-13, debate-adjudicated) ──
@@ -80,7 +82,8 @@ const CONTEXT_BUILDERS: Record<string, ContextBuilder> = {
 // status quo when no sheet matches.
 //
 // Matching: frontmatter `match:` keywords (comma-separated, substring,
-// case-insensitive) counted against RESEARCH.md + literature head + the
+// case-insensitive; whole words for a sheet that names a program) counted
+// against RESEARCH.md + literature head + the
 // spawn task (via contextExtra.task when available); ranked by hit count,
 // filename as tiebreaker. Per adversarial review: NO alphabetical-first-two
 // cap (a QEC-on-neutral-atom project must not shadow the rydberg sheet),
@@ -89,15 +92,25 @@ const CONTEXT_BUILDERS: Record<string, ContextBuilder> = {
 // a rotten registry demotes itself instead of inverting trust.
 const STALE_MS = 90 * 24 * 3600 * 1000;
 
-interface MethodSheet { file: string; body: string; hits: number; banner: string }
+interface MethodSheet {
+  file: string; body: string; hits: number; banner: string;
+  /** Keyword hits in the task text alone: what THIS spawn is asked to do, as against what the project is about. */
+  taskHits: number;
+  /** Has a `verified:` date (STALE or not): somebody ran its rows once. */
+  verified: boolean;
+  /** `software:` / `bin:` / `artifacts:` frontmatter; software is null for a sheet about a method, not a program. */
+  meta: SoftwareMeta;
+}
 
-function loadMethodSheets(projectDir: string, probe: string): MethodSheet[] {
+function loadMethodSheets(projectDir: string, probe: string, task = "", named = probe): MethodSheet[] {
   // skills/ lives in the Luxas repo, not the project; resolve relative to
   // this module (same convention as other skill consumers).
   const skillsDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "skills", "compute-methods");
   let files: string[] = [];
   try { files = readdirSync(skillsDir).filter((f) => f.endsWith(".md") && f !== "SKILL.md"); } catch { return []; }
   const probeLower = probe.toLowerCase();
+  const namedLower = named.toLowerCase();
+  const taskLower = task.toLowerCase();
   const out: MethodSheet[] = [];
   for (const f of files.sort()) {
     try {
@@ -107,7 +120,14 @@ function loadMethodSheets(projectDir: string, probe: string): MethodSheet[] {
       const matchLine = fm[1].match(/^match:\s*(.+)$/m);
       if (!matchLine) continue;
       const keywords = matchLine[1].split(",").map((k) => k.trim().toLowerCase()).filter(Boolean);
-      const hits = keywords.filter((k) => probeLower.includes(k)).length;
+      const meta = softwareMeta(fm[1]);
+      // A program's sheet is chosen by what the brief or the task names. The literature notes say which
+      // methods a field uses; a paper in them that ran COMSOL is not this project running COMSOL, and its
+      // citation alone put the COMSOL sheet in a seat's prompt in place of the method sheet.
+      // And by its keywords as whole words (software.ts namesKeyword): "deblender" and "BlenderBot" do not
+      // name Blender. A method sheet's keywords stay substrings, as they were.
+      const hit = (text: string) => (k: string): boolean => (meta.software ? namesKeyword(text, k) : text.includes(k));
+      const hits = keywords.filter(hit(meta.software ? namedLower : probeLower)).length;
       if (hits === 0) continue;
       const verified = fm[1].match(/^verified:\s*(\d{4}-\d{2}-\d{2})/m);
       let banner = "";
@@ -116,26 +136,74 @@ function loadMethodSheets(projectDir: string, probe: string): MethodSheet[] {
       } else if (Date.now() - new Date(verified[1]).getTime() > STALE_MS) {
         banner = `STALE (verified ${verified[1]}) — versions may have moved; treat frictions as hints and re-run the smoke test.`;
       }
-      out.push({ file: f, body: raw.slice(fm[0].length).trim(), hits, banner });
+      out.push({
+        file: f, body: raw.slice(fm[0].length).trim(), hits, banner,
+        taskHits: keywords.filter(hit(taskLower)).length, verified: !!verified, meta,
+      });
     } catch { /* malformed sheet — skip, never crash a spawn */ }
   }
   return out.sort((a, b) => b.hits - a.hits || a.file.localeCompare(b.file));
 }
 
-function buildMethodsRegistry(projectDir: string, extra: Record<string, any> | undefined, topN: number): string {
+/**
+ * One sheet block. A sheet that names a program (`software:`) carries, under
+ * its banner, where that program is on this machine: until 2026-10-09 the
+ * Blender sheet reached agents on a host without Blender under "environment-
+ * verified … do not abandon the tool". Computed from files on disk, never
+ * probed: a continued agent's prompt must equal its first one.
+ *
+ * A draft sheet (no `verified:` date) for a program that cannot be started
+ * from here gives its header and that line, not its body: rows nobody has run
+ * would arrive under the preamble's "do not abandon the tool" with nothing to
+ * try them on.
+ */
+function sheetBlock(s: MethodSheet, saveUnder: string | null): string {
+  const head = s.banner ? `[${s.banner}]\n` : "";
+  if (!s.meta.software) return `--- ${s.file} ---\n${head}${s.body}`;
+  const where = whereIs(s.meta);
+  const lines = [availabilityLine(s.meta, where)];
+  if (!reachable(where)) {
+    if (!s.verified) return `--- ${s.file} ---\n${head}${lines[0]}`;
+  } else {
+    if (!s.verified) lines.push("No row of this sheet has been run against the program. Where a row and the program's own message disagree, the message is right; quote it.");
+    // The reviewer is handed model files found under the run directories and nowhere else (review-images.ts). It is
+    // asked to re-open one only by a sheet somebody has run: for a draft sheet the same reviewer is told nobody
+    // can, so the line must not promise it.
+    if (saveUnder) lines.push(`Save the model file the result rests on under ${saveUnder}; the reviewer ${s.verified ? "re-opens it" : "looks for it"} there.`);
+  }
+  return `--- ${s.file} ---\n${head}${lines.join("\n")}\n${s.body}`;
+}
+
+function buildMethodsRegistry(projectDir: string, extra: Record<string, any> | undefined, topN: number, opts: { saveHint?: boolean } = {}): string {
+  const task = String(extra?.task ?? "");
+  const brief = readFileSafe(join(projectDir, "RESEARCH.md"));
   const probeParts = [
-    readFileSafe(join(projectDir, "RESEARCH.md")),
+    brief,
     readFileSafe(join(projectDir, "notes", "literature.md")).slice(0, 4000),
-    String(extra?.task ?? ""),
+    task,
   ];
-  const sheets = loadMethodSheets(projectDir, probeParts.join("\n"));
+  const sheets = loadMethodSheets(projectDir, probeParts.join("\n"), task, `${brief}\n${task}`);
   if (sheets.length === 0) return "";
-  const shown = sheets.slice(0, topN);
-  const rest = sheets.slice(topN).map((s) => s.file).join(", ");
-  const blocks = shown.map((s) => {
-    const head = s.banner ? `[${s.banner}]\n` : "";
-    return `--- ${s.file} ---\n${head}${s.body}`;
-  });
+  // Method sheets rank among themselves for the N slots, as they did before a sheet could name a program:
+  // a program that is only mentioned must not take a method sheet's place (the seat got a stub for a program
+  // it could not start, and the method sheet as a file name it cannot open). A program's sheet that ranks
+  // in the top N is added after them, never swapped in for one.
+  const shown = [...sheets.filter((s) => !s.meta.software).slice(0, topN), ...sheets.slice(0, topN).filter((s) => s.meta.software)];
+  // One software sheet rides along. Ranking is by distinct keyword hits over
+  // the whole brief, and tool_impl / tool_review get one slot: in a physics
+  // project that drives a simulator for one experiment the domain sheet takes
+  // it, and the seat that has to start the program is left with a file name
+  // it cannot open. The task text will often not name the program either
+  // (experiment.md tells the orchestrator not to prescribe a library in a tool
+  // description), so one hit anywhere in the brief qualifies; hits in the task
+  // rank first.
+  const riding = sheets.slice(topN).filter((s) => s.meta.software)
+    .sort((a, b) => b.taskHits - a.taskHits || b.hits - a.hits || a.file.localeCompare(b.file))[0];
+  if (riding) shown.push(riding);
+  const rest = sheets.filter((s) => !shown.includes(s)).map((s) => s.file).join(", ");
+  const eid = String(extra?.templateVars?.EXPERIMENT_ID ?? "");
+  const saveUnder = opts.saveHint ? (eid && !eid.includes("{{") ? `data/experiments/${eid}/runs/run_N/` : "your experiment's runs/run_N/") : null;
+  const blocks = shown.map((s) => sheetBlock(s, saveUnder));
   return `<methods_registry>
 Field-standard tools and their environment-verified first-use frictions for
 this project's domain. A friction listed here is a usage bug with a known
@@ -145,10 +213,20 @@ ${blocks.join("\n\n")}${rest ? `\n\n(other sheets, not matched as strongly: ${re
 </methods_registry>`;
 }
 
-// tool_impl gets ONLY the registry (top-1 sheet): it is the agent that picks
+// tool_impl gets ONLY the registry (the top method sheet, and a named program's sheet): it is the agent that picks
 // the library, it is read-blocked outside its experiment dir (so "read on
 // demand" cannot work), and it runs on the cheapest model tier.
 function buildToolImplContext(projectDir: string, extra?: Record<string, any>): string {
+  return buildMethodsRegistry(projectDir, extra, 1);
+}
+
+// tool_review gets the same sheets (2026-10-06). Its tests have to drive
+// the same tool the impl drives: a test for a simulator-backed tool re-opens
+// the saved model and measures it, and that needs the sheet's headless
+// invocation and its "what exit 0 does not tell you" rows as much as the impl
+// does. The sheet is environment fact, not the impl — the two authors stay
+// blind to each other's code.
+function buildToolReviewContext(projectDir: string, extra?: Record<string, any>): string {
   return buildMethodsRegistry(projectDir, extra, 1);
 }
 
@@ -365,8 +443,9 @@ function experimentFileTree(projectDir: string, experimentId: unknown): string[]
 function buildExperimentContext(projectDir: string, extra?: Record<string, any>): string {
   const parts: string[] = [];
 
-  // 0. Compute-methods registry (top-2 sheets) — see buildMethodsRegistry.
-  const registry = buildMethodsRegistry(projectDir, extra, 2);
+  // 0. Compute-methods registry (top-2 method sheets, and a named program's sheet) — see buildMethodsRegistry.
+  // The experiment seat is the one that writes runs/run_N/ (the tool seats cannot), so it gets the save line.
+  const registry = buildMethodsRegistry(projectDir, extra, 2, { saveHint: true });
   if (registry) parts.push(registry);
 
   // 1. Project file tree

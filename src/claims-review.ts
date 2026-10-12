@@ -213,7 +213,7 @@ export function reusableBlindLine(lines: string[], decl: { id: string; inputs: R
 }
 
 /** Write reviews/experiment_review_<EID>_r<round>.md — the file claims-table.ts reads. */
-export function persistReview(projectDir: string, experimentId: string, round: number, blindLines: string[], reviewerLines: ReviewLine[], verdictLine: string, missing: string[], feedback?: string): string {
+export function persistReview(projectDir: string, experimentId: string, round: number, blindLines: string[], reviewerLines: ReviewLine[], verdictLine: string, missing: string[], feedback?: string, artifactLines?: string[]): string {
   const dir = join(projectDir, "reviews");
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   const path = join(dir, `experiment_review_${experimentId}_r${round}.md`);
@@ -230,6 +230,12 @@ export function persistReview(projectDir: string, experimentId: string, round: n
     `Reviewer obligation lines (design §3.5):`,
     ...(persisted.length ? persisted.map((l) => l.text) : ["(none)"]),
     ``,
+    // What the reviewer wrote about re-opening a saved simulator model (review-images.ts asks for
+    // `artifact <path>: …` before the VERDICT line, where nothing else was kept: "measured and agrees"
+    // and "could not open it" both left only SATISFIED). Above the marker, never after FEEDBACK:,
+    // which openReviewFindings reads to the end of the file. With no such line the section is absent
+    // and the file is what it was.
+    ...(artifactLines?.length ? [`Saved-model read-back:`, ...artifactLines, ``] : []),
     missing.length ? `REVIEW-INCOMPLETE: no DISCRIMINATOR+SCALING for ${missing.join(", ")} — NO REVIEW for those quantities; attestation lines withheld` : `REVIEW-COMPLETE`,
     verdictLine,
     // v3 D1 (2026-08-29): the reviewer's feedback used to live only in the

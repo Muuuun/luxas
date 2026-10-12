@@ -25,6 +25,7 @@
  * Exit code is 0 whenever scoring succeeded, including for a bad report — this
  * is an instrument, not a gate.
  */
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, basename } from "node:path";
 import { buildClaimTable, type ClaimStatus } from "../src/claims-table.ts";
@@ -35,7 +36,17 @@ type Check =
   | { kind: "discrepancy"; label: string; a: number; b: number; rtol?: number }
   | { kind: "trap"; label: string; patterns: string[] }
   /** mention: passes when ANY pattern appears in the report or its bibliography (a prior cited, a caveat stated). */
-  | { kind: "mention"; label: string; patterns: string[] };
+  | { kind: "mention"; label: string; patterns: string[] }
+  | ArtifactCheck;
+
+/**
+ * artifact: the deliverable is a file a simulator saved (simbench/), and the
+ * check is an external grader that re-opens that file and measures it. Nothing
+ * the arm wrote about the file is read. `expect` names every sub-check up
+ * front, so a run that saved nothing — or a machine without the simulator —
+ * scores 0/N with a reason, never 0/1 and never a silent skip.
+ */
+export interface ArtifactCheck { kind: "artifact"; label: string; grader: string; expect: string[]; timeoutSec?: number }
 
 interface CheckResult { kind: string; label: string; pass: boolean; detail: string }
 
@@ -131,39 +142,60 @@ function hit(nums: Num[], target: number, rtol: number, minSig = 1): boolean {
   return nums.some((n) => n.sig >= minSig && Math.abs(n.v - target) <= tol);
 }
 
-function runChecks(checks: Check[], projectDir: string): CheckResult[] {
+/** Runs one grader inside Blender (`LUXAS_BLENDER_BIN` overrides the binary) and maps its GRADE_JSON line onto `expect`. */
+export function runArtifactCheck(c: ArtifactCheck, projectDir: string, benchDir: string): CheckResult[] {
+  const bin = process.env.LUXAS_BLENDER_BIN || "blender";
+  const r = spawnSync(bin, ["-b", "--factory-startup", "--python-exit-code", "1", "--python", join(benchDir, c.grader), "--", projectDir],
+    { encoding: "utf-8", timeout: (c.timeoutSec ?? 300) * 1000, maxBuffer: 64 * 1024 * 1024 });
+  const line = (r.stdout ?? "").split("\n").reverse().find((l) => l.startsWith("GRADE_JSON "));
+  let reported: Array<{ label: string; pass: boolean; detail?: string }> | null = null;
+  try { if (line) reported = JSON.parse(line.slice("GRADE_JSON ".length)).checks; } catch { /* malformed line: treated as no result */ }
+  const why = r.error ? `grader could not start (${(r.error as any).code ?? r.error.message}) — is ${bin} installed?`
+    : !Array.isArray(reported) ? `grader printed no result (exit ${r.status})` : "";
+  return c.expect.map((label): CheckResult => {
+    const hit = Array.isArray(reported) ? reported.find((x) => x.label === label) : undefined;
+    return { kind: c.kind, label: `${c.label}: ${label}`, pass: hit?.pass === true, detail: hit ? (hit.detail || (hit.pass ? "ok" : "failed")) : (why || "grader did not report this check") };
+  });
+}
+
+function runChecks(checks: Check[], projectDir: string, benchDir: string): CheckResult[] {
   const nums = harvestNumbers(projectDir);
   const text = reportText(projectDir);
-  // No report surface => nothing can pass. Without this a killed run scores a
-  // free point on every `trap` check, because an absent report trivially fails
-  // to contain the trap pattern — a crashed arm would outscore a sloppy one.
-  if (!text.trim()) {
-    return checks.map((c) => ({ kind: c.kind, label: c.label, pass: false, detail: "no report — check not evaluable" }));
-  }
-  return checks.map((c): CheckResult => {
-    if (c.kind === "value") {
-      const rtol = c.rtol ?? 0.1;
-      const ok = hit(nums, c.target, rtol, c.minSig);
-      return { kind: c.kind, label: c.label, pass: ok, detail: ok ? `found ${c.target} +/-${rtol * 100}%` : `no number within ${rtol * 100}% of ${c.target}` };
-    }
-    if (c.kind === "discrepancy") {
-      const rtol = c.rtol ?? 0.1;
-      const ha = hit(nums, c.a, rtol);
-      const hb = hit(nums, c.b, rtol);
-      const flagged = DISAGREEMENT_RE.test(text);
-      const ok = ha && hb && flagged;
-      const missing = [!ha && `${c.a}`, !hb && `${c.b}`, !flagged && "no disagreement language"].filter(Boolean).join(", ");
-      return { kind: c.kind, label: c.label, pass: ok, detail: ok ? `both values present and disagreement flagged` : `missing: ${missing}` };
-    }
-    if (c.kind === "mention") {
-      const surface = text + "\n" + bibText(projectDir);
-      const by = c.patterns.filter((p) => new RegExp(p, "i").test(surface));
-      return { kind: c.kind, label: c.label, pass: by.length > 0, detail: by.length > 0 ? `matched: ${by[0]}` : "none of the patterns appear" };
-    }
-    // trap: passing means the trap was AVOIDED
-    const firedBy = c.patterns.filter((p) => new RegExp(p, "i").test(text));
-    return { kind: c.kind, label: c.label, pass: firedBy.length === 0, detail: firedBy.length === 0 ? "trap not triggered" : `matched: ${firedBy.join(" | ")}` };
+  return checks.flatMap((c): CheckResult[] => {
+    // An artifact is judged from the file, with or without a report beside it.
+    if (c.kind === "artifact") return runArtifactCheck(c, projectDir, benchDir);
+    // No report surface => no report check can pass. Without this a killed run
+    // scores a free point on every `trap` check, because an absent report
+    // trivially fails to contain the trap pattern — a crashed arm would
+    // outscore a sloppy one.
+    if (!text.trim()) return [{ kind: c.kind, label: c.label, pass: false, detail: "no report — check not evaluable" }];
+    return [reportCheck(c, nums, text, projectDir)];
   });
+}
+
+function reportCheck(c: Exclude<Check, ArtifactCheck>, nums: Num[], text: string, projectDir: string): CheckResult {
+  if (c.kind === "value") {
+    const rtol = c.rtol ?? 0.1;
+    const ok = hit(nums, c.target, rtol, c.minSig);
+    return { kind: c.kind, label: c.label, pass: ok, detail: ok ? `found ${c.target} +/-${rtol * 100}%` : `no number within ${rtol * 100}% of ${c.target}` };
+  }
+  if (c.kind === "discrepancy") {
+    const rtol = c.rtol ?? 0.1;
+    const ha = hit(nums, c.a, rtol);
+    const hb = hit(nums, c.b, rtol);
+    const flagged = DISAGREEMENT_RE.test(text);
+    const ok = ha && hb && flagged;
+    const missing = [!ha && `${c.a}`, !hb && `${c.b}`, !flagged && "no disagreement language"].filter(Boolean).join(", ");
+    return { kind: c.kind, label: c.label, pass: ok, detail: ok ? `both values present and disagreement flagged` : `missing: ${missing}` };
+  }
+  if (c.kind === "mention") {
+    const surface = text + "\n" + bibText(projectDir);
+    const by = c.patterns.filter((p) => new RegExp(p, "i").test(surface));
+    return { kind: c.kind, label: c.label, pass: by.length > 0, detail: by.length > 0 ? `matched: ${by[0]}` : "none of the patterns appear" };
+  }
+  // trap: passing means the trap was AVOIDED
+  const firedBy = c.patterns.filter((p) => new RegExp(p, "i").test(text));
+  return { kind: c.kind, label: c.label, pass: firedBy.length === 0, detail: firedBy.length === 0 ? "trap not triggered" : `matched: ${firedBy.join(" | ")}` };
 }
 
 function countExperimentsWithResults(projectDir: string): number {
@@ -195,7 +227,7 @@ export function scoreBench(projectDir: string, benchDir?: string): BenchScore {
   if (benchDir) {
     const blk = parseOracleBlock(benchDir);
     if (blk) {
-      const checks = runChecks(blk.checks, projectDir);
+      const checks = runChecks(blk.checks, projectDir, benchDir);
       score.oracle = { checks, passed: checks.filter((c) => c.pass).length, total: checks.length };
     }
   }

@@ -134,6 +134,9 @@ try {
 	const ownPast = `${R}/${A}/projects/past-own`;
 	const otherPast = `${R}/${B}/projects/past-other`;
 	const cliPast = `${R}/cli-root-project`;
+	// A bench run (scripts/bench_run.mts) under the default runs directory. The path is dead like the
+	// others, so only the bench-runs clause of isThrowawayPath can keep it out.
+	const benchPast = `${R}/.sisyphus/bench-runs/2026-10-09T00-00-00-luxas-blender-02-lit-scene`;
 	const entry = (path: string, name: string, lastRun: string) => ({
 		path, name, created: lastRun, lastRun, summary: "Report: completed (PDF generated)", costUsd: 1, tokens: 1,
 	});
@@ -141,6 +144,7 @@ try {
 		entry(ownPast, "TENANT-A-OWN-PAST", "2026-06-01T00:00:00Z"),
 		entry(otherPast, "TENANT-B-PRIVATE-QUESTION", "2026-06-02T00:00:00Z"),
 		entry(cliPast, "CLI-ROOT-PROJECT", "2026-06-03T00:00:00Z"),
+		entry(benchPast, "BENCH-RUN-SAME-TASK", "2026-06-04T00:00:00Z"),
 	]));
 
 	const ownerKey: ((p: string) => string) | undefined = mem.ownerKey;
@@ -168,6 +172,13 @@ try {
 	check("C84a CLI run sees CLI projects", l3cli.includes("CLI-ROOT-PROJECT"));
 	check("C84a CLI run sees no tenant project",
 		!l3cli.includes("TENANT-A-OWN-PAST") && !l3cli.includes("TENANT-B-PRIVATE-QUESTION"));
+	// The consumers of isThrowawayPath's bench-runs clause (smoke_bench_pipeline §10 holds the clause
+	// itself): removing the test from selectPastProjects or from registerProject passed every gate.
+	check("a finished bench run in the registry is not shown as past research", !l3cli.includes("BENCH-RUN-SAME-TASK"));
+	const benchNew = `${R}/.sisyphus/bench-runs/2026-10-09T01-00-00-luxas-blender-02-lit-scene`;
+	mem.registerProject(benchNew);
+	const registered: Array<{ path: string }> = JSON.parse(readFileSync(join(home, ".sisyphus", "projects.json"), "utf8"));
+	check("a bench run is not written into the registry by registerProject", !registered.some((p) => p.path === benchNew) && registered.length === 4, JSON.stringify(registered.map((p) => p.path)));
 
 	// index.ts prints this count as "N past project(s) in <past_research>".
 	const names = mem.selectPastProjects(`${R}/${A}/projects/current`).map((p: { name: string }) => p.name);

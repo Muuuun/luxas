@@ -10,13 +10,14 @@
  *
  *   npx tsx scripts/smoke_bench_pipeline.mts
  */
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { scoreBench, numbersIn } from "./bench_score.mts";
-import { baselinePrompt, buildRecord, appendRecord, listBenches } from "./bench_run.mts";
+import { armModel, BARE_ARM_MODEL, baselinePrompt, buildRecord, appendRecord, classifyClaudeResult, listBenches, prepareRunDir } from "./bench_run.mts";
 import { readLedger, summarize, render } from "./bench_compare.mts";
+import * as benchRun from "./bench_run.mts";   // namespace: a missing export fails one check, not the whole file
 
 let failures = 0;
 function check(label: string, cond: boolean, detail?: string) {
@@ -91,8 +92,18 @@ for (const b of benches) {
   const leaked = oracleNums.filter((v) => numbersIn(prompt).some((n) => Math.abs(n.v - v) <= Math.abs(v) * 1e-6));
   check(`${b}: no oracle value appears in the prompt`, leaked.length === 0, leaked.join(", "));
 }
-const runSrc = readFileSync(join(ROOT, "scripts", "bench_run.mts"), "utf-8");
-check("the run directory receives RESEARCH.md and nothing else from the bench", (runSrc.match(/copyFileSync\(/g) ?? []).length === 1 && /copyFileSync\(join\(BENCH_ROOT, bench, "RESEARCH\.md"\)/.test(runSrc));
+// Made by calling prepareRunDir and listing what landed (until 2026-10-06 this
+// counted copyFileSync calls in the source). A bench may now carry input/ files
+// for the arm; ORACLE.md and anything that grades the run still never leave.
+for (const b of benches) {
+  const landed = readdirSync(prepareRunDir(join(tmp, "prepared"), "claude-code", b)).sort();
+  check(`${b}: the run directory receives RESEARCH.md and nothing else from the bench`, JSON.stringify(landed) === JSON.stringify(["RESEARCH.md"]), landed.join(", "));
+}
+const withInput = join(tmp, "root-with-input");
+mkdirSync(join(withInput, "b1", "input"), { recursive: true });
+for (const [f, body] of [["RESEARCH.md", "# r\n"], ["ORACLE.md", "answer\n"], ["grader.py", "x\n"], ["reference.py", "x\n"], ["input/scene.dat", "data\n"]]) writeFileSync(join(withInput, "b1", f), body);
+const landedInput = readdirSync(prepareRunDir(join(tmp, "prepared"), "claude-code", "b1", withInput)).sort();
+check("a bench with input/ hands over RESEARCH.md and input/, never the oracle, grader or reference", JSON.stringify(landedInput) === JSON.stringify(["RESEARCH.md", "input"]), landedInput.join(", "));
 
 console.log("\n6. ledger round trip and the table");
 const ledger = join(tmp, "LEDGER.jsonl");
@@ -109,7 +120,152 @@ const table = render(s);
 check("the table warns that n=1 differences are noise", /n=1 cells present/.test(table));
 check("the table lists arm/bench pairs not yet run", /not yet run: claude-code\/bench-03/.test(table), table.split("\n").slice(-2).join(" / "));
 check("an empty ledger says so instead of printing an empty table", /ledger is empty/.test(render(summarize([]))));
+// 2026-10-06: three bare runs died on "Credit balance is too low"; the CLI still said subtype "success".
+const cutOff = classifyClaudeResult({ subtype: "success", is_error: true, terminal_reason: "api_error", result: "Credit balance is too low" });
+check("a run the provider ended is not exit=success, and carries the provider's message", cutOff.exit === "error:api_error" && cutOff.aborted === "Credit balance is too low");
+check("a finished run is exit=success and not aborted", JSON.stringify(classifyClaudeResult({ subtype: "success", is_error: false })) === JSON.stringify({ exit: "success" }));
+check("running out of the run's own budget is the arm's outcome, not an abort", classifyClaudeResult({ subtype: "error_max_budget_usd", is_error: true }).aborted === undefined && classifyClaudeResult({ subtype: "error_max_budget_usd", is_error: true }).exit === "error_max_budget_usd");
+check("a crash with no JSON is recorded as such", classifyClaudeResult(null, null, 143).exit === "no-json(exit 143)" && classifyClaudeResult(null, { code: "ETIMEDOUT", message: "x" }).exit === "error:ETIMEDOUT");
+appendRecord(buildRecord({ arm: "claude-code", bench: B3, runDir: none, model: "m", costUsd: 0.2, wallSec: 101, ...cutOff }), ledger);
+appendRecord(buildRecord({ arm: "claude-code", bench: B1, runDir: good1, model: "m", costUsd: 9.0, wallSec: 900, ...cutOff }), ledger);
+const s2 = summarize(readLedger(ledger));
+check("an aborted run is left out of its cell, whether its artifact passed or not", s2.cells[B1]["claude-code"].n === 2 && s2.cells[B1]["claude-code"].costUsd === 1.5 && s2.cells[B3]["claude-code"] === undefined && s2.aborted.length === 2);
+check("the table lists aborted runs with the provider's message, and still says the pair is not yet run",
+  /not counted — the provider ended these runs/.test(render(s2)) && /claude-code\/bench-03[^\n]*Credit balance is too low/.test(render(s2)) && /not yet run: claude-code\/bench-03/.test(render(s2)), render(s2).split("\n").slice(-4).join(" / "));
+// 2026-10-09: the CLI's default model had moved; three re-runs joined the column of twelve runs on another model.
+check("the bare arm runs on a pinned model, --model overrides it, and luxas keeps its profile",
+  armModel("claude-code") === BARE_ARM_MODEL && armModel("claude-code", "x") === "x" && armModel("luxas") === undefined && armModel("luxas", "y") === "y");
+const ledger2 = join(tmp, "LEDGER2.jsonl");
+const on = (model: string, dir: string, bench: string, extra: object = {}) => appendRecord(buildRecord({ arm: "claude-code", bench, runDir: dir, model, costUsd: 1.0, wallSec: 60, exit: "success", ...extra }), ledger2);
+on("model-a", good1, B1); on("model-a", good1, B1); on("model-b+helper", naive1, B1); on("model-a", none, B3, cutOff);
+const s3 = summarize(readLedger(ledger2));
+const colA = "claude-code (model-a)", colB = "claude-code (model-b)";
+check("one arm on two models is two columns, and neither mean includes the other's runs",
+  JSON.stringify(s3.arms) === JSON.stringify([colA, colB]) && s3.cells[B1][colA].n === 2 && s3.cells[B1][colA].score === 1 && s3.cells[B1][colB].n === 1 && s3.cells[B1][colB].score === 0.75 && s3.overall[colA].n === 2 && s3.overall[colB].n === 1,
+  JSON.stringify(s3.arms) + " " + JSON.stringify(s3.overall));
+check("an aborted run is listed under its own model's column", /claude-code \(model-a\)\/bench-03[^\n]*Credit balance is too low/.test(render(s3)), render(s3).split("\n").slice(-2).join(" / "));
 check("the committed ledger, if present, parses", !existsSync(join(BENCH, "LEDGER.jsonl")) || readLedger().every((r) => typeof r.arm === "string" && typeof r.oracleTotal === "number"));
+
+console.log("\n7. a run the provider ended is aborted on BOTH arms");
+const blank = benchRun.classifyClaudeResult({ subtype: "success", is_error: true, terminal_reason: "api_error", result: "" });
+check("an api_error with an empty result is still aborted, with a non-empty reason", typeof blank.aborted === "string" && blank.aborted.length > 0, JSON.stringify(blank));
+const runLuxas = (benchRun as any).runLuxas as undefined | ((dir: string, o: any, spawn?: any) => { exit: string; aborted?: string });
+check("bench_run exports runLuxas with an injectable spawner", typeof runLuxas === "function");
+const ledger7 = join(tmp, "LEDGER7.jsonl");
+appendRecord(buildRecord({ arm: "claude-code", bench: B1, runDir: none, model: "m", costUsd: 0.2, wallSec: 101, ...blank }), ledger7);
+const luxasEnding = (kind: string, detail: string, ended: { status: number | null; error?: { code: string; message: string } } = { status: 1 }) => {
+  const dir = join(tmp, `lx-${kind}-${detail ? "d" : "blank"}${ended.error ? "-" + ended.error.code : ""}`); mkdirSync(dir, { recursive: true });
+  // What `luxas run` leaves when it ends this way (exit-state.ts record shape); no process is launched.
+  const stub = (_cmd: string, args: string[]) => {
+    mkdirSync(join(args[2], ".agent"), { recursive: true });
+    writeFileSync(join(args[2], ".agent", "last_exit.json"), JSON.stringify({ kind, detail, ts: Date.now(), pid: process.pid, finished: kind === "finished", lastErrTransient: kind === "provider_transient" }));
+    return { status: ended.status, stdout: "", stderr: "", error: ended.error };
+  };
+  return { dir, res: runLuxas ? runLuxas(dir, { maxUsd: 3, timeoutMin: 1 }, stub) : { exit: "n/a" } as { exit: string; aborted?: string; routing?: Record<string, string> } };
+};
+for (const [kind, detail] of [["provider_unfunded", "deepseek: Insufficient Balance"], ["provider_transient", "502 Bad Gateway"], ["provider_unfunded", ""]] as const) {
+  const { dir, res } = luxasEnding(kind, detail);
+  check(`luxas ${kind}${detail ? "" : " (no detail)"} is exit=${kind} and aborted with a non-empty reason`, res.exit === kind && typeof res.aborted === "string" && res.aborted.length > 0, JSON.stringify(res));
+  appendRecord(buildRecord({ arm: "luxas", bench: B1, runDir: dir, model: "profile:dual", costUsd: 0.1, wallSec: 30, ...(res as any) }), ledger7);
+}
+for (const kind of ["budget_exhausted", "provider_error", "finished", "stopped_unfinished"]) {
+  const { res } = luxasEnding(kind, "x");
+  check(`luxas ${kind} is the arm's outcome, not an abort`, res.exit === kind && res.aborted === undefined, JSON.stringify(res));
+}
+// Two edges of runLuxas that only hand-built records exercised: a runLuxas that dropped the routing, and a
+// classifyLuxasExit without its spawn-error line, both passed every check of this gate (review 2026-10-09).
+const killed = luxasEnding("finished", "x", { status: null, error: { code: "ETIMEDOUT", message: "spawnSync ETIMEDOUT" } }).res;
+check("a luxas run the bench timeout killed is error:ETIMEDOUT, whatever exit record is in its directory", killed.exit === "error:ETIMEDOUT" && killed.aborted === undefined, JSON.stringify(killed));
+const modeBefore = process.env.LUXAS_EXPERIMENT_MODE;
+process.env.LUXAS_EXPERIMENT_MODE = "solo";
+const routed = luxasEnding("finished", "routed").res;
+if (modeBefore === undefined) delete process.env.LUXAS_EXPERIMENT_MODE; else process.env.LUXAS_EXPERIMENT_MODE = modeBefore;
+check("runLuxas puts the launching shell's routing on its result (it becomes the row's column)", routed.routing?.LUXAS_EXPERIMENT_MODE === "solo", JSON.stringify(routed));
+const s7 = summarize(readLedger(ledger7));
+check("provider-ended runs of both arms are left out of every cell", s7.cells[B1] === undefined && s7.aborted.map((r) => r.arm).sort().join(",") === "claude-code,luxas,luxas,luxas",
+  `cells=${JSON.stringify(Object.keys(s7.cells[B1] ?? {}))} aborted=${s7.aborted.map((r) => r.arm).join(",")}`);
+
+console.log("\n8. the bare arm states its effort and leaves a transcript");
+const bare = benchRun as any;
+check("bench_run exports claudeArgs, armEffort, BARE_ARM_EFFORT and an injectable runClaudeCode",
+  typeof bare.claudeArgs === "function" && typeof bare.armEffort === "function" && typeof bare.BARE_ARM_EFFORT === "string" && typeof bare.runClaudeCode === "function");
+const cc: string[] = bare.claudeArgs ? bare.claudeArgs("req", { maxUsd: 3, model: "m", effort: "high" }) : [];
+const flag = (k: string) => (cc.includes(k) ? cc[cc.indexOf(k) + 1] : undefined);
+check("the command line carries the model AND the effort (neither is left to the CLI's settings)", flag("--model") === "m" && flag("--effort") === "high", cc.slice(2).join(" "));
+check("…and asks for the whole conversation, not only its last message", flag("--output-format") === "stream-json" && cc.includes("--verbose"), `--output-format ${flag("--output-format")}`);
+check("the bare arm has a pinned effort, --effort overrides it, and luxas has none",
+  !!bare.armEffort && bare.armEffort("claude-code") === bare.BARE_ARM_EFFORT && bare.armEffort("claude-code", "low") === "low" && bare.armEffort("luxas") === undefined && bare.armEffort("luxas", "high") === undefined);
+const resultObj = { type: "result", subtype: "success", is_error: false, total_cost_usd: 1.25, modelUsage: { helper: { costUSD: 0.05 }, "model-x": { costUSD: 1.2 } }, result: "done" };
+const lines = [JSON.stringify({ type: "system", subtype: "init" }), JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", name: "Bash" }] } }), JSON.stringify(resultObj)];
+const bareRun = (name: string, out: { stdout: string; error?: any; status?: number }, effort = "high") => {
+  const dir = join(tmp, name); mkdirSync(dir, { recursive: true });
+  let seen: string[] = [];
+  const stub = (_cmd: string, args: string[]) => { seen = args; return { status: out.status ?? 0, stdout: out.stdout, stderr: "", error: out.error }; };
+  const res = bare.runClaudeCode ? bare.runClaudeCode(dir, "req", { maxUsd: 3, model: "model-x", effort, timeoutMin: 1 }, stub) : { exit: "n/a" };
+  const kept = existsSync(join(dir, "claude_transcript.jsonl")) ? readFileSync(join(dir, "claude_transcript.jsonl"), "utf-8") : null;
+  return { dir, res, seen, kept };
+};
+const fin = bareRun("cc-finished", { stdout: lines.join("\n") + "\n" });
+check("a finished run: result read from the transcript's last result line (exit, cost, costliest model first)",
+  fin.res.exit === "success" && fin.res.aborted === undefined && fin.res.costUsd === 1.25 && fin.res.model === "model-x+helper", JSON.stringify(fin.res));
+check("…the whole transcript is in the run directory, tool calls included", fin.kept !== null && fin.kept.split("\n").filter(Boolean).length === 3 && fin.kept.includes('"tool_use"'), String(fin.kept).slice(0, 80));
+check("…launched with the effort it reports", fin.seen[fin.seen.indexOf("--effort") + 1] === "high" && fin.res.effort === "high", JSON.stringify(fin.res));
+const cut = bareRun("cc-cut", { stdout: lines.slice(0, 2).join("\n") + "\n" + JSON.stringify({ type: "result", subtype: "success", is_error: true, terminal_reason: "api_error", result: "Credit balance is too low" }) + "\n" });
+check("a provider-ended run is still aborted when read from a transcript", cut.res.exit === "error:api_error" && cut.res.aborted === "Credit balance is too low", JSON.stringify(cut.res));
+const torn = bareRun("cc-timeout", { stdout: lines.slice(0, 2).join("\n") + '\n{"type":"assist', error: { code: "ETIMEDOUT", message: "spawnSync claude ETIMEDOUT" }, status: null as any });
+check("a timeout keeps the transcript up to the kill and is not read as a result", torn.res.exit === "error:ETIMEDOUT" && torn.res.costUsd === null && torn.kept !== null && torn.kept.includes('"tool_use"'), JSON.stringify(torn.res));
+const ledger8 = join(tmp, "LEDGER8.jsonl");
+const row8 = (effort: string | undefined, dir: string, model = "model-x") => appendRecord(buildRecord({ arm: "claude-code", bench: B1, runDir: dir, model, costUsd: 1, wallSec: 60, exit: "success", ...(effort ? { effort } : {}) } as any), ledger8);
+row8(undefined, good1); row8("xhigh", good1);
+check("the ledger row carries the effort", (readLedger(ledger8)[1] as any).effort === "xhigh" && !("effort" in readLedger(ledger8)[0]));
+const s8a: any = summarize(readLedger(ledger8));
+check("a row that recorded no effort beside one that did is not called mixed", JSON.stringify(s8a.mixedEffort ?? null) === "{}" && !/mixed effort/.test(render(s8a)), JSON.stringify(s8a.mixedEffort));
+row8("high", naive1);
+const s8b: any = summarize(readLedger(ledger8));
+check("two recorded efforts in one column are named under the table", JSON.stringify(s8b.mixedEffort?.["claude-code"]) === JSON.stringify(["high", "xhigh"]) && /mixed effort in claude-code: runs at high and xhigh/.test(render(s8b)), render(s8b).split("\n").slice(-2).join(" / "));
+
+console.log("\n9. a luxas run's routing is on its ledger row and decides its column");
+// runLuxas passes the launching shell's environment to `luxas run`: a solo run on an Opus executor and a
+// pipeline run on DeepSeek both recorded profile:dual and would have been averaged together.
+const routingOf = (benchRun as any).luxasRouting as undefined | ((env: Record<string, string | undefined>) => Record<string, string> | undefined);
+check("bench_run exports luxasRouting", typeof routingOf === "function");
+check("nothing set → no routing field; unrelated variables are not recorded", !!routingOf && routingOf({ HOME: "/x", LUXAS_PROJECT_DIR: "/p" }) === undefined);
+const soloEnv = { LUXAS_EXPERIMENT_MODE: "solo", LUXAS_BRAIN_MODEL: "claude-opus-5-5", LUXAS_PROJECT_DIR: "/p", LUXAS_EXECUTOR_MODEL: "" };
+check("the executor mode and the brain model are recorded; an empty variable is not", !!routingOf && JSON.stringify(routingOf(soloEnv)) === JSON.stringify({ LUXAS_EXPERIMENT_MODE: "solo", LUXAS_BRAIN_MODEL: "claude-opus-5-5" }), JSON.stringify(routingOf?.(soloEnv)));
+const ledger9 = join(tmp, "LEDGER9.jsonl");
+const lx = (routing: Record<string, string> | undefined, dir: string) => appendRecord(buildRecord({ arm: "luxas", bench: B1, runDir: dir, model: "profile:dual", costUsd: 5, wallSec: 900, exit: "finished", ...(routing ? { routing } : {}) } as any), ledger9);
+lx(undefined, good1); lx({ LUXAS_EXPERIMENT_MODE: "solo", LUXAS_BRAIN_MODEL: "claude-opus-5-5" }, naive1);
+check("the row carries it", JSON.stringify((readLedger(ledger9)[1] as any).routing) === JSON.stringify({ LUXAS_EXPERIMENT_MODE: "solo", LUXAS_BRAIN_MODEL: "claude-opus-5-5" }) && !("routing" in readLedger(ledger9)[0]));
+const s9 = summarize(readLedger(ledger9));
+check("a pipeline run and a solo run are two columns, each with its own mean",
+  JSON.stringify(s9.arms) === JSON.stringify(["luxas (profile:dual)", "luxas (profile:dual; brain_model=claude-opus-5-5 experiment_mode=solo)"]) && s9.cells[B1][s9.arms[0]].score === 1 && s9.cells[B1][s9.arms[1]].score === 0.75, JSON.stringify(s9.arms));
+
+// A run made elsewhere is recorded with `--record`; its routing is not in this shell, so it is stated.
+const recordedRow = (benchRun as any).recordedRow as undefined | ((a: { arm: string; bench: string; recordDir: string; argv: string[] }) => any);
+check("bench_run exports recordedRow (the row --record writes)", typeof recordedRow === "function");
+const recSolo = recordedRow?.({ arm: "luxas", bench: B1, recordDir: naive1, argv: ["--model", "profile:dual", "--cost", "5", "--routing", "LUXAS_EXPERIMENT_MODE=solo", "--routing", "LUXAS_BRAIN_MODEL=claude-opus-5-5", "--routing", "HOME=/x", "--routing", "not-a-pair"] });
+check("--record keeps the stated routing, and only routing variables", JSON.stringify(recSolo?.routing) === JSON.stringify({ LUXAS_EXPERIMENT_MODE: "solo", LUXAS_BRAIN_MODEL: "claude-opus-5-5" }) && recSolo?.costUsd === 5, JSON.stringify(recSolo?.routing));
+check("--record with no --routing writes a row without the field", !!recordedRow && !("routing" in recordedRow({ arm: "luxas", bench: B1, recordDir: good1, argv: ["--model", "profile:dual"] })));
+if (recSolo) appendRecord(recSolo, ledger9);
+const s9b = summarize(readLedger(ledger9));
+check("a recorded solo run lands in the solo column, not beside the pipeline runs", s9b.cells[B1][s9.arms[0]]?.n === 1 && s9b.cells[B1][s9.arms[1]]?.n === 2, JSON.stringify(Object.fromEntries(Object.entries(s9b.cells[B1] ?? {}).map(([k, v]: any) => [k, v.n]))));
+
+// Before a billable run the launcher prints what it is about to be. For the luxas arm `model=profile:dual` alone
+// said the same for a pipeline run on the default brain and for a solo run on Opus: two columns of the table.
+const planLine = (benchRun as any).planLine as undefined | ((a: object) => string);
+const plan = (arm: string, routing?: Record<string, string>) => planLine?.({ arm, model: arm === "luxas" ? null : "claude-opus-5-5", effort: arm === "luxas" ? undefined : "xhigh", benches: [B1], maxUsd: 25, timeoutMin: 40, runsDir: "/r", commit: "abc", routing }) ?? "(bench_run does not export planLine)";
+check("the line printed before a luxas run names the routing it will be recorded under", plan("luxas", { LUXAS_EXPERIMENT_MODE: "solo", LUXAS_BRAIN_MODEL: "claude-opus-5-5" }) === `arm=luxas model=profile:dual routing=LUXAS_EXPERIMENT_MODE=solo,LUXAS_BRAIN_MODEL=claude-opus-5-5 benches=${B1} max-usd=25/run (worst case $25.00) timeout=40min runs-dir=/r commit=abc`, plan("luxas", { LUXAS_EXPERIMENT_MODE: "solo", LUXAS_BRAIN_MODEL: "claude-opus-5-5" }));
+check("…says so when none is set (the profile's defaults), and the bare arm's line is what it was", / routing=none benches=/.test(plan("luxas")) && plan("claude-code") === `arm=claude-code model=claude-opus-5-5 effort=xhigh benches=${B1} max-usd=25/run (worst case $25.00) timeout=40min runs-dir=/r commit=abc`, `${plan("luxas")} | ${plan("claude-code")}`);
+
+console.log("\n10. a bench run is not a past project");
+// `luxas run` registers its directory in ~/.sisyphus/projects.json and a finished entry is shown to later runs
+// as past research. A second run of a bench task would be handed the first one's notes path.
+// This section holds the path test. That registerProject and selectPastProjects act on it is held in
+// smoke_prompt_assembly (C84a), where HOME is redirected and a registry can be written.
+const { isThrowawayPath } = await import("../src/memory.ts");
+const { homedir } = await import("node:os");
+check("the default runs directory is a throwaway path (so never registered or surfaced: C84a)", isThrowawayPath(join(homedir(), ".sisyphus", "bench-runs", "2026-10-09T00-00-00-luxas-blender-02-lit-scene")));
+check("an ordinary project directory still is", !isThrowawayPath(join(homedir(), "research", "dy-clock")));
 
 rmSync(tmp, { recursive: true, force: true });
 console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");

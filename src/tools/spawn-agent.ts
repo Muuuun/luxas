@@ -22,6 +22,7 @@ import { fileURLToPath } from "node:url";
 import { pidAlive } from "../utils.js";
 import { softCapReached, SOFT_CAP_FRACTION } from "../usage-log.js";
 import { buildClaimTable, parseFrameHeadline, parseResultsJson } from "../claims-table.js";
+import { asksArtifactLine, clearReviewCopies, readBackLines, reviewArtifactsBlock, reviewImagesBlock } from "../review-images.js";
 import { blindEstimateTask, extractBlindEstimate, extractReviewerLines, headlineDeclsFor, persistReview, reviewCompleteness, reviewerObligationBlock, selectBlindEstimateDecls, stampBlindInputs, cosmeticSpawnNotice } from "../claims-review.js";
 
 // Primary defense against path-escape via LLM-supplied id; the realpath check
@@ -547,7 +548,16 @@ export async function runExperimentReviewLoop<R extends { output: string; succes
         const first = await once();
         return reviewerGaveNoReview(first) ? once() : first;
       };
+      // The reviewer opens copies of saved models in the OS temp directory (review-images.ts); they go
+      // when the loop ends, however it ends: by return or throw (the finally), and by process.exit, which is
+      // how the hard cost cap and the unfunded-provider stop end a run from inside a model call such as the
+      // reviewer's own (usage-log.ts). The loop body is not re-indented under this try.
+      const dropCopies = () => clearReviewCopies(projectDir, String(experimentId));
+      process.once("exit", dropCopies);
+      try {
       for (let round = firstRound; round <= lastRound; round++) {
+        // Built once per round: the prompt carries it, and the reply is read against what it asked for.
+        const savedModels = reviewArtifactsBlock(projectDir, experimentId);
         const reviewResult = await spawnReviewer({
           name: "experiment_reviewer",
           projectDir,
@@ -558,7 +568,8 @@ export async function runExperimentReviewLoop<R extends { output: string; succes
             `data/experiments/${experimentId}/runs/run_N/results.json, the referenced ` +
             `raw_data files, and the cited literature fragments under notes/literature.d/. ` +
             `Return a VERDICT: satisfied or VERDICT: revise with actionable FEEDBACK per ` +
-            `your system prompt.` + obligation,
+            // Re-read every round: a revision writes a new run_N, and it is that run's images that need eyes.
+            `your system prompt.` + obligation + reviewImagesBlock(projectDir, experimentId) + savedModels,
           getApiKey,
           parentAgentId: `${parentAgentId ?? "brain"}.experiment-review-${round}`,
           depth: (depth ?? 0) + 1,
@@ -577,9 +588,18 @@ export async function runExperimentReviewLoop<R extends { output: string; succes
         const verdictLineMatch = verdictText.match(/^\s*#{0,6}\s*VERDICT:\s*\w+.*$/im);
         const feedbackForFile = (verdictText.match(/FEEDBACK:\s*([\s\S]*?)$/i) ?? [])[1];
         const verdictForFile = noReview ? `VERDICT: (none — reviewer gave no review: ${noReview})` : verdictLineMatch ? verdictLineMatch[0].trim() : "VERDICT: (none)";
-        try { persistReview(projectDir, experimentId, round, blindLines, reviewLines, verdictForFile, missing, feedbackForFile); }
+        // The saved-model block asks for `artifact <path>: …` before the VERDICT line, and nothing kept
+        // it: a model the reviewer measured and one it could not open both came back as SATISFIED
+        // alone. Read only when the block was sent and asked for it, so a round without a saved model
+        // persists and returns what it always did. Each kept line starts with "artifact" and holds no
+        // line break, so no reader of the review file can take it for a verdict or an obligation line.
+        const modelLines = !noReview && asksArtifactLine(savedModels) ? readBackLines(verdictText) : null;
+        const modelRecord = !modelLines ? [] : modelLines.length ? modelLines : ["(none: a saved model was listed for the reviewer, and no `artifact …:` line was found in its reply)"];
+        try { persistReview(projectDir, experimentId, round, blindLines, reviewLines, verdictForFile, missing, feedbackForFile, modelRecord); }
         catch (err) { claimNotes.push(`[review persistence failed round ${round}: ${(err as Error).message.slice(0, 100)}]`); }
         if (missing.length > 0) claimNotes.push(`[experiment_reviewer round ${round}: NO REVIEW for ${missing.join(", ")} — DISCRIMINATOR/SCALING lines missing; attestations withheld]`);
+        if (modelLines?.length) claimNotes.push(...modelLines.map((l) => `[experiment_reviewer round ${round}, saved-model read-back] ${l}`));
+        else if (modelLines) claimNotes.push(`[experiment_reviewer round ${round}: a saved model was listed for the reviewer, and no \`artifact …:\` line was found in its reply (whether it re-opened the file is not known)]`);
         // Nothing to revise against: re-running the experiment on "(no output)"
         // would be paid for nothing, and the delivered result stands unreviewed.
         if (noReview) {
@@ -664,6 +684,7 @@ export async function runExperimentReviewLoop<R extends { output: string; succes
         headlineIds = [...new Set(headlineDecls.map((d) => d.id))];
         obligation = reviewerObligationBlock(headlineIds, blindLines);
       }
+      } finally { process.removeListener("exit", dropCopies); dropCopies(); }
     }
   return result;
 }

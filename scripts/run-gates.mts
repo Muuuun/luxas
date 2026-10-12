@@ -17,7 +17,7 @@
  * its predecessors did.
  */
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { readdirSync } from "node:fs";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -37,6 +37,12 @@ interface GateSpec {
 	kind: Kind;
 	/** Env vars that must be set, else the gate self-skips (keyless runs stay green). */
 	needsKey?: string[];
+	/**
+	 * Executables that must be on PATH, else the gate self-skips and is named in the
+	 * summary's skipped list. For gates that drive a simulator the droplet may not have;
+	 * anything such a gate checks that does NOT need the binary belongs in a plain assert gate.
+	 */
+	needsBin?: string[];
 	timeoutMs?: number;
 	/** Why an experiment script is not an assert gate. */
 	note?: string;
@@ -92,6 +98,10 @@ const MANIFEST: Record<string, GateSpec> = {
 	smoke_xval_dispute_gate: { kind: "assert" },
 	smoke_claim_table: { kind: "assert" },
 	smoke_claims_review: { kind: "assert" },
+	smoke_sim_wiring: { kind: "assert" },
+	smoke_simbench_graders: { kind: "assert", needsBin: ["blender"], timeoutMs: 600_000 },
+	smoke_simrun: { kind: "assert", needsBin: ["python3"], timeoutMs: 240_000 },   // the runner over its local transport: about 100 short jobs
+	smoke_simrun_ssh: { kind: "assert", needsBin: ["python3", "sshd", "ssh", "scp", "ssh-keygen"], timeoutMs: 240_000 },   // real ssh/scp to a throwaway user-mode sshd on 127.0.0.1
 	smoke_frame_headline_strict: { kind: "assert" },
 	smoke_pi_gate_escalation: { kind: "assert" },
 	smoke_claim_table_legacy: { kind: "assert" },
@@ -166,8 +176,16 @@ interface Result {
 	output?: string;
 }
 
+const onPath = (bin: string): boolean => spawnSync("sh", ["-c", `command -v ${bin}`], { stdio: "ignore" }).status === 0;
+
+// Gates build agent prompts, and a prompt reads the operator's ~/.sisyphus/software.json
+// and simrun's doctor record (src/software.ts). An operator who registers a host must
+// not change what the gates assert, so both point at nothing here; a gate that tests
+// that path sets its own fixture.
+const GATE_ENV = { ...process.env, LUXAS_SOFTWARE_FILE: "/nonexistent/luxas-gates/software.json", SIMRUN_STATE_DIR: "/nonexistent/luxas-gates/simrun" };
+
 function runGate(name: string, spec: GateSpec): Promise<Result> {
-	const missing = (spec.needsKey ?? []).filter((k) => !process.env[k]);
+	const missing = [...(spec.needsKey ?? []).filter((k) => !process.env[k]), ...(spec.needsBin ?? []).filter((b) => !onPath(b)).map((b) => `${b} on PATH`)];
 	if (missing.length > 0) {
 		return Promise.resolve({ name, status: "skip", ms: 0, reason: `needs ${missing.join(", ")}` });
 	}
@@ -175,7 +193,7 @@ function runGate(name: string, spec: GateSpec): Promise<Result> {
 	return new Promise((resolve) => {
 		const child = spawn("npx", ["tsx", join(SCRIPTS, `${name}.mts`)], {
 			cwd: ROOT,
-			env: process.env,
+			env: GATE_ENV,
 			stdio: ["ignore", "pipe", "pipe"],
 		});
 		let out = "";

@@ -41,10 +41,38 @@ export interface Cell {
 
 const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : NaN);
 
-export function summarize(records: LedgerRecord[], opts: { latest?: boolean } = {}): { benches: string[]; arms: string[]; cells: Record<string, Record<string, Cell>>; overall: Record<string, Cell> } {
+/** The model that did the work: the first of a "+"-joined list (bench_run records the costliest first). */
+const primaryModel = (r: LedgerRecord) => {
+  const model = r.model ? r.model.split("+")[0] : "model not recorded";
+  // A luxas run's executor and models also come from the routing variables it inherited: part of what the column is.
+  const routing = Object.entries(r.routing ?? {}).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${k.replace(/^LUXAS_/, "").toLowerCase()}=${v}`).join(" ");
+  return routing ? `${model}; ${routing}` : model;
+};
+
+/**
+ * The column a run belongs to. An arm is one column while every run of it used
+ * one model, and one column per model once it has been seen on two. On
+ * 2026-10-09 three claude-code runs went out on Fable 5.1 and landed in the
+ * column of twelve Opus 5.5 runs: "ALL n=15" was a mean over two models, and
+ * three benches read as measured on a model that had never finished them.
+ */
+export function columnOf(all: LedgerRecord[]): (r: LedgerRecord) => string {
+  const models = new Map<string, Set<string>>();
+  for (const r of all) (models.get(r.arm) ?? models.set(r.arm, new Set()).get(r.arm)!).add(primaryModel(r));
+  return (r) => (models.get(r.arm)!.size > 1 ? `${r.arm} (${primaryModel(r)})` : r.arm);
+}
+
+/** `arms` are the table's columns: see columnOf. */
+export function summarize(all: LedgerRecord[], opts: { latest?: boolean } = {}): { benches: string[]; arms: string[]; cells: Record<string, Record<string, Cell>>; overall: Record<string, Cell>; aborted: (LedgerRecord & { column: string })[]; mixedEffort: Record<string, string[]> } {
+  const col = columnOf(all);
+  // A run the provider ended (billing, outage) says nothing about the arm, pass
+  // or fail: counting only the ones that happened to pass would bias the mean
+  // upward. They are listed under the table and left out of every cell.
+  const aborted = all.filter((r) => r.aborted).map((r) => ({ ...r, column: col(r) }));
+  const records = all.filter((r) => !r.aborted);
   const by = new Map<string, LedgerRecord[]>();
   for (const r of records) {
-    const k = `${r.bench}\u0000${r.arm}`;
+    const k = `${r.bench}\u0000${col(r)}`;
     (by.get(k) ?? by.set(k, []).get(k)!).push(r);
   }
   const cell = (rs: LedgerRecord[]): Cell => {
@@ -57,7 +85,7 @@ export function summarize(records: LedgerRecord[], opts: { latest?: boolean } = 
       costUsd: costs.length ? mean(costs) : null, wallSec: walls.length ? mean(walls) : null, exits };
   };
   const benches = [...new Set(records.map((r) => r.bench))].sort();
-  const arms = [...new Set(records.map((r) => r.arm))].sort();
+  const arms = [...new Set(records.map(col))].sort();
   const cells: Record<string, Record<string, Cell>> = {};
   const perArm: Record<string, LedgerRecord[]> = {};
   for (const b of benches) {
@@ -72,7 +100,14 @@ export function summarize(records: LedgerRecord[], opts: { latest?: boolean } = 
   }
   const overall: Record<string, Cell> = {};
   for (const a of arms) if (perArm[a]?.length) overall[a] = cell(perArm[a]);
-  return { benches, arms, cells, overall };
+  // bench_run records --effort since 2026-10-09. Rows before that carry none
+  // and are left out of this test: what they ran at is not known from the row.
+  const mixedEffort: Record<string, string[]> = {};
+  for (const a of arms) {
+    const seen = [...new Set((perArm[a] ?? []).map((r) => r.effort).filter((e): e is string => !!e))].sort();
+    if (seen.length > 1) mixedEffort[a] = seen;
+  }
+  return { benches, arms, cells, overall, aborted, mixedEffort };
 }
 
 function fmt(c: Cell | undefined): string {
@@ -85,7 +120,9 @@ function fmt(c: Cell | undefined): string {
 }
 
 export function render(s: ReturnType<typeof summarize>): string {
-  if (!s.benches.length) return "ledger is empty — run scripts/bench_run.mts first";
+  const cut = s.aborted.map((r) => `  ${r.column}/${r.bench}: ${r.oraclePassed}/${r.oracleTotal} when it was cut off after ${r.wallSec ?? "?"}s ("${r.aborted}")`);
+  const cutLines = cut.length ? ["", "not counted — the provider ended these runs; run them again:", ...cut] : [];
+  if (!s.benches.length) return ["ledger is empty — run scripts/bench_run.mts first", ...cutLines].join("\n");
   const head = ["bench", ...s.arms];
   const rows = s.benches.map((b) => [b, ...s.arms.map((a) => fmt(s.cells[b][a]))]);
   rows.push(["ALL", ...s.arms.map((a) => fmt(s.overall[a]))]);
@@ -97,6 +134,8 @@ export function render(s: ReturnType<typeof summarize>): string {
   if (thin.length) out.push(`n=1 cells present (${thin.join(", ")}): a one-check difference there is inside run-to-run noise, not a result.`);
   const missing = s.benches.flatMap((b) => s.arms.filter((a) => !s.cells[b][a]).map((a) => `${a}/${b}`));
   if (missing.length) out.push(`not yet run: ${missing.join(", ")}`);
+  for (const [a, efforts] of Object.entries(s.mixedEffort)) out.push(`mixed effort in ${a}: runs at ${efforts.join(" and ")} share this column, so its mean is over two settings (rows before 2026-10-09 recorded none).`);
+  out.push(...cutLines);
   return out.join("\n");
 }
 

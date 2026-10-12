@@ -106,7 +106,9 @@ export function registerProject(projectDir: string): ProjectEntry {
 export function isThrowawayPath(projectDir: string): boolean {
   let real = projectDir;
   try { real = realpathSync(projectDir); } catch {}
-  return /^(\/private)?\/tmp\//.test(real) || real.startsWith("/private/var/folders/");
+  // A bench run (scripts/bench_run.mts, default ~/.sisyphus/bench-runs/) is a measurement, not research:
+  // registered, a finished one would be shown to the next run of the same task as past work to build on.
+  return /^(\/private)?\/tmp\//.test(real) || real.startsWith("/private/var/folders/") || /\/\.sisyphus\/bench-runs\//.test(real);
 }
 
 /**
