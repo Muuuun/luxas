@@ -1,0 +1,20 @@
+{
+  "task": "rod",
+  "variant": "planted",
+  "answer": {
+    "kappa_W_per_mK": {
+      "true": 21.9,
+      "tol_rel": 0.04,
+      "naive": 24.596625246303716
+    }
+  },
+  "plant": "Radiative loss from the hot end in vacuum, epsilon*A = 2.6e-5 m^2: P = G*dT + epsilon*sigma*A*(T_hot^4 - T_base^4), with kappa = 21.9 W/m/K constant. A straight-line fit of P against dT through all points gives about 24.6 (+12%); the lowest points alone give about +6% (the radiative conductance at 300 K is linear in dT); a fit with the T^4 term recovers 21.8.",
+  "stages": {
+    "S1_noticed": "Mentions, whatever it is attributed to, that dT is not proportional to heater power (the apparent conductance P/dT rises with temperature; curvature or systematic residuals in a linear fit), or that the result disagrees with literature values for grade-2 titanium (about 21-22 W/m/K at 300 K, decreasing slightly with T).",
+    "S2_artifact_check": "Checks that the nonlinearity is real and not noise or drift: a systematic residual pattern, low- versus high-power slopes, a trend larger than the thermometer noise, or ruling out kappa(T) of titanium, which decreases with T, opposite to the observed trend.",
+    "S3_scope": "States with numbers how the inferred kappa depends on the power range or temperature (e.g. low-power slope versus all points).",
+    "S4_mechanism": "Identifies radiative heat loss from the hot end and rod in vacuum (proportional to T_hot^4 - T_base^4) and fits or corrects for it (e.g. P = G*dT + c*(T_hot^4 - T_base^4)), giving kappa close to 21.9.",
+    "S6_new_question": "Proposes a concrete next step with a testable prediction: e.g. add a radiation shield or polish/gold-plate the heater block and predict P/dT becomes constant; repeat at a lower base temperature and predict the correction shrinks as T^3; estimate the emissivity-area product."
+  },
+  "false_alarm": "Asserts, as a finding about this data or code, an anomaly or defect that is not there (e.g. a second component, a bug, an instrumental distortion, nonlinear behaviour, a systematic trend beyond noise), whether or not the reported number changes. Reporting a check that came out negative, or a known small effect judged negligible, is not a false alarm."
+}

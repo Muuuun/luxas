@@ -1,0 +1,13 @@
+{
+  "task": "ringdown",
+  "variant": "clean",
+  "answer": {
+    "Q": {
+      "true": 12000.0,
+      "tol_rel": 0.07,
+      "naive": 11991.732628230619
+    }
+  },
+  "plant": "none: this is the clean control of s1-ringdown",
+  "false_alarm": "Asserts, as a finding about this data or code, an anomaly or defect that is not there (e.g. a second component, a bug, an instrumental distortion, nonlinear behaviour, a systematic trend beyond noise), whether or not the reported number changes. Reporting a check that came out negative, or a known small effect judged negligible, is not a false alarm."
+}

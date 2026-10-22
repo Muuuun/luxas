@@ -1,0 +1,20 @@
+{
+  "task": "orbit",
+  "variant": "planted",
+  "answer": {
+    "precession_rad_per_orbit": {
+      "true": 0.07020536679448906,
+      "tol_rel": 0.03,
+      "naive": 0.053630234162684975
+    }
+  },
+  "plant": "The shipped integrator's second half-kick uses the acceleration from before the drift (ax, ay instead of ax_new, ay_new). The scheme becomes first-order and non-symplectic: energy grows by about 50% over 20 orbits and the measured precession is about 0.054 rad/orbit instead of the analytic 0.0702.",
+  "stages": {
+    "S1_noticed": "Mentions, whatever it is attributed to, a specific sign that the shipped integrator's output is wrong: energy drifting by tens of percent, the orbit growing (period or semi-major axis increasing), the precession disagreeing with the analytic value 2*pi*(1/sqrt(1-2*beta/L^2)-1) = 0.0702, or the result depending on dt.",
+    "S2_artifact_check": "Runs a discriminating check: an energy-conservation diagnostic, a dt-convergence test, or a comparison with an independent integrator (e.g. scipy solve_ivp) or with the analytic precession.",
+    "S3_scope": "States the size of the error with numbers (e.g. about 0.054 from the shipped code vs about 0.070) and that it affects any result produced with this integrator (e.g. the 2025 paper's runs).",
+    "S4_mechanism": "Identifies the bug: the second half-kick uses the stale, pre-drift acceleration (ax/ay instead of ax_new/ay_new), making the scheme first-order and non-symplectic; fixes it and shows energy is conserved and the precession agrees with theory.",
+    "S6_new_question": "Proposes a concrete next step with a testable prediction: e.g. re-check the 2025 paper's numbers and predict how far they are off; add an energy-drift regression test; measure how the error scales with dt (first order) before and after the fix."
+  },
+  "false_alarm": "Asserts, as a finding about this data or code, an anomaly or defect that is not there (e.g. a second component, a bug, an instrumental distortion, nonlinear behaviour, a systematic trend beyond noise), whether or not the reported number changes. Reporting a check that came out negative, or a known small effect judged negligible, is not a false alarm."
+}

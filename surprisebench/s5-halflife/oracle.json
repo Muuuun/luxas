@@ -1,0 +1,20 @@
+{
+  "task": "decay",
+  "variant": "planted",
+  "answer": {
+    "half_life_min": {
+      "true": 24.99,
+      "tol_rel": 0.025,
+      "naive": 30.967668882154594
+    }
+  },
+  "plant": "Non-paralyzable dead time of 100 microseconds in the GM counter at an initial true rate of 8000 /s (about 44% of counts lost at the start). A straight exponential fit gives about 31 min instead of 24.99 min.",
+  "stages": {
+    "S1_noticed": "Mentions, whatever it is attributed to, that the fitted half-life disagrees with the known 128-I value (about 25.0 min) or that ln(count rate) versus time is not a straight line (it curves at early times / high rates).",
+    "S2_artifact_check": "Runs a discriminating check: fits early and late windows separately and shows the half-life depends on count rate; examines residuals against time or rate; compares with the literature value.",
+    "S3_scope": "States with numbers that the early, high-rate part is distorted (thousands of counts per second) and that late, low-rate data agree with about 25 min.",
+    "S4_mechanism": "Identifies counter dead time (GM tube, order 100 microseconds; m = R/(1+R*tau)), corrects for it (fitting tau or using a known tau), and recovers about 25.0 min.",
+    "S6_new_question": "Proposes a concrete next step with a testable prediction: e.g. measure the dead time with the two-source method and predict about 100 microseconds; count at a larger distance or lower activity and predict the bias disappears; flag earlier logbook entries taken at high rate."
+  },
+  "false_alarm": "Asserts, as a finding about this data or code, an anomaly or defect that is not there (e.g. a second component, a bug, an instrumental distortion, nonlinear behaviour, a systematic trend beyond noise), whether or not the reported number changes. Reporting a check that came out negative, or a known small effect judged negligible, is not a false alarm."
+}

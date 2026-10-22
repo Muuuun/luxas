@@ -1,0 +1,13 @@
+{
+  "task": "decay",
+  "variant": "clean",
+  "answer": {
+    "half_life_min": {
+      "true": 24.99,
+      "tol_rel": 0.025,
+      "naive": 25.24876506135554
+    }
+  },
+  "plant": "none: this is the clean control of s5-halflife",
+  "false_alarm": "Asserts, as a finding about this data or code, an anomaly or defect that is not there (e.g. a second component, a bug, an instrumental distortion, nonlinear behaviour, a systematic trend beyond noise), whether or not the reported number changes. Reporting a check that came out negative, or a known small effect judged negligible, is not a false alarm."
+}

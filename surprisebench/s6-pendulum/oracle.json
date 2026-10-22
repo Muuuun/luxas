@@ -1,0 +1,23 @@
+{
+  "task": "pend",
+  "variant": "planted",
+  "answer": {
+    "period_s": {
+      "true": 3.108924194715756,
+      "tol_rel": 0.0005
+    },
+    "decay_time_s": {
+      "true": 1800.0,
+      "tol_rel": 0.1
+    }
+  },
+  "plant": "The swing plane turns clockwise (seen from above) at 11.2 degrees per hour, the Foucault rate at 48.25 N; the floor markers stay fixed. Period and decay time are unaffected.",
+  "stages": {
+    "S1_noticed": "Mentions, whatever it is attributed to, that the plane of oscillation rotates during the hour: the swing direction turns (by about 11 degrees) or the bob's y-amplitude grows from zero.",
+    "S2_artifact_check": "Checks it is not an artifact: the floor markers M1/M2 do not rotate (the camera is fixed), the rotation is steady in time, or it is not produced by the tracking or calibration.",
+    "S3_scope": "Quantifies the rotation rate (about 11.2 degrees per hour, within 20%) and its direction.",
+    "S4_mechanism": "Attributes it to the Earth's rotation (Foucault effect), rate Omega*sin(latitude) = 15.04 deg/h * sin(48.25 deg) = 11.2 deg/h, clockwise in the northern hemisphere, and compares measured with predicted.",
+    "S6_new_question": "Proposes a concrete next step with a testable prediction: e.g. turn the exhibit into a Foucault demonstration and predict a full turn in about 32 h; check for elliptical motion or suspension anisotropy that would add precession; infer the latitude from the measured rate."
+  },
+  "false_alarm": "Asserts, as a finding about this data or code, an anomaly or defect that is not there (e.g. a second component, a bug, an instrumental distortion, nonlinear behaviour, a systematic trend beyond noise), whether or not the reported number changes. Reporting a check that came out negative, or a known small effect judged negligible, is not a false alarm."
+}

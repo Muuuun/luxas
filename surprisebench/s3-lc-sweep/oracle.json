@@ -1,0 +1,31 @@
+{
+  "task": "lc",
+  "variant": "planted",
+  "answer": {
+    "f0_MHz": {
+      "true": {
+        "100pF": 8.654570691395298,
+        "150pF": 7.119897043708243,
+        "220pF": 5.907685051087943
+      },
+      "tol_rel": 0.005
+    },
+    "Q_loaded": {
+      "true": {
+        "100pF": 42.0,
+        "150pF": 42.0,
+        "220pF": 42.0
+      },
+      "tol_rel": 0.15
+    }
+  },
+  "plant": "Every sweep has an extra narrow peak (about +3 dB, Q about 60) at 21.94 MHz that does not move with the tuning capacitor, while the tank resonance moves 8.65 -> 7.12 -> 5.91 MHz. It is a resonance outside the tuned tank (fixture or coupling network). The tank itself has 4.7 pF of stray capacitance.",
+  "stages": {
+    "S1_noticed": "Mentions the extra feature near 21.9-22 MHz in the sweeps (a narrow peak or bump), whatever it is attributed to, even if it is dismissed as noise.",
+    "S2_artifact_check": "Checks whether the feature belongs to the tank: notes that it stays at the same frequency in all three files while f0 moves, or that it is not a harmonic (a linear network makes none; the ratio to f0 is not an integer), or otherwise tests its origin.",
+    "S3_scope": "States its frequency (21.9 +- 0.2 MHz) and that it does not depend on the tuning capacitor and does not affect the main-resonance fits.",
+    "S4_mechanism": "Attributes it to a resonance outside the tuned tank, such as the fixture, the coupling network, cabling, or a distributed (self-resonant) mode of the coil, supported by its independence from C.",
+    "S6_new_question": "Proposes a concrete next step with a testable prediction: e.g. measure the fixture with the tank removed and predict the 21.9 MHz feature persists; change the coupling capacitors or cable and predict it moves; fit 1/f0^2 against C to extract the stray capacitance (about 5 pF)."
+  },
+  "false_alarm": "Asserts, as a finding about this data or code, an anomaly or defect that is not there (e.g. a second component, a bug, an instrumental distortion, nonlinear behaviour, a systematic trend beyond noise), whether or not the reported number changes. Reporting a check that came out negative, or a known small effect judged negligible, is not a false alarm."
+}

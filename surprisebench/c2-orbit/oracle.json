@@ -1,0 +1,13 @@
+{
+  "task": "orbit",
+  "variant": "clean",
+  "answer": {
+    "precession_rad_per_orbit": {
+      "true": 0.07020536679448906,
+      "tol_rel": 0.03,
+      "naive": 0.06961374318313404
+    }
+  },
+  "plant": "none: this is the clean control of s2-orbit",
+  "false_alarm": "Asserts, as a finding about this data or code, an anomaly or defect that is not there (e.g. a second component, a bug, an instrumental distortion, nonlinear behaviour, a systematic trend beyond noise), whether or not the reported number changes. Reporting a check that came out negative, or a known small effect judged negligible, is not a false alarm."
+}

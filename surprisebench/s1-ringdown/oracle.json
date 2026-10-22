@@ -1,0 +1,23 @@
+{
+  "task": "ringdown",
+  "variant": "planted",
+  "answer": {
+    "Q": {
+      "true": 12000.0,
+      "tol_rel": 0.07,
+      "naive": 17063.900346119477,
+      "also_accept": [
+        30000.0
+      ]
+    }
+  },
+  "plant": "Two close modes: 1000.00 Hz (Q 12000, amplitude 1) and 1000.80 Hz (Q 30000, amplitude 0.5, phase 0.4). The envelope beats with period 1.25 s and does not decay exponentially; a single-exponential fit gives Q from about 7000 (first 2 s) to about 17000 (whole record).",
+  "stages": {
+    "S1_noticed": "Mentions, whatever it is attributed to, a specific sign that the record is not a single exponential decay: beating or periodic modulation of the envelope or residuals (period about 1.25 s), two peaks near 1000.0 and 1000.8 Hz, a second mode, or Q changing strongly with the fit window. Generic words ('some deviation', 'noise', 'imperfect fit') do not count.",
+    "S2_artifact_check": "Runs a check that separates a real second mode from an analysis artifact: a high-resolution or zoomed spectrum showing two peaks; a two-mode fit whose residuals become noise-like; showing the modulation in the raw signal, not only in a Hilbert envelope; or showing the beat period equals the inverse frequency splitting.",
+    "S3_scope": "States, with numbers, how a single-mode Q depends on the fit window or range, or that one Q is ill-defined for this record.",
+    "S4_mechanism": "Concludes there are two closely spaced modes with different damping (about 1000.0 and 1000.8 Hz; Q about 12000 and about 30000, each within 20%), supported by a two-mode fit or two resolved spectral peaks.",
+    "S6_new_question": "Proposes a concrete next step that follows from the doublet and makes a testable prediction: e.g. excite or read out one mode selectively (drive frequency, readout position) and predict a single-exponential decay; identify the second mode's shape; test whether the splitting changes with clamping or temperature; quantify each mode's contribution to the thermal-noise budget."
+  },
+  "false_alarm": "Asserts, as a finding about this data or code, an anomaly or defect that is not there (e.g. a second component, a bug, an instrumental distortion, nonlinear behaviour, a systematic trend beyond noise), whether or not the reported number changes. Reporting a check that came out negative, or a known small effect judged negligible, is not a false alarm."
+}

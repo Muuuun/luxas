@@ -102,6 +102,7 @@ const MANIFEST: Record<string, GateSpec> = {
 	smoke_simbench_graders: { kind: "assert", needsBin: ["blender"], timeoutMs: 600_000 },
 	smoke_simrun: { kind: "assert", needsBin: ["python3"], timeoutMs: 240_000 },   // the runner over its local transport: about 100 short jobs
 	smoke_simrun_ssh: { kind: "assert", needsBin: ["python3", "sshd", "ssh", "scp", "ssh-keygen"], timeoutMs: 240_000 },   // real ssh/scp to a throwaway user-mode sshd on 127.0.0.1
+	smoke_surprisebench: { kind: "assert", needsBin: ["python3"] },   // answer keys vs generator, X grading, quotes, digest; the judges are --validate, not here
 	smoke_frame_headline_strict: { kind: "assert" },
 	smoke_pi_gate_escalation: { kind: "assert" },
 	smoke_claim_table_legacy: { kind: "assert" },

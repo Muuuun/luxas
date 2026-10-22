@@ -1,0 +1,403 @@
+[
+  {
+    "id": "s1-full",
+    "bench": "s1-ringdown",
+    "report": "# Q of the P-7 fundamental mode\n\nA single-exponential fit to the Hilbert envelope is not adequate: the fit residuals oscillate with a period of 1.25 s and the envelope beats. A single-mode fit gives Q = 7200 over the first 2 s but Q = 17000 over the whole 8 s record, so one Q is ill-defined here.\n\nA zoomed FFT of the 8 s record (0.125 Hz resolution) shows two peaks, at 1000.00 Hz and 1000.80 Hz; the beat period 1.25 s equals 1/(0.80 Hz), and the modulation is visible in the raw signal, not only in the envelope. A two-mode model (two damped sinusoids) leaves noise-like residuals and gives f_A = 1000.000 Hz, Q_A = 12050 +- 80 and f_B = 1000.801 Hz, Q_B = 29800 +- 400. The fundamental is a split doublet of two nearly degenerate modes with different damping. We report the stronger mode, Q = 12050.\n\nNext step: drive at 1000.8 Hz with the readout spot moved off-axis. If the doublet is two distinct mode shapes, the amplitude ratio will change, and each mode excited alone will decay as a single exponential.",
+    "tools": [
+      {
+        "cmd": "python3 fit_two_modes.py input/ringdown.csv",
+        "out": "fA=1000.000 QA=12050 fB=1000.801 QB=29800 residual_rms=0.0201 (noise 0.020)"
+      }
+    ],
+    "answer": {
+      "f0_Hz": 1000.0,
+      "Q": 12050,
+      "Q_unc": 80
+    },
+    "expect": {
+      "S1_noticed": "yes",
+      "S2_artifact_check": "yes",
+      "S3_scope": "yes",
+      "S4_mechanism": "yes",
+      "S6_new_question": "yes"
+    }
+  },
+  {
+    "id": "s1-explained",
+    "bench": "s1-ringdown",
+    "report": "# Q of the P-7 fundamental mode\n\nWe fitted the Hilbert envelope of the whole 8 s record with a single exponential: Q = 17060 +- 300, f0 = 1000.3 Hz from the FFT peak. The fit residuals oscillate with a period of about 1.3 s, which we attribute to slow drift of the optical-lever readout; it does not affect the decay constant.",
+    "answer": {
+      "f0_Hz": 1000.3,
+      "Q": 17060,
+      "Q_unc": 300
+    },
+    "expect": {
+      "S1_noticed": "yes",
+      "S2_artifact_check": "no",
+      "S3_scope": "no",
+      "S4_mechanism": "no",
+      "S6_new_question": "no"
+    }
+  },
+  {
+    "id": "s1-missed",
+    "bench": "s1-ringdown",
+    "report": "# Q of the P-7 fundamental mode\n\nThe Hilbert envelope of the ringdown was fitted with a single exponential over the full record: Q = 17060 +- 300. The frequency from the FFT peak is f0 = 1000.3 Hz. This Q enters the thermal-noise budget.",
+    "answer": {
+      "f0_Hz": 1000.3,
+      "Q": 17060,
+      "Q_unc": 300
+    },
+    "expect": {
+      "S1_noticed": "no",
+      "S2_artifact_check": "no",
+      "S3_scope": "no",
+      "S4_mechanism": "no",
+      "S6_new_question": "no"
+    }
+  },
+  {
+    "id": "c1-clean",
+    "bench": "c1-ringdown",
+    "report": "# Q of the P-7 fundamental mode\n\nA single-exponential fit to the envelope gives Q = 11990 +- 40 at f0 = 1000.00 Hz. The residuals are consistent with white noise, and a two-mode fit does not lower chi-squared, so there is no sign of a second mode.",
+    "answer": {
+      "f0_Hz": 1000.0,
+      "Q": 11990,
+      "Q_unc": 40
+    },
+    "expect": {
+      "false_alarm": "no"
+    }
+  },
+  {
+    "id": "c1-false-alarm",
+    "bench": "c1-ringdown",
+    "report": "# Q of the P-7 fundamental mode\n\nThe envelope shows nonlinear damping: the decay is faster at large amplitude. We therefore fitted an amplitude-dependent damping model, Q(A) = Q0 (1 - 0.15 A), and report the zero-amplitude value Q0 = 13800. The amplitude dependence should be investigated with a sweep of the drive level.",
+    "answer": {
+      "f0_Hz": 1000.0,
+      "Q": 13800,
+      "Q_unc": 200
+    },
+    "expect": {
+      "false_alarm": "yes"
+    }
+  },
+  {
+    "id": "s2-full",
+    "bench": "s2-orbit",
+    "report": "# Apsidal precession\n\nRunning input/sim/orbit.py at dt = 0.01 for 20 orbits gives 0.0536 rad/orbit, but the total energy grows by about 50% over the run and the orbital period increases, which a leapfrog integrator should not allow. The analytic precession for this potential is 2*pi*(1/sqrt(1 - 2*beta/L^2) - 1) = 0.0702 rad/orbit. Halving the step changes the result to 0.0573, so the code does not converge like a second-order scheme.\n\nIn integrate(), the second half-kick uses ax, ay (the acceleration before the drift) instead of ax_new, ay_new. That makes the scheme first-order and non-symplectic. With those two lines fixed, the energy error is 5e-5 and the precession is 0.0696 rad/orbit, matching the analytic 0.0702 to within the expected O(dt^2) leapfrog error.\n\nEvery result produced with this integrator at dt = 0.01, including the 2025 paper's runs, is about 24% low. Next: re-run the 2025 paper's simulations with the fixed integrator; we predict their precession values rise by about 30% (from about 0.054 to 0.070 rad/orbit at dt = 0.01), and that the remaining error scales as dt^2.",
+    "tools": [
+      {
+        "cmd": "python3 check_energy.py",
+        "out": "shipped: dE/E = +0.495 over 20 orbits; fixed: dE/E = 5.0e-05"
+      }
+    ],
+    "answer": {
+      "precession_rad_per_orbit": 0.0699,
+      "unc": 0.0004
+    },
+    "expect": {
+      "S1_noticed": "yes",
+      "S2_artifact_check": "yes",
+      "S3_scope": "yes",
+      "S4_mechanism": "yes",
+      "S6_new_question": "yes"
+    }
+  },
+  {
+    "id": "s2-explained",
+    "bench": "s2-orbit",
+    "report": "# Apsidal precession\n\nUsing input/sim/orbit.py at dt = 0.01 for 20 orbits, the periapsis angle advances by 0.0536 rad per orbit (mean of successive periapsis passages). The total energy changes by about 50% over the run, which is ordinary numerical drift in a long integration and does not affect the angle measurement.",
+    "answer": {
+      "precession_rad_per_orbit": 0.0536,
+      "unc": 0.0004
+    },
+    "expect": {
+      "S1_noticed": "yes",
+      "S2_artifact_check": "no",
+      "S3_scope": "no",
+      "S4_mechanism": "no",
+      "S6_new_question": "no"
+    }
+  },
+  {
+    "id": "s2-missed",
+    "bench": "s2-orbit",
+    "report": "# Apsidal precession\n\nWith the group's integrator at dt = 0.01 over 20 orbits, the precession per orbit is 0.0536 +- 0.0004 rad (mean and standard deviation of successive periapsis advances).",
+    "answer": {
+      "precession_rad_per_orbit": 0.0536,
+      "unc": 0.0004
+    },
+    "expect": {
+      "S1_noticed": "no",
+      "S2_artifact_check": "no",
+      "S3_scope": "no",
+      "S4_mechanism": "no",
+      "S6_new_question": "no"
+    }
+  },
+  {
+    "id": "c2-clean",
+    "bench": "c2-orbit",
+    "report": "# Apsidal precession\n\nWith orbit.py at dt = 0.01 for 20 orbits the precession is 0.0696 rad/orbit. Energy is conserved to 5e-5, and the analytic value 0.0702 agrees to 0.8%, consistent with the O(dt^2) error of a leapfrog: dt = 0.005 gives 0.0700.",
+    "answer": {
+      "precession_rad_per_orbit": 0.0696,
+      "unc": 0.0005
+    },
+    "expect": {
+      "false_alarm": "no"
+    }
+  },
+  {
+    "id": "c2-false-alarm",
+    "bench": "c2-orbit",
+    "report": "# Apsidal precession\n\nThe group's integrator is not symplectic: orbit.py accumulates a secular phase error, so we replaced it with scipy's RK45, which gives 0.0702 rad/orbit. We recommend that the group stop using orbit.py.",
+    "answer": {
+      "precession_rad_per_orbit": 0.0702,
+      "unc": 0.0001
+    },
+    "expect": {
+      "false_alarm": "yes"
+    }
+  },
+  {
+    "id": "s3-full",
+    "bench": "s3-lc-sweep",
+    "report": "# LC tank rev B\n\nLorentzian fits around each peak give f0 = 8.655, 7.120 and 5.908 MHz with loaded Q of about 42 for 100, 150 and 220 pF.\n\nEvery sweep also shows a narrow peak of about +3 dB at 21.94 MHz. It stays at 21.94 MHz in all three files while f0 moves with C, and it is not a harmonic (21.94/8.655 = 2.53; a linear network generates none), so it is not part of the tuned tank but a resonance of the fixture or coupling network. It does not affect the main-resonance fits. Fitting 1/f0^2 against C gives L = 3.23 uH and a stray capacitance of 4.7 pF.\n\nNext: measure the fixture with the tank removed; we predict the 21.94 MHz peak remains.",
+    "answer": {
+      "f0_MHz": {
+        "100pF": 8.655,
+        "150pF": 7.12,
+        "220pF": 5.908
+      },
+      "Q_loaded": {
+        "100pF": 42,
+        "150pF": 42,
+        "220pF": 41.5
+      }
+    },
+    "expect": {
+      "S1_noticed": "yes",
+      "S2_artifact_check": "yes",
+      "S3_scope": "yes",
+      "S4_mechanism": "yes",
+      "S6_new_question": "yes"
+    }
+  },
+  {
+    "id": "s3-explained",
+    "bench": "s3-lc-sweep",
+    "report": "# LC tank rev B\n\nLorentzian fits give f0 = 8.655, 7.120 and 5.908 MHz and loaded Q of about 42. A small bump near 22 MHz is measurement noise and was ignored.",
+    "answer": {
+      "f0_MHz": {
+        "100pF": 8.655,
+        "150pF": 7.12,
+        "220pF": 5.908
+      },
+      "Q_loaded": {
+        "100pF": 42,
+        "150pF": 42,
+        "220pF": 41.5
+      }
+    },
+    "expect": {
+      "S1_noticed": "yes",
+      "S2_artifact_check": "no",
+      "S3_scope": "no",
+      "S4_mechanism": "no",
+      "S6_new_question": "no"
+    }
+  },
+  {
+    "id": "s3-missed",
+    "bench": "s3-lc-sweep",
+    "report": "# LC tank rev B\n\nLorentzian fits give f0 = 8.655, 7.120 and 5.908 MHz and loaded Q of 42, 42 and 41.5 for 100, 150 and 220 pF.",
+    "answer": {
+      "f0_MHz": {
+        "100pF": 8.655,
+        "150pF": 7.12,
+        "220pF": 5.908
+      },
+      "Q_loaded": {
+        "100pF": 42,
+        "150pF": 42,
+        "220pF": 41.5
+      }
+    },
+    "expect": {
+      "S1_noticed": "no",
+      "S2_artifact_check": "no",
+      "S3_scope": "no",
+      "S4_mechanism": "no",
+      "S6_new_question": "no"
+    }
+  },
+  {
+    "id": "s4-full",
+    "bench": "s4-rod-kappa",
+    "report": "# Conductivity of the Ti rod\n\nA straight line of P against dT through all points gives kappa = 24.6 W/m/K, above the 21-22 W/m/K expected for grade-2 titanium. The residuals are systematic: P/dT rises from 3.2 mW/K at the lowest power to 3.5 mW/K at the highest. Titanium's conductivity falls with temperature, so this is not kappa(T), and the trend is about 50 times the thermometer noise.\n\nIn vacuum the hot end radiates: P = G dT + c (T_hot^4 - T_base^4). Fitting both terms gives G = 3.07 mW/K, so kappa = 21.8 +- 0.2 W/m/K, and c = 1.5e-12 W/K^4 (epsilon*A about 2.6e-5 m^2). The low-power slope alone still reads about 6% high, because radiation is linear in dT near 300 K.\n\nNext: add a radiation shield around the heater block; we predict P/dT becomes constant to within 1%.",
+    "answer": {
+      "kappa_W_per_mK": 21.8,
+      "unc": 0.2
+    },
+    "expect": {
+      "S1_noticed": "yes",
+      "S2_artifact_check": "yes",
+      "S3_scope": "yes",
+      "S4_mechanism": "yes",
+      "S6_new_question": "yes"
+    }
+  },
+  {
+    "id": "s4-explained",
+    "bench": "s4-rod-kappa",
+    "report": "# Conductivity of the Ti rod\n\nA linear fit of P against dT gives kappa = 24.6 +- 0.3 W/m/K. The slight curvature at high power is attributed to the usual increase of thermal conductivity with temperature.",
+    "answer": {
+      "kappa_W_per_mK": 24.6,
+      "unc": 0.3
+    },
+    "expect": {
+      "S1_noticed": "yes",
+      "S2_artifact_check": "no",
+      "S3_scope": "no",
+      "S4_mechanism": "no",
+      "S6_new_question": "no"
+    }
+  },
+  {
+    "id": "s4-missed",
+    "bench": "s4-rod-kappa",
+    "report": "# Conductivity of the Ti rod\n\nA linear fit through the origin of P against dT gives G = 3.48 mW/K, so kappa = G L / A = 24.6 +- 0.3 W/m/K.",
+    "answer": {
+      "kappa_W_per_mK": 24.6,
+      "unc": 0.3
+    },
+    "expect": {
+      "S1_noticed": "no",
+      "S2_artifact_check": "no",
+      "S3_scope": "no",
+      "S4_mechanism": "no",
+      "S6_new_question": "no"
+    }
+  },
+  {
+    "id": "s5-full",
+    "bench": "s5-halflife",
+    "report": "# Half-life of 128-I\n\nA single exponential fitted to the whole run gives 31.0 min, far from the 24.99 min of 128-I. ln(rate) curves at early times: the last 60 min (rates below 300 counts/s) give 25.1 min, while the first 20 min give 37 min. The distortion grows with count rate, the signature of counter dead time.\n\nFitting m = R/(1 + R*tau) with R = R0 exp(-lambda t) + b gives tau = 99 +- 2 microseconds and T1/2 = 24.98 +- 0.05 min.\n\nNext: measure tau with the two-source method (we predict about 100 microseconds) and count at three times the distance; the uncorrected fit should then agree with 25.0 min.",
+    "answer": {
+      "half_life_min": 24.98,
+      "unc_min": 0.05
+    },
+    "expect": {
+      "S1_noticed": "yes",
+      "S2_artifact_check": "yes",
+      "S3_scope": "yes",
+      "S4_mechanism": "yes",
+      "S6_new_question": "yes"
+    }
+  },
+  {
+    "id": "s5-explained",
+    "bench": "s5-halflife",
+    "report": "# Half-life of 128-I\n\nAn exponential fit to all 720 bins gives T1/2 = 31.0 +- 0.1 min. This is longer than the tabulated 25.0 min, probably because a longer-lived contaminant activity is present in the sample.",
+    "answer": {
+      "half_life_min": 31.0,
+      "unc_min": 0.1
+    },
+    "expect": {
+      "S1_noticed": "yes",
+      "S2_artifact_check": "no",
+      "S3_scope": "no",
+      "S4_mechanism": "no",
+      "S6_new_question": "no"
+    }
+  },
+  {
+    "id": "s5-missed",
+    "bench": "s5-halflife",
+    "report": "# Half-life of 128-I\n\nA weighted exponential fit to the background-subtracted count rate gives T1/2 = 31.0 +- 0.1 min.",
+    "answer": {
+      "half_life_min": 31.0,
+      "unc_min": 0.1
+    },
+    "expect": {
+      "S1_noticed": "no",
+      "S2_artifact_check": "no",
+      "S3_scope": "no",
+      "S4_mechanism": "no",
+      "S6_new_question": "no"
+    }
+  },
+  {
+    "id": "c5-clean",
+    "bench": "c5-halflife",
+    "report": "# Half-life of 128-I\n\nAn exponential fit with constant background gives T1/2 = 25.2 +- 0.3 min, consistent with the tabulated 24.99 min. The dead-time correction at the initial 200 counts/s is 2% and moves the result by 0.2 min, inside the uncertainty.",
+    "answer": {
+      "half_life_min": 25.2,
+      "unc_min": 0.3
+    },
+    "expect": {
+      "false_alarm": "no"
+    }
+  },
+  {
+    "id": "c5-false-alarm",
+    "bench": "c5-halflife",
+    "report": "# Half-life of 128-I\n\nThe decay curve has a second, long-lived component (about 8% of the activity, half-life about 3 h, probably 126-I). A two-component fit gives T1/2(128-I) = 23.6 +- 0.4 min.",
+    "answer": {
+      "half_life_min": 23.6,
+      "unc_min": 0.4
+    },
+    "expect": {
+      "false_alarm": "yes"
+    }
+  },
+  {
+    "id": "s6-full",
+    "bench": "s6-pendulum",
+    "report": "# Long pendulum\n\nThe period from zero crossings of the swing coordinate is 3.1089 +- 0.0001 s and the amplitude decay time is 1800 +- 20 s.\n\nThe swing plane is not fixed. A principal-axis fit in 5-minute blocks shows the swing direction turning clockwise (seen from above) by 11.2 degrees over the hour, at a steady rate. The floor markers M1 and M2 do not move, so the camera did not rotate. The Earth's rotation predicts Omega*sin(48.25 deg) = 11.2 deg/h, clockwise in the northern hemisphere: this is the Foucault effect, and the measured rate matches it.\n\nNext: the exhibit can demonstrate the Earth's rotation; a full turn takes about 32 h, and over a 4 h run we predict 45 degrees.",
+    "answer": {
+      "period_s": 3.1089,
+      "decay_time_s": 1800
+    },
+    "expect": {
+      "S1_noticed": "yes",
+      "S2_artifact_check": "yes",
+      "S3_scope": "yes",
+      "S4_mechanism": "yes",
+      "S6_new_question": "yes"
+    }
+  },
+  {
+    "id": "s6-explained",
+    "bench": "s6-pendulum",
+    "report": "# Long pendulum\n\nFrom the x coordinate: period 3.1089 s, decay time 1800 s. The y coordinate grows slowly during the run, which we attribute to a slight misalignment of the camera axes.",
+    "answer": {
+      "period_s": 3.1089,
+      "decay_time_s": 1800
+    },
+    "expect": {
+      "S1_noticed": "yes",
+      "S2_artifact_check": "no",
+      "S3_scope": "no",
+      "S4_mechanism": "no",
+      "S6_new_question": "no"
+    }
+  },
+  {
+    "id": "s6-missed",
+    "bench": "s6-pendulum",
+    "report": "# Long pendulum\n\nFitting x(t) = A exp(-t/tau) cos(2 pi t / T + phi) gives T = 3.1089 s and tau = 1800 s.",
+    "answer": {
+      "period_s": 3.1089,
+      "decay_time_s": 1800
+    },
+    "expect": {
+      "S1_noticed": "no",
+      "S2_artifact_check": "no",
+      "S3_scope": "no",
+      "S4_mechanism": "no",
+      "S6_new_question": "no"
+    }
+  }
+]
