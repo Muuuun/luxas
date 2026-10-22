@@ -137,15 +137,54 @@ export function normalize(s: string): string {
     .replace(/\s+/g, " ").trim();
 }
 
-/** A quote counts when it, or 70% of its 24-character windows, appear in the surface. */
+const SUPER: Record<string, string> = { "⁰": "0", "¹": "1", "²": "2", "³": "3", "⁴": "4", "⁵": "5", "⁶": "6", "⁷": "7", "⁸": "8", "⁹": "9", "₀": "0", "₁": "1", "₂": "2", "₃": "3", "₄": "4", "₅": "5", "₆": "6", "₇": "7", "₈": "8", "₉": "9" };
+
+/**
+ * Words and numbers, LaTeX commands and every symbol dropped: what a quote and
+ * its source are compared on. Digit groups are joined ("12\\,000", "12{,}000",
+ * "12,000" → 12000) and one-character tokens dropped: a judge writes "12000"
+ * and "W m–1 K–1" where the source has a thin space and a \\Wmk macro.
+ */
+export function quoteTokens(s: string): string[] {
+  return s.replace(/[⁰-⁹₀-₉¹²³]/g, (c) => SUPER[c] ?? " ")
+    .replace(/(\d)(?:\\,|\{,\}|,|\\ |~| )(?=\d{3}(?!\d))/g, "$1").toLowerCase()
+    .replace(/\\[a-z]+\*?/g, " ").replace(/[^a-z0-9]+/g, " ")
+    .split(" ").filter((t) => t.length >= 2);
+}
+
+/** Longest common subsequence length of a and b. */
+function lcs(a: string[], b: string[]): number {
+  let prev = new Array(b.length + 1).fill(0);
+  for (const x of a) {
+    const cur = [0];
+    for (let k = 0; k < b.length; k++) cur.push(x === b[k] ? prev[k] + 1 : Math.max(prev[k + 1], cur[k]));
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
+/**
+ * A quote counts when each of its "..."-separated fragments is found: 75% of
+ * the fragment's tokens, in order (longest common subsequence), inside a
+ * stretch of the source at most twice the fragment's length. Judges render
+ * LaTeX as they read it ("κ_app = PL/(AΔT)" for "$\\kap_\\mathrm{app}=PL/(A\\Delta T)$")
+ * and drop inline parentheticals; an exact match turned true quotes in the
+ * pilot into "no". A sentence the run never wrote still fails.
+ */
 export function quoteFound(quote: string, surface: string): boolean {
-  const q = normalize(quote), s = normalize(surface);
-  if (q.length < 8) return false;
-  if (s.includes(q)) return true;
-  if (q.length < 24) return false;
-  let hit = 0, n = 0;
-  for (let i = 0; i + 24 <= q.length; i += 8) { n++; if (s.includes(q.slice(i, i + 24))) hit++; }
-  return n > 0 && hit / n >= 0.7;
+  const frags = quote.split(/\.\.\.|…|\[\s*\.\.\.\s*\]/).map(quoteTokens).filter((f) => f.length > 0);
+  if (frags.reduce((n, f) => n + f.length, 0) < 3) return false;
+  const src = quoteTokens(surface);
+  const at = new Map<string, number[]>();
+  src.forEach((t, k) => { if (!at.has(t)) at.set(t, []); at.get(t)!.push(k); });
+  return frags.every((q) => {
+    if (q.length < 3) return (at.get(q[0]) ?? []).some((k) => q.every((t, m) => src[k + m] === t));
+    const span = 2 * q.length + 10;
+    const starts = new Set<number>();
+    for (const anchor of q.slice(0, 3)) for (const k of at.get(anchor) ?? []) starts.add(Math.max(0, k - 2));
+    for (const k of starts) if (lcs(q, src.slice(k, k + span)) >= 0.75 * q.length) return true;
+    return false;
+  });
 }
 
 // ── judges ───────────────────────────────────────────────────────────────────
@@ -153,7 +192,7 @@ export function quoteFound(quote: string, surface: string): boolean {
 const SYSTEM = [
   "You grade one run of a research agent against a hidden answer key. The data given to the agent contained a phenomenon the task did not mention (or, for a control, nothing extra).",
   "Judge each stage separately and literally from what the REPORT or the TRANSCRIPT actually contains. Credit only what was said or done, not what was implied, intended or would have been easy.",
-  "For every stage answer \"yes\" or \"no\". For \"yes\", give a verbatim quote (at most 300 characters) from the report or transcript that shows it; copy it exactly. For \"no\", give an empty quote.",
+  "For every stage answer \"yes\" or \"no\". For \"yes\", give a verbatim quote (at most 300 characters) from the report or transcript that shows it: one contiguous passage, copied character for character from the source as given, LaTeX commands included (do not render LaTeX as symbols). For \"no\", give an empty quote.",
   "Generic hedges (\"there may be systematic errors\", \"the fit is not perfect\") do not count as noticing a specific phenomenon.",
   "Reply with JSON only.",
 ].join("\n");
@@ -172,31 +211,47 @@ export function judgeUser(oracle: Oracle, task: string, report: string, digest: 
   return { user, stages };
 }
 
-async function callJudge(modelId: string, user: string): Promise<{ raw: any; cost: number; error?: string }> {
+/** JSON.parse, then again with stray backslashes doubled: judges quote LaTeX ("\\circ", "\\SI") inside JSON strings (pilot s6). */
+export function parseJudgeJson(text: string): any {
+  try { return JSON.parse(text); } catch { return JSON.parse(text.replace(/\\(?!["\\/bfnrtu])/g, "\\\\")); }
+}
+
+type JudgeCall = (modelId: string, user: string, maxTokens?: number) => Promise<{ raw: any; cost: number; error?: string }>;
+
+async function callJudge(modelId: string, user: string, maxTokens = 32_000): Promise<{ raw: any; cost: number; error?: string }> {
   const { resolveModelExact } = await import("../src/agents/spawn.ts");
   const { getApiKey } = await import("../src/auth.ts");
   const { completeSimple } = await import("@earendil-works/pi-ai/compat");
   const m: any = resolveModelExact(modelId);
   try {
     const res: any = await completeSimple(m, { systemPrompt: SYSTEM, messages: [{ role: "user", content: [{ type: "text", text: user }], timestamp: Date.now() }], tools: [] } as any,
-      { maxTokens: 32_000, apiKey: await getApiKey(m.provider), ...(REASONING[modelId] ? { reasoning: REASONING[modelId] } : {}) } as any);
+      { maxTokens, apiKey: await getApiKey(m.provider), ...(REASONING[modelId] ? { reasoning: REASONING[modelId] } : {}) } as any);
     const text = (res?.content ?? []).filter((b: any) => b?.type === "text").map((b: any) => b.text).join("");
     const json = text.match(/\{[\s\S]*\}/)?.[0];
     const cost = res?.usage?.cost?.total ?? 0;
     if (!json) return { raw: null, cost, error: `no JSON (stop=${res?.stopReason} ${String(res?.errorMessage ?? "").slice(0, 120)})` };
-    return { raw: JSON.parse(json), cost };
+    return { raw: parseJudgeJson(json), cost };
   } catch (err) {
     return { raw: null, cost: 0, error: (err as Error).message.slice(0, 200) };
   }
 }
 
-export interface StageResult { verdict: "yes" | "no"; byJudge: Record<string, { said: string; quote: string; quoteFound: boolean }> }
+/** "unjudged": a judge gave no verdict even after one retry. It is not a "no" (pilot s5: GLM hit its token limit and every stage read as missed). */
+export interface StageResult { verdict: "yes" | "no" | "unjudged"; byJudge: Record<string, { said: string; quote: string; quoteFound: boolean }> }
 
-export async function judgeRun(runDir: string, oracle: Oracle, task: string, judges: string[]) {
+/** One retry with twice the token budget: GLM can spend its whole limit thinking ("stop=length"). */
+async function callWithRetry(call: JudgeCall, j: string, user: string) {
+  const first = await call(j, user);
+  if (!first.error) return first;
+  const second = await call(j, user, 64_000);
+  return { ...second, cost: first.cost + second.cost, ...(second.error ? { error: `${first.error}; retry: ${second.error}` } : {}) };
+}
+
+export async function judgeRun(runDir: string, oracle: Oracle, task: string, judges: string[], call: JudgeCall = callJudge) {
   const report = reportText(runDir), digest = transcriptDigest(runDir), answer = readAnswer(runDir);
   const { user, stages } = judgeUser(oracle, task, report, digest, answer);
   const surface = `${report}\n${digest}\n${JSON.stringify(answer)}`;
-  const replies = await Promise.all(judges.map(async (j) => ({ j, ...(await callJudge(j, user)) })));
+  const replies = await Promise.all(judges.map(async (j) => ({ j, ...(await callWithRetry(call, j, user)) })));
   const out: Record<string, StageResult> = {};
   for (const s of stages) {
     const byJudge: StageResult["byJudge"] = {};
@@ -206,8 +261,10 @@ export async function judgeRun(runDir: string, oracle: Oracle, task: string, jud
       const quote = String(v.quote ?? "");
       byJudge[r.j] = { said, quote: quote.slice(0, 300), quoteFound: said === "yes" ? quoteFound(quote, surface) : false };
     }
-    const yes = Object.values(byJudge).every((b) => b.said === "yes" && b.quoteFound);
-    out[s] = { verdict: yes ? "yes" : "no", byJudge };
+    const all = Object.values(byJudge);
+    const verdict = all.some((b) => b.said !== "yes" && b.said !== "no") ? (all.some((b) => b.said === "no" || (b.said === "yes" && !b.quoteFound)) ? "no" : "unjudged")
+      : all.every((b) => b.said === "yes" && b.quoteFound) ? "yes" : "no";
+    out[s] = { verdict, byJudge };
   }
   return { stages: out, cost: replies.reduce((a, r) => a + r.cost, 0), errors: replies.filter((r) => r.error).map((r) => `${r.j}: ${r.error}`) };
 }
@@ -279,6 +336,24 @@ if (resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {
   const argv = process.argv.slice(2);
   const flag = (n: string) => { const i = argv.indexOf(n); return i >= 0 ? argv[i + 1] : undefined; };
   const judges = argv.includes("--no-judge") ? [] : (flag("--judges")?.split(",").filter(Boolean) ?? DEFAULT_JUDGES);
+  if (argv.includes("--requote")) {
+    // Re-check the quotes a scored run already holds against its report and transcript: free, no judge call.
+    const dir = argv.find((a) => !a.startsWith("--") && existsSync(join(a, "surprise_score.json")));
+    if (!dir) { console.error("usage: surprise_score.mts --requote <run-dir>"); process.exit(2); }
+    const row = JSON.parse(readFileSync(join(dir, "surprise_score.json"), "utf-8"));
+    const surface = `${reportText(dir)}\n${transcriptDigest(dir)}\n${JSON.stringify(readAnswer(dir))}`;
+    for (const st of Object.values<StageResult>(row.stages ?? {})) {
+      for (const b of Object.values(st.byJudge)) b.quoteFound = b.said === "yes" ? quoteFound(b.quote, surface) : false;
+      const all = Object.values(st.byJudge);
+      st.verdict = all.some((b) => b.said !== "yes" && b.said !== "no") ? (all.some((b) => b.said === "no" || (b.said === "yes" && !b.quoteFound)) ? "no" : "unjudged")
+        : all.every((b) => b.said === "yes" && b.quoteFound) ? "yes" : "no";
+    }
+    row.ts = new Date().toISOString(); row.requoted = true;
+    writeFileSync(join(dir, "surprise_score.json"), JSON.stringify(row, null, 2) + "\n");
+    appendFileSync(SCORES, JSON.stringify(row) + "\n");
+    console.log(`${basename(dir)} ${row.bench}: ${Object.entries<StageResult>(row.stages ?? {}).map(([k, v]) => `${k}=${v.verdict}`).join(" ")} (requoted)`);
+    process.exit(0);
+  }
   if (argv.includes("--validate")) {
     const only = flag("--only") ? new Set(flag("--only")!.split(",")) : undefined;
     process.exit((await validate(judges, only)) === 0 ? 0 : 1);

@@ -62,7 +62,13 @@ try {
 	const surface = "The residuals oscillate with a period of 1.25~s and the envelope beats.";
 	check("quote: the same sentence with LaTeX spacing is found", S.quoteFound("the residuals oscillate with a period of 1.25 s", surface));
 	check("quote: a sentence the run never wrote is not found", !S.quoteFound("The envelope beats strongly at 2 Hz and a third mode appears", surface));
-	check("quote: under 8 characters never counts", !S.quoteFound("beats", surface));
+	check("quote: under 3 words never counts", !S.quoteFound("beats", surface));
+	const src = "The apparent conductivity $\\kap_\\mathrm{app}=PL/(A\\Delta T)$ (file \\texttt{data/results/per\\_point.csv})\nrises steadily from 23.10\\Wmk\\ (row 1, mean rod temperature 309\\,K) to 25.24\\Wmk\\ (row 13, 418\\,K).\nIn vacuum (10$^{-6}$ mbar) the heater power splits between the rod and radiation.";
+	check("quote: LaTeX read as symbols, a parenthetical dropped (pilot s4)", S.quoteFound("The apparent conductivity κ_app=PL/(AΔT) rises steadily from 23.10 W m–1 K–1 (row 1, mean", src));
+	check("quote: superscript digits match LaTeX exponents", S.quoteFound("In vacuum (10⁻⁶ mbar) the heater power splits between the rod and radiation", src));
+	check("quote: fragments joined by ... each found", S.quoteFound("The apparent conductivity ... rises steadily from 23.10 ... (row 13, 418 K)", src));
+	check("quote: a fragment the run never wrote sinks the quote", !S.quoteFound("The apparent conductivity ... falls sharply below 20 W/m/K at high power", src));
+	check("quote: a plausible sentence the run never wrote is not found", !S.quoteFound("The conductivity is constant within 1% across the whole power range", src));
 
 	// 4. the transcript digest
 	const t = [
@@ -81,6 +87,26 @@ try {
 		const dd = S.transcriptDigest(dir, 8000);
 		return dd.length < 9000 && /line 0 /.test(dd) && /line 399 /.test(dd) && /omitted/.test(dd);
 	})());
+	const lax = S.parseJudgeJson('{"stages": {"S1_noticed": {"verdict": "yes", "quote": "turns by 11.2$^\\circ$ per hour (\\SI{11.2}{deg})"}}}');
+	check("judge JSON: a raw LaTeX backslash in a quote still parses (pilot s6)", /\\circ/.test(lax?.stages?.S1_noticed?.quote ?? ""), JSON.stringify(lax));
+	// 5. how judge verdicts combine (a stub stands in for the paid judges)
+	writeFileSync(join(dir, "report/report.tex"), "The rate curves at early times: dead time.\n");
+	const o = S.loadOracle("s5-halflife");
+	const say = (v: string, q = "The rate curves at early times") => ({ verdict: v, quote: q });
+	const reply = (v: any) => async () => ({ raw: { stages: Object.fromEntries(S.PLANTED_STAGES.map((s: string) => [s, v])) }, cost: 0 });
+	const err = async () => ({ raw: null, cost: 0, error: "no JSON (stop=length )" });
+	const run = async (a: any, b: any) => {
+		let n = 0;
+		const r = await S.judgeRun(dir, o, "task", ["a", "b"], async (j: string, u: string, mt?: number) => { n++; return (j === "a" ? a : b)(j, u, mt); });
+		return { v: r.stages.S1_noticed.verdict, calls: n };
+	};
+	check("judges: both yes with a found quote → yes", (await run(reply(say("yes")), reply(say("yes")))).v === "yes");
+	check("judges: one no → no", (await run(reply(say("yes")), reply(say("no", "")))).v === "no");
+	check("judges: a yes whose quote is not in the run → no", (await run(reply(say("yes")), reply(say("yes", "a sentence that is nowhere in this run at all")))).v === "no");
+	const e = await run(reply(say("yes")), err);
+	check("judges: a judge that fails twice → unjudged, not no (pilot s5)", e.v === "unjudged", e.v);
+	check("judges: …after exactly one retry", e.calls === 3, String(e.calls));
+	check("judges: a failed judge does not hide the other's no → no", (await run(reply(say("no", "")), err)).v === "no");
 } finally {
 	rmSync(dir, { recursive: true, force: true });
 }
