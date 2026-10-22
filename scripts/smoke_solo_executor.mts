@@ -120,6 +120,59 @@ async function loop(eid: string, onRespawn: () => void) {
   const fine = await loop("E3_ok", () => {});
   check("an experiment that delivered is not re-run", fine.prompts.length === 0, `${fine.prompts.length} spawns`);
 }
+
+console.log("\n5b. declarations fixed in place, once, before any review (step 0, 2026-10-22)");
+// blender-02 run 2: E1's results.json (written by a python script, so the
+// write-time hook never saw it) had an array key and an object key; the brain
+// paid a whole re-run ($4.5) to fix them. The producer fixes them in place.
+{
+  const saved = { b: process.env.LUXAS_BLIND_ESTIMATE, i: process.env.LUXAS_REVIEW_IMAGES };
+  process.env.LUXAS_BLIND_ESTIMATE = "0"; process.env.LUXAS_REVIEW_IMAGES = "0";
+  const declared = (eid: string, key: string, extra = "") =>
+    writeFileSync(mk(eid), `{"computed":{"edge":[2,2,2],"edge_x":2.0,"rate":NaN,${extra}"quantities":[{"id":"box_edge","key":"${key}","observable":"edge length, m","uncertainty":0}]}}`);
+  async function declLoop(eid: string, fix: () => void, opts: { outside?: boolean } = {}) {
+    const names: string[] = [], prompts: string[] = [];
+    const out: any = await runExperimentReviewLoop({ output: "FIRST RUN SUMMARY", success: true }, {
+      projectDir: tmp, mergedTemplateVars: { EXPERIMENT_ID: eid, PROJECT_DIR: tmp },
+      baseOpts: { name: "experiment", templateVars: { EXPERIMENT_ID: eid }, projectDir: tmp, getApiKey: () => undefined } as any,
+      initialTask: "ORIGINAL TASK", getApiKey: () => undefined, makeSpawnTool: () => null, executorOutside: opts.outside,
+      spawn: (async (o: any) => {
+        names.push(o.name); prompts.push(o.prompt);
+        if (o.name === "experiment") { fix(); return { output: "fixed the keys", success: true }; }
+        return { output: "REVIEW-COMPLETE\nVERDICT: satisfied", success: true };
+      }) as any,
+    });
+    return { names, prompts, out };
+  }
+  const tmpDecl = tmp;
+  declared("E6_array", "computed.edge");
+  process.env.LUXAS_MAX_REVIEW_ITERATIONS = "1"; // one reviewer round, to see the order
+  const a = await declLoop("E6_array", () => declared("E6_array", "computed.edge_x"));
+  process.env.LUXAS_MAX_REVIEW_ITERATIONS = "0"; // the rest: no review round, so the note must travel on its own
+  const sent = a.prompts.filter((p) => /Declarations to fix in place/.test(p));
+  check("an array key → sent back to the producer exactly once, before the reviewer", sent.length === 1 && a.names[0] === "experiment" && a.names.includes("experiment_reviewer"), a.names.join(","));
+  check("…told the problem, bookkeeping only, and given the original task", /is not a finite number/.test(sent[0] ?? "") && /Do NOT recompute/.test(sent[0] ?? "") && /ORIGINAL TASK/.test(sent[0] ?? ""), (sent[0] ?? "").slice(0, 200));
+  check("…the experiment's own summary is what the brain gets, with a note that it was fixed", /^FIRST RUN SUMMARY/.test(a.out.output) && /declaration problem\(s\) fixed in place by the producer before review/.test(a.out.output), a.out.output.slice(-300));
+  declared("E7_stuck", "computed.edge");
+  const b = await declLoop("E7_stuck", () => {});
+  check("not fixed after the one send-back → no second send-back; the brain is told what is open", b.names.filter((n) => n === "experiment").length === 1 && /still open: E7: quantities\[0\]/.test(b.out.output), b.out.output.slice(-300));
+  declared("E8_nan", "computed.rate");
+  const c = await declLoop("E8_nan", () => {});
+  check("a key whose leaf is NaN is a failed computation, not bookkeeping → not sent back", !c.names.includes("experiment"), c.names.join(","));
+  declared("E9_hand", "computed.edge");
+  const d = await declLoop("E9_hand", () => {}, { outside: true });
+  check("executorOutside (review_experiment.mts) → nothing sent back, no experiment spawned", !d.names.includes("experiment"), d.names.join(","));
+  mkdirSync(join(tmpDecl, ".agent"), { recursive: true });
+  writeFileSync(join(tmpDecl, ".agent/run_config.json"), JSON.stringify({ maxCost: 100 }));
+  writeFileSync(join(tmpDecl, ".agent/usage.log"), "1788000000000\tm\tp\t1\t1\t0\t0\t95\n");
+  const { setCostCap } = await import("../src/usage-log.ts");
+  setCostCap(join(tmpDecl, ".agent/usage.log"), 100);
+  declared("E10_late", "computed.edge");
+  const e = await declLoop("E10_late", () => {});
+  setCostCap(join(tmpDecl, ".agent/usage.log"), undefined);
+  check("past the 90% freeze → not sent back, and the note says why", !e.names.includes("experiment") && /not sent back — past the 90% cost freeze/.test(e.out.output), e.out.output.slice(-300));
+  for (const [k, v] of [["LUXAS_BLIND_ESTIMATE", saved.b], ["LUXAS_REVIEW_IMAGES", saved.i]] as const) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+}
 rmSync(tmp, { recursive: true, force: true });
 
 console.log("\n6. [C64] solo_trial: a recorded, refusable two-arm harness");

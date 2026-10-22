@@ -10,7 +10,7 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { readFileSafe, extractTextContent } from "./utils.js";
 import { readUsageTotals, SOFT_CAP_FRACTION } from "./usage-log.js";
-import { buildClaimTable } from "./claims-table.js";
+import { blindFlagAnswerText, buildClaimTable } from "./claims-table.js";
 import { loadAgentDefinitions } from "./agents/registry.js";
 import { surfaceReturnedIsError } from "./agents/safety-wrappers.js";
 import type { ReminderRegistry } from "./reminders.js";
@@ -131,7 +131,7 @@ export function finalizationDenyText(toolName: string, spawnTarget: string, clai
       ? `No new experiment starts in the last 10% of the cap, even while a headline quantity is DISPUTED/CONDITIONAL: one does not fit in what is left. ` +
         `For such a row, abstain on it in the abstract (the claim table's [abstain] sentence), or CLAIM-DISCLOSE it for the PI or a reviewer to countersign — ` +
         `at most one disclosed headline quantity; more than one is a notes/escalations/needs-operator.md escalation, not a report. ` +
-        `A replicator (replicate mode) settles only a disagreement between two producers, not a blind-estimate flag.`
+        `In what is left, ${blindFlagAnswerText(false)}.`
       : hatch
         ? `A headline quantity is DISPUTED/CONDITIONAL, so settling work (replicator / experiment and the tools an experiment needs) is open.`
         : `If a headline quantity is DISPUTED/CONDITIONAL the settling agents open automatically — check the claim table rather than working around this block.`)

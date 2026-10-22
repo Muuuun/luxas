@@ -335,10 +335,15 @@ function parseExperiment(id: string, j: any): Parsed {
       observable: typeof pick("observable") === "string" ? (pick("observable") as string) : undefined,
       inputs: {},
     };
+    // σ = 0 is a declaration, not an error: a clause count or a fixed-seed
+    // render statistic has no spread (blender-02, 2026-10-21: five σ=0 rows
+    // were MALFORMED, their σ dropped, every blind line against them read as
+    // a dispute, and the brain paid a full re-run to invent spreads). It makes
+    // a comparison stricter, never looser, so it cannot buy agreement.
     const uncertainty = pick("uncertainty");
     if (uncertainty !== undefined) {
-      const u = posNum(uncertainty);
-      if (u === undefined) out.malformed.push(`${id}: quantities[${i}] (${q.id}) uncertainty must be a positive number, got ${JSON.stringify(uncertainty)}`);
+      const u = num(uncertainty);
+      if (u === undefined || u < 0) out.malformed.push(`${id}: quantities[${i}] (${q.id}) uncertainty must be a number ≥ 0 (0 for an exact or deterministic value), got ${JSON.stringify(uncertainty)}`);
       else decl.uncertainty = u;
     }
     const uSrc = pick("uncertainty_source");
@@ -782,6 +787,25 @@ export function signOnlyDisagreement(a: Estimate, b: Estimate): boolean {
   return agreement(ma, mb) !== "disagree";
 }
 
+/**
+ * v3 D2: a computing replication on an ASSIGNED route that differs from its
+ * partner's is independent by construction (the harness chose the route, the
+ * replicator never saw the producer's value) — it needs no INDEPENDENT line
+ * to count as a leg.
+ */
+function computingLeg(x: Estimate): boolean {
+  return x.kind === "replication" && !!x.route && !!x.job && process.env.LUXAS_REPLICATE_LEGS !== "0";
+}
+
+/**
+ * An assigned route on the replication side counts as different when the
+ * producer never named its own route (unknown ≠ same); relation() has already
+ * turned two named identical routes into wiring.
+ */
+function routesDiffer(a: Estimate, b: Estimate): boolean {
+  return (a.route && b.route) ? !sameRoute(a.route, b.route) && !routeConfessesDependence(a.route, b.route) : true;
+}
+
 // ── the table ──────────────────────────────────────────────────────────────
 
 export function buildClaimTable(projectDir: string): ClaimTable {
@@ -802,26 +826,41 @@ export function buildClaimTable(projectDir: string): ClaimTable {
     const p = parseExperiment(e.id, j);
     decls.push(...p.quantities); verdicts.push(...p.verdicts); estimates.push(...p.estimates); malformed.push(...p.malformed); instanceNotes.push(...p.instanceNotes); anchorsByExp.set(e.id, [...(anchorsByExp.get(e.id) ?? []), ...p.anchors]); dirByExp.set(e.id, basename(e.dir));
   }
-  // Replicator results (design §3.6.2): data/experiments/<dir>/replication/results.json.
+  // Replicator results (design §3.6.2): data/experiments/<dir>/replication/results.json,
+  // and one level down, replication/<QID>[-N]/results.json — each replicator's
+  // own file. With one shared file, blender-02's four replicators (2026-10-21)
+  // left one leg: one overwrote another by edit, one was refused the write,
+  // one wrote its own subdirectory, which nothing read.
   const byEstimator = estimatorOnlyReplication(projectDir);
   const estimatorWrote = new Map<string, string[]>();
   for (const e of dirs) {
-    const p = join(e.dir, "replication", "results.json");
-    if (!existsSync(p)) continue;
+    const repDir = join(e.dir, "replication");
+    const files: string[] = [];
+    if (existsSync(join(repDir, "results.json"))) files.push("results.json");
     try {
-      const r = parseResultsJson(readFileSync(p, "utf-8"));
-      const v = num(r?.value);
-      if (typeof r?.quantity !== "string" || v === undefined) { malformed.push(`${e.id}: replication/results.json needs {quantity: string, value: number}`); continue; }
-      if (byEstimator(basename(e.dir), r.quantity)) {
-        estimatorWrote.set(r.quantity, [...(estimatorWrote.get(r.quantity) ?? []), `${e.id}: replication/results.json written by the blind estimator — not a second leg`]);
-        continue;
+      for (const d of readdirSync(repDir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+        if (d.isDirectory() && existsSync(join(repDir, d.name, "results.json"))) files.push(`${d.name}/results.json`);
       }
-      const inputs: Record<string, number> = {};
-      if (r?.inputs && typeof r.inputs === "object") for (const [k, x] of Object.entries(r.inputs)) { const n = num(x); if (n !== undefined) inputs[k] = n; }
-      estimates.push({ quantity: r.quantity, value: v, sigma: posNum(r?.sigma), kind: "replication", source: `${e.id}:replication`, experiment: e.id, script: `replication:${e.id}:${String(r?.script ?? "")}`, inputs,
-        route: typeof r?.route === "string" ? r.route : undefined, model: typeof r?.model === "string" ? r.model : undefined,
-        job: typeof r?.job_id === "string" ? r.job_id : (typeof r?.script === "string" && /replication\//.test(r.script) ? r.script : undefined) });
-    } catch (err) { malformed.push(`${e.id}: replication/results.json unparseable (${(err as Error).message.slice(0, 60)})`); }
+    } catch { /* no replication/ */ }
+    for (const f of files) {
+      const rel = `replication/${f}`;
+      try {
+        const r = parseResultsJson(readFileSync(join(repDir, f), "utf-8"));
+        const v = num(r?.value);
+        if (typeof r?.quantity !== "string" || v === undefined) { malformed.push(`${e.id}: ${rel} needs {quantity: string, value: number}`); continue; }
+        if (byEstimator(basename(e.dir), r.quantity)) {
+          estimatorWrote.set(r.quantity, [...(estimatorWrote.get(r.quantity) ?? []), `${e.id}: ${rel} written by the blind estimator — not a second leg`]);
+          continue;
+        }
+        const inputs: Record<string, number> = {};
+        if (r?.inputs && typeof r.inputs === "object") for (const [k, x] of Object.entries(r.inputs)) { const n = num(x); if (n !== undefined) inputs[k] = n; }
+        // The legacy file keeps its old source and script names, so tables built before this change read the same.
+        const tag = f === "results.json" ? "replication" : rel.replace(/\/results\.json$/, "");
+        estimates.push({ quantity: r.quantity, value: v, sigma: posNum(r?.sigma), kind: "replication", source: `${e.id}:${tag}`, experiment: e.id, script: `${tag}:${e.id}:${String(r?.script ?? "")}`, inputs,
+          route: typeof r?.route === "string" ? r.route : undefined, model: typeof r?.model === "string" ? r.model : undefined,
+          job: typeof r?.job_id === "string" ? r.job_id : (typeof r?.script === "string" && /replication\//.test(r.script) ? r.script : undefined) });
+      } catch (err) { malformed.push(`${e.id}: ${rel} unparseable (${(err as Error).message.slice(0, 60)})`); }
+    }
   }
   const declared = decls.length > 0 || verdicts.length > 0;
   const rev = parseReviewerLines(projectDir);
@@ -914,18 +953,7 @@ export function buildClaimTable(projectDir: string): ClaimTable {
       }
       if (ag === "disagree") { dispute(signOnlyDisagreement(a, b) ? `sign convention: |${a.source}|=${Math.abs(a.value)} ≈ |${b.source}|=${Math.abs(b.value)} but signs differ — pin the convention in \`observable\` (e.g. "negative = attractive") and restate one estimate with a locator; a physics dispute only if the signs survive that` : `disagree: ${a.source}=${a.value} vs ${b.source}=${b.value}`); }
       else if (ag === "agree") {
-        // v3 D2: a computing replication on an ASSIGNED route that differs from
-        // its partner's is independent by construction (the harness chose the
-        // route, the replicator never saw the producer's value) — it needs no
-        // INDEPENDENT line to count as a leg.
-        const computingLeg = (x: Estimate) => x.kind === "replication" && !!x.route && !!x.job && process.env.LUXAS_REPLICATE_LEGS !== "0";
-        // An assigned route on the replication side counts as different when the
-        // producer never named its own route (unknown ≠ same); relation() has
-        // already turned two named identical routes into wiring.
-        const routesDiffer = (a.route && b.route)
-          ? !sameRoute(a.route, b.route) && !routeConfessesDependence(a.route, b.route)
-          : true;
-        const attested = !headline.has(id) || rev.independent.has(id) || ((computingLeg(a) || computingLeg(b)) && routesDiffer);
+        const attested = !headline.has(id) || rev.independent.has(id) || ((computingLeg(a) || computingLeg(b)) && routesDiffer(a, b));
         if (attested) {
           agreeingPair = true;
           reasons.push(`agree: ${a.source} ~ ${b.source}${a.anchor || b.anchor ? " (anchored)" : ""}`);
@@ -939,23 +967,37 @@ export function buildClaimTable(projectDir: string): ClaimTable {
     // Blind estimates (design §3.5/§3.6.1, v2 plan P0.1 2026-08-28). A blind
     // line is compared with the SAME comparability rule as producer pairs —
     // an estimate made against input values that have since moved is
-    // incomparable, not wrong. A disagreeing blind flag is ANSWERED when a
-    // later own-estimate of the same id from a DIFFERENT experiment is
-    // comparable and agrees with the flagged producer: the discriminator ran,
-    // the outlier stays in the row beside it. Sign-only disagreements keep the
-    // convention hint. Nothing here is written by a producer or the brain.
+    // incomparable, not wrong. A disagreeing blind flag is ANSWERED when an
+    // independent computation of the same id agrees with the flagged
+    // producer: an own-estimate from a DIFFERENT experiment, or a computing
+    // replication on a route other than the producer's (2026-10-22; before,
+    // only an experiment could, and blender-02's brain re-ran the same
+    // experiment four times — a re-run never answers, the table reads only an
+    // experiment's latest run). The outlier stays in the row beside the
+    // answer. LUXAS_REPLICATION_ANSWERS_BLIND=0 restores experiment-only.
+    // Sign-only disagreements keep the convention hint. Nothing here is
+    // written by a producer or the brain.
     const owns = producers.filter((e) => e.kind === "own");
+    // A producer that gave no σ is held to its value exactly: the blind line's
+    // own σ decides. "No σ" used to read as undecidable, and an undecidable
+    // blind line as a dispute (blender-02 r1: 3.0 ± 1.0 against 2.76 disputed).
+    const exact = (e: Estimate): Estimate => (e.sigma === undefined ? { ...e, sigma: 0 } : e);
     for (const bl of rev.blind.filter((e) => e.quantity === id)) {
       // The unit is printed so the reviewer can see a units mismatch; the comparison stays numeric.
       const blv = bl.unit ? `${bl.value} ${bl.unit}` : `${bl.value}`;
       const comparable = owns.filter((o) => relation(o, bl).rel !== "incomparable");
       if (owns.length && comparable.length === 0) { reasons.push(`blind estimate ${blv} incomparable: its inputs (${Object.entries(bl.inputs ?? {}).map(([k, v]) => `${k}=${v}`).join(",") || "none"}) differ in value from the producer's — re-estimate against current inputs`); continue; }
-      const agreeingOwn = comparable.find((o) => agreement(o, bl) === "agree");
+      const agreeingOwn = comparable.find((o) => agreement(exact(o), bl) === "agree");
       if (agreeingOwn) { reasons.push(`blind estimate ${blv} agrees with ${agreeingOwn.source}`); continue; }
+      // Only a blind line without σ (within 3×, same sign) is undecidable now: it flags nothing.
+      const undecided = comparable.find((o) => agreement(exact(o), bl) === "undecidable");
+      if (undecided) { reasons.push(`blind estimate ${blv} gives no σ: within 3× of ${undecided.source}=${undecided.value}, not a flag`); continue; }
       const flagged = comparable[0];
       if (!flagged) continue;
-      const answer = owns.find((o) => o !== flagged && o.experiment !== flagged.experiment && relation(o, flagged).rel === "comparable" && agreement(o, flagged) === "agree");
-      if (answer) { reasons.push(`blind estimate ${blv} disagreed with ${flagged.source}=${flagged.value}; answered by ${answer.source}=${answer.value} (independent experiment agrees with the producer)`); continue; }
+      const confirms = (o: Estimate) => relation(o, flagged).rel === "comparable" && agreement(o, exact(flagged)) === "agree";
+      const answer = owns.find((o) => o !== flagged && o.experiment !== flagged.experiment && confirms(o))
+        ?? (process.env.LUXAS_REPLICATION_ANSWERS_BLIND !== "0" ? producers.find((o) => computingLeg(o) && routesDiffer(o, flagged) && confirms(o)) : undefined);
+      if (answer) { reasons.push(`blind estimate ${blv} disagreed with ${flagged.source}=${flagged.value}; answered by ${answer.source}=${answer.value} (${answer.kind === "replication" ? "a replication on another route" : "an independent experiment"} agrees with the producer)`); continue; }
       if (signOnlyDisagreement(flagged, bl)) {
         // A sign-only disagreement is ANSWERED the moment the producer's
         // observable sentence pins the convention (design §3.5 "answer with a
@@ -1084,10 +1126,25 @@ export function buildClaimTable(projectDir: string): ClaimTable {
 
 export interface ClaimIssue { blocking: boolean; text: string }
 
+/**
+ * What answers a blind-estimate flag, in the words every legal-move text uses
+ * (this table's issues, the cosmetic-spawn notice, the cost-freeze refusal),
+ * so none of them drifts from the blind loop in buildClaimTable.
+ */
+export function blindFlagAnswerText(experimentFits = true): string {
+  const experiment = experimentFits ? `an experiment under a new experiment id that declares the same quantity id` : "";
+  const rerun = `a re-run of the same experiment never does (the table reads only its latest run)`;
+  if (process.env.LUXAS_REPLICATION_ANSWERS_BLIND === "0") {
+    return `a replicator (replicate mode) settles only a disagreement between two producers, never a blind-estimate flag` +
+      (experimentFits ? `; only ${experiment} answers one, and ${rerun}` : "");
+  }
+  return `a replicator (replicate mode) on a route other than the producer's settles a disagreement between two producers and, when it agrees with the producer, answers a blind-estimate flag — the cheapest independent computation` +
+    (experimentFits ? `; ${experiment} answers one too, and ${rerun}` : "");
+}
+
 // Static on purpose: a row's `cause` is only its last dispute, so a blind flag
-// can hide behind a later scaling line. Only another experiment's own estimate
-// answers a blind flag (buildClaimTable's blind loop); a replication never does.
-const LEGAL_MOVES = `Legal moves: run the discriminating computation (an experiment whose results.json declares a comparable estimate under the same quantity id — the only answer to a blind-estimate flag), a replicate-mode replicator (spawn_agent(agent="replicator", MODE: "replicate"); it settles a disagreement between two producers, never a blind-estimate flag), or a countersigned disclosure (CLAIM-DISCLOSE in notes/memory.md + DISCLOSE-OK from a reviewer or the PI).`;
+// can hide behind a later scaling line.
+const legalMoves = () => `Legal moves: ${blindFlagAnswerText()} — spawn_agent(agent="replicator", templateVars={EXPERIMENT_ID, QUANTITY_ID, MODE: "replicate", ROUTE: "<a route other than the producer's>"}); or a countersigned disclosure (CLAIM-DISCLOSE in notes/memory.md + DISCLOSE-OK from a reviewer or the PI).`;
 
 /** Finish-gate issues (design §3.4, §3.6, §3.9). Empty for legacy projects (no declarations). */
 export function claimTableIssues(projectDir: string, table: ClaimTable = buildClaimTable(projectDir)): ClaimIssue[] {
@@ -1144,11 +1201,11 @@ export function claimTableIssues(projectDir: string, table: ClaimTable = buildCl
           }
         }
         if (!row) continue;
-        issues.push({ blocking: true, text: `"${ctx}" carries a value equal to an estimate of ${row.id} (status ${row.status}) under a different key — the same number under another name inherits the status. ${LEGAL_MOVES}` });
+        issues.push({ blocking: true, text: `"${ctx}" carries a value equal to an estimate of ${row.id} (status ${row.status}) under a different key — the same number under another name inherits the status. ${legalMoves()}` });
         continue;
       }
       if (!row.headline) issues.push({ blocking: true, text: `"${ctx}" cites ${row.id}, which is outside the headline set (${table.headline.join(", ") || "empty"}). Add it to notes/frame.md "Headline quantities" or mark headline:true — the set never widens silently.` });
-      if (bad.has(row.status)) issues.push({ blocking: true, text: `"${ctx}" cites ${row.id} whose status is ${row.status} (${row.cause ?? row.reasons.slice(-2).join("; ")}). ${LEGAL_MOVES}` });
+      if (bad.has(row.status)) issues.push({ blocking: true, text: `"${ctx}" cites ${row.id} whose status is ${row.status} (${row.cause ?? row.reasons.slice(-2).join("; ")}). ${legalMoves()}` });
     }
     if (claims.length > 0 && table.headline.length === 0) issues.push({ blocking: true, text: `claims.json carries ${claims.length} entries but the headline set is empty — declare headline quantity ids in notes/frame.md.` });
   }

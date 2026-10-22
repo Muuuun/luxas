@@ -28,7 +28,7 @@
 import { existsSync, mkdirSync, writeFileSync , readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { buildBudgetStatus } from "./context.js";
-import { parseFrameHeadline, buildClaimTable, differingInputs, parseEstimateLine, type ClaimIssue, type ClaimTable, type QuantityDecl } from "./claims-table.js";
+import { parseFrameHeadline, buildClaimTable, blindFlagAnswerText, differingInputs, parseEstimateLine, type ClaimIssue, type ClaimTable, type QuantityDecl } from "./claims-table.js";
 
 export const REVIEW_LINE_RE = /^\s*(DISCRIMINATOR|ESTIMATE(?:\(blind\))?|SCALING|INDEPENDENT|DISCLOSE-OK):\s*(\S+)/;
 
@@ -560,11 +560,17 @@ export function nearestIds(id: string, known: Iterable<string>, n = 3): string[]
     .filter((x) => x.s >= x.need).sort((a, b) => b.s - a.s).slice(0, n).map((x) => x.k);
 }
 
-/** Problems with a results.json's computed.quantities[] / verdicts[], for the write-time hook. */
-export function quantityDeclarationProblems(projectDir: string, experimentId: string): string[] {
+/**
+ * Problems with a results.json's computed.quantities[] / verdicts[], for the
+ * write-time hook. `fixableInPlace` keeps only what the producer can fix by
+ * editing its declarations — the review loop's send-back: not the suggestion
+ * (too many headline:true ids), not a key whose leaf is NaN/Infinity/null
+ * (a computation that produced no number).
+ */
+export function quantityDeclarationProblems(projectDir: string, experimentId: string, opts: { fixableInPlace?: boolean } = {}): string[] {
   const table = buildClaimTable(projectDir);
   const e = experimentNumberOf(experimentId) ?? experimentId;
-  const problems = table.malformed.filter((m) => m.startsWith(`${e}:`));
+  const problems = table.malformed.filter((m) => m.startsWith(`${e}:`) && !(opts.fixableInPlace && /is not a finite number in results\.json \(got null\)/.test(m)));
   const others = new Set(table.decls.filter((d) => d.experiment !== e).map((d) => d.id));
   for (const d of table.decls.filter((d) => d.experiment === e)) {
     if (others.has(d.id)) continue; // reuse — the intended case
@@ -585,7 +591,7 @@ export function quantityDeclarationProblems(projectDir: string, experimentId: st
     if (near.length > 0) problems.push(`${e}: notes/frame.md names headline quantity "${fid}" but no experiment declares it; your "${near[0]}" looks like the same observable — declare it under the frame id "${fid}" (the ship gate and the reviewer obligation are scoped to frame ids; a near-miss id leaves the headline unreviewed).`);
   }
   const declaredHeadline = table.decls.filter((d) => d.experiment === e && d.headline).map((d) => d.id);
-  if (declaredHeadline.length > OBLIGATION_CAP_PER_EXPERIMENT) {
+  if (!opts.fixableInPlace && declaredHeadline.length > OBLIGATION_CAP_PER_EXPERIMENT) {
     const kept = headlineDeclsFor(table, experimentId).map((d) => d.id);
     problems.push(`${e}: ${declaredHeadline.length} quantities are marked headline:true; the reviewer/blind-estimate obligation covers only the frame's ids plus ${OBLIGATION_CAP_PER_EXPERIMENT} by load — this round: ${kept.join(", ")}. Every declaration stays in the table; if the number the abstract will quote is not among those, mark fewer as headline or name it in notes/frame.md.`);
   }
@@ -624,8 +630,8 @@ export function cosmeticSpawnNotice(projectDir: string, agent: string): { notice
   // <budget_status> block is shown under.
   const notice = `[claim gate] ${blocked.length} headline quantit${blocked.length === 1 ? "y is" : "ies are"} disputed/conditional — the abstract cannot ship and figures/report text built now will be redrawn: ${blocked.join(", ")}. ` +
     (buildBudgetStatus(projectDir) !== ""
-      ? `Legal moves in finalization (no new experiment fits in what is left): abstain on it in the abstract (the claim table's [abstain] sentence), or propose CLAIM-DISCLOSE for a non-producer to countersign (more than one disclosed headline quantity is a needs-operator escalation); a replicator (replicate mode) settles only a disagreement between two producers, not a blind-estimate flag. `
-      : `Legal moves: run the reviewer's DISCRIMINATOR as an experiment that declares the same quantity id (the only answer to a blind-estimate flag), spawn a replicator (replicate mode) on the highest-load disputed id — it settles a disagreement between two producers, never a blind-estimate flag — or propose CLAIM-DISCLOSE for a non-producer to countersign. `) +
+      ? `Legal moves in finalization (no new experiment fits in what is left): abstain on it in the abstract (the claim table's [abstain] sentence), or propose CLAIM-DISCLOSE for a non-producer to countersign (more than one disclosed headline quantity is a needs-operator escalation); ${blindFlagAnswerText(false)}. `
+      : `Legal moves: spawn a replicator (replicate mode) on the highest-load disputed id, or run the reviewer's DISCRIMINATOR as an experiment that declares the same quantity id — ${blindFlagAnswerText()} — or propose CLAIM-DISCLOSE for a non-producer to countersign. `) +
     (refuse ? `Refused (LUXAS_COSMETIC_WHILE_DISPUTED=0). Spawn "${agent}" once the ship line is clean.` : `Spawning "${agent}" anyway — the dollars are yours to spend; the ship line is not.`);
   return { notice, refuse };
 }

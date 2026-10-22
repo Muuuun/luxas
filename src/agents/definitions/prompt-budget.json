@@ -1,7 +1,11 @@
 {
   "$comment": "Byte ceilings on the brain.md and experiment.md bodies (frontmatter excluded), checked by scripts/smoke_agent_defs.mts §C55 against its pinned pre-ratchet BASELINE. A ceiling rises only with a growth entry naming the metric the new text moves, the script that measures it, the item or commit it came from, and the text it superseded (deleted in the same diff) or 'none'. Deletions are logged with negative bytes.",
-  "brain": { "ceilingBytes": 91358 },
-  "experiment": { "ceilingBytes": 49015 },
+  "brain": {
+    "ceilingBytes": 91276
+  },
+  "experiment": {
+    "ceilingBytes": 49015
+  },
   "growth": [
     {
       "agent": "brain",
@@ -54,6 +58,18 @@
       "metric": "review-open issues cleared by round-bound answers",
       "measuredBy": "scripts/claims_compliance.mts",
       "supersedes": "'when a revision round's feedback is not fully addressed, the L2 section's `### Limitations` carries `finding_open: \"<reviewer's first sentence verbatim>\"`; when it is addressed, `finding_answered: <clause> — <locator>`.'"
+    },
+    {
+      "agent": "brain",
+      "item": "2026-10-20 dispute routing",
+      "bytes": -52,
+      "supersedes": "'the top DISPUTED *frame* quantity' (any dispute) in the breadth policy, now a row disputed between two producers with blind-estimate flags sent to item 1, as claims-table.ts LEGAL_MOVES says; 'on the DISCRIMINATOR' in the abstention levers, which now lead with an experiment declaring that id; '`LUXAS_BREADTH_K` (default 2)' and ' (`LUXAS_BREADTH_FRAC`)', env vars no code reads"
+    },
+    {
+      "agent": "brain",
+      "item": "2026-10-22 step 0: blind flags answered by a replication",
+      "bytes": -30,
+      "supersedes": "'(a blind-estimate flag goes to item 1)' and 'an experiment declaring that id (the only answer to a blind estimate)': a replication on a route other than the producer's now answers a blind-estimate flag (claims-table.ts blind loop, blindFlagAnswerText), and a re-run of the same experiment never did; 'that differs from the producer's counts as', 'two replications on one route', 'total' tightened"
     }
   ]
 }

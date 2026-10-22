@@ -14,7 +14,7 @@ import { spawn } from "node:child_process";
 import { spawnAgent, resolveModel, type SpawnAgentOptions, type SpawnAgentResult } from "../agents/spawn.js";
 import { listAgentDescriptions, getDefinition } from "../agents/registry.js";
 import { replicatorEstimateDefinition } from "../agents/registry.js";
-import { nextReviewRound, priorBlindLines, reusableBlindLine } from "../claims-review.js";
+import { nextReviewRound, priorBlindLines, quantityDeclarationProblems, reusableBlindLine } from "../claims-review.js";
 import { addAgent, removeAgent, loadRegistry, isAlive, markFailed, tryExtractResult, formatExitHint, parseConvJsonl } from "../active-agents.js";
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { join, dirname, sep as pathSep } from "node:path";
@@ -311,6 +311,12 @@ export interface ExperimentReviewContext {
    * [] for --blind (estimate every id again).
    */
   priorBlindLines?: string[];
+  /**
+   * The experiment ran outside this process (scripts/review_experiment.mts):
+   * declaration problems are not sent back to it — that script reports them
+   * itself — and nothing here spawns an experiment.
+   */
+  executorOutside?: boolean;
 }
 
 /**
@@ -438,6 +444,41 @@ export async function runExperimentReviewLoop<R extends { output: string; succes
         }
       }
 
+      const claimNotes: string[] = [];
+      // Declaration bookkeeping, before blind estimates and the review are
+      // keyed on the ids: the producer that wrote results.json fixes its own
+      // declarations in place, once. Otherwise the brain sees MALFORMED rows
+      // and pays a whole re-run to fix bookkeeping (blender-02 2026-10-21:
+      // run_2, $4.5 of $25, re-measured nothing; results.json was written by
+      // a python script, so the write-time hook never ran). What is still
+      // wrong after the one send-back goes to the brain as a note.
+      let declNote = "";
+      if (!ctx.executorOutside) {
+        const declProblems = (): string[] => { try { return quantityDeclarationProblems(projectDir, String(experimentId), { fixableInPlace: true }); } catch { return []; } };
+        const before = declProblems();
+        if (before.length > 0 && !pastFreeze()) {
+          const fixTask =
+            `# Declarations to fix in place — bookkeeping only\n\n` +
+            `You delivered results.json for ${experimentId}; its quantity declarations have these problems:\n\n` +
+            before.map((p) => `- ${p}`).join("\n") +
+            `\n\nEdit computed.quantities[] (and, where needed, the leaves its keys point at) in the latest run's results.json so each problem is gone: ` +
+            `point a key at an existing numeric leaf or add a "value", rename an id, state an uncertainty with its uncertainty_source (0 for an exact or deterministic value). ` +
+            `Do NOT recompute, re-run, or change any other file. If a fix would need a new computation, leave it and say which in one line.\n\n` +
+            `## Original task (for reference)\n\n${initialTask}`;
+          const fix = await spawn({ ...baseOpts, prompt: fixTask, contextExtra: { task: fixTask } });
+          const after = declProblems();
+          const note = !fix.success
+            ? `declaration send-back failed (${String(fix.output ?? "").replace(/\s+/g, " ").slice(0, 120)}); ${before.length} problem(s) stand`
+            : after.length === 0
+              ? `${before.length} declaration problem(s) fixed in place by the producer before review`
+              : `${before.length - after.length} of ${before.length} declaration problem(s) fixed in place; still open: ${after.map((p) => p.slice(0, 160)).join(" | ")}`;
+          declNote = `[harness: ${note}]`;
+        } else if (before.length > 0) {
+          declNote = `[harness: ${before.length} declaration problem(s) not sent back — past the ${freezePct}% cost freeze: ${before.map((p) => p.slice(0, 160)).join(" | ")}]`;
+        }
+        if (declNote) claimNotes.push(declNote);
+      }
+
       // Env-configurable. Default 3 preserves prior behavior.
       // Set LUXAS_MAX_REVIEW_ITERATIONS=1 for compute-heavy runs (Monte
       // Carlo sims) where 3 rounds × hours/round burns wallclock budget
@@ -454,7 +495,6 @@ export async function runExperimentReviewLoop<R extends { output: string; succes
       // observable sentence and input values only; its ESTIMATE(blind)
       // line is handed to the reviewer and persisted with the review so
       // claims-table.ts can read it. LUXAS_BLIND_ESTIMATE=0 disables.
-      const claimNotes: string[] = [];
       const scopeFor = () => {
         try { return headlineDeclsFor(buildClaimTable(projectDir), experimentId); }
         catch (err) { claimNotes.push(`[claim-table MALFORMED: ${(err as Error).message.slice(0, 120)} — no blind estimate or reviewer obligation could be computed]`); return []; }
@@ -539,6 +579,8 @@ export async function runExperimentReviewLoop<R extends { output: string; succes
       // MAX=0 short-circuits the loop body and falls through to return.
       const firstRound = Math.max(1, Math.floor(ctx.startRound ?? nextReviewRound(projectDir, experimentId)));
       const lastRound = firstRound + MAX_REVIEW_ITERATIONS - 1;
+      // With no review round the round outputs never carry the notes; the declaration one must still reach brain.
+      if (MAX_REVIEW_ITERATIONS === 0 && declNote) result = { ...result, output: result.output + `\n\n---\n${declNote}` };
       // A reviewer that gave no review is spawned once more (spawnAgent gives
       // it a fresh id); a second silence is NOT REVIEWED below. Every reader
       // below (no-review test, satisfied test, FEEDBACK, persisted verdict)
@@ -1026,13 +1068,20 @@ export function createSpawnAgentTool(
 
       // v3 D2: stamp the model that produced a replication so same-model-same-route is wiring.
       if (params.agent === "replicator" && mergedTemplateVars.EXPERIMENT_ID) {
-        try {
-          const rp = join(projectDir, "data", "experiments", String(mergedTemplateVars.EXPERIMENT_ID), "replication", "results.json");
-          if (existsSync(rp)) {
+        // Each replicator writes replication/<QID>[-N]/results.json (the legacy
+        // shared file is still read); stamp whichever of them is unstamped.
+        const repDir = join(projectDir, "data", "experiments", String(mergedTemplateVars.EXPERIMENT_ID), "replication");
+        const qid = String(mergedTemplateVars.QUANTITY_ID ?? "");
+        let names: string[] = [];
+        try { names = readdirSync(repDir).filter((n) => !!qid && (n === qid || (n.startsWith(`${qid}-`) && /^\d+$/.test(n.slice(qid.length + 1))))); } catch { /* none */ }
+        for (const rel of ["results.json", ...names.map((n) => join(n, "results.json"))]) {
+          try {
+            const rp = join(repDir, rel);
+            if (!existsSync(rp)) continue;
             const j = JSON.parse(readFileSync(rp, "utf-8"));
             if (j && typeof j === "object" && !j.model) { j.model = String(resolveModel("opus", "replicator")?.id ?? "unknown"); writeFileSync(rp, JSON.stringify(j, null, 2) + "\n"); }
-          }
-        } catch { /* stamping is best-effort */ }
+          } catch { /* stamping is best-effort */ }
+        }
       }
       return {
         content: [{ type: "text" as const, text: `${cosmetic.notice ? cosmetic.notice + "\n\n" : ""}[agent: ${result.agentId}]\n${result.output}${formatExitHint(result.exit, projectDir)}` }],

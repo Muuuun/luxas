@@ -98,7 +98,7 @@ try {
 	j.computed.quantities[0].inputs = { forster_defect_GHz: "0.185" };
 	writeFileSync(p, JSON.stringify(j));
 	const t2 = buildClaimTable(d);
-	check("string uncertainty → MALFORMED (not Number()-coerced)", t2.malformed.some((m: string) => /uncertainty must be a positive number/.test(m)), t2.malformed.join(" | "));
+	check("string uncertainty → MALFORMED (not Number()-coerced)", t2.malformed.some((m: string) => /uncertainty must be a number ≥ 0/.test(m)), t2.malformed.join(" | "));
 	check("string input value → MALFORMED (values, not ids)", t2.malformed.some((m: string) => /inputs\.forster_defect_GHz must be a number/.test(m)));
 	check("MALFORMED rows are a blocking gate issue", claimTableIssues(d, t2).some((i: any) => i.blocking && /Malformed quantity declarations/.test(i.text)));
 	check("MALFORMED rows render (never silently skipped)", /MALFORMED/.test(renderClaimTable(t2)));
@@ -192,53 +192,96 @@ for (const [name, line, converges] of c41Cases) {
 	}
 }
 
-// §C38 fallback (F3): a blind-estimate flag is answered only by another
-// experiment's own estimate of the id. A replicate-mode replication that
-// agrees with the producer leaves the row DISPUTED (Dy rf_gate / κ532 /
-// scattering_1064), so every text that offers the replicator for such a row
-// must say it does not settle a blind flag. The first check pins the code
-// side: when a replication can answer a blind flag (C38 proper), it goes red
-// and the texts change in the same diff.
+// §C38 (2026-10-22, step 0): a blind-estimate flag is answered by an
+// independent computation that agrees with the producer — an own estimate from
+// another experiment, or a computing replication (route + job) on a route other
+// than the producer's. blender-02 run 2 (2026-10-21) re-ran E1 four times
+// against such flags: a re-run never answers (only the latest run is read), and
+// the replications that would have were refused by the rule and overwrote each
+// other in one shared file. What must still dispute: a replication on the
+// producer's own route, one with no job, one that sides with the blind line,
+// and everything under LUXAS_REPLICATION_ANSWERS_BLIND=0. Every legal-move text
+// says what answers, from one function (blindFlagAnswerText).
 {
 	const { cosmeticSpawnNotice } = await import(join(ROOT, "src/claims-review.js"));
-	const dir = mkdtempSync(join(tmpdir(), "luxas-c38-"));
-	const Q = "rf_gate_error";
-	const exp = join(dir, "data/experiments/E3_control");
-	mkdirSync(join(exp, "runs/run_1"), { recursive: true });
-	mkdirSync(join(exp, "replication"), { recursive: true });
-	mkdirSync(join(dir, "notes"), { recursive: true });
-	mkdirSync(join(dir, "reviews"), { recursive: true });
-	mkdirSync(join(dir, "report"), { recursive: true });
-	writeFileSync(join(dir, "notes/frame.md"), `# F\n\n## Headline quantities\n- \`${Q}\`\n`);
-	writeFileSync(join(exp, "runs/run_1/results.json"), JSON.stringify({ computed: { rf: { err: 4.363e-7 }, quantities: [{ id: Q, key: "computed.rf.err", headline: true, observable: "RF gate error at the clock point", uncertainty: 1.8e-8, inputs: {} }] } }));
-	writeFileSync(join(exp, "replication/results.json"), JSON.stringify({ quantity: Q, value: 4.4e-7, sigma: 3e-8, route: "Floquet propagator on the full Zeeman-hyperfine manifold", script: "replication/rf_floquet.py", job_id: "job_0a1b2c3d4e", inputs: {} }));
-	writeFileSync(join(dir, "reviews/experiment_review_E3_control_r1.md"), `# r\nESTIMATE(blind): ${Q} — 1.7e-6 ± 3e-7 via Landau-Zener leakage of the Blackman pulse\nDISCRIMINATOR: ${Q} — if right: a; if wrong: b; computation: c\nREVIEW-COMPLETE\nVERDICT: satisfied\n`);
-	writeFileSync(join(dir, "report/claims.json"), JSON.stringify([
-		{ quantity_id: Q, value: 4.363e-7, tex_context: "RF gate error 4.4e-7 at the clock point" },
-		{ claim_key: "computed.rf.err_v2", value: 4.363e-7, tex_context: "the same gate error under another key" },
-	]));
+	const { finalizationDenyText } = await import(join(ROOT, "src/hooks.js"));
+	const Q = "rf_gate_error", Q2 = "rf_gate_time";
+	const ROUTE = "Floquet propagator on the full Zeeman-hyperfine manifold";
+	const BLIND = `ESTIMATE(blind): ${Q} — 1.7e-6 ± 3e-7 via Landau-Zener leakage of the Blackman pulse`;
+	type Rep = { path: string; json: Record<string, unknown> };
+	const rep = (over: Record<string, unknown> = {}): Record<string, unknown> => ({ quantity: Q, value: 4.4e-7, sigma: 3e-8, route: ROUTE, script: "replication/rf_floquet.py", job_id: "job_0a1b2c3d4e", inputs: {}, ...over });
+	const dirs: string[] = [];
+	const mk = (o: { reps?: Rep[]; sigma?: number | null; producerRoute?: string; blind?: string; claims?: boolean } = {}) => {
+		const dir = mkdtempSync(join(tmpdir(), "luxas-c38-"));
+		dirs.push(dir);
+		const exp = join(dir, "data/experiments/E3_control");
+		mkdirSync(join(exp, "runs/run_1"), { recursive: true });
+		for (const d of ["notes", "reviews", "report"]) mkdirSync(join(dir, d), { recursive: true });
+		writeFileSync(join(dir, "notes/frame.md"), `# F\n\n## Headline quantities\n- \`${Q}\`\n`);
+		const q: any = { id: Q, key: "computed.rf.err", headline: true, observable: "RF gate error at the clock point", inputs: {} };
+		if (o.sigma !== null) q.uncertainty = o.sigma ?? 1.8e-8;
+		const computed: any = { rf: { err: 4.363e-7, time_us: 12.5 }, quantities: [q, { id: Q2, key: "computed.rf.time_us", observable: "RF gate time", uncertainty: 0.1, inputs: {} }] };
+		if (o.producerRoute) computed.cross_validation = [{ claim_key: "computed.rf.err", method_a: o.producerRoute, method_b: "control" }];
+		writeFileSync(join(exp, "runs/run_1/results.json"), JSON.stringify({ computed }));
+		for (const r of o.reps ?? []) { mkdirSync(join(exp, r.path, ".."), { recursive: true }); writeFileSync(join(exp, r.path), JSON.stringify(r.json)); }
+		writeFileSync(join(dir, "reviews/experiment_review_E3_control_r1.md"), `# r\n${o.blind ?? BLIND}\nDISCRIMINATOR: ${Q} — if right: a; if wrong: b; computation: c\nREVIEW-COMPLETE\nVERDICT: satisfied\n`);
+		if (o.claims) writeFileSync(join(dir, "report/claims.json"), JSON.stringify([{ quantity_id: Q, value: 4.363e-7, tex_context: "RF gate error 4.4e-7 at the clock point" }]));
+		return dir;
+	};
+	const row = (dir: string, id = Q) => buildClaimTable(dir).rows.find((x: any) => x.id === id);
+	const says = (r: any) => `${r?.status}: ${r?.reasons?.join(" | ")}`;
+	const answered = (r: any) => (r?.reasons ?? []).some((x: string) => /^blind estimate .* answered by .*replication/.test(x));
+	const open = (r: any) => (r?.reasons ?? []).some((x: string) => /^blind reviewer estimate .*\(unanswered\)$/.test(x));
 	try {
-		const tc = buildClaimTable(dir);
-		const row = tc.rows.find((x: any) => x.id === Q);
-		const blindOpen = (row?.reasons ?? []).some((x: string) => /^(blind reviewer estimate|sign convention: blind estimate).*\(unanswered\)$/.test(x));
-		check("§C38 an agreeing route+job replication leaves a blind-flag row DISPUTED, flag unanswered", row?.status === "disputed" && blindOpen && (row?.reasons ?? []).some((x: string) => /^agree: .*replication/.test(x)), `${row?.status}: ${row?.reasons?.join(" | ")}`);
-		const texts: [string, string][] = claimTableIssues(dir, tc).filter((i: any) => i.blocking && i.text.includes(Q) && !i.text.startsWith("[abstain]")).map((i: any) => [`claims.json "${i.text.match(/^"([^"]*)"/)?.[1] ?? "?"}"`, i.text]);
-		check("§C38 both claims.json entries (by id, and the re-keyed value) block on the row", texts.length === 2, texts.map(([l]) => l).join(" | "));
-		const notice = cosmeticSpawnNotice(dir, "illustrator").notice;
-		check("§C38 the cosmetic notice outside finalization carries the legal moves", /\bLegal moves: /.test(notice), notice.slice(0, 200));
-		texts.push(["cosmetic notice", notice]);
-		mkdirSync(join(dir, ".agent"), { recursive: true });
-		writeFileSync(join(dir, ".agent/run_config.json"), JSON.stringify({ maxCost: 100 }));
-		writeFileSync(join(dir, ".agent/usage.log"), "1788000000000\tm\tp\t1\t1\t0\t0\t95\n");
-		const late = cosmeticSpawnNotice(dir, "illustrator").notice;
+		const legacy = row(mk({ reps: [{ path: "replication/results.json", json: rep() }] }));
+		check("§C38 a route+job replication on another route that agrees with the producer answers the blind flag (legacy shared file)", legacy?.status === "converging" && answered(legacy) && !open(legacy), says(legacy));
+		const own = mk({ reps: [{ path: `replication/${Q}/results.json`, json: rep() }, { path: `replication/${Q2}/results.json`, json: rep({ quantity: Q2, value: 12.4, sigma: 0.2, script: `replication/${Q2}/t.py` }) }] });
+		check("§C38 …and from its own replication/<QID>/results.json", row(own)?.status === "converging" && answered(row(own)), says(row(own)));
+		check("§C38 two replications in two directories are two legs, neither overwrites the other", row(own, Q2)?.estimates.some((e: any) => e.kind === "replication" && e.value === 12.4) && row(own)?.estimates.some((e: any) => e.kind === "replication" && e.value === 4.4e-7), says(row(own, Q2)));
+		const sameRoute = row(mk({ reps: [{ path: `replication/${Q}/results.json`, json: rep() }], producerRoute: ROUTE }));
+		check("§C38 a replication on the producer's own route answers nothing (one leg)", sameRoute?.status === "disputed" && open(sameRoute), says(sameRoute));
+		const noJob = row(mk({ reps: [{ path: `replication/${Q}/results.json`, json: rep({ job_id: undefined, script: "rf.py" }) }] }));
+		check("§C38 a replication with no job answers nothing (not a computing leg)", noJob?.status === "disputed" && open(noJob), says(noJob));
+		const sides = row(mk({ reps: [{ path: `replication/${Q}/results.json`, json: rep({ value: 1.75e-6, sigma: 2e-7 }) }] }));
+		check("§C38 a replication that sides with the blind line is a producer dispute, not an answer", sides?.status === "disputed" && (sides?.reasons ?? []).some((x: string) => /^disagree: /.test(x)) && !answered(sides), says(sides));
+		process.env.LUXAS_REPLICATION_ANSWERS_BLIND = "0";
+		const rolled = row(mk({ reps: [{ path: `replication/${Q}/results.json`, json: rep() }] }));
+		check("§C38 LUXAS_REPLICATION_ANSWERS_BLIND=0: the agreeing replication leaves the flag unanswered", rolled?.status === "disputed" && open(rolled), says(rolled));
+		const rolledText = cosmeticSpawnNotice(mk({ reps: [{ path: `replication/${Q}/results.json`, json: rep({ value: 1.75e-6, sigma: 2e-7 }) }] }), "illustrator").notice;
+		check("§C38 …and the texts say so", /never a blind-estimate flag/.test(rolledText), rolledText.slice(0, 300));
+		delete process.env.LUXAS_REPLICATION_ANSWERS_BLIND;
+		// σ = 0 is a declaration; a producer with no σ is held to its value; the blind line's σ decides.
+		const zeroDir = mk({ sigma: 0, blind: `ESTIMATE(blind): ${Q} — 5e-7 ± 1e-7 via napkin` });
+		const zero = buildClaimTable(zeroDir);
+		check("§S0 uncertainty 0 is not MALFORMED", zero.malformed.length === 0, zero.malformed.join(" | "));
+		check("§S0 a blind line whose own σ covers a σ=0 producer agrees", row(zeroDir)?.status !== "disputed" && (row(zeroDir)?.reasons ?? []).some((x: string) => /^blind estimate .* agrees with/.test(x)), says(row(zeroDir)));
+		const noSigma = row(mk({ sigma: null, blind: `ESTIMATE(blind): ${Q} — 3e-7 ± 1e-7 via napkin` }));
+		check("§S0 a producer with no σ is held to its value: blind 3e-7 ± 1e-7 covers 4.363e-7, no flag", noSigma?.status !== "disputed" && (noSigma?.reasons ?? []).some((x: string) => /^blind estimate .* agrees with/.test(x)), says(noSigma));
+		const noSigmaFar = row(mk({ sigma: null, blind: `ESTIMATE(blind): ${Q} — 3e-7 ± 5e-8 via napkin` }));
+		check("§S0 …and one outside the blind line's 2σ still flags", noSigmaFar?.status === "disputed" && open(noSigmaFar), says(noSigmaFar));
+		const neg = buildClaimTable(mk({ sigma: -1e-8 }));
+		check("§S0 a negative uncertainty is MALFORMED", neg.malformed.some((m: string) => /uncertainty must be a number ≥ 0/.test(m)), neg.malformed.join(" | "));
+		// Texts: every one that offers moves for a disputed row says what answers a blind flag.
+		const disputedDir = mk({ reps: [{ path: `replication/${Q}/results.json`, json: rep({ value: 1.75e-6, sigma: 2e-7 }) }], claims: true });
+		const tc = buildClaimTable(disputedDir);
+		const texts: [string, string][] = claimTableIssues(disputedDir, tc).filter((i: any) => i.blocking && i.text.includes(Q) && !i.text.startsWith("[abstain]")).map((i: any) => ["claims.json issue", i.text]);
+		check("§C38 the claims.json entry citing the disputed row blocks with the legal moves", texts.length === 1 && /\bLegal moves: /.test(texts[0]?.[1] ?? ""), texts.map(([, t]) => t.slice(0, 120)).join(" | "));
+		texts.push(["cosmetic notice", cosmeticSpawnNotice(disputedDir, "illustrator").notice]);
+		mkdirSync(join(disputedDir, ".agent"), { recursive: true });
+		writeFileSync(join(disputedDir, ".agent/run_config.json"), JSON.stringify({ maxCost: 100 }));
+		writeFileSync(join(disputedDir, ".agent/usage.log"), "1788000000000\tm\tp\t1\t1\t0\t0\t95\n");
+		const late = cosmeticSpawnNotice(disputedDir, "illustrator").notice;
 		check("§C38 the cosmetic notice past the soft cap carries the finalization moves", /Legal moves in finalization/.test(late), late.slice(0, 200));
-		texts.push(["cosmetic notice (finalization)", late]);
+		texts.push(["cosmetic notice (finalization)", late], ["cost-freeze refusal", finalizationDenyText("spawn_agent", "experiment", true, "cost")]);
 		for (const [label, text] of texts) {
-			if (/replicator/i.test(text)) check(`§C38 ${label}: offers the replicator only as not settling a blind-estimate flag`, /(?:never|not) a blind-estimate flag/.test(text), text.slice(text.search(/Legal moves/), text.search(/Legal moves/) + 400));
-			if (/Legal moves: /.test(text)) check(`§C38 ${label}: names an experiment declaring the same quantity id as what answers a blind flag`, /experiment.{0,120}same quantity id.{0,60}blind-estimate flag/.test(text), text.slice(text.search(/Legal moves/), text.search(/Legal moves/) + 400));
+			check(`§C38 ${label}: a replicator that agrees with the producer answers a blind-estimate flag`, /replicator \(replicate mode\) on a route other than the producer's[^.]*answers a blind-estimate flag/.test(text), text.slice(Math.max(0, text.search(/replicator/) - 40), text.search(/replicator/) + 300));
+			const finalization = /finalization|In what is left/.test(text);
+			if (!finalization) check(`${"§C38"} ${label}: a re-run of the same experiment never answers one`, /re-run of the same experiment never does/.test(text), text.slice(text.search(/Legal moves/), text.search(/Legal moves/) + 500));
+			else check(`§C38 ${label}: offers no new experiment`, !/experiment under a new experiment id/.test(text), text.slice(0, 300));
 		}
 	} finally {
-		rmSync(dir, { recursive: true, force: true });
+		delete process.env.LUXAS_REPLICATION_ANSWERS_BLIND;
+		for (const d of dirs) rmSync(d, { recursive: true, force: true });
 	}
 }
 

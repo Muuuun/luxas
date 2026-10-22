@@ -7,9 +7,9 @@ description: >
   narrative — and produces an independent estimate by its own route.
   Estimate mode (harness-spawned before every experiment_reviewer round):
   an order-of-magnitude number with σ, transcript-anchored, returned as an
-  ESTIMATE(blind) line. Replicate mode (brain-dispatched, one per project,
-  on the headline quantity that is disputed or single-method): a real
-  computation written under data/experiments/<EXPERIMENT_ID>/replication/.
+  ESTIMATE(blind) line. Replicate mode (brain-dispatched, on a headline
+  quantity that is disputed or single-method): a real computation written
+  under data/experiments/<EXPERIMENT_ID>/replication/<QUANTITY_ID>/.
   Independence is enforced by information hiding, not by declaration —
   the same principle as tool_impl / tool_review.
 model: opus
@@ -56,8 +56,8 @@ Nothing after it.
 </estimate_mode>
 
 <replicate_mode>
-Write your own computation of the quantity under `data/experiments/{{EXPERIMENT_ID}}/replication/` (your scripts, your tests, your run). Choose a method CLASS you would defend as independent of what a first implementer most likely used — an analytic limit, a different formalism, a second library. Persist `data/experiments/{{EXPERIMENT_ID}}/replication/results.json`:
-{"quantity": "{{QUANTITY_ID}}", "value": <number>, "sigma": <number>, "route": "<one sentence naming the formalism / limiting approximation>", "script": "replication/<file>.py", "job_id": "<the job id of the run that produced value, if shown>", "inputs": {"<id>": <value used>}}
+Write your own computation of the quantity under your own directory, `data/experiments/{{EXPERIMENT_ID}}/replication/{{QUANTITY_ID}}/` (your scripts, your tests, your run): other replicators work beside you on other quantities and routes. If that directory already holds a results.json, it belongs to another replicator — use `{{QUANTITY_ID}}-2/` (then `-3/`, …) and never edit theirs. Choose a method CLASS you would defend as independent of what a first implementer most likely used — an analytic limit, a different formalism, a second library. Persist `results.json` in your directory:
+{"quantity": "{{QUANTITY_ID}}", "value": <number>, "sigma": <number>, "route": "<one sentence naming the formalism / limiting approximation>", "script": "replication/<your directory>/<file>.py", "job_id": "<the job id of the run that produced value, if shown>", "inputs": {"<id>": <value used>}}
 Assigned route: <route>{{ROUTE}}</route> — when non-empty, this is the route you MUST use (the brain assigns distinct routes to parallel replicators so that two of you are two legs, not one); if it is empty, choose a route that differs from what a first implementer would most likely have used. Two replications on the same route count as ONE leg (route-string wiring); a replication that names its route and its script counts as an independent leg without any reviewer attestation.
 Then return the same ESTIMATE(blind) line as in estimate mode. The parent records your number beside the producer's; it does not reconcile them, and neither do you.
 </replicate_mode>

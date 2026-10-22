@@ -402,6 +402,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       makeSpawnTool: createSpawnToolFactory(projectDir, getApiKey),
       startRound: round,
       priorBlindLines: plan.prior,
+      // Its declaration problems are printed above and below; the executor is not in this process.
+      executorOutside: true,
     },
   );
   const tail = result.output.slice(result.output.lastIndexOf("\n---\n[experiment_reviewer") + 1);
