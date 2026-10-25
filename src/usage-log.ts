@@ -196,6 +196,11 @@ export function setCostCap(logPath: string, maxCostUsd: number | undefined): voi
   else costCaps.delete(logPath);
 }
 
+/** The cap this process enforces for this log, if one is registered (the Claude Code executor reads it instead of run_config.json, which an executor can edit). */
+export function costCapFor(logPath: string): number | undefined {
+  return costCaps.get(logPath);
+}
+
 /** Fraction of --max-cost at which the brain is told to wrap up (fix 4, 2026-09-01). */
 export const SOFT_CAP_FRACTION = 0.9;
 

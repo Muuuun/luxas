@@ -24,6 +24,7 @@ import { cleanMessagesForModel } from "./transform.js";
 import { installUsageTracking } from "./usage-log.js";
 import { createSpawnToolFactory, runExperimentReviewLoop } from "./tools/spawn-agent.js";
 import { jobOwnerAls } from "./jobs/als.js";
+import { operatorStopNote, stoppedByOperator, stopIssuedSince } from "./board-actions.js";
 
 // Match agent.ts: default Anthropic prompt-cache TTL to 5m.
 // Subagents are separate processes, so the env var must be set here too.
@@ -178,8 +179,20 @@ async function main() {
       lengthRecovery,
     };
 
+    // A stop from the studio board (src/board-actions.ts) holds the experiment
+    // until the operator asks for a rework; a running pi run aborts at its next turn end.
+    const stopEid = args.agent === "experiment" ? String(spawnOpts.templateVars?.EXPERIMENT_ID ?? "") : "";
+    const held = stopEid ? stoppedByOperator(projectDir, stopEid) : undefined;
+    if (held) {
+      markDone(agentDir, args.id, `[harness: ${operatorStopNote(stopEid, held)}; not started. Do not dispatch it again unless the operator asks for a rework.]`,
+        { stopReason: "killed", errorMessage: "stopped by the operator", filesTouched: [], elapsedMs: 0, toolCallCount: 0, endedAt: new Date().toISOString() });
+      return;
+    }
+
     let output: string;
     let firstExit: SubAgentExit;
+    // An operator stop, or a run the executor refused: returned as is, not reviewed or re-sent.
+    let skipReview = false;
     if (args.agent === "experiment" && process.env.LUXAS_EXPERIMENT_MODE === "claude-code") {
       // The experiment is one `claude -p` run (src/executors/claude-code.ts);
       // this runner already registered it and keeps its heartbeat.
@@ -187,6 +200,7 @@ async function main() {
       const cc = await runClaudeCodeExperiment(spawnOpts, { register: false });
       output = cc.output;
       firstExit = cc.exit;
+      skipReview = !cc.success;
     } else {
       const { agent, agentId, definition, tokenTap } = buildAgentFromDefinition(spawnOpts);
       exitCollector.attach(agent, tokenTap);
@@ -236,6 +250,7 @@ async function main() {
               piStopped: false, piToolCalls: 0, piLastReviewAt: 0, piReviewCount: 0,
             });
           } catch { /* must not crash the agent */ }
+          if (stopEid && stopIssuedSince(projectDir, stopEid, processStartTime)) agent.abort();
         }
       });
 
@@ -258,6 +273,12 @@ async function main() {
       ) as any;
       output = (lastAssistant?.content ? extractTextContent(lastAssistant.content) : "") || "(no output)";
       firstExit = exitCollector.finalize();
+      const opStop = stopEid ? stopIssuedSince(projectDir, stopEid, processStartTime) : undefined;
+      if (opStop) {
+        output += `\n\n---\n[harness: ${operatorStopNote(stopEid, opStop)}; do not dispatch it again unless the operator asks for a rework.]`;
+        firstExit = { ...firstExit, stopReason: "killed", errorMessage: "stopped by the operator" };
+        skipReview = true;
+      }
     }
 
     // A background experiment gets the same harness review as a foreground
@@ -265,7 +286,7 @@ async function main() {
     // (yttrium-tweezer E1–E4; notes/backtest-2026-09-24/SUMMARY.md §2).
     // A stopReason=error run is not a completed experiment: nothing to review.
     let exit = firstExit;
-    if (args.agent === "experiment" && firstExit.stopReason !== "error") {
+    if (args.agent === "experiment" && !skipReview && firstExit.stopReason !== "error") {
       try {
         const reviewed = await runExperimentReviewLoop({ output, success: true, exit: firstExit }, {
           projectDir,

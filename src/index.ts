@@ -550,7 +550,7 @@ async function run(dir: string, modelName: string, userDirective?: string, maxCo
   // Claude Code executor: which login pays, and whether the CLI runs, before any spend.
   if (process.env.LUXAS_EXPERIMENT_MODE === "claude-code") {
     const { claudeCodePreflight } = await import("./executors/claude-code.js");
-    const problems = claudeCodePreflight(process.env, dir);
+    const problems = await claudeCodePreflight(process.env, dir);
     if (problems.length) {
       for (const p of problems) console.error(`✗ ${p}`);
       process.exit(1);

@@ -77,6 +77,7 @@ const MANIFEST: Record<string, GateSpec> = {
 	smoke_compaction_ratchet: { kind: "assert" },
 	smoke_solo_executor: { kind: "assert", timeoutMs: 180_000 },   // CLI child processes; 6 s on a dev Mac
 	smoke_cc_executor: { kind: "assert", timeoutMs: 240_000 },   // a fake `claude`, one background-runner child process, a watchdog wait
+	smoke_board: { kind: "assert", timeoutMs: 180_000 },   // the studio board: states, actions, a stop the executor's host carries out, bounded reads, the CLI
 	smoke_review_experiment: { kind: "assert", timeoutMs: 300_000 },   // ~12 offline CLI child processes; 54 s on a dev Mac
 	smoke_resume_request: { kind: "assert", timeoutMs: 360_000 },   // two offline brain replays in child processes
 	smoke_dual_profile: { kind: "assert" },

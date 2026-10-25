@@ -22,6 +22,7 @@ import { buildSafetyWrapper, surfaceReturnedIsError, type SafetyRuntimeHooks } f
 import { jobOwnerAls } from "../jobs/als.js";
 import { recordAgentOutcome } from "../agent-liveness.js";
 import { addAgent, removeAgent, classifyThrownStopReason, type SubAgentExit, type SubAgentStopReason, type FileTouchRecord } from "../active-agents.js";
+import { operatorStopNote, stoppedByOperator, stopIssuedSince } from "../board-actions.js";
 import { cleanMessagesForModel } from "../transform.js";
 import {
   createFileContextCache,
@@ -1406,6 +1407,20 @@ export async function spawnAgent(opts: SpawnAgentOptions): Promise<SpawnAgentRes
     const { runClaudeCodeExperiment } = await import("../executors/claude-code.js");
     return runClaudeCodeExperiment(opts);
   }
+  // A stop from the studio board (src/board-actions.ts) holds the experiment
+  // until the operator asks for a rework; a running one aborts at its next turn end.
+  const stopWatch = opts.name === "experiment" && opts.templateVars?.EXPERIMENT_ID
+    ? { eid: String(opts.templateVars.EXPERIMENT_ID), since: Date.now() } : null;
+  if (stopWatch) {
+    const held = stoppedByOperator(opts.projectDir, stopWatch.eid);
+    if (held) {
+      return {
+        output: `[harness: ${operatorStopNote(stopWatch.eid, held)}; not started. Do not dispatch it again unless the operator asks for a rework.]`,
+        elapsed: 0, success: false, agentId: opts.resume?.agentId ?? "",
+        exit: { stopReason: "killed", errorMessage: "stopped by the operator", filesTouched: [], elapsedMs: 0, toolCallCount: 0, endedAt: new Date().toISOString() },
+      };
+    }
+  }
   const collector = createSubAgentExitCollector(Date.now());
   const recovery = createLengthRecoveryController();
   collector.attachRecovery(recovery);
@@ -1530,6 +1545,7 @@ export async function spawnAgent(opts: SpawnAgentOptions): Promise<SpawnAgentRes
           }
           lastSavedMsgCount = msgs.length;
         } catch { /* conversation save must not crash the agent */ }
+        if (stopWatch && stopIssuedSince(opts.projectDir, stopWatch.eid, stopWatch.since)) agent.abort();
       }
     });
 
@@ -1571,6 +1587,13 @@ export async function spawnAgent(opts: SpawnAgentOptions): Promise<SpawnAgentRes
 
     const exit = collector.finalize();
     if (registered) try { removeAgent(agentDir, agentId); } catch { /* registry is best-effort */ }
+    // Stopped from the board mid-run: not a delivery, not a failure. success:false
+    // so the review loop returns it instead of re-sending it as undelivered.
+    const opStop = stopWatch ? stopIssuedSince(opts.projectDir, stopWatch.eid, stopWatch.since) : undefined;
+    if (opStop) {
+      return { output: `${output.slice(0, 49_000)}\n\n---\n[harness: ${operatorStopNote(stopWatch!.eid, opStop)}; do not dispatch it again unless the operator asks for a rework.]`,
+        elapsed: exit.elapsedMs, success: false, exit: { ...exit, stopReason: "killed", errorMessage: "stopped by the operator" }, agentId };
+    }
     // Liveness: a graceful stopReason="error" reaches HERE with success:true —
     // the agent object exists, it just never produced anything because the
     // provider answered 429/404. That is precisely how a dead verifier stayed
