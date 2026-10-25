@@ -1,0 +1,26 @@
+{
+ "tn-1:12ca637de4693c27de50aecee11b5b1273c75ea84bce82b11ae785887c62da70": {
+  "log10_flops": 0.0,
+  "search_s": 0.5,
+  "settings": "tn-1",
+  "width_log2": 1
+ },
+ "tn-1:21c76c49ed8317c10e16ec03c9725c83a29b7be3e5e723383a1bea93a433d713": {
+  "log10_flops": 14.45845274342263,
+  "search_s": 181.7,
+  "settings": "tn-1",
+  "width_log2": 36.0
+ },
+ "tn-1:45e7da46a31f6d308161906a3fe683bc51f0dc4aa42799d1e4d2c7244093a8dd": {
+  "log10_flops": 32.981437729849425,
+  "search_s": 388.2,
+  "settings": "tn-1",
+  "width_log2": 104.0
+ },
+ "tn-1:56b8a56919a9ca81e10cb8c8c4c4b0a31e3b219716a353bb20981d5bbaaf4e3e": {
+  "log10_flops": 20.63873474296765,
+  "search_s": 183.5,
+  "settings": "tn-1",
+  "width_log2": 61.0
+ }
+}

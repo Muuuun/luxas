@@ -1,0 +1,157 @@
+{
+ "grid": {
+  "L": 8,
+  "cycles": 16
+ },
+ "cube": {
+  "cols": 16,
+  "rows": 8,
+  "rounds": 1
+ },
+ "deep_extra": 6,
+ "designs": {
+  "ref-grid-rcs": {
+   "feasible": true,
+   "analytic": {
+    "fidelity": 0.054729804210764434,
+    "keep_probability": 0.5281377677342993,
+    "cycle_time_s": 0.22018819335983758,
+    "kept_samples": 8347,
+    "quantum_time_s": 3479.9837509428,
+    "errors_per_cycle_max": 0.22411544010601697,
+    "circuit_us": 5188.193359837562
+   }
+  },
+  "ref-hypercube-rcs": {
+   "feasible": true,
+   "analytic": {
+    "fidelity": 0.04400532532255351,
+    "keep_probability": 0.5274587804294861,
+    "cycle_time_s": 0.2178956089798399,
+    "kept_samples": 12911,
+    "quantum_time_s": 5333.59252309348,
+    "errors_per_cycle_max": 0.49083130656948437,
+    "circuit_us": 2895.60897983987
+   }
+  },
+  "ref-hypercube-deep": {
+   "feasible": true,
+   "analytic": {
+    "fidelity": 0.005874880914569011,
+    "keep_probability": 0.30490418769380245,
+    "cycle_time_s": 0.22032414139956097,
+    "kept_samples": 724340,
+    "quantum_time_s": 523408.97574560216,
+    "errors_per_cycle_max": 0.481858062504934,
+    "circuit_us": 5324.14139956098
+   }
+  },
+  "bad-runtime": {
+   "feasible": false,
+   "failure": "run_time",
+   "analytic": {
+    "fidelity": 0.00035397308417703,
+    "keep_probability": 0.14731948988444699,
+    "cycle_time_s": 0.23054458007951273,
+    "kept_samples": 199526016,
+    "quantum_time_s": 312244100.2866551,
+    "errors_per_cycle_max": 0.22411544010601697,
+    "circuit_us": 15544.580079512703
+   }
+  },
+  "bad-noise": {
+   "feasible": false,
+   "failure": "noise",
+   "analytic": {
+    "fidelity": 0.00723888647088147,
+    "keep_probability": 0.5271438057997644,
+    "cycle_time_s": 0.21803560897983987,
+    "kept_samples": 477086,
+    "quantum_time_s": 197330.85241879622,
+    "errors_per_cycle_max": 0.748537973236151,
+    "circuit_us": 3035.60897983987
+   }
+  },
+  "bad-clifford": {
+   "feasible": true,
+   "method": "stabilizer",
+   "score_below": 0.0,
+   "analytic": {
+    "fidelity": 0.054729804210764434,
+    "keep_probability": 0.5281377677342993,
+    "cycle_time_s": 0.22018819335983758,
+    "kept_samples": 8347,
+    "quantum_time_s": 3479.9837509428,
+    "errors_per_cycle_max": 0.22411544010601697,
+    "circuit_us": 5188.193359837562
+   }
+  },
+  "bad-blockade": {
+   "feasible": false,
+   "failure": "compile",
+   "message": "partial blockade",
+   "analytic": null
+  },
+  "bad-lightcone": {
+   "feasible": false,
+   "failure": "light_cone",
+   "analytic": {
+    "fidelity": 0.054729804210764434,
+    "keep_probability": 0.5281377677342993,
+    "cycle_time_s": 0.22018819335983758,
+    "kept_samples": 8347,
+    "quantum_time_s": 3479.9837509428,
+    "errors_per_cycle_max": 0.22491544010601694,
+    "circuit_us": 5188.193359837562
+   }
+  },
+  "bad-claims": {
+   "feasible": true,
+   "claims": {
+    "fidelity": "inconsistent",
+    "keep_probability": "consistent",
+    "cycle_time_s": "consistent",
+    "kept_samples": "inconsistent",
+    "quantum_time_s": "inconsistent",
+    "classical_time_s": "inconsistent",
+    "score": "inconsistent"
+   },
+   "analytic": {
+    "fidelity": 0.04400532532255351,
+    "keep_probability": 0.5274587804294861,
+    "cycle_time_s": 0.2178956089798399,
+    "kept_samples": 12911,
+    "quantum_time_s": 5333.59252309348,
+    "errors_per_cycle_max": 0.49083130656948437,
+    "circuit_us": 2895.60897983987
+   }
+  },
+  "bad-mirror": {
+   "feasible": false,
+   "failure": "light_cone",
+   "analytic": {
+    "fidelity": 0.0859616126440948,
+    "keep_probability": 0.5783011230393664,
+    "cycle_time_s": 0.21966367709037354,
+    "kept_samples": 3384,
+    "quantum_time_s": 1285.3889671993995,
+    "errors_per_cycle_max": 0.23972223567924195,
+    "circuit_us": 4663.677090373512
+   }
+  },
+  "bad-trivial": {
+   "feasible": true,
+   "method": "tensor-network",
+   "score_below": 0.0,
+   "analytic": {
+    "fidelity": 0.04400532532255351,
+    "keep_probability": 0.5274587804294861,
+    "cycle_time_s": 0.2178956089798399,
+    "kept_samples": 12911,
+    "quantum_time_s": 5333.59252309348,
+    "errors_per_cycle_max": 0.49083130656948437,
+    "circuit_us": 2895.60897983987
+   }
+  }
+ }
+}

@@ -1,0 +1,30 @@
+{
+  "name": "AtomX-400",
+  "note": "Fictional machine. Units are in the key names. MACHINE.md says how each number enters the error, time and cost model.",
+  "sites": {"nx": 20, "ny": 20, "pitch_um": 10.0},
+  "field_um": {"xmin": -20.0, "xmax": 210.0, "ymin": -20.0, "ymax": 210.0},
+  "geometry_um": {"pair_max": 3.0, "isolated_min": 7.0, "min_separation": 1.0},
+  "duration_us": {"global_1q": 2.0, "local_1q": 10.0, "rydberg": 0.5, "move_overhead": 100.0},
+  "move_acceleration_um_per_us2": 0.01,
+  "error": {
+    "global_1q": 3.0e-4,
+    "local_1q": 1.0e-3,
+    "cz": 2.5e-3,
+    "rydberg_unpaired": 5.0e-4,
+    "move": 1.0e-4,
+    "prep": 2.0e-3,
+    "meas": 3.0e-3
+  },
+  "t2_s": 1.5,
+  "loss": {"move": 2.0e-4, "cz_per_atom": 5.0e-4},
+  "vacuum_lifetime_s": 30.0,
+  "shot_overhead_s": {"prepare": 0.200, "image": 0.015},
+  "limits": {
+    "max_atoms": 400,
+    "max_steps": 200000,
+    "max_run_time_s": 604800,
+    "significance_sigma": 5.0,
+    "max_errors_per_cycle": 0.5
+  },
+  "reference_classical_machine": {"flops_per_s": 1.0e18, "memory": "unlimited"}
+}
