@@ -156,7 +156,10 @@ const brainChild = (dir: string, tail: string) =>
 console.log("\n2c. [C18] a dead stderr cannot flood the log");
 // Whoever read the brain's piped stderr goes away. The child gets its own
 // process group so the watchdog can kill tsx and the node it starts together.
-async function closedStderrChild(body: string[], watchdogMs = 8000) {
+// The watchdog stops a hang, not a flood (the line counts catch that): 8 s
+// killed healthy children on the droplet under four parallel gates
+// (2026-10-25, 2c passes there when run alone).
+async function closedStderrChild(body: string[], watchdogMs = 30_000) {
   const d = mk();
   const t0 = Date.now();
   const c = spawn(TSX, [brainScript(d, body)], { cwd: ROOT, stdio: ["ignore", "pipe", "pipe"], detached: true });

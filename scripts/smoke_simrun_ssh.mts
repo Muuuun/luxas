@@ -34,6 +34,7 @@ import { createConnection, createServer } from "node:net";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { withoutSiteNoise } from "./python-site-noise.mts";
 
 let failures = 0, checks = 0;
 function check(label: string, cond: boolean, detail?: string) {
@@ -85,7 +86,7 @@ interface Ran { rc: number | null; out: string; last: string; ms: number }
 function simrun(args: string[], env: Record<string, string> = {}, timeout = 60_000, runner = SIMRUN): Ran {
   const t0 = Date.now();
   const r = spawnSync(PY, [runner, ...args], { env: { ...ENV, ...env }, encoding: "utf8", timeout });
-  const out = (r.stdout ?? "") + (r.stderr ?? "");
+  const out = withoutSiteNoise((r.stdout ?? "") + (r.stderr ?? ""));
   const lines = out.trimEnd().split("\n");
   return { rc: r.status, out, last: lines[lines.length - 1] ?? "", ms: Date.now() - t0 };
 }
@@ -96,7 +97,7 @@ function simrunAsync(args: string[]): Promise<Ran> {
     const p = spawn(PY, [SIMRUN, ...args], { env: ENV, stdio: ["ignore", "pipe", "pipe"] });
     let out = "";
     p.stdout.on("data", (b) => (out += b)); p.stderr.on("data", (b) => (out += b));
-    p.on("close", (rc) => { const lines = out.trimEnd().split("\n"); resolve({ rc, out, last: lines[lines.length - 1] ?? "", ms: Date.now() - t0 }); });
+    p.on("close", (rc) => { out = withoutSiteNoise(out); const lines = out.trimEnd().split("\n"); resolve({ rc, out, last: lines[lines.length - 1] ?? "", ms: Date.now() - t0 }); });
   });
 }
 const LINE = /^SIMRUN state=(\S+) exit=(\S+) host=(\S+) software=(\S+) job=(\d{8}T\d{6}Z-[0-9a-f]{8}) elapsed=(\d+)s(.*)$/;

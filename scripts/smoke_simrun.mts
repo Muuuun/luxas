@@ -32,6 +32,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { withoutSiteNoise } from "./python-site-noise.mts";
 
 let failures = 0, checks = 0;
 function check(label: string, cond: boolean, detail?: string) {
@@ -64,7 +65,7 @@ interface Ran { rc: number | null; out: string; last: string; ms: number }
 function simrun(args: string[], env: Record<string, string> = {}): Ran {
   const t0 = Date.now();
   const r = spawnSync(PY, [SIMRUN, ...args], { env: { ...ENV, ...env }, encoding: "utf8", timeout: 60_000 });
-  const out = (r.stdout ?? "") + (r.stderr ?? "");
+  const out = withoutSiteNoise((r.stdout ?? "") + (r.stderr ?? ""));
   const lines = out.trimEnd().split("\n");
   return { rc: r.status, out, last: lines[lines.length - 1] ?? "", ms: Date.now() - t0 };
 }
@@ -77,7 +78,7 @@ function simrunAsync(args: string[], env: Record<string, string> = {}): Promise<
     const p = spawn(PY, [SIMRUN, ...args], { env: { ...ENV, ...env }, stdio: ["ignore", "pipe", "pipe"] });
     let out = "";
     p.stdout.on("data", (b) => (out += b)); p.stderr.on("data", (b) => (out += b));
-    p.on("close", (rc) => { const lines = out.trimEnd().split("\n"); resolve({ rc, out, last: lines[lines.length - 1] ?? "", ms: Date.now() - t0 }); });
+    p.on("close", (rc) => { out = withoutSiteNoise(out); const lines = out.trimEnd().split("\n"); resolve({ rc, out, last: lines[lines.length - 1] ?? "", ms: Date.now() - t0 }); });
   });
 }
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -909,6 +910,7 @@ print(json.dumps({"state": st.get("state"), "exit": st.get("exit"), "reason": st
 
   console.log("13. doctor on a local host (it ran beside the sections above)");
   const doctorRc = await doctorDone;
+  doctorOut = withoutSiteNoise(doctorOut);
   const dl = doctorOut.trimEnd().split("\n");
   check("every line is an ok line or a problem line", dl.length >= 9 && dl.every((l) => l.startsWith("ok ") || l.startsWith("problem: ")), doctorOut);
   for (const what of [/^ok transport reachable \(local\)/, /^ok a job ran with the host's own Python/, /^ok a 1 MB file went to the host and its copy came back with the same sha256/, /^ok two jobs on a one-seat software did not overlap/,
@@ -933,7 +935,10 @@ print(json.dumps({"state": st.get("state"), "exit": st.get("exit"), "reason": st
     && /status, log and cancel exit 0 when the call itself worked/.test(usage), all[2]);
   r = simrun(["status", exit3]);
   check("…which is what status does: exit 0 for a job that exited 3, and the state line says exit=3", r.rc === 0 && st(r).state === "exited" && st(r).exit === "3", r.out);
-  check("log prints the job's lines behind a bar", all[3].trim() === "| answer = 1764.2500", all[3]);
+  // The job's own python writes site's .pth error into the job log on a host whose python prints it (the droplet).
+  const logLines = all[3].trimEnd().split("\n");
+  const unbarred = logLines.map((l) => l.replace(/^\| ?/, "")).join("\n") + "\n";
+  check("log prints the job's lines behind a bar", logLines.every((l) => l.startsWith("|")) && withoutSiteNoise(unbarred).trim() === "answer = 1764.2500", all[3]);
   check("simrun wrote nothing under ~/.sisyphus (state and operator file come from the environment)", !existsSync(join(ENV.HOME, ".sisyphus")), readdirSync(ENV.HOME).join(","));
   await until(() => strays().length === 0, 3000);
   check("no job or supervisor process is left running", strays().length === 0, strays().join(","));

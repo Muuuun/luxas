@@ -211,6 +211,17 @@ function pytest(dir: string, testFile: string) {
   return { ok: r.status === 0, tail: (r.stdout + r.stderr).split("\n").slice(-6).join("\n") };
 }
 
+/**
+ * The mutant files of a tool_review fixture: *.py only. A checkout where python
+ * has run holds a gitignored mutants/__pycache__/, and listing the directory
+ * whole made it a mutant: on the droplet (2026-10-25) the legacy rebuild below
+ * credited "__pycache__", and scoring would have copied a directory over the
+ * target.
+ */
+export function mutantFiles(dir: string): string[] {
+  return readdirSync(dir).filter((f) => f.endsWith(".py")).sort();
+}
+
 function scoreToolReview(task: string, dir: string) {
   const tests = join(dir, "data", "experiments", BENCH_EID, "tests");
   const files = existsSync(tests) ? readdirSync(tests).filter((f) => /^test_.*\.py$/.test(f)) : [];
@@ -221,7 +232,7 @@ function scoreToolReview(task: string, dir: string) {
   const ref = pytest(dir, "tests");
   if (!ref.ok) return { score: 0, passes_reference: false, note: "tests FAIL the reference implementation", tail: ref.tail };
   const killed: string[] = [], survived: string[] = [];
-  for (const m of readdirSync(join(src, "mutants")).sort()) {
+  for (const m of mutantFiles(join(src, "mutants"))) {
     copyFileSync(join(src, "mutants", m), target);
     (pytest(dir, "tests").ok ? survived : killed).push(m.replace(/\.py$/, ""));
   }
@@ -369,7 +380,7 @@ export function itemsOf(r: any): Record<string, number> | null {
   // tool_review rows from before `items` recorded only the survivors; the full list is the fixture's.
   if (r.role === "tool_review" && Array.isArray(r.survived) && r.passes_reference) {
     const dir = join(FIX, "tool_review", r.task, "mutants");
-    if (existsSync(dir)) return Object.fromEntries(readdirSync(dir).map((m) => m.replace(/\.py$/, "")).map((m) => [m, r.survived.includes(m) ? 0 : 1]));
+    if (existsSync(dir)) return Object.fromEntries(mutantFiles(dir).map((m) => m.replace(/\.py$/, "")).map((m) => [m, r.survived.includes(m) ? 0 : 1]));
   }
   return null;
 }

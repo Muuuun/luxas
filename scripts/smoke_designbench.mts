@@ -22,6 +22,7 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { withoutSiteNoise } from "./python-site-noise.mts";
 
 let failures = 0;
 function check(label: string, cond: boolean, detail?: string) {
@@ -38,7 +39,7 @@ const tmp = mkdtempSync(join(tmpdir(), "luxas-designbench-"));
 function py(args: string[], input?: string) {
   // -B: no __pycache__ next to input/compile.py, which bench_run would copy into runs (checked in 7)
   const r = spawnSync("python3", ["-B", ...args], { cwd: ROOT, encoding: "utf-8", input, timeout: 120_000 });
-  return { code: r.status, out: (r.stdout ?? "") + (r.stderr ?? "") };
+  return { code: r.status, out: withoutSiteNoise((r.stdout ?? "") + (r.stderr ?? "")) };
 }
 function grade(target: string): any {
   const r = py([join(DB, "_lib", "grade.py"), target, "--no-search", "--cache", CACHE, "--json"]);
@@ -47,6 +48,14 @@ function grade(target: string): any {
 const rel = (a: number, b: number) => Math.abs(a - b) / Math.max(Math.abs(b), 1e-300);
 
 const expected = JSON.parse(readFileSync(join(REF, "expected.json"), "utf-8"));
+
+console.log("0. a python that prints site's .pth error on start (the droplet's) is not the grader's output");
+{
+  const block = "Error processing line 1 of /usr/lib/python3/dist-packages/x-nspkg.pth:\n\n  Traceback (most recent call last):\n    File \"<frozen site>\", line 201, in addpackage\n  AttributeError: 'NoneType' object has no attribute 'loader'\n\nRemainder of file ignored\n";
+  const own = "Traceback (most recent call last):\n  File \"grade.py\", line 3, in <module>\nValueError: bad design\n";
+  check("the site .pth block is removed, wherever it sits", JSON.stringify(JSON.parse(withoutSiteNoise('{"S": 1.7}\n' + block))) === '{"S":1.7}' && withoutSiteNoise(block + "x\n" + block) === "x\n");
+  check("…and a traceback of the program's own is kept", withoutSiteNoise(own + block) === own);
+}
 
 console.log("1. the committed references are what make_refs.py builds");
 {

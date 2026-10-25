@@ -48,6 +48,16 @@ for (const t of readdirSync(root)) {
   rmSync(copy, { recursive: true, force: true });
   check(`tool_review/${t}: a stray mutants/__pycache__ does not break the gold test`, s.status === 0, (s.stderr || s.stdout).trim().split("\n").slice(-1)[0] ?? "");
 }
+{
+  // The bench's own readers of that directory (scoring, the legacy rebuild) list it through mutantFiles.
+  const { mutantFiles } = await import("./model_bench.mts");
+  const d = mkdtempSync(join(tmpdir(), "mutants-"));
+  for (const f of ["b_mutant.py", "a_mutant.py", "notes.txt"]) writeFileSync(join(d, f), "");
+  mkdirSync(join(d, "__pycache__"));
+  const got = mutantFiles(d);
+  rmSync(d, { recursive: true, force: true });
+  check("model_bench lists only *.py mutants, sorted (a stray __pycache__ is not a mutant)", JSON.stringify(got) === JSON.stringify(["a_mutant.py", "b_mutant.py"]), JSON.stringify(got));
+}
 
 // ── Luxas definition vs bare prompt (2026-10-05) ─────────────────────────────
 // The pairing decides whether a definition earns its keep, so it is pinned on
