@@ -10,7 +10,8 @@
  *    contestant below 1.0 for a fixture bug).
  */
 import { spawnSync } from "node:child_process";
-import { readdirSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveModel, resolveModelExact } from "../src/agents/spawn.ts";
 
@@ -35,6 +36,17 @@ const root = join("fixtures", "model-bench", "tool_review");
 for (const t of readdirSync(root)) {
   const r = spawnSync("python3", [join(root, t, "gold_test.py")], { encoding: "utf-8" });
   check(`tool_review/${t}: reference passes, every mutant killable`, r.status === 0, r.stdout.split("\n").filter((l) => /FAIL|EQUIVALENT/.test(l)).join("; "));
+  // A checkout where python has run leaves a gitignored mutants/__pycache__/.
+  // The gold test used to import every directory entry, so on the droplet it
+  // crashed there while passing in every fresh worktree, and the pi
+  // auto-update reverted nine releases in a row (0.99.1 → 1.4.0) for it.
+  const copy = mkdtempSync(join(tmpdir(), "gold-"));
+  cpSync(join(root, t), copy, { recursive: true });
+  mkdirSync(join(copy, "mutants", "__pycache__"), { recursive: true });
+  writeFileSync(join(copy, "mutants", "__pycache__", "stray.cpython-312.pyc"), "");
+  const s = spawnSync("python3", [join(copy, "gold_test.py")], { encoding: "utf-8" });
+  rmSync(copy, { recursive: true, force: true });
+  check(`tool_review/${t}: a stray mutants/__pycache__ does not break the gold test`, s.status === 0, (s.stderr || s.stdout).trim().split("\n").slice(-1)[0] ?? "");
 }
 
 // ── Luxas definition vs bare prompt (2026-10-05) ─────────────────────────────

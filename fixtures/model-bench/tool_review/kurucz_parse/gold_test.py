@@ -63,7 +63,7 @@ if __name__ == "__main__":
     bad = 0
     f = check(load(os.path.join(here, "reference.py")))
     print(("OK " if not f else "FAIL ") + "reference", f); bad += bool(f)
-    for m in sorted(os.listdir(os.path.join(here, "mutants"))):
+    for m in sorted(n for n in os.listdir(os.path.join(here, "mutants")) if n.endswith(".py")):
         f = check(load(os.path.join(here, "mutants", m)))
         print(("killable " if f else "EQUIVALENT ") + m, f[:2]); bad += not f
     sys.exit(1 if bad else 0)

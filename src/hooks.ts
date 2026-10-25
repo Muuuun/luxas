@@ -348,9 +348,12 @@ export function buildResearchHooks(opts: ResearchOptions) {
 
   const after = async (ctx: any): Promise<any> => {
     const toolName = ctx.toolCall?.name ?? "unknown";
-    // ctx.isError is set only for a thrown error; a safety block returns
-    // isError:true instead (see surfaceReturnedIsError).
+    // A safety block returns a result carrying isError:true (see
+    // surfaceReturnedIsError); a thrown error's result carries no isError
+    // field. pi-agent-core 0.87 set ctx.isError only for the throw, 1.4 sets it
+    // for both, so "thrown" is ctx.isError without the result's own flag.
     const isError = ctx.isError === true || ctx.result?.isError === true;
+    const thrown = ctx.isError === true && ctx.result?.isError !== true;
     const errorText = extractErrorText(ctx, isError);
     const errorCategory = isError ? classifyError(errorText, toolName) : undefined;
     // A gate-blocked finish returns plain content without details.success
@@ -386,7 +389,7 @@ export function buildResearchHooks(opts: ResearchOptions) {
 
     // 2. Capture lessons from failures → notes/lessons.md. Thrown errors only:
     //    a safety block is policy working as intended, not a lesson to record.
-    if (ctx.isError && errorText.length > 10) {
+    if (thrown && errorText.length > 10) {
       captureLesson(opts.projectDir, toolName, errorCategory ?? "unknown", errorText, ctx.args);
       opts.bus?.emit({
         type: "tool_failure",

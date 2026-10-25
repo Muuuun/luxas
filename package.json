@@ -18,10 +18,10 @@
     "test:live": "tsx scripts/run-gates.mts --live"
   },
   "dependencies": {
-    "@earendil-works/pi-agent-core": "file:vendor/earendil-works-pi-agent-core-0.87.1.tgz",
-    "@earendil-works/pi-ai": "file:vendor/earendil-works-pi-ai-0.87.1.tgz",
-    "@earendil-works/pi-coding-agent": "file:vendor/earendil-works-pi-coding-agent-0.87.1.tgz",
-    "@earendil-works/pi-tui": "file:vendor/earendil-works-pi-tui-0.87.1.tgz",
+    "@earendil-works/pi-agent-core": "file:vendor/earendil-works-pi-agent-core-1.4.0.tgz",
+    "@earendil-works/pi-ai": "file:vendor/earendil-works-pi-ai-1.4.0.tgz",
+    "@earendil-works/pi-coding-agent": "file:vendor/earendil-works-pi-coding-agent-1.4.0.tgz",
+    "@earendil-works/pi-tui": "file:vendor/earendil-works-pi-tui-1.4.0.tgz",
     "@types/js-yaml": "^4.0.9",
     "better-sqlite3": "^11.0.0",
     "ink": "^6.8.0",
