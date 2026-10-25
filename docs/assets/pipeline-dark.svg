@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="612" viewBox="0 0 1280 612" role="img" aria-label="Luxas pipeline: RESEARCH.md goes to the brain, which dispatches literature, experiment, verification and report agents; finish() gates release report.pdf; every state lives in files.">
+<defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#8b949e"/></marker></defs>
+<rect x="40" y="40" width="220" height="56" rx="8" fill="#21262d" stroke="#30363d" stroke-width="1.2"/>
+<text x="150" y="63" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="700" fill="#e6edf3" text-anchor="middle">RESEARCH.md</text>
+<text x="150" y="82" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#8b949e" text-anchor="middle">your question · read-only to every agent</text>
+<line x1="262" y1="68" x2="298" y2="68" stroke="#8b949e" stroke-width="1.4" marker-end="url(#arr)"/>
+<rect x="300" y="40" width="940" height="56" rx="8" fill="#2a2305" stroke="#9e6a03" stroke-width="1.2"/>
+<text x="322" y="73" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="700" fill="#e6edf3" text-anchor="start">brain</text>
+<text x="378" y="73" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="normal" fill="#e6edf3" text-anchor="start">reads RESEARCH.md · decomposes it into experiments · dispatches the agents below · writes report.tex · calls finish()</text>
+<line x1="407.0" y1="98" x2="407.0" y2="128" stroke="#8b949e" stroke-width="1.4" marker-end="url(#arr)"/>
+<rect x="300" y="130" width="214" height="310" rx="10" fill="#161b22" stroke="#30363d" stroke-width="1.2"/>
+<text x="314" y="156" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="700" fill="#e6edf3" text-anchor="start">Literature</text>
+<line x1="649.0" y1="98" x2="649.0" y2="128" stroke="#8b949e" stroke-width="1.4" marker-end="url(#arr)"/>
+<rect x="542" y="130" width="214" height="310" rx="10" fill="#161b22" stroke="#30363d" stroke-width="1.2"/>
+<text x="556" y="156" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="700" fill="#e6edf3" text-anchor="start">Experiments</text>
+<line x1="891.0" y1="98" x2="891.0" y2="128" stroke="#8b949e" stroke-width="1.4" marker-end="url(#arr)"/>
+<rect x="784" y="130" width="214" height="310" rx="10" fill="#161b22" stroke="#30363d" stroke-width="1.2"/>
+<text x="798" y="156" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="700" fill="#e6edf3" text-anchor="start">Verification</text>
+<line x1="1133.0" y1="98" x2="1133.0" y2="128" stroke="#8b949e" stroke-width="1.4" marker-end="url(#arr)"/>
+<rect x="1026" y="130" width="214" height="310" rx="10" fill="#161b22" stroke="#30363d" stroke-width="1.2"/>
+<text x="1040" y="156" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="700" fill="#e6edf3" text-anchor="start">Report</text>
+<line x1="516" y1="285.0" x2="540" y2="285.0" stroke="#8b949e" stroke-width="1.4" marker-end="url(#arr)"/>
+<line x1="758" y1="285.0" x2="782" y2="285.0" stroke="#8b949e" stroke-width="1.4" marker-end="url(#arr)"/>
+<line x1="1000" y1="285.0" x2="1024" y2="285.0" stroke="#8b949e" stroke-width="1.4" marker-end="url(#arr)"/>
+<rect x="312" y="172" width="190" height="44" rx="6" fill="#0d1117" stroke="#58a6ff" stroke-width="1.2"/>
+<text x="407.0" y="190" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="600" fill="#58a6ff" text-anchor="middle">search</text>
+<text x="407.0" y="205" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#8b949e" text-anchor="middle">OpenAlex · arXiv · CrossRef · browser</text>
+<line x1="407.0" y1="218" x2="407.0" y2="230" stroke="#8b949e" stroke-width="1.4" marker-end="url(#arr)"/>
+<rect x="312" y="232" width="190" height="44" rx="6" fill="#0d1117" stroke="#58a6ff" stroke-width="1.2"/>
+<text x="407.0" y="250" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="600" fill="#58a6ff" text-anchor="middle">reader × N</text>
+<text x="407.0" y="265" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#8b949e" text-anchor="middle">one agent per paper, full text</text>
+<line x1="407.0" y1="278" x2="407.0" y2="290" stroke="#8b949e" stroke-width="1.4" marker-end="url(#arr)"/>
+<rect x="312" y="292" width="190" height="44" rx="6" fill="#21262d" stroke="#30363d" stroke-width="1.2"/>
+<text x="407.0" y="310" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" font-weight="600" fill="#e6edf3" text-anchor="middle">notes/literature.md</text>
+<text x="407.0" y="325" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#8b949e" text-anchor="middle">+ literature.d/&lt;paper&gt;.md</text>
+<text x="407.0" y="366" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#8b949e" text-anchor="middle">Cite keys exist only if a reader</text>
+<text x="407.0" y="381" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#8b949e" text-anchor="middle">wrote the entry. The brain cannot</text>
+<text x="407.0" y="396" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#8b949e" text-anchor="middle">invent a reference.</text>
+<rect x="554" y="172" width="190" height="44" rx="6" fill="#0d1117" stroke="#58a6ff" stroke-width="1.2"/>
+<text x="649.0" y="190" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="600" fill="#58a6ff" text-anchor="middle">experiment</text>
+<text x="649.0" y="205" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#8b949e" text-anchor="middle">designs the tools · writes no code</text>
+<line x1="599.0" y1="218" x2="599.0" y2="230" stroke="#8b949e" stroke-width="1.4" marker-end="url(#arr)"/>
+<line x1="699.0" y1="218" x2="699.0" y2="230" stroke="#8b949e" stroke-width="1.4" marker-end="url(#arr)"/>
+<rect x="554" y="232" width="90.0" height="44" rx="6" fill="#0d1117" stroke="#58a6ff" stroke-width="1.2"/>
+<text x="599.0" y="250" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="600" fill="#58a6ff" text-anchor="middle">tool_impl</text>
+<text x="599.0" y="265" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#8b949e" text-anchor="middle">scripts/</text>
+<rect x="654.0" y="232" width="90.0" height="44" rx="6" fill="#0d1117" stroke="#58a6ff" stroke-width="1.2"/>
+<text x="699.0" y="250" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="600" fill="#58a6ff" text-anchor="middle">tool_review</text>
+<text x="699.0" y="265" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#8b949e" text-anchor="middle">tests/</text>
+<line x1="649.0" y1="228" x2="649.0" y2="280" stroke="#f85149" stroke-width="1.4" stroke-dasharray="3 3"/>
+<text x="649.0" y="293" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="600" fill="#f85149" text-anchor="middle">blind to each other</text>
+<line x1="649.0" y1="298" x2="649.0" y2="310" stroke="#8b949e" stroke-width="1.4" marker-end="url(#arr)"/>
+<rect x="554" y="312" width="190" height="30" rx="6" fill="#0f2e1a" stroke="#3fb950" stroke-width="1.2"/>
+<text x="649.0" y="331.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="600" fill="#3fb950" text-anchor="middle">pytest is the only judge</text>
+<line x1="649.0" y1="344" x2="649.0" y2="356" stroke="#8b949e" stroke-width="1.4" marker-end="url(#arr)"/>
+<rect x="554" y="358" width="190" height="44" rx="6" fill="#21262d" stroke="#30363d" stroke-width="1.2"/>
+<text x="649.0" y="376" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" font-weight="600" fill="#e6edf3" text-anchor="middle">runs/run_N/results.json</text>
+<text x="649.0" y="391" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#8b949e" text-anchor="middle">+ notes/experiments.md § L2.N</text>
+<text x="649.0" y="424" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#8b949e" text-anchor="middle">quantities declared with σ and inputs</text>
+<rect x="796" y="172" width="190" height="44" rx="6" fill="#0d1117" stroke="#58a6ff" stroke-width="1.2"/>
+<text x="891.0" y="190" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="600" fill="#58a6ff" text-anchor="middle">replicator</text>
+<text x="891.0" y="205" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#8b949e" text-anchor="middle">blind estimate from the inputs only</text>
+<rect x="796" y="232" width="190" height="44" rx="6" fill="#0d1117" stroke="#58a6ff" stroke-width="1.2"/>
+<text x="891.0" y="250" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="600" fill="#58a6ff" text-anchor="middle">experiment_reviewer</text>
+<text x="891.0" y="265" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#8b949e" text-anchor="middle">satisfied / revise · up to 3 rounds</text>
+<rect x="796" y="292" width="190" height="44" rx="6" fill="#21262d" stroke="#30363d" stroke-width="1.2"/>
+<text x="891.0" y="310" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" font-weight="600" fill="#e6edf3" text-anchor="middle">claim table</text>
+<text x="891.0" y="325" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#8b949e" text-anchor="middle">converging · disputed · conditional</text>
+<text x="891.0" y="366" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#8b949e" text-anchor="middle">Every headline number needs an</text>
+<text x="891.0" y="381" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#8b949e" text-anchor="middle">independent leg that agrees within σ.</text>
+<text x="891.0" y="396" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#8b949e" text-anchor="middle">A disputed row blocks the finish</text>
+<text x="891.0" y="411" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#8b949e" text-anchor="middle">until another route settles it.</text>
+<rect x="1038" y="172" width="190" height="44" rx="6" fill="#0d1117" stroke="#58a6ff" stroke-width="1.2"/>
+<text x="1133.0" y="190" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="600" fill="#58a6ff" text-anchor="middle">report_writer</text>
+<text x="1133.0" y="205" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#8b949e" text-anchor="middle">fresh context → report.tex</text>
+<rect x="1038" y="232" width="190" height="44" rx="6" fill="#0d1117" stroke="#58a6ff" stroke-width="1.2"/>
+<text x="1133.0" y="250" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="600" fill="#58a6ff" text-anchor="middle">figspec · levelspec</text>
+<text x="1133.0" y="265" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#8b949e" text-anchor="middle">figures rendered from results, linted</text>
+<rect x="1038" y="292" width="190" height="44" rx="6" fill="#0d1117" stroke="#58a6ff" stroke-width="1.2"/>
+<text x="1133.0" y="310" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="600" fill="#58a6ff" text-anchor="middle">figure_auditor · typesetter</text>
+<text x="1133.0" y="325" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#8b949e" text-anchor="middle">a vision model reads the PDF pages</text>
+<rect x="1038" y="352" width="190" height="44" rx="6" fill="#0d1117" stroke="#58a6ff" stroke-width="1.2"/>
+<text x="1133.0" y="370" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.5" font-weight="600" fill="#58a6ff" text-anchor="middle">contradiction sweep · PI</text>
+<text x="1133.0" y="385" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#8b949e" text-anchor="middle">one-request diff · continue / steer / stop</text>
+<text x="1133.0" y="424" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#8b949e" text-anchor="middle">every number traces to a results.json key</text>
+<line x1="407.0" y1="442" x2="407.0" y2="470" stroke="#8b949e" stroke-width="1.4" marker-end="url(#arr)"/>
+<line x1="649.0" y1="442" x2="649.0" y2="470" stroke="#8b949e" stroke-width="1.4" marker-end="url(#arr)"/>
+<line x1="891.0" y1="442" x2="891.0" y2="470" stroke="#8b949e" stroke-width="1.4" marker-end="url(#arr)"/>
+<line x1="1133.0" y1="442" x2="1133.0" y2="470" stroke="#8b949e" stroke-width="1.4" marker-end="url(#arr)"/>
+<rect x="300" y="472" width="770" height="58" rx="8" fill="#0f2e1a" stroke="#3fb950" stroke-width="1.2"/>
+<text x="322" y="496" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#3fb950" text-anchor="start">finish() gates</text>
+<text x="322" y="516" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" font-weight="normal" fill="#e6edf3" text-anchor="start">refuses until: every experiment reviewed · no disputed headline quantity · report.pdf compiles · figures pass audit · PI verdict is stop</text>
+<line x1="1072" y1="501" x2="1098" y2="501" stroke="#8b949e" stroke-width="1.4" marker-end="url(#arr)"/>
+<rect x="1100" y="472" width="140" height="58" rx="8" fill="#21262d" stroke="#30363d" stroke-width="1.2"/>
+<text x="1170" y="501" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" font-weight="700" fill="#e6edf3" text-anchor="middle">report.pdf</text>
+<text x="1170" y="518" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="normal" fill="#8b949e" text-anchor="middle">+ references.bib · figures</text>
+<line x1="40" y1="556" x2="1240" y2="556" stroke="#30363d" stroke-width="1"/>
+<text x="640" y="580" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" font-weight="normal" fill="#8b949e" text-anchor="middle">Everything is a file:  notes/*.md  ·  data/experiments/E*/runs/run_N/results.json  ·  reviews/*.md  ·  .agent/log.jsonl</text>
+<text x="640" y="599" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#8b949e" text-anchor="middle">Kill the process at any point; `luxas run` again resumes from disk. No vector store, no in-process state.</text>
+</svg>
