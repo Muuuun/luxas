@@ -193,6 +193,8 @@ const cc: string[] = bare.claudeArgs ? bare.claudeArgs("req", { maxUsd: 3, model
 const flag = (k: string) => (cc.includes(k) ? cc[cc.indexOf(k) + 1] : undefined);
 check("the command line carries the model AND the effort (neither is left to the CLI's settings)", flag("--model") === "m" && flag("--effort") === "high", cc.slice(2).join(" "));
 check("…and asks for the whole conversation, not only its last message", flag("--output-format") === "stream-json" && cc.includes("--verbose"), `--output-format ${flag("--output-format")}`);
+check("a session is not stored by default; --keep-session stores it so a later --resume --fork-session can continue it",
+  cc.includes("--no-session-persistence") && bare.claudeArgs && !bare.claudeArgs("req", { maxUsd: 3, keepSession: true }).includes("--no-session-persistence"));
 check("the bare arm has a pinned effort, --effort overrides it, and luxas has none",
   !!bare.armEffort && bare.armEffort("claude-code") === bare.BARE_ARM_EFFORT && bare.armEffort("claude-code", "low") === "low" && bare.armEffort("luxas") === undefined && bare.armEffort("luxas", "high") === undefined);
 const resultObj = { type: "result", subtype: "success", is_error: false, total_cost_usd: 1.25, modelUsage: { helper: { costUSD: 0.05 }, "model-x": { costUSD: 1.2 } }, result: "done" };
@@ -266,6 +268,63 @@ const { isThrowawayPath } = await import("../src/memory.ts");
 const { homedir } = await import("node:os");
 check("the default runs directory is a throwaway path (so never registered or surfaced: C84a)", isThrowawayPath(join(homedir(), ".sisyphus", "bench-runs", "2026-10-09T00-00-00-luxas-blender-02-lit-scene")));
 check("an ordinary project directory still is", !isThrowawayPath(join(homedir(), "research", "dy-clock")));
+
+// The ledger is tracked, so each run used to dirty the tree and stamp every
+// later row +dirty until someone committed it.
+{
+  const { spawnSync } = await import("node:child_process");
+  const repo = join(tmp, "git-ledger"); mkdirSync(join(repo, "benchmarks"), { recursive: true });
+  const git = (...a: string[]) => spawnSync("git", ["-c", "user.name=g", "-c", "user.email=g@g", ...a], { cwd: repo, encoding: "utf-8" });
+  writeFileSync(join(repo, "benchmarks", "LEDGER.jsonl"), "{}\n"); writeFileSync(join(repo, "code.ts"), "1\n");
+  git("init", "-q"); git("add", "."); git("commit", "-qm", "init");
+  writeFileSync(join(repo, "benchmarks", "LEDGER.jsonl"), "{}\n{}\n");
+  const afterLedger = bare.gitCommit ? bare.gitCommit(repo) : "n/a";
+  writeFileSync(join(repo, "code.ts"), "2\n");
+  const afterCode = bare.gitCommit ? bare.gitCommit(repo) : "n/a";
+  check("a ledger-only change leaves the commit clean", /^[0-9a-f]{4,}$/.test(afterLedger), afterLedger);
+  check("…and any other tracked change still marks it +dirty", afterCode.endsWith("+dirty"), afterCode);
+}
+
+// What an arm leaves running dies with the run: one child stays in the arm's
+// process group, one leaves it (setsid) but names the run directory.
+{
+  const dir = join(tmp, "cc-orphans"); mkdirSync(dir, { recursive: true });
+  const bin = join(tmp, "fake-bin"); mkdirSync(bin, { recursive: true });
+  // The children do not hold the arm's stdout: claude's Bash tool gives each command
+  // its own pipes. One that did would keep spawnSync waiting for the arm's whole
+  // timeout (this gate took 60 s that way).
+  writeFileSync(join(bin, "claude"), `#!/bin/sh
+sleep 300 >/dev/null 2>&1 &
+echo $! > "$PWD/pid_group"
+perl -MPOSIX -e 'POSIX::setsid(); open(F, ">", "$ARGV[0]/pid_escaped"); print F $$; close F; sleep 300' "$PWD" >/dev/null 2>&1 &
+sleep 1
+exit 0
+`, { mode: 0o755 });
+  const savedPath = process.env.PATH;
+  process.env.PATH = `${bin}:${savedPath}`;
+  try { bare.runClaudeCode?.(dir, "req", { maxUsd: 1, timeoutMin: 1 }); } finally { process.env.PATH = savedPath; }
+  const pidOf = (f: string) => { try { return Number(readFileSync(join(dir, f), "utf-8").trim()); } catch { return 0; } };
+  const alive = (pid: number) => { if (!pid) return false; try { process.kill(pid, 0); return true; } catch { return false; } };
+  const g = pidOf("pid_group"), e = pidOf("pid_escaped");
+  const t0 = Date.now(); while ((alive(g) || alive(e)) && Date.now() - t0 < 3000) { /* reaped by launchd/init shortly after SIGKILL */ }
+  check("the fake arm started both children (else this proves nothing)", g > 0 && e > 0, `group ${g}, escaped ${e}`);
+  check("a child left in the arm's process group is dead after the run", g > 0 && !alive(g), String(g));
+  check("a child that left the group but names the run directory is dead too", e > 0 && !alive(e), String(e));
+  for (const p of [g, e]) { try { if (p) process.kill(p, "SIGKILL"); } catch { /* */ } }
+}
+
+// --luxas-root refuses a tree an agent could read the answers from.
+{
+  const ok = join(tmp, "export-ok"), leaky = join(tmp, "export-leaky");
+  for (const r of [ok, leaky]) {
+    mkdirSync(join(r, "src"), { recursive: true }); writeFileSync(join(r, "src", "index.ts"), "");
+    mkdirSync(join(r, "node_modules", ".bin"), { recursive: true }); writeFileSync(join(r, "node_modules", ".bin", "tsx"), "");
+    writeFileSync(join(r, ".luxas-export"), "abc1234\n");
+  }
+  mkdirSync(join(leaky, "simbench", "blender-02"), { recursive: true });
+  check("an export without the answer directories is accepted", bare.luxasExportProblem?.(ok) === null, String(bare.luxasExportProblem?.(ok)));
+  check("…one that still holds simbench/ is refused", /simbench/.test(String(bare.luxasExportProblem?.(leaky))), String(bare.luxasExportProblem?.(leaky)));
+}
 
 rmSync(tmp, { recursive: true, force: true });
 console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");

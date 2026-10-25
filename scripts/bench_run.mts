@@ -11,7 +11,9 @@
  * Arms:
  *   claude-code   `claude -p` in an empty directory holding only RESEARCH.md.
  *                 No Luxas prompt, agents, gates or tools — the baseline.
- *   luxas         `luxas run` on the same directory (this checkout).
+ *   luxas         `luxas run` on the same directory (this checkout, or with
+ *                 --luxas-root an export without the answer directories;
+ *                 see luxasExportProblem).
  *
  * Both arms get the same request and never see ORACLE.md: the run directory is
  * created outside the repo and only RESEARCH.md is copied into it.
@@ -37,14 +39,15 @@
  *
  * This spends real money. --dry-run prints the plan and calls nothing.
  */
-import { spawnSync } from "node:child_process";
-import { appendFileSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { appendFileSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { scoreBench } from "./bench_score.mts";
 import { readUsageTotals } from "../src/usage-log.js";
 import { readLastExit, type ExitRecord } from "../src/exit-state.js";
+import { parsePs, stopRun } from "../src/stop-run.js";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const BENCH_ROOT = join(ROOT, "benchmarks");
@@ -139,9 +142,11 @@ export function baselinePrompt(request: string): string {
   ].join("\n");
 }
 
-export function gitCommit(): string {
-  const rev = spawnSync("git", ["rev-parse", "--short", "HEAD"], { cwd: ROOT, encoding: "utf-8" }).stdout.trim() || "unknown";
-  const dirty = spawnSync("git", ["status", "--porcelain", "--untracked-files=no"], { cwd: ROOT, encoding: "utf-8" }).stdout.trim() !== "";
+export function gitCommit(root: string = ROOT): string {
+  const rev = spawnSync("git", ["rev-parse", "--short", "HEAD"], { cwd: root, encoding: "utf-8" }).stdout.trim() || "unknown";
+  // The ledger itself is left out: it is tracked, so every run made the tree
+  // dirty and stamped every later row +dirty until someone committed it.
+  const dirty = spawnSync("git", ["status", "--porcelain", "--untracked-files=no", "--", ".", ":(exclude)benchmarks/LEDGER.jsonl"], { cwd: root, encoding: "utf-8" }).stdout.trim() !== "";
   return dirty ? `${rev}+dirty` : rev;
 }
 
@@ -153,10 +158,12 @@ export function listBenches(root = BENCH_ROOT): string[] {
 
 export function buildRecord(a: {
   arm: string; bench: string; runDir: string; model: string | null; effort?: string; costUsd: number | null; wallSec: number | null; exit: string; note?: string; aborted?: string; routing?: Record<string, string>; benchRoot?: string;
+  /** The code the run used when it was not this checkout (--luxas-root): the export's stamp. */
+  commit?: string;
 }): LedgerRecord {
   const s = scoreBench(a.runDir, join(a.benchRoot ?? BENCH_ROOT, a.bench));
   return {
-    ts: new Date().toISOString(), arm: a.arm, bench: a.bench, commit: gitCommit(), model: a.model, ...(a.effort ? { effort: a.effort } : {}),
+    ts: new Date().toISOString(), arm: a.arm, bench: a.bench, commit: a.commit ?? gitCommit(), model: a.model, ...(a.effort ? { effort: a.effort } : {}),
     costUsd: a.costUsd, wallSec: a.wallSec, exit: a.exit,
     reportTex: s.completion.reportTex, reportPdf: s.completion.reportPdf,
     oraclePassed: s.oracle?.passed ?? 0, oracleTotal: s.oracle?.total ?? 0,
@@ -202,8 +209,8 @@ export function classifyClaudeResult(j: any, spawnError?: { code?: string; messa
  * --no-session-persistence a run left its last message and nothing to audit
  * (fifteen 100% runs, none of which could be re-read).
  */
-export function claudeArgs(request: string, o: { maxUsd: number; model?: string; effort?: string }): string[] {
-  return [
+export function claudeArgs(request: string, o: { maxUsd: number; model?: string; effort?: string; keepSession?: boolean }): string[] {
+  const args = [
     "-p", baselinePrompt(request),
     "--output-format", "stream-json", "--verbose",
     "--max-budget-usd", String(o.maxUsd),
@@ -214,6 +221,10 @@ export function claudeArgs(request: string, o: { maxUsd: number; model?: string;
     ...(o.model ? ["--model", o.model] : []),
     ...(o.effort ? ["--effort", o.effort] : []),
   ];
+  // --keep-session: the session is also stored under ~/.claude, so a later
+  // `claude -p --resume <id> --fork-session` from the run directory can continue
+  // it (the surprisebench long design's B phase forks each run twice).
+  return o.keepSession ? args.filter((a) => a !== "--no-session-persistence") : args;
 }
 
 /** The last `type: "result"` line of a stream-json transcript: the object "--output-format json" used to print alone. */
@@ -226,10 +237,42 @@ export function claudeResultLine(transcript: string): any {
   return j;
 }
 
-export function runClaudeCode(dir: string, request: string, o: { maxUsd: number; model?: string; effort?: string; timeoutMin: number }, spawn: typeof spawnSync = spawnSync) {
+/**
+ * spawnSync with the arm in a process group of its own (perl setpgrp, then
+ * exec), so reapArm can kill what the arm left running.
+ */
+export function groupSpawnSync(cmd: string, args: string[], opts: Parameters<typeof spawnSync>[2]): ReturnType<typeof spawnSync> {
+  return spawnSync("perl", ["-e", 'setpgrp(0, 0); exec { $ARGV[0] } @ARGV or die "exec $ARGV[0]: $!\\n"', cmd, ...args], opts as any);
+}
+
+/**
+ * Kill everything an arm left behind: its process group, and any process whose
+ * command line names the run directory (one that left the group). 2026-10-06:
+ * a `blender -b … measure_flange.py` from the claude-code arm held a core for
+ * six days, and 18 of 20 ledger rows were timed beside it.
+ */
+export function reapArm(dir: string, groupPid?: number): number[] {
+  const killed: number[] = [];
+  if (groupPid) { try { process.kill(-groupPid, "SIGKILL"); killed.push(-groupPid); } catch { /* the group is already empty */ } }
+  let rows: { pid: number; args: string }[] = [];
+  try { rows = parsePs(execFileSync("ps", ["-eo", "pid=,args="], { encoding: "utf-8" })); } catch { return killed; }
+  // Both spellings: on macOS /var and /tmp are links into /private, and a
+  // shell started there names the resolved path ($PWD is getcwd()).
+  const paths = [...new Set([resolve(dir), (() => { try { return realpathSync(dir); } catch { return resolve(dir); } })()])];
+  const names = (args: string) => paths.some((d) => args.includes(d + "/") || args.endsWith(" " + d) || args.includes(" " + d + " "));
+  for (const p of rows) {
+    if (p.pid === process.pid || p.pid === process.ppid) continue;
+    if (!names(p.args)) continue;
+    try { process.kill(p.pid, "SIGKILL"); killed.push(p.pid); } catch { /* already gone */ }
+  }
+  return killed;
+}
+
+export function runClaudeCode(dir: string, request: string, o: { maxUsd: number; model?: string; effort?: string; timeoutMin: number; keepSession?: boolean }, spawn: typeof spawnSync = groupSpawnSync as typeof spawnSync) {
   const t0 = Date.now();
   const r = spawn("claude", claudeArgs(request, o), { cwd: dir, encoding: "utf-8", timeout: o.timeoutMin * 60_000, maxBuffer: 512 * 1024 * 1024 });
   const wallSec = Math.round((Date.now() - t0) / 1000);
+  reapArm(dir, r.pid);
   // Written after the process has ended (the arm never sees it) and whatever
   // ended it: a timeout or a provider abort leaves the transcript up to there.
   writeFileSync(join(dir, "claude_transcript.jsonl"), r.stdout ?? "");
@@ -249,12 +292,35 @@ export function classifyLuxasExit(last: Pick<ExitRecord, "kind" | "detail"> | nu
   return { exit: last.kind };
 }
 
-export function runLuxas(dir: string, o: { maxUsd: number; model?: string; timeoutMin: number }, spawn: typeof spawnSync = spawnSync) {
-  const tsx = join(ROOT, "node_modules", ".bin", "tsx");
-  const args = [join(ROOT, "src", "index.ts"), "run", dir, "--max-cost", String(o.maxUsd), ...(o.model ? ["--model", o.model] : ["--profile", "dual"])];
+/**
+ * Why a --luxas-root directory cannot be run from, or null. It must be an
+ * export: stamped with the commit it came from (.luxas-export), with node_modules,
+ * and without the directories that hold answers. Make one with
+ *   C=$(git stash create); C=${C:-HEAD}; mkdir -p X
+ *   git archive "$C" -- . ':(exclude)simbench' ':(exclude)benchmarks' ':(exclude)notes' ':(exclude)fixtures' | tar -x -C X
+ *   ln -s "$PWD/node_modules" X/node_modules; git rev-parse --short "$C" > X/.luxas-export
+ */
+export function luxasExportProblem(root: string): string | null {
+  if (!existsSync(join(root, "src", "index.ts"))) return "no src/index.ts — not a Luxas tree";
+  if (!existsSync(join(root, ".luxas-export"))) return "no .luxas-export stamp — the row could not say which code ran";
+  if (!existsSync(join(root, "node_modules", ".bin", "tsx"))) return "no node_modules/.bin/tsx";
+  const leaks = ["simbench", "benchmarks", "notes", "fixtures"].filter((d) => existsSync(join(root, d)));
+  return leaks.length ? `holds ${leaks.join(", ")} — every agent shell can read them through $LUXAS_ROOT` : null;
+}
+
+export function runLuxas(dir: string, o: { maxUsd: number; model?: string; timeoutMin: number; luxasRoot?: string }, spawn: typeof spawnSync = groupSpawnSync as typeof spawnSync) {
+  // --luxas-root: run from an export of the checkout that leaves out the
+  // answers (simbench graders and references, benchmarks/ oracles, notes/).
+  // Every agent shell has LUXAS_ROOT, and from this checkout it can read them.
+  const root = o.luxasRoot ? resolve(o.luxasRoot) : ROOT;
+  const tsx = join(root, "node_modules", ".bin", "tsx");
+  const args = [join(root, "src", "index.ts"), "run", dir, "--max-cost", String(o.maxUsd), ...(o.model ? ["--model", o.model] : ["--profile", "dual"])];
   const t0 = Date.now();
-  const r = spawn(tsx, args, { cwd: ROOT, encoding: "utf-8", timeout: o.timeoutMin * 60_000, maxBuffer: 64 * 1024 * 1024 });
+  const r = spawn(tsx, args, { cwd: root, encoding: "utf-8", timeout: o.timeoutMin * 60_000, maxBuffer: 64 * 1024 * 1024 });
   const wallSec = Math.round((Date.now() - t0) / 1000);
+  // Background agents outlive the brain process; stop them before anything else is read.
+  try { stopRun(dir, { log: () => {} }); } catch { /* not a project: nothing ran */ }
+  reapArm(dir, r.pid);
   writeFileSync(join(dir, "luxas_stdout.txt"), (r.stdout ?? "") + "\n--- stderr ---\n" + (r.stderr ?? ""));
   let costUsd: number | null = null;
   try { costUsd = readUsageTotals(join(dir, ".agent", "usage.log")).cost; } catch { /* no usage log: the run never reached a model */ }
@@ -307,7 +373,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const benchArg = arg("--bench", argv) ?? "all";
   const dry = argv.includes("--dry-run");
   const recordDir = arg("--record", argv);
-  if (!arm) { console.error("usage: bench_run.mts --arm claude-code|luxas [--bench <name>|all] [--bench-root DIR] [--max-usd N] [--model M] [--effort L] [--timeout-min N] [--runs-dir DIR] [--dry-run]\n       bench_run.mts --record <run-dir> --arm <arm> --bench <bench> [--cost N] [--wall-sec N] [--model M] [--effort L] [--routing KEY=VALUE ...]"); process.exit(2); }
+  if (!arm) { console.error("usage: bench_run.mts --arm claude-code|luxas [--bench <name>|all] [--bench-root DIR] [--max-usd N] [--model M] [--effort L] [--timeout-min N] [--runs-dir DIR] [--luxas-root DIR] [--keep-session] [--dry-run]\n       bench_run.mts --record <run-dir> --arm <arm> --bench <bench> [--cost N] [--wall-sec N] [--model M] [--effort L] [--routing KEY=VALUE ...]"); process.exit(2); }
   const benchRoot = resolve(arg("--bench-root", argv) ?? BENCH_ROOT);
   if (!existsSync(benchRoot)) { console.error(`--bench-root ${benchRoot} does not exist`); process.exit(2); }
   const all = listBenches(benchRoot);
@@ -332,17 +398,24 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const effortFlag = arg("--effort", argv);
   if (effortFlag !== undefined && (arm !== "claude-code" || !(EFFORTS as readonly string[]).includes(effortFlag))) { console.error(`--effort is one of ${EFFORTS.join(", ")} and applies to --arm claude-code only (luxas sets effort per agent)`); process.exit(2); }
   const effort = armEffort(arm, effortFlag);
+  const keepSession = argv.includes("--keep-session");
+  if (keepSession && arm !== "claude-code") { console.error("--keep-session applies to --arm claude-code only"); process.exit(2); }
   const runsDir = resolve(arg("--runs-dir", argv) ?? join(homedir(), ".sisyphus", "bench-runs"));
+  const luxasRoot = arg("--luxas-root", argv);
+  const exportProblem = luxasRoot ? luxasExportProblem(luxasRoot) : null;
+  if (luxasRoot && arm !== "luxas") { console.error("--luxas-root applies to --arm luxas only"); process.exit(2); }
+  if (exportProblem) { console.error(`--luxas-root ${luxasRoot}: ${exportProblem}`); process.exit(2); }
+  const commit = luxasRoot ? readFileSync(join(luxasRoot, ".luxas-export"), "utf-8").trim() : gitCommit();
 
-  console.log(planLine({ arm, model, effort, benches, maxUsd, timeoutMin, runsDir, commit: gitCommit(), routing: luxasRouting() }));
+  console.log(planLine({ arm, model, effort, benches, maxUsd, timeoutMin, runsDir, commit, routing: luxasRouting() }));
   if (dry) { console.log("dry run — nothing launched"); process.exit(0); }
 
   for (const bench of benches) {
     const dir = prepareRunDir(runsDir, arm, bench, benchRoot);
     const request = readFileSync(join(dir, "RESEARCH.md"), "utf-8");
     console.log(`\n▶ ${arm} ${bench} → ${dir}`);
-    const res = arm === "claude-code" ? runClaudeCode(dir, request, { maxUsd, model, effort, timeoutMin }) : runLuxas(dir, { maxUsd, model, timeoutMin });
-    const rec = buildRecord({ arm, bench, runDir: dir, benchRoot, ...res });
+    const res = arm === "claude-code" ? runClaudeCode(dir, request, { maxUsd, model, effort, timeoutMin, keepSession }) : runLuxas(dir, { maxUsd, model, timeoutMin, luxasRoot });
+    const rec = buildRecord({ arm, bench, runDir: dir, benchRoot, ...res, ...(luxasRoot ? { commit } : {}) });
     appendRecord(rec);
     console.log(`  exit=${rec.exit} cost=${rec.costUsd === null ? "?" : "$" + rec.costUsd.toFixed(2)} wall=${rec.wallSec}s report=${rec.reportTex} pdf=${rec.reportPdf} oracle=${rec.oraclePassed}/${rec.oracleTotal}`);
     if (rec.aborted) console.log(`  ABORTED by the provider ("${rec.aborted}") — recorded, not counted. Fix the cause and run this bench again.`);
