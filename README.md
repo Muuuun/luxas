@@ -123,7 +123,7 @@ Luxas runs shell commands, Python and `pip install` unattended inside the projec
 
 ## Acknowledgments
 
-Built on [pi-mono](https://github.com/badlogic/pi-mono) by [Mario Zechner](https://mariozechner.at/). Prompt evolution via [AgentSmelt](https://github.com/Muuuun/agentsmelt); number provenance via [provref](https://github.com/Muuuun/provref). Token sponsorship from [Deeplang 深言科技](https://www.deeplang.ai/).
+Built on [pi-mono](https://github.com/badlogic/pi-mono) by [Mario Zechner](https://mariozechner.at/). Prompt evolution via [AgentSmelt](https://github.com/Muuuun/agentsmelt); number provenance via [provref](https://github.com/Muuuun/provref).
 
 ## License
 
