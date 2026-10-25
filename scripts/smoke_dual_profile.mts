@@ -7,6 +7,7 @@
  * Text agents:    experiment, reader, search, ...             → deepseek-v4-pro
  * brain:          deepseek-v4-pro (LUXAS_BRAIN_MODEL, 2026-09-20 — OpenAI out of credit)
  * PI reviewers:   reviewer, experiment_reviewer               → declared Anthropic tier
+ * Report checkers: contradiction_auditor, prior_art_auditor   → declared Anthropic tier
  *
  * Also guards the two live-probed API constraints of the vision model
  * (2026-09-02): it must accept images, and it must declare `reasoning: true`
@@ -146,6 +147,14 @@ check("experiment (sonnet) → deepseek-v4-pro",
 // prior is the point, so the reviewer must not run on the producer's model.
 check("reviewer (sonnet) → claude-sonnet-5 (PI keeps Anthropic tier)",
   modelId(resolveModel("sonnet", "reviewer")) === "claude-sonnet-5");
+// The report-level checkers keep theirs too: an auditor on the producer's
+// model reconciled the producer's own contradiction (297nm, 99.89 vs 99.909).
+check("contradiction_auditor (sonnet) → claude-sonnet-5, not the producer",
+  modelId(resolveModel("sonnet", "contradiction_auditor")) === "claude-sonnet-5", modelId(resolveModel("sonnet", "contradiction_auditor")));
+check("prior_art_auditor (opus) → claude-opus-5-5, not the producer",
+  modelId(resolveModel("opus", "prior_art_auditor")) === "claude-opus-5-5", modelId(resolveModel("opus", "prior_art_auditor")));
+check("…while the replicator still follows the producer profile (until the verifier bench)",
+  modelId(resolveModel("opus", "replicator")) === "deepseek-v4-pro", modelId(resolveModel("opus", "replicator")));
 // The invariant is the capability, not the vendor: a vision-required agent
 // must land on a model that actually accepts images.
 for (const agent of ["illustrator", "illustrator_write", "typesetter"]) {

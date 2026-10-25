@@ -17,7 +17,7 @@
  * Also: a hash-mismatch refusal prints the recorded hash in full and never the
  * current one (§C78b).
  */
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, utimesSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -348,6 +348,73 @@ Some narrative.
     assert(!!issue, "prior_art: the stale-sources blocker fires");
     const line = (issue?.text ?? "").split("\n").find((l) => l.includes("prior_art.md audited different sources")) ?? "";
     showsRecordedOnly("prior_art", line, recorded, current);
+  }
+
+  for (const d of dirs) rmSync(d, { recursive: true, force: true });
+}
+
+// ---- §L1. A document-check refusal names every outstanding check, in clearing order ----
+//   blender-02, 2026-10-20 (Opus 5.5 brain): finish() came back one gate per call —
+//   sweep stale, then typesetter notes missing, then report.tex edited after the
+//   compile. Three refusals; $3.23 of the run's $16.86 came after the first finish().
+//   The first line stays the gate's own (FinishEscalation keys on it); when only one
+//   check is outstanding the refusal is unchanged.
+{
+  console.log(`\n[§L1 document-check refusals list every outstanding check]`);
+  const proj = () => {
+    const d = mkdtempSync(join(tmpdir(), "luxas-l1-"));
+    for (const sub of [".agent", "report/figures", "reviews", "notes"]) mkdirSync(join(d, sub), { recursive: true });
+    writeFileSync(join(d, "RESEARCH.md"), "# probe\n");
+    writeFileSync(join(d, "report", "figures", "a.pdf"), "%PDF-1.4\n% figure\n");
+    writeFileSync(join(d, "report", "report.tex"), [
+      "\\documentclass{article}", "\\usepackage{graphicx}", "\\begin{document}",
+      "Figure~\\ref{fig:a} shows the scene.",
+      "\\begin{figure}\\includegraphics{figures/a.pdf}\\caption{Scene.}\\label{fig:a}\\end{figure}",
+      "\\end{document}", "",
+    ].join("\n"));
+    writeFileSync(join(d, "notes", "report_outline.md"), "type: empirical\n\n## The scene renders red and blue\n");
+    writeFileSync(join(d, "report", "report.pdf"), "%PDF-1.4\n% L1 fixture bytes, not a renderable PDF\n");
+    return d;
+  };
+  const finishText = async (d: string) => {
+    const { tools } = buildResearchTools(d, { PROJECT_DIR: d }, () => undefined, {});
+    const r = await tools.find((t: any) => t.name === "finish").execute("l1", { summary: "probe" });
+    return String(r?.content?.[0]?.text ?? "");
+  };
+  const at = (p: string, s: number) => utimesSync(p, s, s);
+  const now = Math.floor(Date.now() / 1000);
+  const dirs: string[] = [];
+
+  // The blender-02 state: report.tex edited after the compile, sweep stale, no typesetter notes, no PI review.
+  {
+    const d = proj(); dirs.push(d);
+    writeFileSync(join(d, "reviews", "contradiction_sweep.md"),
+      `---\nstatus: clean\nsources_md5: ${"0".repeat(32)}\n---\n\n## Contradictions\n\nNone.\n`);
+    at(join(d, "report", "report.pdf"), now - 120);
+    at(join(d, "report", "report.tex"), now - 60);
+    const text = await finishText(d);
+    const first = text.split("\n")[0];
+    assert(first.startsWith("Cannot finish: reviews/contradiction_sweep.md swept different source files"),
+      `the sweep gate refuses first, first line unchanged (got: ${first.slice(0, 120)})`);
+    const order = ["compile_latex", "contradiction_auditor", "typesetter", "request_pi_review"];
+    const tail = text.slice(first.length);
+    const pos = order.map((s) => tail.indexOf(s));
+    assert(/still outstanding/.test(tail), "the refusal carries the list of outstanding checks");
+    assert(pos.every((p) => p >= 0), `the list names all four steps (${order.map((s, i) => `${s}@${pos[i]}`).join(", ")})`);
+    assert(pos.every((p, i) => i === 0 || p > pos[i - 1]), "in clearing order: compile, sweep, typesetter, PI review");
+  }
+
+  // Only the typesetter outstanding: the refusal is the gate's own text and nothing else.
+  {
+    const d = proj(); dirs.push(d);
+    at(join(d, "report", "report.tex"), now - 120);
+    at(join(d, "report", "report.pdf"), now - 60);
+    writeFileSync(join(d, "reviews", "contradiction_sweep.md"),
+      `---\nstatus: clean\nsources_md5: ${evidenceSourcesDigest(d)}\n---\n\n## Contradictions\n\nNone.\n`);
+    writeFileSync(join(d, "reviews", "pi_feedback.md"), "## Verdict: continue\n\nShip it.\n");
+    const text = await finishText(d);
+    assert(text.startsWith("Cannot finish: reviews/typesetter_notes.md is missing."), "the typesetter gate refuses");
+    assert(!/still outstanding/.test(text), "one outstanding check: no list appended");
   }
 
   for (const d of dirs) rmSync(d, { recursive: true, force: true });

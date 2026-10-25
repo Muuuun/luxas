@@ -31,7 +31,7 @@
  *
  *   npx tsx scripts/smoke_brain_request.mts
  */
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, appendFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, appendFileSync, readdirSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -205,8 +205,10 @@ delete process.env.LUXAS_EXPERIMENT_MODE;
 (globalThis as any).fetch = async () => { throw new Error("gate: network blocked"); };
 const { getApiProviders, registerApiProvider } = await import("@earendil-works/pi-ai/compat");
 const subSent: any[][] = [];
+let onRequest: ((ctx: any) => void) | null = null;
 const scripted = (model: any, ctx: any) => {
   subSent.push(ctx.messages);
+  onRequest?.(ctx);
   const msg = { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "ok" }], api: model.api, provider: model.provider, model: model.id,
     timestamp: Date.now(), usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } };
   return { async *[Symbol.asyncIterator]() { yield { type: "done" }; }, result: async () => msg };
@@ -277,6 +279,36 @@ const lateContSys: string = getCurrentSystemPrompt(subSent[nBefore5] ?? []) ?? "
 check("…and its continue rebuilds the same prompt, sheet included", subSent.length > nBefore5 && lateContSys === lateFreshSys,
   `fresh ${lateFreshSys.length} vs continued ${lateContSys.length}; continued has the sheet=${lateContSys.includes(sheet)}`);
 rmSync(cproj, { recursive: true, force: true });
+
+console.log("\n6. a continued experiment whose results.json moved is reviewed again, numbered after the rounds on disk");
+// Offline: no blind estimate and one review round; the scripted reply "ok" is a
+// terse critique, which the loop records as a round file.
+process.env.LUXAS_BLIND_ESTIMATE = "0";
+process.env.LUXAS_MAX_REVIEW_ITERATIONS = "1";
+const eproj = mkdtempSync(join(tmpdir(), "luxas-continue-review-gate-"));
+mkdirSync(join(eproj, "notes"), { recursive: true });
+writeFileSync(join(eproj, "RESEARCH.md"), "# gate\nA throwaway goal for an offline wiring gate.\n");
+const eResults = join(eproj, "data", "experiments", "E1_gate", "runs", "run_1", "results.json");
+const writeResults = (x: number) => { mkdirSync(join(eResults, ".."), { recursive: true }); writeFileSync(eResults, JSON.stringify({ computed: { x } }) + "\n"); };
+const rounds = () => { try { return readdirSync(join(eproj, "reviews")).filter((f) => /^experiment_review_E1_gate_r\d+\.md$/.test(f)).length; } catch { return 0; } };
+const brainSpawn: any = createSpawnAgentTool(eproj, { PROJECT_DIR: eproj }, () => "offline", undefined, 0, undefined, ["experiment"]);
+writeResults(1);
+const e1 = await brainSpawn.execute("e1", { agent: "experiment", task: "Compute x for the gate.", templateVars: { EXPERIMENT_ID: "E1_gate" } });
+const afterSpawn = rounds();
+check("the fresh experiment spawn is reviewed (else this proves nothing)", afterSpawn >= 1,
+  `${afterSpawn} round file(s); ${String(e1.content?.[0]?.text).slice(0, 160)}`);
+const e2 = await brainSpawn.execute("e2", { action: "continue", id: e1.details?.agentId, task: "Tidy the ledger wording." });
+// experiment.md declares ROLE, which brain may leave unset; the continue must still run.
+check("an experiment spawned without ROLE can be continued (else the next check proves nothing)", e2.details?.revisionNumber === 1,
+  String(e2.content?.[0]?.text).slice(0, 200));
+check("a continue that leaves results.json as it was adds no review round", rounds() === afterSpawn, `${rounds()} vs ${afterSpawn}`);
+onRequest = (ctx: any) => { if (JSON.stringify(ctx.messages.at(-1) ?? "").includes("GATE-MOVE-RESULTS")) writeResults(2); };
+const e3 = await brainSpawn.execute("e3", { action: "continue", id: e1.details?.agentId, task: "GATE-MOVE-RESULTS: recompute x with the corrected input." });
+onRequest = null;
+check("a continue that moves results.json adds the next review round",
+  rounds() === afterSpawn + 1 && existsSync(join(eproj, "reviews", `experiment_review_E1_gate_r${afterSpawn + 1}.md`)),
+  `${rounds()} round file(s) after; ${String(e3.content?.[0]?.text).slice(0, 200)}`);
+rmSync(eproj, { recursive: true, force: true });
 
 rmSync(proj, { recursive: true, force: true });
 console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");

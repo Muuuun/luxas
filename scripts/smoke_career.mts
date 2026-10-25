@@ -58,6 +58,7 @@ try {
 	check("matched question renders <career>", /<career>/.test(block), block.slice(0, 120));
 	check("finding carries provenance + inherited-unverified discipline",
 		/Rydberg blockade fidelity study/.test(block) && /INHERITED-UNVERIFIED/.test(block) && /53\.77/.test(block));
+	check("an inherited finding carries no grade from its old project", !/grade /.test(block), block.slice(0, 300));
 	check("correction carried (do-not-re-assume)", /blockade leakage overtakes/.test(block));
 	check("career frontier lists the unrun lead", /E_5_master_equation/.test(block));
 

@@ -9,7 +9,7 @@
  *
  *   npx tsx scripts/smoke_solo_executor.mts
  */
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, readlinkSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -296,6 +296,68 @@ console.log("\n6. [C64] solo_trial: a recorded, refusable two-arm harness");
   const torn = fn("ccTrialRecord")(pre, "{\"type\":\"system\"}\n", clean);
   check("ingest: a transcript with no result line is not a success", !!torn && torn.stopReason !== "success", JSON.stringify(torn));
   check("ingest: 1-hour cache writes (TTL not pinned) make the pair refuse", (pair(a, fn("ccTrialRecord")(pre, result({ usage: { cache_creation: { ephemeral_1h_input_tokens: 500 } } }), clean) ?? {}) ?? []).some((x: string) => /1-hour/.test(x)));
+
+  // (10) Three arms (2026-10-24): upstream data/ inputs, one hash of the inputs, the codex arm, the comparison.
+  check("fresh: a data/ of upstream inputs passes, and the codex arm's record does not make a dir used",
+    JSON.stringify(fresh(task("datain", (d) => { mkdirSync(join(d, "data", "e"), { recursive: true }); writeFileSync(join(d, "data", "e", "q.json"), "{}"); mkdirSync(join(d, ".agent")); writeFileSync(join(d, ".agent", "codex_arm.json"), "{}"); }))) === "[]");
+  const twin = (name: string, body: string) => task(name, (d) => writeFileSync(join(d, "refs", "n.md"), body));
+  const tA = twin("twinA", "x"), tB = twin("twinB", "x"), tC = twin("twinC", "y");
+  const ish = fn("inputsSha");
+  mkdirSync(join(tB, ".agent")); writeFileSync(join(tB, ".agent", "codex_arm.json"), "{}");
+  check("inputsSha: equal for the same input bytes (blind to .agent/), different when one input differs", !!ish(tA) && ish(tA) === ish(tB) && ish(tA) !== ish(tC));
+  check("record: inputsSha on record", !!rec?.inputsSha && rec.inputsSha === ish(clean));
+  const cx: string[] = fn("codexArmArgs")(PROMPT, { thinking: "high" }) ?? [];
+  const cxAfter = (f: string) => cx.includes(f) ? cx[cx.indexOf(f) + 1] : undefined;
+  check("codex: exec --json, gpt-6-astra, the same effort word, no sandbox, no user config, no saved session, prompt bytes last",
+    cx[0] === "exec" && cx.includes("--json") && cxAfter("-m") === "gpt-6-astra" && cxAfter("-c") === 'model_reasoning_effort="high"' && cxAfter("-s") === "danger-full-access"
+      && cx.includes("--ignore-user-config") && cx.includes("--ephemeral") && cx[cx.length - 1] === PROMPT, cx.slice(0, -1).join(" "));
+  const ev = (o: object) => JSON.stringify(o);
+  const stream = (...extra: object[]) => [ev({ type: "thread.started", thread_id: "t" }), ev({ type: "turn.started" }), "{ not json",
+    ev({ type: "item.completed", item: { type: "command_execution", command: "ls" } }), ev({ type: "item.completed", item: { type: "file_change" } }),
+    ev({ type: "item.completed", item: { type: "agent_message", text: "done" } }), ...extra.map(ev)].join("\n");
+  const cpre = { arm: "codex", model: "gpt-6-astra", thinking: "high", cap: 9, promptSha: "a".repeat(64), fresh: [] };
+  const usage = { input_tokens: 1000, cached_input_tokens: 800, cache_write_input_tokens: 0, output_tokens: 50, reasoning_output_tokens: 20 };
+  const cok = fn("codexTrialRecord")(cpre, stream({ type: "error", message: "Reconnecting... 1/5" }, { type: "turn.completed", usage }), out("cxok", "{}", "# r"), { elapsedMs: 120_000 });
+  check("codex ingest: completed, tokens by class (input minus cached), tool calls, wall time, delivered; a retried stream error is not fatal",
+    cok?.stopReason === "completed" && !cok?.aborted && JSON.stringify(cok?.tokens) === JSON.stringify({ input: 200, output: 50, cacheRead: 800, cacheWrite: 0 })
+      && cok?.reasoningTokens === 20 && cok?.calls === 2 && cok?.elapsedMs === 120_000 && cok?.delivered === true, JSON.stringify(cok));
+  const climit = fn("codexTrialRecord")(cpre, stream({ type: "turn.failed", error: { message: "You've hit your usage limit. Try again later." } }), clean, {});
+  check("codex ingest: a ChatGPT usage limit is aborted, and the comparison says it is no measurement",
+    climit?.stopReason === "error" && /usage limit/.test(climit?.aborted ?? "") && (fn("compareProblems")([cok, climit]) ?? []).some((x: string) => /aborted/.test(x)), JSON.stringify(climit));
+  check("codex ingest: no turn.completed is not completed; the wall limit says so",
+    fn("codexTrialRecord")(cpre, stream(), clean, { timedOut: true })?.stopReason === "wall_limit" && fn("codexTrialRecord")(cpre, stream(), clean, {})?.stopReason === "no-result");
+  const A = { arm: "solo", model: "claude-opus-5-5", thinking: "high", cap: 9, promptSha: "a".repeat(64), inputsSha: "i".repeat(64), fresh: [], dir: "/x/dy-solo" };
+  check("compare: arms differing only in arm and model are comparable", JSON.stringify(fn("compareProblems")([A, { ...A, arm: "claude-p" }, { ...A, arm: "codex", model: "gpt-6-astra" }])) === "[]");
+  for (const [label, patch] of [["effort", { thinking: "xhigh" }], ["cap", { cap: 5 }], ["PROMPT.txt", { promptSha: "b".repeat(64) }], ["input files", { inputsSha: "j".repeat(64) }]] as const)
+    check(`compare: flagged when the ${label} differs`, (fn("compareProblems")([A, { ...A, arm: "codex", ...patch }]) ?? []).some((x: string) => x.includes(label)));
+  check("compare: a codex run whose analysis-price cost exceeds the cap is marked OVER CAP ($9.60 > $9)",
+    (fn("compareReport")([{ ...A, arm: "codex", model: "gpt-6-astra", tokens: { input: 2_000_000, output: 200_000, cacheRead: 0, cacheWrite: 0 } }], () => undefined) ?? []).some((l: string) => /OVER CAP/.test(l)));
+  // The launching Claude Code session's variables must not reach a nested claude; the subscription arm drops the API key.
+  const saved = { cc: process.env.CLAUDECODE, key: process.env.ANTHROPIC_API_KEY };
+  process.env.CLAUDECODE = "1"; process.env.CLAUDE_CODE_GATE_PROBE = "x"; process.env.ANTHROPIC_API_KEY = saved.key ?? "sk-gate-probe";
+  const env = fn("armEnv")({ FORCE_PROMPT_CACHING_5M: "1" }, ["ANTHROPIC_API_KEY"]) ?? {};
+  check("armEnv: no CLAUDECODE / CLAUDE_CODE_*, the dropped key gone, the extra set, the rest kept",
+    !("CLAUDECODE" in env) && !Object.keys(env).some((k) => k.startsWith("CLAUDE_CODE_")) && !("ANTHROPIC_API_KEY" in env) && env.FORCE_PROMPT_CACHING_5M === "1" && env.PATH === process.env.PATH);
+  delete process.env.CLAUDE_CODE_GATE_PROBE;
+  if (saved.cc === undefined) delete process.env.CLAUDECODE; else process.env.CLAUDECODE = saved.cc;
+  if (saved.key === undefined) delete process.env.ANTHROPIC_API_KEY;
+  // The isolated CODEX_HOME: the login and nothing else (the user's global AGENTS.md told Codex to prefix every command with rtk).
+  const fakeHome = join(root, "fake-codex"); mkdirSync(fakeHome); writeFileSync(join(fakeHome, "auth.json"), "{}"); writeFileSync(join(fakeHome, "AGENTS.md"), "Always prefix shell commands with `rtk`.");
+  const savedHome = process.env.CODEX_HOME; process.env.CODEX_HOME = fakeHome;
+  const iso = fn("isolatedCodexHome")(join(root, "iso-home"));
+  if (savedHome === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = savedHome;
+  let linkTarget = ""; try { linkTarget = readlinkSync(join(iso, "auth.json")); } catch { /* not a link */ }
+  check("isolatedCodexHome: auth.json is a symlink to the real login (a refresh reaches it), and no AGENTS.md", linkTarget === join(fakeHome, "auth.json") && JSON.stringify(readdirSync(iso)) === JSON.stringify(["auth.json"]), `${linkTarget} ${iso && readdirSync(iso)}`);
+  // launchArm: the CLI's leftover background job dies with its group; the wall limit stops a hung CLI.
+  const ldir = task("launch"); mkdirSync(join(ldir, ".agent"));
+  const r1 = await T.launchArm?.("/bin/sh", ["-c", "sleep 300 & echo $! > bg.pid; echo '{\"ok\":1}'"], ldir, process.env, 30_000, "x");
+  const bgPid = Number(readFileSync(join(ldir, "bg.pid"), "utf-8").trim());
+  await new Promise((res) => setTimeout(res, 300));
+  let bgAlive = true; try { process.kill(bgPid, 0); } catch { bgAlive = false; }
+  check("launchArm: the transcript is the CLI's stdout, and a background job it left behind is killed with its group",
+    r1?.code === 0 && !r1?.timedOut && readFileSync(join(ldir, ".agent", "x_transcript.jsonl"), "utf-8").includes('"ok":1') && bgPid > 0 && !bgAlive, `code ${r1?.code}, bg ${bgPid} alive=${bgAlive}`);
+  const r2 = await T.launchArm?.("/bin/sh", ["-c", "sleep 30"], ldir, process.env, 500, "y");
+  check("launchArm: the wall limit kills a hung CLI and says so", r2?.timedOut === true && r2?.elapsedMs < 15_000, JSON.stringify(r2));
   rmSync(root, { recursive: true, force: true });
 }
 

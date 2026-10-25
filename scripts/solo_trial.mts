@@ -20,19 +20,33 @@
  *   npx tsx scripts/solo_trial.mts --print-cc --dir <task dir> --cap 9 [--thinking high]   (the claude -p arm's command)
  *   npx tsx scripts/solo_trial.mts --ingest-cc <transcript.jsonl> --dir <task dir>
  *   npx tsx scripts/solo_trial.mts --pair <solo dir> <claude -p dir>
+ *
+ * Three-arm form (2026-10-24: should Luxas dispatch experiments to Claude Code or Codex as well as pi):
+ *   npx tsx scripts/solo_trial.mts --run cc|codex --dir <task dir> --cap 9 [--thinking high] [--model X] [--wall-min 150]
+ *   npx tsx scripts/solo_trial.mts --compare <dir> <dir> [<dir> ...]
+ * --run launches the CLI in its own process group from the fresh dir and ingests it: claude -p on the
+ * subscription login with 5-minute caching forced, codex exec with an isolated CODEX_HOME (the login is
+ * shared through a symlink; the user's global AGENTS.md, which tells Codex to prefix every command with
+ * rtk, is not). codex exec has no cost cap, so --compare marks a Codex run over the cap afterwards.
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { spawnSync } from "node:child_process";
-import { dirname, join, resolve } from "node:path";
+import { spawn, spawnSync } from "node:child_process";
+import { homedir, tmpdir } from "node:os";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { installUsageTracking, readUsageTotals, unfundedSentinelPath } from "../src/usage-log.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const TASK_INPUTS = new Set(["TASK.md", "PROMPT.txt", "refs", "upstream"]);
+// data/: upstream files a task names at relative paths (ba E5's E2/E3 inputs). An earlier arm's own data/
+// passes this check, so --compare also requires equal inputsSha across the arms of a task.
+const TASK_INPUTS = new Set(["TASK.md", "PROMPT.txt", "refs", "upstream", "data"]);
 /** --print-cc's record of the claude -p arm, in the dir's .agent/; --ingest-cc builds on it. */
 export const CC_ARM_RECORD = "cc_arm.json";
 export const CC_MODEL = "claude-opus-5-5";
+/** --run codex's record, in the dir's .agent/. */
+export const CODEX_ARM_RECORD = "codex_arm.json";
+export const CODEX_MODEL = "gpt-6-astra";
 // pi's thinking levels that are also effort levels: the same word goes to the solo definition and to claude --effort.
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 
@@ -49,11 +63,26 @@ export function freshDirProblems(dir: string): string[] {
   try { names = list(dir); } catch { return [`cannot read ${dir}`]; }
   for (const n of names) {
     if (TASK_INPUTS.has(n.replace(/\/$/, ""))) continue;
-    // .agent/ may hold --print-cc's record and nothing else; a usage.log means an arm already spent here.
-    if (n === ".agent/") out.push(...list(join(dir, ".agent")).filter((f) => f !== CC_ARM_RECORD).map((f) => `.agent/${f}`));
+    // .agent/ may hold an arm's own record and nothing else; a usage.log means an arm already spent here.
+    if (n === ".agent/") out.push(...list(join(dir, ".agent")).filter((f) => f !== CC_ARM_RECORD && f !== CODEX_ARM_RECORD).map((f) => `.agent/${f}`));
     else out.push(n);
   }
   return out;
+}
+
+/** sha256 over every input file's path and bytes (not .agent/): equal across the arms of one task iff they started from the same bytes. */
+export function inputsSha(dir: string): string {
+  const rows: string[] = [];
+  const walk = (d: string) => {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      if (e.name === ".DS_Store" || (d === dir && e.name === ".agent")) continue;
+      const p = join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (e.isFile() || e.isSymbolicLink()) rows.push(`${relative(dir, p)}\0${statSync(p).isFile() ? sha256(readFileSync(p)) : "not-a-file"}`);
+    }
+  };
+  walk(dir);
+  return sha256(rows.sort().join("\n"));
 }
 
 /** The flat task dir's deliverables: results.json parses to an object and REPORT.md is not empty. */
@@ -92,11 +121,11 @@ export const soloDefinition = (thinking: string, turns: number) => ({
  * template, before {{PROJECT_DIR}}, so it is equal across task dirs whenever
  * the definition is.
  */
-export function newTrialRecord(dir: string, o: { arm: "solo" | "claude-p"; model: string; thinking: string; cap: number; turns: number | null; systemPrompt?: string }) {
+export function newTrialRecord(dir: string, o: { arm: "solo" | "claude-p" | "codex"; model: string; thinking: string; cap: number; turns: number | null; systemPrompt?: string }) {
   const git = (...a: string[]) => spawnSync("git", ["--no-optional-locks", ...a], { cwd: ROOT, encoding: "utf-8" }).stdout?.trim() ?? "";
   const commit = git("rev-parse", "HEAD") || "unknown", dirty = git("status", "--porcelain", "--untracked-files=no") !== "";
   const promptSha = sha256(readFileSync(join(dir, "PROMPT.txt")));
-  const rec: any = { arm: o.arm, model: o.model, thinking: o.thinking, cap: o.cap, turns: o.turns, commit, dirty, promptSha,
+  const rec: any = { arm: o.arm, model: o.model, thinking: o.thinking, cap: o.cap, turns: o.turns, commit, dirty, promptSha, inputsSha: inputsSha(dir),
     systemSha: o.systemPrompt === undefined ? null : sha256(o.systemPrompt), fresh: freshDirProblems(dir), dir, started: new Date().toISOString() };
   return rec;
 }
@@ -226,10 +255,163 @@ export function pairReport(a: any, b: any, price: Price): string[] {
   ];
 }
 
+/**
+ * The codex exec arm: the PROMPT.txt bytes as the prompt, the solo arm's effort word, no sandbox (the other
+ * two arms run unrestricted bash as well), no user config and no saved session. The prompt stays last.
+ */
+export function codexArmArgs(prompt: string, o: { thinking: string; model?: string }): string[] {
+  return ["exec", "--json", "--skip-git-repo-check", "--ephemeral", "--ignore-user-config", "-m", o.model ?? CODEX_MODEL,
+    "-c", `model_reasoning_effort="${o.thinking}"`, "-s", "danger-full-access", prompt];
+}
+
+// A ChatGPT-plan limit or a lost login ends a run the way an unfunded API key does: no measurement.
+const CODEX_ABORT = /usage limit|rate limit|quota|exceeded your|insufficient|unauthorized|\b401\b/i;
+
+/** The codex arm's trial.json: --run codex's record plus the --json event stream. */
+export function codexTrialRecord(pre: any, transcript: string, dir: string, run?: { timedOut?: boolean; elapsedMs?: number }) {
+  const u = { input: 0, cached: 0, cacheWrite: 0, output: 0, reasoning: 0 };
+  let completed = 0, commands = 0, edits = 0, failed = "", lastError = "";
+  for (const line of transcript.split("\n")) {
+    let x: any;
+    try { x = JSON.parse(line); } catch { continue; }
+    if (x?.type === "turn.completed") {
+      completed++;
+      const t = x.usage ?? {};
+      u.input += Number(t.input_tokens) || 0; u.cached += Number(t.cached_input_tokens) || 0; u.cacheWrite += Number(t.cache_write_input_tokens) || 0;
+      u.output += Number(t.output_tokens) || 0; u.reasoning += Number(t.reasoning_output_tokens) || 0;
+    } else if (x?.type === "turn.failed") failed = String(x.error?.message ?? "turn failed");
+    else if (x?.type === "error") lastError = String(x.message ?? "error");   // also emitted for retried stream errors
+    else if (x?.type === "item.completed") { if (x.item?.type === "command_execution") commands++; else if (x.item?.type === "file_change") edits++; }
+  }
+  const fatal = failed || (!completed ? lastError : "");
+  const aborted = fatal && CODEX_ABORT.test(fatal) ? fatal.slice(0, 200) : undefined;
+  const stopReason = run?.timedOut ? "wall_limit" : failed ? "error" : completed ? "completed" : lastError ? "error" : "no-result";
+  return { ...pre, dir, stopReason, ...(aborted ? { aborted } : {}), ...(fatal && !aborted ? { errorMessage: fatal.slice(0, 500) } : {}),
+    elapsedMs: run?.elapsedMs ?? null, calls: commands + edits,
+    // input_tokens counts the cached ones too (OpenAI's convention); reasoning_output_tokens is part of output_tokens.
+    tokens: { input: Math.max(0, u.input - u.cached), output: u.output, cacheRead: u.cached, cacheWrite: u.cacheWrite },
+    reasoningTokens: u.reasoning, cost: null, delivered: deliveredFlat(dir) };
+}
+
+/** A CODEX_HOME holding only the user's login (a symlink, so a token refresh reaches the real file): no global AGENTS.md, config or memories. */
+export function isolatedCodexHome(base = join(tmpdir(), "luxas-bench-codex-home")): string {
+  mkdirSync(base, { recursive: true });
+  const link = join(base, "auth.json");
+  try { statSync(link); } catch { symlinkSync(join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "auth.json"), link); }
+  return base;
+}
+
+/** The environment an external arm starts from: none of the launching Claude Code session's variables (a nested claude would attach to it). */
+export function armEnv(extra: Record<string, string>, drop: string[] = []): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [k, v] of Object.entries(process.env)) if (k !== "CLAUDECODE" && !k.startsWith("CLAUDE_CODE_") && !drop.includes(k)) env[k] = v;
+  return { ...env, ...extra };
+}
+
+/** Launch an external arm in its own process group; the group is killed when the CLI exits (background jobs it left) or the wall limit hits. */
+export async function launchArm(cmd: string, args: string[], dir: string, env: NodeJS.ProcessEnv, wallMs: number, tag: string) {
+  const out = openSync(join(dir, ".agent", `${tag}_transcript.jsonl`), "w"), err = openSync(join(dir, ".agent", `${tag}_stderr.txt`), "w");
+  const t0 = Date.now();
+  const child = spawn(cmd, args, { cwd: dir, env, detached: true, stdio: ["ignore", out, err] });
+  let timedOut = false;
+  const killGroup = (sig: NodeJS.Signals) => { try { process.kill(-child.pid!, sig); } catch { /* the group is gone */ } };
+  const timer = setTimeout(() => { timedOut = true; killGroup("SIGTERM"); setTimeout(() => killGroup("SIGKILL"), 10_000).unref(); }, wallMs);
+  const code: number | null = await new Promise((res) => { child.on("exit", (c) => res(c)); child.on("error", () => res(-1)); });
+  clearTimeout(timer);
+  killGroup("SIGKILL");
+  closeSync(out); closeSync(err);
+  return { code, timedOut, elapsedMs: Date.now() - t0 };
+}
+
+// gpt-6-astra has no published price: the catalog pins $5/$30 so a cost cap bites early; the 09-06 routing analysis used $3/$18.
+export const CODEX_ANALYSIS_PRICE: Price = { input: 3, output: 18, cacheRead: 0.3, cacheWrite: 0 };
+
+/** Why the arms of one task are not comparable; empty = comparable. The model is meant to differ. */
+export function compareProblems(recs: any[]): string[] {
+  const out: string[] = [];
+  for (const r of recs) {
+    const who = `${r?.arm ?? "an arm"} (${String(r?.dir ?? "?").split("/").pop()})`;
+    if (!Array.isArray(r?.fresh)) out.push(`${who}: no fresh-dir check on record`);
+    else if (r.fresh.length) out.push(`${who}: the dir was not fresh (${r.fresh.join(", ")})`);
+    if (r?.aborted) out.push(`${who}: aborted by the provider (${r.aborted}); not a measurement, rerun it`);
+    if (r?.tokens?.cacheWrite1h > 0) out.push(`${who}: ${r.tokens.cacheWrite1h} tokens written to the 1-hour cache; 5-minute caching was not in force`);
+  }
+  for (const [k, label] of [["thinking", "effort"], ["cap", "cap"], ["promptSha", "PROMPT.txt sha256"], ["inputsSha", "input files"]] as const) {
+    const vals = new Set(recs.map((r) => String(r?.[k] ?? "(none)")));
+    if (vals.size > 1) out.push(`the ${label} differs across arms: ${[...vals].map((v) => v.slice(0, 12)).join(" vs ")}`);
+  }
+  return out;
+}
+
+/** One task's arms side by side, each repriced at its own model's table; a codex run is over the cap when its analysis-price cost is. */
+export function compareReport(recs: any[], priceOf: (model: string) => Price | undefined): string[] {
+  const usd = (x: number | undefined) => typeof x === "number" ? `$${x.toFixed(2)}` : "-";
+  const cell = (r: any) => {
+    const p = priceOf(r.model), list = p ? repriceUsd(r.tokens, p) : undefined;
+    const alt = r.arm === "codex" ? repriceUsd(r.tokens, CODEX_ANALYSIS_PRICE) : undefined;
+    return {
+      arm: String(r.arm), model: String(r.model), delivered: r.delivered ? "yes" : "no", stop: String(r.stopReason),
+      wall: typeof (r.elapsedMs ?? r.wallMs) === "number" ? `${((r.elapsedMs ?? r.wallMs) / 60_000).toFixed(1)} min` : "-",
+      calls: String(r.calls ?? "-"),
+      tokens: `${((r.tokens?.input ?? 0) / 1e6).toFixed(2)}M in, ${((r.tokens?.cacheRead ?? 0) / 1e6).toFixed(2)}M cached, ${((r.tokens?.output ?? 0) / 1e3).toFixed(0)}K out`,
+      cost: alt === undefined ? usd(list) : `${usd(alt)} (catalog ${usd(list)})`,
+      overCap: alt !== undefined && alt > r.cap ? "OVER CAP" : "",
+    };
+  };
+  const cells = recs.map(cell);
+  const rows = ["arm", "model", "delivered", "stop", "wall", "calls", "tokens", "cost", "overCap"] as const;
+  return rows.map((k) => `  ${k.padEnd(10)}${cells.map((c) => String(c[k]).padEnd(40)).join("")}`);
+}
+
 async function main(argv: string[]) {
   // Declared type, not an inferred one: TS only narrows after a never-returning
   // call through a const whose type is annotated.
   const refuse: (msg: string) => never = (msg) => { console.error(msg); process.exit(2); };
+
+  if (argv.includes("--compare")) {
+    const dirs = argv.slice(argv.indexOf("--compare") + 1).filter((d) => !d.startsWith("--")).map((d) => resolve(d));
+    const recs = dirs.map((d) => readJson(join(d, "trial.json")));
+    if (dirs.length < 2 || recs.some((r) => !r)) refuse("--compare <dir> <dir> [...]: every dir needs a trial.json");
+    const { resolveModelExact } = await import("../src/agents/spawn.ts");
+    const priceOf = (m: string) => { try { return (resolveModelExact(m) as any).cost as Price; } catch { return undefined; } };
+    const problems = compareProblems(recs);
+    console.log([...compareReport(recs, priceOf), "", problems.length ? `NOT COMPARABLE:\n  - ${problems.join("\n  - ")}` : "comparable: same prompt, inputs, effort and cap; fresh dirs; no aborts"].join("\n"));
+    return;
+  }
+
+  if (argv.includes("--run")) {
+    const which = argOf(argv, "--run");
+    if (which !== "cc" && which !== "codex") refuse("--run cc|codex --dir <task dir> --cap <usd>");
+    let o!: ReturnType<typeof parseTrialArgs>;
+    try { o = parseTrialArgs(argv, false); } catch (e: any) { refuse(e.message); }
+    const problems = freshDirProblems(o.dir);
+    if (problems.length) refuse(`not a fresh task dir: ${o.dir}\n  holds ${problems.join(", ")}`);
+    const wallMs = Number(argOf(argv, "--wall-min") ?? "150") * 60_000;
+    if (!(wallMs > 0)) refuse("--wall-min must be positive");
+    mkdirSync(join(o.dir, ".agent"), { recursive: true });
+    const prompt = readFileSync(join(o.dir, "PROMPT.txt"), "utf-8");
+    if (which === "cc") {
+      const model = o.model ?? CC_MODEL;
+      const pre = { ...newTrialRecord(o.dir, { arm: "claude-p", model, thinking: o.thinking, cap: o.cap, turns: null }), launcher: "--run", auth: "subscription", cache: "FORCE_PROMPT_CACHING_5M" };
+      writeFileSync(join(o.dir, ".agent", CC_ARM_RECORD), JSON.stringify(pre, null, 2) + "\n");
+      const run = await launchArm("claude", ccArmArgs(prompt, { thinking: o.thinking, cap: o.cap, model }), o.dir,
+        armEnv({ FORCE_PROMPT_CACHING_5M: "1" }, ["ANTHROPIC_API_KEY"]), wallMs, "cc");
+      const rec: any = ccTrialRecord(pre, readFileSync(join(o.dir, ".agent", "cc_transcript.jsonl"), "utf-8"), o.dir);
+      Object.assign(rec, { wallMs: run.elapsedMs, exitCode: run.code }, run.timedOut ? { stopReason: "wall_limit" } : {});
+      writeTrial(o.dir, rec);
+      console.log(JSON.stringify(rec));
+      return;
+    }
+    const model = o.model ?? CODEX_MODEL;
+    const pre = { ...newTrialRecord(o.dir, { arm: "codex", model, thinking: o.thinking, cap: o.cap, turns: null }), launcher: "--run", auth: "chatgpt", codexHome: "isolated" };
+    writeFileSync(join(o.dir, ".agent", CODEX_ARM_RECORD), JSON.stringify(pre, null, 2) + "\n");
+    const run = await launchArm("codex", codexArmArgs(prompt, { thinking: o.thinking, model }), o.dir, armEnv({ CODEX_HOME: isolatedCodexHome() }), wallMs, "codex");
+    const rec: any = codexTrialRecord(pre, readFileSync(join(o.dir, ".agent", "codex_transcript.jsonl"), "utf-8"), o.dir, run);
+    rec.exitCode = run.code;
+    writeTrial(o.dir, rec);
+    console.log(JSON.stringify(rec));
+    return;
+  }
 
   if (argv.includes("--pair")) {
     const dirs = argv.slice(argv.indexOf("--pair") + 1, argv.indexOf("--pair") + 3).map((d) => resolve(d));

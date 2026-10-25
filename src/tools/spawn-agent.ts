@@ -11,6 +11,7 @@
 import { Type } from "@earendil-works/pi-ai/compat";
 import type { Agent as AgentType } from "@earendil-works/pi-agent-core";
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { spawnAgent, resolveModel, type SpawnAgentOptions, type SpawnAgentResult } from "../agents/spawn.js";
 import { listAgentDescriptions, getDefinition } from "../agents/registry.js";
 import { replicatorEstimateDefinition } from "../agents/registry.js";
@@ -20,10 +21,12 @@ import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readdirSync
 import { join, dirname, sep as pathSep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { pidAlive } from "../utils.js";
+import { runSweepSpawn, sweepMode } from "../contradiction-sweep.js";
 import { softCapReached, SOFT_CAP_FRACTION } from "../usage-log.js";
 import { buildClaimTable, parseFrameHeadline, parseResultsJson } from "../claims-table.js";
 import { asksArtifactLine, clearReviewCopies, readBackLines, reviewArtifactsBlock, reviewImagesBlock } from "../review-images.js";
-import { blindEstimateTask, extractBlindEstimate, extractReviewerLines, headlineDeclsFor, persistReview, reviewCompleteness, reviewerObligationBlock, selectBlindEstimateDecls, stampBlindInputs, cosmeticSpawnNotice } from "../claims-review.js";
+import { blindEstimateTask, extractBlindEstimate, extractReviewerLines, headlineDeclsFor, headlineDeclsOutOfScope, persistReview, reviewCompleteness, reviewerObligationBlock, selectBlindEstimateDecls, stampBlindInputs, cosmeticSpawnNotice } from "../claims-review.js";
+import { checkModel, runVerifierSeat, seatEngine, seatLinesSummary, seatMode } from "../verifier-seat.js";
 
 // Primary defense against path-escape via LLM-supplied id; the realpath check
 // in handleContinue is defense-in-depth in case this regex is ever widened.
@@ -57,7 +60,27 @@ interface ContinueContext {
   agentDir: string;
   getApiKey: (provider: string) => Promise<string | undefined> | string | undefined;
   parentAgentId?: string;
+  depth?: number;
   makeSpawnTool: (parentId: string, childDepth: number, childAllowedTypes?: string[]) => any;
+}
+
+/**
+ * Every run's results.json of one experiment as one digest ("" when there is
+ * none). handleContinue reviews a continued experiment again only when it moved.
+ */
+export function experimentResultsFingerprint(projectDir: string, experimentId: string): string {
+  const runsDir = join(projectDir, "data", "experiments", experimentId, "runs");
+  let runs: string[];
+  try { runs = readdirSync(runsDir).sort(); } catch { return ""; }
+  const h = createHash("sha256");
+  let any = false;
+  for (const r of runs) {
+    let body: Buffer;
+    try { body = readFileSync(join(runsDir, r, "results.json")); } catch { continue; }
+    h.update(r).update("\0").update(body).update("\0");
+    any = true;
+  }
+  return any ? h.digest("hex") : "";
 }
 
 function errResult(text: string) {
@@ -179,12 +202,16 @@ async function handleContinue(
       return continueErr(`agent type "${spawnInit.agent}" referenced by "${params.id}" is no longer registered. ${err.message}`);
     }
 
-    // Required templateVars must be recoverable. Without them the safety
-    // wrapper's path scopes (e.g. EXPERIMENT_ID embedded in allowedWriteRoots)
-    // would silently widen — refuse rather than gamble with blast radius.
+    // Required templateVars must be recoverable. A marker written before they
+    // were persisted has none, and rebuilding the safety wrapper's path scopes
+    // (e.g. EXPERIMENT_ID embedded in allowedWriteRoots) without them would
+    // silently widen — refuse rather than gamble with blast radius. A marker
+    // that has them holds exactly what the original spawn had: a template the
+    // spawn left unset (experiment's optional ROLE) was unset then too, so the
+    // rebuilt prompt and scopes match the fresh ones. Requiring it refused every
+    // continue of an experiment spawned without a role.
     const recoveredTemplateVars = spawnInit.templateVars ?? {};
-    const missing = (def.templates ?? [])
-      .filter(t => t !== "PROJECT_DIR" && !(t in recoveredTemplateVars));
+    const missing = spawnInit.templateVars ? [] : (def.templates ?? []).filter(t => t !== "PROJECT_DIR");
     if (missing.length > 0) {
       return continueErr(
         `cannot recover required template variables [${missing.join(", ")}] for "${params.id}" — ` +
@@ -196,8 +223,15 @@ async function handleContinue(
       ...recoveredTemplateVars,
       PROJECT_DIR: ctx.projectDir,
     };
+    // A continued experiment whose results moved gets the review a fresh spawn
+    // gets. Before, a revision sent with action="continue" went straight back to
+    // brain: y-magic's headline flipped that way after its last review and
+    // reached the report unreviewed. A revision that leaves every results.json
+    // as it was costs nothing extra.
+    const experimentId = spawnInit.agent === "experiment" ? mergedTemplateVars.EXPERIMENT_ID : undefined;
+    const resultsBefore = experimentId ? experimentResultsFingerprint(ctx.projectDir, String(experimentId)) : "";
     const revisionNumber = continueInits.length + 1;
-    const result = await spawnAgent({
+    let result: SpawnAgentResult = await spawnAgent({
       name: spawnInit.agent,
       templateVars: mergedTemplateVars,
       prompt: params.task,
@@ -210,6 +244,21 @@ async function handleContinue(
       createSpawnTool: ctx.makeSpawnTool,
       resume: { agentId: params.id, messages, revisionNumber },
     });
+    if (experimentId && result.success && experimentResultsFingerprint(ctx.projectDir, String(experimentId)) !== resultsBefore) {
+      result = await runExperimentReviewLoop(result, {
+        projectDir: ctx.projectDir,
+        mergedTemplateVars,
+        baseOpts: {
+          name: spawnInit.agent, templateVars: mergedTemplateVars, projectDir: ctx.projectDir,
+          getApiKey: ctx.getApiKey, parentAgentId: callerParent, depth: ctx.depth ?? 0, createSpawnTool: ctx.makeSpawnTool,
+        },
+        initialTask: spawnInit.contextTask ?? spawnInit.task,
+        getApiKey: ctx.getApiKey,
+        parentAgentId: callerParent,
+        depth: ctx.depth,
+        makeSpawnTool: ctx.makeSpawnTool,
+      });
+    }
 
     const elapsedSec = Math.floor(result.elapsed / 1000);
     const header = `[agent continue: id=${params.id}, revision=${revisionNumber}, elapsed=${elapsedSec}s, success=${result.success}]`;
@@ -499,6 +548,10 @@ export async function runExperimentReviewLoop<R extends { output: string; succes
         try { return headlineDeclsFor(buildClaimTable(projectDir), experimentId); }
         catch (err) { claimNotes.push(`[claim-table MALFORMED: ${(err as Error).message.slice(0, 120)} — no blind estimate or reviewer obligation could be computed]`); return []; }
       };
+      // Declared headline ids the obligation leaves out are named to the reviewer.
+      const outOfScopeFor = () => {
+        try { return headlineDeclsOutOfScope(buildClaimTable(projectDir), experimentId); } catch { return []; }
+      };
       let headlineDecls = scopeFor();
       let headlineIds = [...new Set(headlineDecls.map((d) => d.id))];
       // An earlier round's estimate stands while the inputs it was made
@@ -507,7 +560,10 @@ export async function runExperimentReviewLoop<R extends { output: string; succes
       const reused = new Set(headlineDecls.filter((d) => reusableBlindLine(prior, d)).map((d) => d.id));
       if (reused.size) claimNotes.push(`[blind estimates reused from earlier rounds: ${[...reused].join(", ")}]`);
       const fresh = new Map<string, string>();
-      if (MAX_REVIEW_ITERATIONS > 0 && process.env.LUXAS_BLIND_ESTIMATE !== "0") {
+      // Which seat sits before the reviewer (verifier-seat.ts seatMode): estimate (default, the
+      // replicators below), check (the verifier seat, further down), or off.
+      const seat = seatMode();
+      if (MAX_REVIEW_ITERATIONS > 0 && seat === "estimate") {
         let settled = new Set<string>();
         // `corroborated` dropped from this union 2026-09-04 with the status
         // itself. It was always OR'd with `converging`, and every row that
@@ -575,9 +631,33 @@ export async function runExperimentReviewLoop<R extends { output: string; succes
         }),
         ...fresh.values(),
       ];
-      let obligation = reviewerObligationBlock(headlineIds, blindLines);
       // MAX=0 short-circuits the loop body and falls through to return.
       const firstRound = Math.max(1, Math.floor(ctx.startRound ?? nextReviewRound(projectDir, experimentId)));
+      // Verifier seat (LUXAS_VERIFY_SEAT=check, src/verifier-seat.ts): in place of the estimators, one
+      // replicator in check mode per round, on a clone of the project — recompute each headline id by its
+      // own route before opening the producer's code, re-run the shipped code against results.json, toggle
+      // the cause in each causal sentence of the ledger. Its replication/<id>/ files come back for the claim
+      // table; its RECOMPUTED / RERUN / CONTROL lines go to the reviewer and into the review file. A seat
+      // that fails leaves the review to run without it — never a REVISE, never a re-run of the experiment.
+      let seatLines: string[] = [];
+      const runSeat = async (round: number, discriminators: string[]) => {
+        seatLines = [];
+        const outOfScope = outOfScopeFor();
+        if (!headlineDecls.length && !outOfScope.length) { claimNotes.push(`[verifier seat round ${round}: nothing to check — no declared headline quantity]`); return; }
+        try {
+          const r = await runVerifierSeat({
+            projectDir, experimentId: String(experimentId), round, decls: headlineDecls, outOfScope, priorDiscriminators: discriminators,
+            engine: seatEngine(), model: checkModel(), getApiKey, spawn, makeSpawnTool, parentAgentId, depth: (depth ?? 0) + 1, mergedTemplateVars,
+          });
+          seatLines = r.lines.map((l) => l.text);
+          claimNotes.push(`[verifier seat round ${round} (${r.engine}, ${r.model}): ${seatLinesSummary(r.lines)}${r.harvested.length ? `; carried back ${r.harvested.map((h) => h.rel).join(", ")}` : ""}${r.listCostUsd !== undefined ? `; $${r.listCostUsd.toFixed(2)} list` : ""}; ${Math.round(r.durationMs / 60_000)} min]`);
+          claimNotes.push(...r.notes.map((n) => `[verifier seat round ${round}: ${n}]`));
+        } catch (err) {
+          claimNotes.push(`[verifier seat round ${round} failed: ${(err as Error).message.replace(/\s+/g, " ").slice(0, 200)} — the reviewer ran without it]`);
+        }
+      };
+      if (MAX_REVIEW_ITERATIONS > 0 && seat === "check") await runSeat(firstRound, []);
+      let obligation = reviewerObligationBlock(headlineIds, blindLines, outOfScopeFor(), seatLines);
       const lastRound = firstRound + MAX_REVIEW_ITERATIONS - 1;
       // With no review round the round outputs never carry the notes; the declaration one must still reach brain.
       if (MAX_REVIEW_ITERATIONS === 0 && declNote) result = { ...result, output: result.output + `\n\n---\n${declNote}` };
@@ -637,7 +717,7 @@ export async function runExperimentReviewLoop<R extends { output: string; succes
         // line break, so no reader of the review file can take it for a verdict or an obligation line.
         const modelLines = !noReview && asksArtifactLine(savedModels) ? readBackLines(verdictText) : null;
         const modelRecord = !modelLines ? [] : modelLines.length ? modelLines : ["(none: a saved model was listed for the reviewer, and no `artifact …:` line was found in its reply)"];
-        try { persistReview(projectDir, experimentId, round, blindLines, reviewLines, verdictForFile, missing, feedbackForFile, modelRecord); }
+        try { persistReview(projectDir, experimentId, round, blindLines, reviewLines, verdictForFile, missing, feedbackForFile, modelRecord, seatLines); }
         catch (err) { claimNotes.push(`[review persistence failed round ${round}: ${(err as Error).message.slice(0, 100)}]`); }
         if (missing.length > 0) claimNotes.push(`[experiment_reviewer round ${round}: NO REVIEW for ${missing.join(", ")} — DISCRIMINATOR/SCALING lines missing; attestations withheld]`);
         if (modelLines?.length) claimNotes.push(...modelLines.map((l) => `[experiment_reviewer round ${round}, saved-model read-back] ${l}`));
@@ -724,7 +804,9 @@ export async function runExperimentReviewLoop<R extends { output: string; succes
         // obligation scope for the next round (blind lines are reused).
         headlineDecls = scopeFor();
         headlineIds = [...new Set(headlineDecls.map((d) => d.id))];
-        obligation = reviewerObligationBlock(headlineIds, blindLines);
+        // The revision changed files: a fresh clone, and the reviewer's DISCRIMINATOR lines to execute.
+        if (seat === "check") await runSeat(round + 1, reviewLines.filter((l) => l.kind === "DISCRIMINATOR").map((l) => l.text));
+        obligation = reviewerObligationBlock(headlineIds, blindLines, outOfScopeFor(), seatLines);
       }
       } finally { process.removeListener("exit", dropCopies); dropCopies(); }
     }
@@ -835,7 +917,7 @@ export function createSpawnAgentTool(
       if (action === "continue") {
         return await handleContinue(
           params,
-          { projectDir, agentDir, getApiKey, parentAgentId, makeSpawnTool },
+          { projectDir, agentDir, getApiKey, parentAgentId, depth, makeSpawnTool },
         );
       }
 
@@ -898,6 +980,19 @@ export function createSpawnAgentTool(
 
       if (allowedTypes && !allowedTypes.includes(params.agent)) {
         return errResult(`spawn_agent: agent "${params.agent}" is not whitelisted for this parent. Allowed: ${allowedTypes.join(", ")}.`);
+      }
+
+      // The sweep is one request (contradiction-sweep.ts), background or not.
+      // When it cannot be (too large, failed twice, unreadable), the agent below runs.
+      if (params.agent === "contradiction_auditor" && sweepMode() === "single-request") {
+        const cosmetic = cosmeticSpawnNotice(projectDir, params.agent);
+        if (cosmetic.refuse) return errResult(cosmetic.notice);
+        const sweep = await runSweepSpawn({ projectDir, parentAgentId, getApiKey });
+        if ("text" in sweep) {
+          const note = `${cosmetic.notice ? cosmetic.notice + "\n\n" : ""}${params.background ? "(Ran in the foreground as one request: there is nothing to poll.)\n" : ""}`;
+          return { content: [{ type: "text" as const, text: note + sweep.text }], details: { success: true, agentId: sweep.agentId } };
+        }
+        console.error(`[sweep] one request did not produce a sweep (${sweep.fallback}); running the contradiction_auditor agent`);
       }
 
       // Merge per-call templateVars over the factory defaults (PROJECT_DIR etc).

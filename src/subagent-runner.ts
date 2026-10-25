@@ -17,7 +17,7 @@ import { mkdirSync, appendFileSync, existsSync, readFileSync } from "node:fs";
 import { join, isAbsolute, resolve, dirname } from "node:path";
 import { buildAgentFromDefinition, createSubAgentExitCollector, createLengthRecoveryController, runWithLengthRecovery, type SpawnAgentOptions } from "./agents/spawn.js";
 import { Session, deriveState, buildSessionContext } from "./session.js";
-import { markDone, markFailed, touchHeartbeat, classifyThrownStopReason } from "./active-agents.js";
+import { markDone, markFailed, touchHeartbeat, classifyThrownStopReason, type SubAgentExit } from "./active-agents.js";
 import { getApiKey } from "./auth.js";
 import { extractTextContent } from "./utils.js";
 import { cleanMessagesForModel } from "./transform.js";
@@ -178,81 +178,92 @@ async function main() {
       lengthRecovery,
     };
 
-    const { agent, agentId, definition, tokenTap } = buildAgentFromDefinition(spawnOpts);
-    exitCollector.attach(agent, tokenTap);
+    let output: string;
+    let firstExit: SubAgentExit;
+    if (args.agent === "experiment" && process.env.LUXAS_EXPERIMENT_MODE === "claude-code") {
+      // The experiment is one `claude -p` run (src/executors/claude-code.ts);
+      // this runner already registered it and keeps its heartbeat.
+      const { runClaudeCodeExperiment } = await import("./executors/claude-code.js");
+      const cc = await runClaudeCodeExperiment(spawnOpts, { register: false });
+      output = cc.output;
+      firstExit = cc.exit;
+    } else {
+      const { agent, agentId, definition, tokenTap } = buildAgentFromDefinition(spawnOpts);
+      exitCollector.attach(agent, tokenTap);
 
-    // Resolve the actual model for cross-model message cleaning
-    const modelKey = definition.model === "inherit" ? "sonnet" : definition.model;
-    const modelProvider = modelKey.startsWith("gpt") || modelKey.startsWith("o3") || modelKey.startsWith("o4") ? "openai" : "anthropic";
+      // Resolve the actual model for cross-model message cleaning
+      const modelKey = definition.model === "inherit" ? "sonnet" : definition.model;
+      const modelProvider = modelKey.startsWith("gpt") || modelKey.startsWith("o3") || modelKey.startsWith("o4") ? "openai" : "anthropic";
 
-    // Session: open or create for crash recovery
-    const session = Session.open(sessionFile, projectDir);
-    const savedState = deriveState(session);
-    let lastSavedMsgCount = 0;
+      // Session: open or create for crash recovery
+      const session = Session.open(sessionFile, projectDir);
+      const savedState = deriveState(session);
+      let lastSavedMsgCount = 0;
 
-    // Restore from checkpoint ONLY when explicitly resuming a crashed/detached
-    // session. Without this gate, any reuse of a conversation file path would
-    // replay the full prior history into the new agent, causing O(N²) token
-    // blow-up (see plans/cheerful-weaving-flurry.md).
-    if (args.resume && savedState && session.getEntries().length > 0) {
-      const messages = buildSessionContext(session);
-      if (messages.length > 0) {
-        const cleaned = cleanMessagesForModel(messages, { provider: modelProvider, id: modelKey });
-        cleaned.push({
-          role: "user",
-          content: `[SESSION RESUMED] Restored from checkpoint. Continue your task: ${args.task}`,
-          timestamp: Date.now(),
-        });
-        agent.state.messages = cleaned;
-        lastSavedMsgCount = cleaned.length;
-      }
-    }
-
-    // Per-turn persistence: messages + state
-    agent.subscribe((event: any) => {
-      if (event.type === "turn_end") {
-        try {
-          const msgs = agent.state.messages;
-          for (let i = lastSavedMsgCount; i < msgs.length; i++) {
-            session.appendMessage(msgs[i]);
-          }
-          lastSavedMsgCount = msgs.length;
-
-          // Write state snapshot for crash recovery
-          session.append({
-            type: "state" as const,
-            cost: 0, inputTokens: 0, outputTokens: 0,
-            lastContextTokens: tokenTap.lastContextTokens, startTime: processStartTime,
-            piStopped: false, piToolCalls: 0, piLastReviewAt: 0, piReviewCount: 0,
+      // Restore from checkpoint ONLY when explicitly resuming a crashed/detached
+      // session. Without this gate, any reuse of a conversation file path would
+      // replay the full prior history into the new agent, causing O(N²) token
+      // blow-up (see plans/cheerful-weaving-flurry.md).
+      if (args.resume && savedState && session.getEntries().length > 0) {
+        const messages = buildSessionContext(session);
+        if (messages.length > 0) {
+          const cleaned = cleanMessagesForModel(messages, { provider: modelProvider, id: modelKey });
+          cleaned.push({
+            role: "user",
+            content: `[SESSION RESUMED] Restored from checkpoint. Continue your task: ${args.task}`,
+            timestamp: Date.now(),
           });
-        } catch { /* must not crash the agent */ }
+          agent.state.messages = cleaned;
+          lastSavedMsgCount = cleaned.length;
+        }
       }
-    });
 
-    // Run with automatic length-truncation recovery. Scoped under this
-    // sub-agent's owner identity (matches the in-process branch in
-    // spawn.ts) so bash jobs persist with this agent's id, not "brain".
-    await jobOwnerAls.run(
-      { agentId: args.id, agentType: args.agent, projectDir },
-      () => runWithLengthRecovery(agent, args.task, lengthRecovery),
-    );
+      // Per-turn persistence: messages + state
+      agent.subscribe((event: any) => {
+        if (event.type === "turn_end") {
+          try {
+            const msgs = agent.state.messages;
+            for (let i = lastSavedMsgCount; i < msgs.length; i++) {
+              session.appendMessage(msgs[i]);
+            }
+            lastSavedMsgCount = msgs.length;
 
-    // Extract output. extractTextContent can return "" even when content
-    // exists (e.g., assistant message that was all thinking blocks + tool_use
-    // but no text). Normalize to the sentinel so parent harvest always sees
-    // a non-empty result — its truthy-result gate would otherwise leak this
-    // agent in the registry forever.
-    const messages = agent.state.messages;
-    const lastAssistant = [...messages].reverse().find(
-      (m: any) => m.role === "assistant",
-    ) as any;
-    let output = (lastAssistant?.content ? extractTextContent(lastAssistant.content) : "") || "(no output)";
+            // Write state snapshot for crash recovery
+            session.append({
+              type: "state" as const,
+              cost: 0, inputTokens: 0, outputTokens: 0,
+              lastContextTokens: tokenTap.lastContextTokens, startTime: processStartTime,
+              piStopped: false, piToolCalls: 0, piLastReviewAt: 0, piReviewCount: 0,
+            });
+          } catch { /* must not crash the agent */ }
+        }
+      });
+
+      // Run with automatic length-truncation recovery. Scoped under this
+      // sub-agent's owner identity (matches the in-process branch in
+      // spawn.ts) so bash jobs persist with this agent's id, not "brain".
+      await jobOwnerAls.run(
+        { agentId: args.id, agentType: args.agent, projectDir },
+        () => runWithLengthRecovery(agent, args.task, lengthRecovery),
+      );
+
+      // Extract output. extractTextContent can return "" even when content
+      // exists (e.g., assistant message that was all thinking blocks + tool_use
+      // but no text). Normalize to the sentinel so parent harvest always sees
+      // a non-empty result — its truthy-result gate would otherwise leak this
+      // agent in the registry forever.
+      const messages = agent.state.messages;
+      const lastAssistant = [...messages].reverse().find(
+        (m: any) => m.role === "assistant",
+      ) as any;
+      output = (lastAssistant?.content ? extractTextContent(lastAssistant.content) : "") || "(no output)";
+      firstExit = exitCollector.finalize();
+    }
 
     // A background experiment gets the same harness review as a foreground
     // one. Without this, background spawns were never reviewed at all
     // (yttrium-tweezer E1–E4; notes/backtest-2026-09-24/SUMMARY.md §2).
     // A stopReason=error run is not a completed experiment: nothing to review.
-    const firstExit = exitCollector.finalize();
     let exit = firstExit;
     if (args.agent === "experiment" && firstExit.stopReason !== "error") {
       try {

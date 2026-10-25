@@ -89,6 +89,29 @@ export function headlineDeclsFor(table: ClaimTable, experimentId: string, cap = 
   return [...inFrame, ...rest.slice(0, cap)];
 }
 
+/**
+ * This experiment's declared headline quantities that headlineDeclsFor leaves
+ * out of the obligation, and why: no single numeric value at the key (an
+ * object, a curve), or past the cap. The reviewer is told about them, because
+ * a block that lists only the kept ids reads as the whole headline set
+ * (verifier bench A3, 2026-10-21: Dy E1's two T2* headlines resolve to
+ * objects, the reviewer was shown clock_point_B and transition_frequency only,
+ * and never looked at T2*, where both of the bench's E1 faults sat).
+ */
+export function headlineDeclsOutOfScope(table: ClaimTable, experimentId: string): { id: string; key: string; why: string }[] {
+  const e = experimentNumberOf(experimentId);
+  if (!e) return [];
+  const kept = new Set(headlineDeclsFor(table, experimentId).map((d) => d.id));
+  const frame = new Set(table.frameHeadline ?? []);
+  const out = new Map<string, { id: string; key: string; why: string }>();
+  for (const d of table.decls) {
+    if (d.experiment !== e || kept.has(d.id) || out.has(d.id)) continue;
+    if (!(d.headline || frame.has(d.id) || table.headlineDeclared.includes(d.id))) continue;
+    out.set(d.id, { id: d.id, key: d.key, why: d.value === undefined ? "no single numeric value" : `past the ${OBLIGATION_CAP_PER_EXPERIMENT}-id cap` });
+  }
+  return [...out.values()];
+}
+
 /** Project-wide obligation scope: frame ids ∪ each experiment's capped headline set (PI estimate rule uses this). */
 export function obligationScope(table: ClaimTable): string[] {
   const out = new Set<string>(table.frameHeadline ?? []);
@@ -213,7 +236,7 @@ export function reusableBlindLine(lines: string[], decl: { id: string; inputs: R
 }
 
 /** Write reviews/experiment_review_<EID>_r<round>.md — the file claims-table.ts reads. */
-export function persistReview(projectDir: string, experimentId: string, round: number, blindLines: string[], reviewerLines: ReviewLine[], verdictLine: string, missing: string[], feedback?: string, artifactLines?: string[]): string {
+export function persistReview(projectDir: string, experimentId: string, round: number, blindLines: string[], reviewerLines: ReviewLine[], verdictLine: string, missing: string[], feedback?: string, artifactLines?: string[], seatLines?: string[]): string {
   const dir = join(projectDir, "reviews");
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   const path = join(dir, `experiment_review_${experimentId}_r${round}.md`);
@@ -227,6 +250,11 @@ export function persistReview(projectDir: string, experimentId: string, round: n
     `Blind estimates (harness-spawned replicator, recorded BEFORE the reviewer ran):`,
     ...(blindLines.length ? blindLines : ["(none — no declared headline quantity for this experiment, or estimator disabled/failed)"]),
     ``,
+    // Verifier seat (src/verifier-seat.ts): RECOMPUTED / RERUN / CONTROL lines, executed on a clone before the
+    // reviewer ran. The claim table reads the seat's files under replication/, not these lines; they are for
+    // the reviewer, the brain and the finish-gate reader. With no seat the section is absent and the file is
+    // what it was.
+    ...(seatLines?.length ? [`Verifier seat (check mode; harness-run replicator, EXECUTED before the reviewer ran):`, ...seatLines, ``] : []),
     `Reviewer obligation lines (design §3.5):`,
     ...(persisted.length ? persisted.map((l) => l.text) : ["(none)"]),
     ``,
@@ -417,13 +445,30 @@ export function reviewOpenIssues(projectDir: string): ClaimIssue[] {
 }
 
 
-/** Headline ids (this experiment's) for the reviewer prompt, plus the rendered blind lines. */
-export function reviewerObligationBlock(headlineIds: string[], blindLines: string[]): string {
-  if (headlineIds.length === 0) return "";
+/**
+ * Headline ids (this experiment's) for the reviewer prompt, plus the rendered
+ * blind lines, plus the declared headline ids the obligation left out
+ * (headlineDeclsOutOfScope): named, so the reviewer does not take the kept ids
+ * for the whole headline set.
+ */
+export function reviewerObligationBlock(headlineIds: string[], blindLines: string[], outOfScope: { id: string; key: string; why: string }[] = [], seatLines: string[] = []): string {
+  const left = outOfScope.length
+    ? `Also declared headline but outside this block: ${outOfScope.map((o) => `${o.id} (${o.key}: ${o.why})`).join(", ")}. Their numbers are headline claims too: check them as you check the others. No DISCRIMINATOR or SCALING line is owed for them.`
+    : "";
+  // Verifier seat (src/verifier-seat.ts): executed computations, recorded before the reviewer ran. Absent → the block is what it was.
+  const seat = seatLines.length
+    ? [
+      `Verifier seat lines recorded by the harness (a replicator in check mode EXECUTED these on a clone of the project before you ran — evidence, not opinion; its files are under data/experiments/<this experiment>/replication/<id>/):`,
+      ...seatLines,
+      `Read them as: RECOMPUTED = the seat's own-route value — compare it with the producer's; RERUN = the shipped code re-run against results.json — \`differ\` means the reported number is not what the code produces: an Issue quoting both numbers, unless you show the seat ran the wrong script; CONTROL = a ledger sentence with its cause toggled — \`refutes\` means the attribution does not hold: an Issue. Do not re-run what the seat ran unless you have a reason to doubt it.`,
+    ]
+    : [];
+  if (headlineIds.length === 0) return left || seat.length ? [``, `<claim_obligation>`, ...(left ? [left] : []), ...seat, `</claim_obligation>`].join("\n") : "";
   return [
     ``,
     `<claim_obligation>`,
     `Headline quantities in your scope: ${headlineIds.join(", ")}.`,
+    ...(left ? [left] : []),
     `For EACH, your response MUST contain (anywhere, one per line, exact prefixes):`,
     `  DISCRIMINATOR: <id> — if right: <prediction>; if wrong: <prediction>; computation: <what would tell them apart>`,
     `  SCALING: <id> — expected <exponent> in <parameter>; observed <exponent> from <artifact>   (or "observed not swept")`,
@@ -433,6 +478,7 @@ export function reviewerObligationBlock(headlineIds: string[], blindLines: strin
     `  inputs: an undeclared upstream drives the result;  model: the same formalism, separately coded;  code: the same script or function;  values: one route reuses the other's numbers`,
     `A response missing a DISCRIMINATOR or a SCALING line for a headline quantity is recorded as NO REVIEW for it, and none of its attestation lines count.`,
     blindLines.length ? `Blind estimates already recorded by the harness (do not re-derive; compare):\n${blindLines.join("\n")}` : `No blind estimate was available for these quantities.`,
+    ...seat,
     `</claim_obligation>`,
   ].join("\n");
 }

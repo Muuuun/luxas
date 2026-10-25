@@ -374,5 +374,29 @@ check("replicator templates carry QUANTITY_ID and MODE", (rep?.templates ?? []).
 	check(`§C9(e) every line the old grammar accepted parses identically with no unit (${accepted - changed.length}/${accepted})`, accepted >= 137 && changed.length === 0, changed.slice(0, 3).join(" | "));
 }
 
+// §A3 — headline quantities the obligation leaves out are named to the
+// reviewer, with why. Verifier bench A3 (2026-10-21): Dy E1's two T2*
+// headlines resolve to objects with no single value, headlineDeclsFor drops
+// them, and the reviewer, told "Headline quantities in your scope:
+// clock_point_B, transition_frequency", never looked at T2* — where both of
+// the bench's E1 faults sat (a planted 2π and a stale floor).
+{
+	const decl = (id: string, value: number | undefined, headline = true) => ({ id, key: `computed.${id}`, experiment: "E1", headline, inputs: {}, value });
+	const tbl = (decls: any[]) => ({ decls, frameHeadline: [], headlineDeclared: [], verdicts: [], rows: [] });
+	const t1 = tbl([decl("clock_B", 3136.8), decl("freq", 1.2e5), decl("T2star_clock", undefined), decl("not_headline", 7, false)]);
+	const out1 = R.headlineDeclsOutOfScope?.(t1, "E1_probe") ?? [];
+	check("§A3 a headline id with no single numeric value is reported out of scope, with its key and why",
+		out1.length === 1 && out1[0].id === "T2star_clock" && out1[0].key === "computed.T2star_clock" && /no single numeric value/.test(out1[0].why), JSON.stringify(out1));
+	check("§A3 the in-scope set is unchanged (numeric headline ids only)", R.headlineDeclsFor(t1, "E1_probe").map((d: any) => d.id).join() === "clock_B,freq");
+	const blk = R.reviewerObligationBlock(["clock_B", "freq"], [], out1);
+	check("§A3 the reviewer's block names it and says its number is a headline claim to check", /T2star_clock \(computed\.T2star_clock: no single numeric value/.test(blk) && /headline claims too/.test(blk) && blk.includes("</claim_obligation>"), blk.slice(0, 400));
+	check("§A3 nothing left out: the block is the same as before (no extra line)", R.reviewerObligationBlock(["clock_B", "freq"], [], []) === R.reviewerObligationBlock(["clock_B", "freq"], []) && !/outside this block/.test(R.reviewerObligationBlock(["clock_B", "freq"], [])));
+	const t2 = tbl(["q1", "q2", "q3", "q4", "q5"].map((id, i) => decl(id, i + 1)));
+	const out2 = R.headlineDeclsOutOfScope?.(t2, "E1_probe") ?? [];
+	check("§A3 ids past the cap are reported too", out2.length === 2 && out2.every((o: any) => /past the 3-id cap/.test(o.why)), JSON.stringify(out2));
+	const only = R.reviewerObligationBlock([], [], out1);
+	check("§A3 with nothing in scope but something left out, the block still names it", only !== "" && /T2star_clock/.test(only) && !/For EACH/.test(only), only);
+}
+
 console.log(failures === 0 ? "\nALL PASS — reviewers estimate, reviews persist, disputes escalate to people, replicators are blind." : `\n${failures} check(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

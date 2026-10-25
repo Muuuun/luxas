@@ -490,6 +490,14 @@ const PI_REVIEWER_AGENTS = new Set([
   // facts become recorded knowledge, and the turn the producer model fails at
   // (deepseek: 100% hard-error on search-failure interpretation, n=20).
   "ledger_writer",
+  // The two report-level checkers (2026-10-20). On the producer profile they
+  // audited deepseek-v4-pro's work with deepseek-v4-pro, and that failure was
+  // a false agreement: 297nm's contradiction auditor reconciled 99.89 vs
+  // 99.909 as "two models". As auditors on model_bench, Opus 5.5 scored
+  // 0.78–0.94 and deepseek-v4-pro 0.15–0.44. The replicator stays on the
+  // profile until the verifier bench says whether blind estimates earn it.
+  "contradiction_auditor",
+  "prior_art_auditor",
 ]);
 //  SUPERSEDED IN PART 2026-10-06 — see toolReviewDefault() below: under a
 //  non-Anthropic producer tool_review now runs on claude-opus-5-5, and falls
@@ -814,6 +822,13 @@ export interface SpawnAgentOptions {
   prompt: string;
   /** Project directory (for tool creation). */
   projectDir: string;
+  /**
+   * Directory the agent's tools and safety roots resolve against when it is
+   * not the project: the verifier seat (src/verifier-seat.ts) works on a
+   * clone of the project while its transcript, registry entry and usage rows
+   * stay under projectDir/.agent. Default projectDir.
+   */
+  workDir?: string;
   /** API key resolver. */
   getApiKey: (provider: string) => Promise<string | undefined> | string | undefined;
   /** Override the definition's default model. */
@@ -953,7 +968,8 @@ export function buildAgentFromDefinition(opts: SpawnAgentOptions): BuiltAgent {
   const systemPrompt = resolvePrompt(def, templateVarsWithSpawn);
 
   // 3. Build tools from tool-sets
-  let tools = resolveToolSets(def.toolSets, opts.projectDir);
+  const toolDir = opts.workDir ?? opts.projectDir;
+  let tools = resolveToolSets(def.toolSets, toolDir);
 
   // 4. Apply safety wrapper if defined.
   // Create a per-run FileContextCache and wire it into the wrapper's
@@ -968,7 +984,7 @@ export function buildAgentFromDefinition(opts: SpawnAgentOptions): BuiltAgent {
 
   const wrapper = buildSafetyWrapper(def.safety);
   if (wrapper) {
-    tools = wrapper(tools, opts.projectDir, templateVarsWithSpawn, mergedHooks);
+    tools = wrapper(tools, toolDir, templateVarsWithSpawn, mergedHooks);
   }
 
   // 5. Add tool overrides (e.g., PI verdict tool)
@@ -1382,6 +1398,14 @@ export function buildSubAgentExit(
 // ── Spawn (in-process mode) ─────────────────────────
 
 export async function spawnAgent(opts: SpawnAgentOptions): Promise<SpawnAgentResult> {
+  // LUXAS_EXPERIMENT_MODE=claude-code: the experiment is one `claude -p` run
+  // (src/executors/claude-code.ts). Every path an experiment takes comes
+  // through here — the first spawn, action="continue", and the review loop's
+  // re-runs — so they all reach the same executor and session.
+  if (opts.name === "experiment" && process.env.LUXAS_EXPERIMENT_MODE === "claude-code") {
+    const { runClaudeCodeExperiment } = await import("../executors/claude-code.js");
+    return runClaudeCodeExperiment(opts);
+  }
   const collector = createSubAgentExitCollector(Date.now());
   const recovery = createLengthRecoveryController();
   collector.attachRecovery(recovery);

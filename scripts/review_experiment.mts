@@ -68,6 +68,7 @@ import { findRunProcesses, parsePs, readRunPid } from "../src/stop-run.js";
 import { archiveUnfundedSentinel, installUsageTracking, readUsageByAgent, readUsageTotals, UNFUNDED_SENTINEL } from "../src/usage-log.js";
 import { SOFT_CAP_FRACTION } from "../src/hooks.js";
 import { createSpawnToolFactory, experimentDeliveryProblem, runExperimentReviewLoop } from "../src/tools/spawn-agent.js";
+import { checkModel, seatEngine } from "../src/verifier-seat.js";
 
 // The loop numbers rounds and reads earlier blind lines with these same two.
 export { nextReviewRound, priorBlindLines } from "../src/claims-review.js";
@@ -104,7 +105,7 @@ export function blindPlan(argv: string[], projectDir: string, experimentId: stri
 }
 
 /** Flags that take a value, and flags that stand alone; any other argument starting with "-" is refused. */
-const VALUE_FLAGS = ["--profile", "--blind-lines", "--summary", "--max-usd", "--raise-run-cap"];
+const VALUE_FLAGS = ["--profile", "--blind-lines", "--summary", "--max-usd", "--raise-run-cap", "--seat", "--seat-engine"];
 const BARE_FLAGS = ["--blind", "--no-blind", "--check"];
 
 /**
@@ -124,6 +125,26 @@ export function argvProblem(argv: string[]): string | null {
     } else if (++positionals > 2) return `unexpected argument "${a}" (a flag without its dashes?)`;
   }
   return null;
+}
+
+/**
+ * Which seat sits before the reviewer (src/verifier-seat.ts seatMode), from the flags. --seat check puts
+ * the verifier seat (recompute on a clone, re-run the shipped code, toggle causes) in place of the blind
+ * estimators; --seat none runs neither; default estimate, today's behaviour. --seat-engine claude-code
+ * runs the check seat as `claude -p` on the subscription login (the measured route) instead of an
+ * in-process pi agent on the API key. --no-blind switches every seat off, so beside --seat check it is
+ * refused rather than silently winning: the invocation would look like a seat run and be none.
+ */
+export function seatPlan(argv: string[]): { mode: "estimate" | "check" | "off"; engine: "pi" | "claude-code"; refuse?: string } {
+  const flag = (name: string) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined; };
+  const seat = flag("--seat"), engine = flag("--seat-engine");
+  const refuse = (why: string) => ({ mode: "off" as const, engine: "pi" as const, refuse: why });
+  if (seat !== undefined && !["check", "estimate", "none"].includes(seat)) return refuse(`--seat must be check, estimate or none, got "${seat}"`);
+  if (engine !== undefined && !["pi", "claude-code"].includes(engine)) return refuse(`--seat-engine must be pi or claude-code, got "${engine}"`);
+  if (seat === "check" && argv.includes("--no-blind")) return refuse("--no-blind switches every seat off, the check seat included; with --seat check drop it (the check seat estimates nothing)");
+  const mode = argv.includes("--no-blind") || seat === "none" ? "off" : seat === "check" ? "check" : "estimate";
+  // No flag → the environment's choice (LUXAS_SEAT_ENGINE), so an operator export is not silently overridden.
+  return { mode, engine: engine === undefined ? seatEngine() : engine === "claude-code" ? "claude-code" : "pi" };
 }
 
 /** The newest run's results.json, parsed; null when there is none. */
@@ -298,7 +319,7 @@ export function clearStaleUnfundedSentinel(projectDir: string, psOut?: string): 
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const argv = process.argv.slice(2);
-  const usage = "usage: review_experiment.mts <projectDir> <EXPERIMENT_ID> [--profile dual|claude] [--blind | --no-blind | --blind-lines <file>] [--summary <file>] [--max-usd N] [--raise-run-cap N]\n" +
+  const usage = "usage: review_experiment.mts <projectDir> <EXPERIMENT_ID> [--profile dual|claude] [--blind | --no-blind | --blind-lines <file>] [--seat check|estimate|none] [--seat-engine pi|claude-code] [--summary <file>] [--max-usd N] [--raise-run-cap N]\n" +
     "       review_experiment.mts <projectDir> --check";
   const argProblem = argvProblem(argv);
   if (argProblem) { console.error(`${argProblem} — nothing spent\n${usage}`); process.exit(2); }
@@ -330,6 +351,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   // An argument mistake, so ahead of the delivery check and of everything that spends, writes or archives.
   const plan = blindPlan(argv, projectDir, experimentId);
   if (plan.refuse) { console.error(plan.refuse); process.exit(2); }
+  const seat = seatPlan(argv);
+  if (seat.refuse) { console.error(seat.refuse); process.exit(2); }
   const notDelivered = experimentDeliveryProblem(projectDir, experimentId);
   if (notDelivered) {
     console.error(`NOT DELIVERED: ${notDelivered} — nothing to review, nothing spent.`);
@@ -370,6 +393,10 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 
   const round = nextReviewRound(projectDir, experimentId);
   if (!plan.estimate) process.env.LUXAS_BLIND_ESTIMATE = "0";
+  // The seat before the reviewer (src/verifier-seat.ts): the loop reads these two variables.
+  if (seat.mode === "check") process.env.LUXAS_VERIFY_SEAT = "check";
+  else if (seat.mode === "off") process.env.LUXAS_VERIFY_SEAT = "0";
+  process.env.LUXAS_SEAT_ENGINE = seat.engine;
   // For the start line only; the loop decides the same way and notes any id it caps or finds settled.
   let decls: ReturnType<typeof headlineDeclsFor> = [];
   try { decls = headlineDeclsFor(buildClaimTable(projectDir), experimentId); } catch { /* the loop reports a malformed table */ }
@@ -382,7 +409,10 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     ? `cost cap $${budget.cap.toFixed(2)} — the run's cap ($${budget.runCap}, ${budget.runCapSource}) binds before --max-usd ${maxUsd}: $${(budget.cap - budget.spent).toFixed(2)} left`
     : `cost cap $${budget.cap.toFixed(2)} = ledger $${budget.spent.toFixed(2)} + --max-usd ${maxUsd} (the run's $${budget.runCap} cap, ${budget.runCapSource}, binds only when that sum exceeds it)`;
   const handed = flag("--blind-lines") ? `handed from ${flag("--blind-lines")}: ${plan.prior.length}` : `reused ${reusedCount}`;
-  console.error(`◈ review_experiment ${experimentId} — round ${round}, profile ${profile}, blind estimates ${handed} / estimating ${toEstimate}, ${capNote}`);
+  const seatNote = seat.mode === "check"
+    ? `verifier seat check (${seat.engine}, ${checkModel()}${seat.engine === "claude-code" ? ", subscription login, list price not cash" : ", on the API key: --max-usd must cover it"}), blind estimates ${handed} / estimating 0 (the seat replaces them)`
+    : `blind estimates ${handed} / estimating ${toEstimate}`;
+  console.error(`◈ review_experiment ${experimentId} — round ${round}, profile ${profile}, ${seatNote}, ${capNote}`);
   if (problems.length) console.error(`◈ write-time checks the executor never saw (${problems.length}):\n${problems.map((p) => `  - ${p.split("\n")[0].slice(0, 300)}`).join("\n")}`);
   else console.error("◈ write-time checks: clean");
 

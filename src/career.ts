@@ -158,7 +158,10 @@ export function buildCareerBlock(researchText: string, cap = 7000): string {
   const parts: string[] = [];
   if (findings.length) {
     parts.push("## Established findings (INHERITED-UNVERIFIED — priors and Fermi anchors, never report citations; re-derive through this project's evidence chain)\n" +
-      findings.map((r) => `- [${r.project}, ${r.date}] ${r.text}${r.value !== null ? ` (= ${r.value}, grade ${r.grade})` : ""}`).join("\n"));
+      // No value/grade suffix (2026-10-20): the grade was the old project's own,
+      // and on the 2026-09-24 backtest inherited findings caught no defect and
+      // reinforced two errors. The sentence keeps whatever number it states.
+      findings.map((r) => `- [${r.project}, ${r.date}] ${r.text}`).join("\n"));
   }
   if (corrections.length) {
     parts.push("## Corrections you have already paid for (do not re-assume the premise)\n" +

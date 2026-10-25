@@ -848,7 +848,10 @@ export function buildClaimTable(projectDir: string): ClaimTable {
         const r = parseResultsJson(readFileSync(join(repDir, f), "utf-8"));
         const v = num(r?.value);
         if (typeof r?.quantity !== "string" || v === undefined) { malformed.push(`${e.id}: ${rel} needs {quantity: string, value: number}`); continue; }
-        if (byEstimator(basename(e.dir), r.quantity)) {
+        // The verifier seat's files are stamped seat:"check" by the harness when carried back
+        // (verifier-seat.ts harvestSeatReplications): an estimator that once ran for the id does
+        // not make them the estimator's.
+        if (byEstimator(basename(e.dir), r.quantity) && r?.seat !== "check") {
           estimatorWrote.set(r.quantity, [...(estimatorWrote.get(r.quantity) ?? []), `${e.id}: ${rel} written by the blind estimator — not a second leg`]);
           continue;
         }

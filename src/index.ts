@@ -547,6 +547,16 @@ async function run(dir: string, modelName: string, userDirective?: string, maxCo
     }
   }
 
+  // Claude Code executor: which login pays, and whether the CLI runs, before any spend.
+  if (process.env.LUXAS_EXPERIMENT_MODE === "claude-code") {
+    const { claudeCodePreflight } = await import("./executors/claude-code.js");
+    const problems = claudeCodePreflight(process.env, dir);
+    if (problems.length) {
+      for (const p of problems) console.error(`✗ ${p}`);
+      process.exit(1);
+    }
+  }
+
   // Model liveness + freshness, before any spend. The key check above proves a
   // credential EXISTS; it does not prove the model still does. Kimi K2.5 passed
   // that check every time while 404ing on every call, and the Ba run burned
@@ -1080,7 +1090,10 @@ function archiveIfFinished(dir: string): string | undefined {
   // possibly schedules a deep review — all in the background. Detached so
   // the new session doesn't wait; ignore failures entirely (hook is
   // best-effort and must never block the research run).
-  if (donePath) {
+  // Opt-in since 2026-10-20 (LUXAS_POST_SESSION_HOOK=1): its model calls are
+  // outside the run's cost cap and ledger, and the meta-agents had produced
+  // no merged change for about $23 of such calls.
+  if (donePath && process.env.LUXAS_POST_SESSION_HOOK === "1") {
     try {
       const moduleDir = dirname(fileURLToPath(import.meta.url));
       const sisyphusRoot = resolve(moduleDir, "..");

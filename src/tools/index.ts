@@ -8,6 +8,7 @@ import { md5OrNull, extractFrontmatterBlock, parseAuditFrontmatter, parseFollowU
 import type { Agent } from "@earendil-works/pi-agent-core";
 import { createReportTools, parseCompileVerdict, gateBlockingIssues } from "./report.js";
 import { reportIntegrityIssues, formatIntegrityIssues, evidenceSourcesDigest, cheapPendingTrailer } from "./report-integrity.js";
+import { refreshSweepForFinish, sweepMode } from "../contradiction-sweep.js";
 import { createInitReportTool } from "./init-report.js";
 import { pdfPagesDigest } from "./figure-gen.js";
 import { createAuthorityEscalationTools } from "./authority-escalation.js";
@@ -185,6 +186,68 @@ export function parseLatestPIVerdict(projectDir: string):
   if (genuine.length === 0) return null;
   const last = genuine[genuine.length - 1][1].toLowerCase() as "continue" | "steer" | "stop";
   return { verdict: last, reviewPath: p, reviewMtimeMs: mtimeMs };
+}
+
+/**
+ * The document checks at the end of finish(), evaluated together and without
+ * side effects, in the order they have to be cleared: compile, contradiction
+ * sweep, typesetter, PI review. finish() still refuses at its first failing
+ * check with that check's first line (FinishEscalation keys on it); when more
+ * than one is outstanding the refusal also lists them all. On the 2026-10-20
+ * blender-02 run they came back one per finish() call (sweep stale, typesetter
+ * notes missing, report.tex edited after the compile): three refusals, and
+ * $3.23 of the run's $16.86 spent after the first finish().
+ */
+export function outstandingFinalSteps(projectDir: string): string[] {
+  const steps: string[] = [];
+  const mtime = (p: string) => { try { return statSync(p).mtimeMs; } catch { return 0; } };
+  const pdfPath = join(projectDir, "report", "report.pdf");
+  const pdfMs = mtime(pdfPath);
+  const recompile = pdfMs > 0 && mtime(join(projectDir, "report", "report.tex")) > pdfMs;
+  if (recompile) steps.push("compile_latex — report.tex was edited after the last compile");
+
+  const sweep = readFileSafe(join(projectDir, "reviews", "contradiction_sweep.md"));
+  const sweepBlock = sweep ? extractFrontmatterBlock(sweep) : null;
+  const sfm = sweepBlock ? parseAuditFrontmatter(sweepBlock) : null;
+  if (!sweep) steps.push("spawn contradiction_auditor — reviews/contradiction_sweep.md is missing");
+  else if (!sfm?.status || !sfm.sources_md5) steps.push("spawn contradiction_auditor — contradiction_sweep.md has no status / sources_md5");
+  else if (sfm.status !== "clean") steps.push(`reconcile the contradictions listed in contradiction_sweep.md (status "${sfm.status}"), then ` +
+    (sweepMode() === "single-request" ? "finish() re-runs the sweep (contradiction_auditor, one request)" : "spawn contradiction_auditor"));
+  else if (sfm.sources_md5 !== evidenceSourcesDigest(projectDir)) steps.push("spawn contradiction_auditor — report.tex, notes/experiments.md or a results.json changed since the sweep");
+
+  const notes = readFileSafe(join(projectDir, "reviews", "typesetter_notes.md"));
+  const notesBlock = notes ? extractFrontmatterBlock(notes) : null;
+  const tfm = notesBlock ? parseAuditFrontmatter(notesBlock) : null;
+  if (!notes) steps.push("spawn typesetter — reviews/typesetter_notes.md is missing");
+  else if (!tfm?.status || !tfm.report_pdf_md5) steps.push("spawn typesetter — typesetter_notes.md has no status / report_pdf_md5");
+  else if (tfm.status !== "all-clear") steps.push(`fix the layout issues in typesetter_notes.md (status "${tfm.status}"), then spawn typesetter`);
+  else if (recompile) steps.push("spawn typesetter on the recompiled PDF");
+  else {
+    const md5 = md5OrNull(pdfPath);
+    if (md5 && md5 !== tfm.report_pdf_md5) {
+      const digest = pdfPagesDigest(pdfPath);
+      if (!(digest !== null && tfm.pages_digest !== undefined && digest === tfm.pages_digest)) {
+        steps.push("spawn typesetter — it audited a different report.pdf");
+      }
+    }
+  }
+
+  const pi = parseLatestPIVerdict(projectDir);
+  if (pdfMs > 0 && (recompile || !pi || pi.reviewMtimeMs < pdfMs)) {
+    steps.push(`request_pi_review(milestone="final report") on the compiled PDF`);
+  } else if (pi?.verdict === "steer" && mtime(join(projectDir, "reviews", "pi_pushback.md")) <= pi.reviewMtimeMs) {
+    steps.push("address the PI's STEER and request_pi_review again, or write reviews/pi_pushback.md");
+  }
+  return steps;
+}
+
+/** Appended to a document-check refusal when more than one check is outstanding; "" otherwise. */
+export function finalStepsNote(projectDir: string): string {
+  const steps = outstandingFinalSteps(projectDir);
+  if (steps.length < 2) return "";
+  return `\n\nEvery finalization check still outstanding, in the order to clear them ` +
+    `(an edit to report.tex after any step restarts the list at compile_latex):\n` +
+    steps.map((s, i) => `  ${i + 1}. ${s}`).join("\n") + `\nthen finish().`;
 }
 
 /** Which finish path stopped the loop (see exit-state.ts for what each means to a reader). */
@@ -1022,6 +1085,10 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
       // sweep findings force content edits that invalidate the expensive
       // vision audit, so content must settle first — the surgery run burned
       // two full ~30min typesetter passes to the old order.
+      // A missing or stale sweep is re-run here first, as one request
+      // (contradiction-sweep.ts); the refusals below then read its file, and
+      // stand unchanged when it could not run.
+      await refreshSweepForFinish(projectDir, getApiKey);
       const sweepPath = join(projectDir, "reviews", "contradiction_sweep.md");
       const sweepSrc = existsSync(sweepPath) ? readFileSync(sweepPath, "utf-8") : null;
       if (sweepSrc === null) {
@@ -1034,7 +1101,8 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
           `Run the sweep (and any content fixes it forces) BEFORE the typesetter ` +
           `audit — every content edit invalidates a typesetter pass, and typesetter ` +
           `is the most expensive auditor. Once the sweep returns status: clean, ` +
-          `finish() proceeds to the layout gate.`
+          `finish() proceeds to the layout gate.` +
+            finalStepsNote(projectDir)
         }] };
       }
       {
@@ -1043,7 +1111,8 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
         if (!fmB || !sfm.status || !sfm.sources_md5) {
           return { content: [{ type: "text" as const, text:
             `Cannot finish: reviews/contradiction_sweep.md is missing YAML frontmatter ` +
-            `keys (status, sources_md5). Re-spawn contradiction_auditor.`
+            `keys (status, sources_md5). Re-spawn contradiction_auditor.` +
+            finalStepsNote(projectDir)
           }] };
         }
         if (sfm.status !== "clean") {
@@ -1051,9 +1120,12 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
           return { content: [{ type: "text" as const, text:
             `Cannot finish: reviews/contradiction_sweep.md status is "${sfm.status}". ` +
             `Reconcile each contradiction (one value with a cited source, or state the ` +
-            `differing conditions at both sites), recompile, then re-spawn ` +
-            `contradiction_auditor.\n\n` +
-            (summaryMatch ? `Contradictions:\n${summaryMatch[1].trim().slice(0, 1500)}` : "")
+            `differing conditions at both sites), recompile, then ` +
+            (sweepMode() === "single-request"
+              ? `call finish() again: it re-runs the sweep itself once report.tex, notes/experiments.md or a results.json has changed.\n\n`
+              : `re-spawn contradiction_auditor.\n\n`) +
+            (summaryMatch ? `Contradictions:\n${summaryMatch[1].trim().slice(0, 1500)}` : "") +
+            finalStepsNote(projectDir)
           }] };
         }
         // Keyed on the SOURCE files the auditor reads (report.tex + ledger +
@@ -1067,7 +1139,8 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
             `Cannot finish: reviews/contradiction_sweep.md swept different source files ` +
             `(recorded sources_md5 ${sfm.sources_md5} does not match the current ` +
             `sources) — report.tex, notes/experiments.md or a ` +
-            `results.json changed since the sweep. Re-spawn contradiction_auditor.`
+            `results.json changed since the sweep. Re-spawn contradiction_auditor.` +
+            finalStepsNote(projectDir)
           }] };
         }
       }
@@ -1088,7 +1161,8 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
           `page-by-page for layout issues per your prompt. Write reviews/` +
           `typesetter_notes.md.", background=false)\n\n` +
           `Once it returns status: all-clear (and the PDF hasn't been ` +
-          `recompiled since), finish() is allowed.`
+          `recompiled since), finish() is allowed.` +
+            finalStepsNote(projectDir)
         }] };
       }
       const fmBlock = extractFrontmatterBlock(typesetterSrc);
@@ -1096,14 +1170,16 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
         return { content: [{ type: "text" as const, text:
           `Cannot finish: reviews/typesetter_notes.md has no YAML frontmatter. ` +
           `Re-spawn typesetter to regenerate with proper frontmatter ` +
-          `(status, report_pdf_md5, page_count, pages_audited).`
+          `(status, report_pdf_md5, page_count, pages_audited).` +
+            finalStepsNote(projectDir)
         }] };
       }
       const fm = parseAuditFrontmatter(fmBlock);
       if (!fm.status || !fm.report_pdf_md5) {
         return { content: [{ type: "text" as const, text:
           `Cannot finish: reviews/typesetter_notes.md frontmatter is ` +
-          `missing required keys (status, report_pdf_md5). Re-spawn typesetter.`
+          `missing required keys (status, report_pdf_md5). Re-spawn typesetter.` +
+            finalStepsNote(projectDir)
         }] };
       }
       if (fm.status !== "all-clear") {
@@ -1113,7 +1189,8 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
           `Cannot finish: reviews/typesetter_notes.md status is "${fm.status}" ` +
           `(not all-clear). Address the layout issues then re-spawn ` +
           `typesetter to regenerate the audit.\n\n` +
-          `Summary from typesetter_notes.md:\n${summary}`
+          `Summary from typesetter_notes.md:\n${summary}` +
+            finalStepsNote(projectDir)
         }] };
       }
       const currentPdfMd5 = md5OrNull(pdfPath);
@@ -1137,7 +1214,8 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
             `the current report.pdf` +
             (fm.pages_digest ? `; page rasters also differ` : ``) +
             `). Re-spawn typesetter to audit the current PDF — it will use ` +
-            `diff_pdf_pages to re-read only the pages that visually changed.`
+            `diff_pdf_pages to re-read only the pages that visually changed.` +
+            finalStepsNote(projectDir)
           }] };
         }
       }
@@ -1163,7 +1241,8 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
             `Cannot finish: report/report.tex was edited after the last ` +
             `compile — the PDF you are shipping does not contain your latest ` +
             `edits. Run compile_latex, re-run typesetter, then ` +
-            `request_pi_review(milestone="final report").`
+            `request_pi_review(milestone="final report").` +
+            finalStepsNote(projectDir)
           }] };
         }
         if (pdfMtimeMs > 0 && (!piVerdict || piVerdict.reviewMtimeMs < pdfMtimeMs)) {
@@ -1172,7 +1251,8 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
             `review${piVerdict ? "" : " (no PI review on record at all)"} — ` +
             `the document you are about to ship has never been reviewed. ` +
             `Call request_pi_review(milestone="final report") now; once PI ` +
-            `returns continue or stop on the current PDF, finish() is allowed.`
+            `returns continue or stop on the current PDF, finish() is allowed.` +
+            finalStepsNote(projectDir)
           }] };
         }
       }
@@ -1198,7 +1278,8 @@ function writeFinishStats(projectDir: string, finishCalls: number, forceExited: 
             `mtime is newer than reviews/pi_feedback.md, finish() is allowed ` +
             `through — PI's authority is advisory, not a veto.\n\n` +
             `Do NOT retry finish() without taking one of these paths; the ` +
-            `block will repeat identically.`
+            `block will repeat identically.` +
+            finalStepsNote(projectDir)
           }] };
         }
       }

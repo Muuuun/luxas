@@ -85,12 +85,17 @@ for (const n of ["tool_impl", "tool_review"]) {
   check("estimate render has no replication/results.json", !est.includes("replication/results.json"));
   check("estimate render has no '{{'", !est.includes("{{"));
   check("estimate render leaves one blank line between blocks", est.includes("</estimate_mode>\n\n<hard_rules>"));
+  // 2026-10-25: a third block, <check_mode> (the verifier seat), is rendered only
+  // in check mode, so "plain expansion" is now the template minus that block.
+  const CHECK_MODE_RE = /\n*<check_mode>[\s\S]*?<\/check_mode>/;
+  check("the template has a <check_mode> block (smoke_verifier_seat §F renders it)", CHECK_MODE_RE.test(rep.systemPromptTemplate));
   for (const [label, vars] of [
     ["replicate", { ...base, MODE: "replicate", ROUTE: "x" }],
     ["MODE unset", base],
   ] as const) {
-    check(`${label} render byte-identical to plain expansion`,
-      resolvePrompt(rep, vars) === expandTemplate(rep.systemPromptTemplate, vars));
+    check(`${label} render byte-identical to plain expansion minus the check block`,
+      resolvePrompt(rep, vars) === expandTemplate(rep.systemPromptTemplate.replace(CHECK_MODE_RE, ""), vars));
+    check(`${label} render has no <check_mode>`, !resolvePrompt(rep, vars).includes("<check_mode>"));
   }
   const noBlock = { ...rep, systemPromptTemplate: rep.systemPromptTemplate.replace(/<replicate_mode>[\s\S]*?<\/replicate_mode>/, "") };
   let threw = false;

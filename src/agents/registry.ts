@@ -140,7 +140,8 @@ export function getDefinition(name: string): AgentDefinition {
 // the executor writes its own.
 
 export function soloExperimentEnabled(): boolean {
-  return process.env.LUXAS_EXPERIMENT_MODE === "solo";
+  // claude-code (src/executors/claude-code.ts) is a single executor too: it gets this definition as its prompt.
+  return process.env.LUXAS_EXPERIMENT_MODE === "solo" || process.env.LUXAS_EXPERIMENT_MODE === "claude-code";
 }
 
 const ROLE_SEPARATION_RE = /<role_separation strict="true">[\s\S]*?<\/role_separation>/;
@@ -230,21 +231,58 @@ export function replicatorEstimateDefinition(base: AgentDefinition, slug: string
   return { ...base, safety };
 }
 
+// ── Verifier seat scope (replicator, MODE=check; src/verifier-seat.ts) ───────
+//
+// The seat recomputes, re-runs and toggles on a CLONE of the project, so the
+// blind scope above is wrong for it: phases 2–3 open the producer's scripts,
+// runs and ledger section by design (phase 1, the blind recompute, is ordered
+// by the prompt). It writes only replication/; bash may not write the
+// producer's scripts/ or tests/ (it re-runs them as shipped) but may write
+// runs/ — re-running a build script does, and the clone is what makes that
+// harmless. Effort is the measured one (verifier bench A2: Opus, high).
+
+export function replicatorCheckDefinition(base: AgentDefinition): AgentDefinition {
+  const exp = "data/experiments/{{EXPERIMENT_ID}}";
+  const safety: SafetyConfig = { ...(base.safety ?? {}) };
+  safety.allowedReadRoots = [exp, "notes", "data/papers", "report", "RESEARCH.md"];
+  safety.allowedWriteRoots = [`${exp}/replication/`];
+  safety.blockedBashWriteRoots = [`${exp}/scripts/`, `${exp}/tests/`];
+  safety.blockedBashPathMentions = [];
+  const capEnv = Number(process.env.LUXAS_CHECK_MAX_TURNS);
+  return { ...base, safety, thinkingLevel: "high", maxTurns: Number.isFinite(capEnv) && capEnv > 0 ? capEnv : 90 };
+}
+
 // The harness spawns the replicator in estimate mode without a ROUTE; rendering
 // the replicate block too handed the estimator a literal {{ROUTE}} and an order
 // to write replication/results.json. Replicate mode keeps both blocks (it reuses
-// the estimate block's ESTIMATE(blind) line format).
+// the estimate block's ESTIMATE(blind) line format). Check mode (2026-10-25)
+// renders the environment block and its own block only: the blind intro, the
+// estimate and replicate blocks and <hard_rules> all forbid what the seat does.
 const REPLICATE_MODE_RE = /\n*<replicate_mode>[\s\S]*?<\/replicate_mode>/;
+const CHECK_MODE_RE = /\n*<check_mode>[\s\S]*?<\/check_mode>/;
+const ENVIRONMENT_RE = /<environment>[\s\S]*?<\/environment>/;
 
 export function resolvePrompt(def: AgentDefinition, vars: Record<string, string>): string {
   let template = def.systemPromptTemplate;
-  if (def.name === "replicator" && vars.MODE === "estimate") {
+  if (def.name === "replicator") {
     // Same fail-loud rule as soloExperimentDefinition: a renamed block would
-    // silently put the replicate instructions back into every blind estimate.
-    if (!REPLICATE_MODE_RE.test(template)) {
-      throw new Error("replicator: replicator.md no longer has a <replicate_mode> block to drop in estimate mode — update resolvePrompt");
+    // silently put the check text into every estimate, or the replicate
+    // instructions back into every blind estimate.
+    const check = template.match(CHECK_MODE_RE);
+    if (!check) throw new Error("replicator: replicator.md no longer has a <check_mode> block — update resolvePrompt");
+    if (vars.MODE === "check") {
+      const env = template.match(ENVIRONMENT_RE);
+      if (!env) throw new Error("replicator: replicator.md no longer has an <environment> block — update resolvePrompt");
+      template = `${env[0]}\n\n${check[0].trim()}\n`;
+    } else {
+      template = template.replace(CHECK_MODE_RE, "");
+      if (vars.MODE === "estimate") {
+        if (!REPLICATE_MODE_RE.test(template)) {
+          throw new Error("replicator: replicator.md no longer has a <replicate_mode> block to drop in estimate mode — update resolvePrompt");
+        }
+        template = template.replace(REPLICATE_MODE_RE, "");
+      }
     }
-    template = template.replace(REPLICATE_MODE_RE, "");
   }
   return expandTemplate(template, vars);
 }

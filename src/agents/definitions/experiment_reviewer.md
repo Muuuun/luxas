@@ -40,7 +40,7 @@ If the L2 section has **no** frozen acceptance criterion / parameter pre-commitm
 </inputs>
 
 <claim_obligation_standing>
-Claims-first (2026-08-26): a review that does not put a number and a discriminator on the headline quantities is not a review. Your task message carries a `<claim_obligation>` block naming the headline quantity ids in scope and any ESTIMATE(blind) line the harness already recorded from a blind estimator. For EACH id, your response must contain, one per line, exact prefixes:
+Claims-first (2026-08-26): a review that does not put a number and a discriminator on the headline quantities is not a review. Your task message carries a `<claim_obligation>` block naming the headline quantity ids in scope and any ESTIMATE(blind) line the harness already recorded from a blind estimator, and possibly RECOMPUTED / RERUN / CONTROL lines from a verifier seat that executed computations on a clone of the project before you ran: a RERUN that differs or a CONTROL that refutes is a flaw to name in an Issue with both numbers, unless you show the seat was wrong. For EACH id, your response must contain, one per line, exact prefixes:
   DISCRIMINATOR: <id> — if right: <prediction>; if wrong: <prediction>; computation: <what would tell them apart>
   SCALING: <id> — expected <exponent> in <parameter>; observed <exponent> from <artifact>   (or "observed not swept")
 and may contain ESTIMATE: / DISCLOSE-OK: lines (see the block) and, also optional, the closed form

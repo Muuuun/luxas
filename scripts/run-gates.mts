@@ -65,6 +65,7 @@ const MANIFEST: Record<string, GateSpec> = {
 	smoke_bash_status_truth: { kind: "assert" },
 	smoke_bash_write_guard: { kind: "assert" },
 	smoke_bench_pipeline: { kind: "assert" },
+	smoke_audit_experiment: { kind: "assert", timeoutMs: 120_000 },   // four offline CLI child processes
 	smoke_benchmarks_discovery: { kind: "assert" },
 	smoke_brain_context: { kind: "assert" },
 	smoke_budget_softcap: { kind: "assert" },
@@ -75,6 +76,7 @@ const MANIFEST: Record<string, GateSpec> = {
 	smoke_claim_registry: { kind: "assert" },
 	smoke_compaction_ratchet: { kind: "assert" },
 	smoke_solo_executor: { kind: "assert", timeoutMs: 180_000 },   // CLI child processes; 6 s on a dev Mac
+	smoke_cc_executor: { kind: "assert", timeoutMs: 240_000 },   // a fake `claude`, one background-runner child process, a watchdog wait
 	smoke_review_experiment: { kind: "assert", timeoutMs: 300_000 },   // ~12 offline CLI child processes; 54 s on a dev Mac
 	smoke_resume_request: { kind: "assert", timeoutMs: 360_000 },   // two offline brain replays in child processes
 	smoke_dual_profile: { kind: "assert" },
@@ -98,6 +100,8 @@ const MANIFEST: Record<string, GateSpec> = {
 	smoke_xval_dispute_gate: { kind: "assert" },
 	smoke_claim_table: { kind: "assert" },
 	smoke_claims_review: { kind: "assert" },
+	smoke_verifier_seat: { kind: "assert", timeoutMs: 180_000 },   // the replicator check mode: clones, a fake `claude`, three verify_experiment child processes
+	smoke_contradiction_sweep: { kind: "assert" },
 	smoke_sim_wiring: { kind: "assert" },
 	smoke_simbench_graders: { kind: "assert", needsBin: ["blender"], timeoutMs: 600_000 },
 	smoke_simrun: { kind: "assert", needsBin: ["python3"], timeoutMs: 240_000 },   // the runner over its local transport: about 100 short jobs
