@@ -303,6 +303,22 @@ def build_all(bench, hw):
     return designs, exp, missing
 
 
+def same(a, b):
+    """Equal as JSON, floats to 1e-9 relative: the claims are computed, and the
+    droplet's Python 3.12 / numpy 2.4 gave ref-hypercube-rcs a score one ulp
+    off the Mac's 3.9 / 2.0 (1.6661800267830729 vs 1.666180026783073), which
+    made every committed reference read as stale there (2026-10-25)."""
+    if isinstance(a, bool) or isinstance(b, bool):
+        return a is b
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+        return a == b or math.isclose(a, b, rel_tol=1e-9, abs_tol=0.0)
+    if isinstance(a, dict) and isinstance(b, dict):
+        return a.keys() == b.keys() and all(same(a[k], b[k]) for k in a)
+    if isinstance(a, list) and isinstance(b, list):
+        return len(a) == len(b) and all(same(x, y) for x, y in zip(a, b))
+    return a == b
+
+
 def main(argv):
     ap = argparse.ArgumentParser()
     ap.add_argument("--bench", default="na-advantage")
@@ -317,10 +333,10 @@ def main(argv):
         bad = []
         for name, d in designs.items():
             p = os.path.join(ref, name, "design.json")
-            if not os.path.exists(p) or json.load(open(p)) != json.loads(json.dumps(d)):
+            if not os.path.exists(p) or not same(json.load(open(p)), json.loads(json.dumps(d))):
                 bad.append(name)
         p = os.path.join(ref, "expected.json")
-        if not os.path.exists(p) or json.load(open(p)) != json.loads(json.dumps(exp)):
+        if not os.path.exists(p) or not same(json.load(open(p)), json.loads(json.dumps(exp))):
             bad.append("expected.json")
         print("make_refs --check: " + ("OK" if not bad and not missing else
               f"stale {', '.join(bad) or '-'}; no search result for {', '.join(missing) or '-'}"))

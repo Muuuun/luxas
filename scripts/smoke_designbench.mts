@@ -61,6 +61,8 @@ console.log("1. the committed references are what make_refs.py builds");
 {
   const r = py([join(DB, "_lib", "make_refs.py"), "--check"]);
   check("make_refs --check: designs, expected.json and search cache are current", r.code === 0, r.out.trim());
+  const cmp = py(["-c", "import sys; sys.path.insert(0, sys.argv[1]); from make_refs import same; print(same(1.666180026783073, 1.6661800267830729), same(1.6662, 1.666180026783073), same({'a': [1.0, True]}, {'a': [1.0, 1]}))", join(DB, "_lib")]);
+  check("…where a last-bit float difference (another python or numpy) is current, and a 1e-5 change or a bool for a number is stale", cmp.out.trim() === "True False False", cmp.out.trim());
 }
 
 console.log("2. each design grades as built");
