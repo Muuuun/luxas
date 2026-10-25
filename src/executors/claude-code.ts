@@ -147,7 +147,7 @@ export function claudeCodeArgs(o: CcArgsOptions): string[] {
 // few names. The executor runs code it writes itself from papers and web
 // pages, and every child of its Bash tool inherits what it is given: the other
 // providers' keys (DeepSeek, OpenAI, GLM…), GitHub tokens, the studio's
-// session secret, an ssh-agent socket that reaches the production server.
+// session secret, an ssh-agent socket that may reach other servers.
 // None of them is needed to run an experiment, so none is passed. What is
 // passed: the shell basics, locale, toolchain and numerics settings, proxies
 // and CA bundles (without them the CLI cannot reach the API behind a proxy),
