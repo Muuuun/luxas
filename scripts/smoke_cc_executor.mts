@@ -244,6 +244,13 @@ console.log("\n6. api: the resolved key, spend as it accrues, budget");
     const m1 = (1000 * 5 + 2000 * 25) / 1e6, m2 = (4000 * 25 + 100000 * 0.5) / 1e6;
     check("one row per API message, priced; then a correction to the CLI's total", rows.length === 3 && Math.abs(Number(rows[0][7]) - m1) < 1e-9 && Math.abs(Number(rows[1][7]) - m2) < 1e-9 && Math.abs(rows.reduce((s, x) => s + Number(x[7]), 0) - 0.45) < 1e-9, JSON.stringify(rows.map((x) => x[7])));
     check("…all attributed to the experiment, provider anthropic", rows.every((x) => x[2] === "anthropic" && x[9] === "experiment"));
+    // A resumed session: the CLI reports the session's cumulative total and checks --max-budget-usd against it.
+    const n0 = usageRows(p6).length;
+    await withEnv({ FAKE_COST: "0.95" }, () => spawnAgent(spawnOpts(p6, "Revise it.", "sk-resolved-by-luxas")));
+    const a2 = argsOf(log6);
+    check("a resume gets its budget on top of what the session already cost ($0.45 + $7.55 left)", !!argAfter(a2, "--resume") && argAfter(a2, "--max-budget-usd") === "8.00", argAfter(a2, "--max-budget-usd"));
+    const rows2 = usageRows(p6).slice(n0);
+    check("…and logs only what it added ($0.95 cumulative − $0.45 = $0.50), not the session total again", Math.abs(rows2.reduce((s, x) => s + Number(x[7]), 0) - 0.50) < 1e-9, JSON.stringify(rows2.map((x) => x[7])));
   });
   await withEnv(api, async () => {
     // Another executor of this project is running with $5 reserved.
@@ -251,11 +258,11 @@ console.log("\n6. api: the resolved key, spend as it accrues, budget");
     const grp = spawnProc("sleep", ["30"], { detached: true, stdio: "ignore" });
     A.writeRunningMarker(p6, "E9_other", { eid: "E9_other", pgid: grp.pid!, hostPid: host.pid!, agentId: "x", startedAt: new Date().toISOString(), budget: 5 });
     writeFileSync(join(p6, ".agent", "usage.log"), `${Date.now()}\tm\tanthropic\t1\t1\t0\t0\t20.00000000\tbrain\tbrain\n`);
-    await spawnAgent(spawnOpts(p6, "Compute it.", "sk-k"));
+    await withEnv({ LUXAS_CC_RESUME: "0" }, () => spawnAgent(spawnOpts(p6, "Compute it.", "sk-k")));
     check("what running executors reserved comes off the budget ($30 − $20 − $5)", argAfter(argsOf(log6), "--max-budget-usd") === "5.00", argAfter(argsOf(log6), "--max-budget-usd"));
     for (const c of [host, grp]) try { process.kill(c.pid!, "SIGKILL"); } catch { /* gone */ }
   });
-  await withEnv({ ...baseEnv(log6), LUXAS_EXPERIMENT_MODE: "claude-code", LUXAS_CC_MAX_USD: "7" }, async () => {
+  await withEnv({ ...baseEnv(log6), LUXAS_EXPERIMENT_MODE: "claude-code", LUXAS_CC_MAX_USD: "7", LUXAS_CC_RESUME: "0" }, async () => {
     await spawnAgent(spawnOpts(p6));
     check("subscription: the per-run bound alone (LUXAS_CC_MAX_USD)", argAfter(argsOf(log6), "--max-budget-usd") === "7.00");
   });

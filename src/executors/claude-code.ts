@@ -528,6 +528,20 @@ export function readExperimentSession(projectDir: string, eid: string): string |
   } catch { return undefined; }
 }
 
+/**
+ * What the session has cost so far at list price (its last run's total_cost_usd).
+ * The CLI's total and its --max-budget-usd check are both cumulative over a
+ * resumed session (measured 2026-10-25: a 33 s fix-up resume reported $7.51,
+ * the whole session; a resume with a budget below the earlier spend stopped
+ * after one turn). 0 when the file does not hold this session.
+ */
+function readSessionCost(projectDir: string, eid: string, sessionId: string): number {
+  try {
+    const j = JSON.parse(readFileSync(sessionFile(projectDir, eid), "utf-8"));
+    return j.sessionId === sessionId && typeof j.costUsd === "number" && Number.isFinite(j.costUsd) && j.costUsd >= 0 ? j.costUsd : 0;
+  } catch { return 0; }
+}
+
 function writeExperimentSession(projectDir: string, eid: string, rec: Record<string, unknown>): void {
   const p = sessionFile(projectDir, eid);
   writeFileSync(`${p}.tmp`, JSON.stringify(rec, null, 2) + "\n");
@@ -613,6 +627,8 @@ export async function runClaudeCodeExperiment(opts: SpawnAgentOptions, run: CcRu
   // action="continue") resumes its session, so it keeps what it already did.
   const resumeSessionId = env.LUXAS_CC_RESUME === "0" ? undefined : readExperimentSession(projectDir, eid);
   const freshSessionId = resumeSessionId ? undefined : randomUUID();
+  // A resumed session's total and budget include its earlier runs: this run gets `budget` on top of them.
+  const priorCost = resumeSessionId ? readSessionCost(projectDir, eid, resumeSessionId) : 0;
 
   mkdirSync(ccDir(projectDir), { recursive: true });
   const convDir = join(agentDir, "conversations");
@@ -674,7 +690,7 @@ export async function runClaudeCodeExperiment(opts: SpawnAgentOptions, run: CcRu
   // This run acts on any rework the operator asked for: the brain stops seeing that directive.
   archiveBoardDirectives(projectDir, eid, "rework");
   let authProblem: string | undefined;
-  const launch = await launchClaudeCode(claudeBin(env), claudeCodeArgs({ systemPromptFile, model, effort, maxBudgetUsd: budget, sessionId: freshSessionId, resumeSessionId }), {
+  const launch = await launchClaudeCode(claudeBin(env), claudeCodeArgs({ systemPromptFile, model, effort, maxBudgetUsd: priorCost + budget, sessionId: freshSessionId, resumeSessionId }), {
     cwd: opts.workDir ?? projectDir, env: claudeCodeEnv(env, auth, apiKey), wallMs: wallMin * 60_000, transcriptPath, stderrPath, stdin: opts.prompt,
     // The board's stop is enforced here, by the host that holds the group: it polls the decision log.
     onStart: (pgid) => writeRunningMarker(projectDir, eid, { eid, pgid, hostPid: process.pid, agentId, startedAt: new Date(started).toISOString(), budget: auth === "api" ? budget : 0 }),
@@ -702,7 +718,9 @@ export async function runClaudeCodeExperiment(opts: SpawnAgentOptions, run: CcRu
     : authProblem ? { stopReason: "error" as SubAgentStopReason, errorMessage: authProblem }
     : classifyCcRun(parsed, launch, wallMin, stderrTail);
   const r = parsed.result;
-  const listUsd = typeof r?.total_cost_usd === "number" ? r.total_cost_usd : 0;
+  // The session's total so far; this run's share is what it added.
+  const sessionUsd = typeof r?.total_cost_usd === "number" ? r.total_cost_usd : 0;
+  const listUsd = Math.max(0, sessionUsd - priorCost);
 
   // Spend: the messages not yet logged, then the CLI's own total settles the
   // run (a correction row, which may be negative). A CLI that reports no
@@ -715,7 +733,7 @@ export async function runClaudeCodeExperiment(opts: SpawnAgentOptions, run: CcRu
   // A rework asked for while this run was going starts the next run fresh, so this session is not kept.
   const reworkDuring = latestActionFor(readBoardActions(projectDir), eid);
   const keepSession = !(reworkDuring?.action === "rework" && Date.parse(reworkDuring.at) >= started - 1000);
-  if (sessionId && SESSION_ID_RE.test(sessionId) && r && keepSession) writeExperimentSession(projectDir, eid, { sessionId, agentId, updatedAt: new Date().toISOString() });
+  if (sessionId && SESSION_ID_RE.test(sessionId) && r && keepSession) writeExperimentSession(projectDir, eid, { sessionId, agentId, costUsd: sessionUsd, updatedAt: new Date().toISOString() });
 
   const notes: string[] = [];
   if (verdict.note) notes.push(verdict.note);
@@ -753,9 +771,9 @@ export async function runClaudeCodeExperiment(opts: SpawnAgentOptions, run: CcRu
   try {
     appendFileSync(convPath, JSON.stringify({ role: "assistant", content: [{ type: "text", text: output.slice(0, 50_000) }], timestamp: Date.now() }) + "\n");
     appendFileSync(convPath, JSON.stringify({ type: "claude_code_run", sessionId, resumed: !!resumeSessionId, transcript: transcriptPath, auth, model: parsed.model ?? model,
-      listUsd, billedUsd: auth === "api" ? loggedCost : 0, stopReason: verdict.stopReason, outsideChanges: outside.length, timestamp: Date.now() }) + "\n");
+      listUsd, sessionUsd, billedUsd: auth === "api" ? loggedCost : 0, stopReason: verdict.stopReason, outsideChanges: outside.length, timestamp: Date.now() }) + "\n");
     appendFileSync(join(agentDir, "log.jsonl"), JSON.stringify({
-      type: "claude_code_run", agent_id: agentId, experiment: eid, auth, list_usd: listUsd, billed_usd: auth === "api" ? loggedCost : 0,
+      type: "claude_code_run", agent_id: agentId, experiment: eid, auth, list_usd: listUsd, session_usd: sessionUsd, billed_usd: auth === "api" ? loggedCost : 0,
       stop_reason: verdict.stopReason, wall_ms: launch.elapsedMs, outside_changes: outside, timestamp: new Date().toISOString(),
     }) + "\n");
   } catch { /* observability must not crash the spawn */ }
