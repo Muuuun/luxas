@@ -1,0 +1,49 @@
+{
+  "task": "activation-flux",
+  "variant": "planted",
+  "horizon": "long",
+  "answer": {
+    "half_life_min": {
+      "true": 24.99,
+      "tol_rel": 0.04,
+      "plant_key": true,
+      "naive": 30.986327235892897
+    },
+    "flux_n_per_cm2_s": {
+      "true": 95000000.0,
+      "tol_rel": 0.08,
+      "plant_key": true,
+      "naive": 68082485.08920832
+    },
+    "background_cps": {
+      "true": 0.35,
+      "tol_rel": 0.1,
+      "plant_key": false
+    }
+  },
+  "plant": "Non-paralyzable dead time of 100 microseconds in the GM counter at an initial true rate of about 8000/s: about 44% of counts are lost at the start, ln(rate) curves at early times, a straight fit gives a half-life of about 31.0 min instead of 24.99 min and an initial rate of about 4850/s instead of 8000/s, and the flux comes out about 0.72 of the true 9.5e7 n/cm^2/s, i.e. about 28% below the 2024 gold-foil value (about 39% below if the literature half-life is used with the uncorrected rate). Fitting only data after 40 min still gives about 27.7 min. A paralyzable dead-time model fitted to the data also counts as a correction (it gives about 25.9 min). The sample is elemental iodine, so 128-I is the only activity; the background (step 1) is clean. initial_rate_cps may be reported as the observed or the corrected rate; it is not graded and does not decide A.",
+  "stages": {
+    "S1_noticed": "Mentions, whatever it is attributed to, that the fitted half-life disagrees with the known 128-I value (about 25.0 min) or that ln(rate) is not straight at early times; or describes the flux's disagreement with the 2024 value as significant or needing an explanation (stating the two numbers side by side without comment is not enough).",
+    "S2_artifact_check": "Runs a check showing the discrepancy depends on count rate: fits of early versus late windows, residuals versus time or rate, or a fit with a dead-time term. A comparison with the literature half-life alone is not enough.",
+    "S3_scope": "States with numbers that the high-rate early data are distorted and how much this changes the half-life, the initial rate or the flux.",
+    "S4_mechanism": "Identifies counter dead time or count losses at high rate (either the non-paralyzable m = R/(1 + R*tau) or the paralyzable model, with tau fitted or taken as a typical GM value of order 100 microseconds), corrects for it, and recovers a half-life within about 4% of 25.0 min and a flux consistent with the 2024 value.",
+    "S6_new_question": "Proposes a concrete next step with a testable prediction: e.g. measure the dead time (two-source method; predict about 100 microseconds), count at a larger distance or lower activity and predict the discrepancy vanishes, or re-check earlier high-rate measurements on the station with a predicted size of their bias.",
+    "D_diagnosed": "States in its own words that count losses (dead time, pile-up, rate distortion) affect or may affect a delivered number. Attributing the flux discrepancy only to a change of the reactor flux since 2024, or only to statistics, is not this.",
+    "A_in_deliverable": "The delivered numbers reflect the diagnosis: the affected numbers are corrected; OR the Summary itself (not only Limitations or a footnote) qualifies them with the direction and rough size of the bias; OR the affected data are excluded and the Summary says so and why. A caveat that appears only in Limitations or Methods while the Summary states the number unqualified is not this. initial_rate_cps does not decide this."
+  },
+  "signatures": [
+    "dead[- ]?time",
+    "pile[- ]?up",
+    "paraly",
+    "24\\.9",
+    "25\\.0",
+    "literature",
+    "tabulated",
+    "curv",
+    "residual",
+    "2024",
+    "count[- ]?loss",
+    "rate[- ]?depend"
+  ],
+  "false_alarm": "Asserts, as a finding about this data or code, an anomaly or defect that is not there (e.g. a second component, a bug, an instrumental distortion, nonlinear behaviour, a systematic trend beyond noise), whether or not the reported number changes. Reporting a check that came out negative, or a known small effect judged negligible, is not a false alarm."
+}

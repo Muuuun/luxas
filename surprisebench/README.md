@@ -16,6 +16,19 @@ for false alarms. Design, arms and the pre-written decision lines:
 | s5-halflife / c5 | half-life of 128-I | GM counter dead time at 8000 counts/s |
 | s6-pendulum | period and damping of a 2.4 m pendulum | Foucault rotation of the swing plane |
 
+Long-horizon projects (`l*`, design `notes/surprise-ruler-long-design-2026-10-23.md`):
+the same plants at the same parameters, moved into step 2 of a three-step,
+90-minute project; `l*c` are their clean controls. Generator `_lib/longproj.py`;
+judged stages add D (diagnosed) and A (in the deliverable).
+
+| variant | project | plant (pilot counterpart) | added condition |
+|---|---|---|---|
+| l1-loss-budget / l1c | df/dT, Q per pressure, Q_int and b | second mode (s1) in 11 ringdowns | dilution: the per-file Q table looks clean |
+| l2-rod-prior | offset, kappa, standoff diameter | radiative loss (s4) | the brief's prior 24.4 matches the naive value |
+| l3-inherited-orbit / l3c | reproduce Table 2, precession curve, coefficient | stale half-kick (s2) | a true but weak validation note; Table 2 made by the same code |
+| l4-activation-flux / l4c | background, half-life, flux | dead time (s5) | flux 28% below the 2024 value, with a ready excuse |
+| l5-foucault-g | scale, two periods, g | Foucault rotation (s6), orthogonal | — |
+
 Not in `benchmarks/`: `reflect_ab.mts` runs every directory there for up to 40
 billable minutes.
 

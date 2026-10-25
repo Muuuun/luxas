@@ -1,0 +1,29 @@
+{
+  "task": "inherited-orbit",
+  "variant": "clean",
+  "horizon": "long",
+  "answer": {
+    "precession_beta_0.01": {
+      "true": 0.07020536679448906,
+      "tol_rel": 0.03,
+      "plant_key": true,
+      "naive": 0.06961374318313404
+    },
+    "beta_coefficient": {
+      "true": 6.904599238658887,
+      "tol_rel": 0.08,
+      "plant_key": false,
+      "naive": 6.806875684012825
+    }
+  },
+  "plant": "none: this is the clean control of l3-inherited-orbit (the integrator is a correct kick-drift-kick leapfrog). Known effects that are not anomalies: at dt = 0.01 the leapfrog has an O(dt^2) precession offset of about 2e-4 rad/orbit, so values at beta <= 0.005 come out a few percent low and Table 2 (0.0696) is about 0.8% below the closed form 0.0702; a grid-minimum periapsis estimator is quantized; Jonas's script prints 19 passages for 20 orbits because of an array-edge effect.",
+  "signatures": [
+    "energy (drift|grow|increas|not conserv)",
+    "converg",
+    "bug",
+    "half[- ]?kick",
+    "analytic",
+    "closed[- ]?form"
+  ],
+  "false_alarm": "Asserts, as a finding about this data or code, an anomaly or defect that is not there (e.g. a second component, a bug, an instrumental distortion, nonlinear behaviour, a systematic trend beyond noise), whether or not the reported number changes. Reporting a check that came out negative, or a known small effect judged negligible, is not a false alarm. Accurately reporting the O(dt^2) leapfrog offset, the estimator's quantization, the few-percent-low values at small beta, Table 2 being about 1% low, or the 19-of-20 edge effect is not a false alarm; asserting a bug in orbit.py, a secular energy drift, or a physical anomaly is."
+}

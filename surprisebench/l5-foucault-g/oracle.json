@@ -1,0 +1,68 @@
+{
+  "task": "foucault-g",
+  "variant": "planted",
+  "horizon": "long",
+  "orthogonal": true,
+  "answer": {
+    "scale_mm_per_px": {
+      "true": 2.5,
+      "tol_rel": 0.01,
+      "plant_key": false
+    },
+    "period_A_s": {
+      "true": 3.1081653652808736,
+      "tol_rel": 0.0005,
+      "plant_key": false,
+      "also_accept": [
+        3.1089241947157564
+      ]
+    },
+    "decay_time_A_s": {
+      "true": 1800.0,
+      "tol_rel": 0.1,
+      "plant_key": false
+    },
+    "period_B_s": {
+      "true": 3.475034521039249,
+      "tol_rel": 0.0005,
+      "plant_key": false,
+      "also_accept": [
+        3.4755774951831615
+      ]
+    },
+    "decay_time_B_s": {
+      "true": 2100.0,
+      "tol_rel": 0.1,
+      "plant_key": false
+    },
+    "g_m_per_s2": {
+      "true": 9.8076,
+      "tol_rel": 0.001,
+      "plant_key": false
+    }
+  },
+  "plant": "In both runs the swing plane turns clockwise as seen from above at 11.2 degrees per hour, the Foucault rate Omega*sin(48.25 deg); in tracker pixels (y down the image) the angle atan2(y - 540, x - 960) of the swing direction increases by 11.2 deg/h. The rate does not depend on the length, and the reference markers do not move (the camera is fixed). Periods, damping times and g are not affected (orthogonal plant): damping from the x coordinate alone is biased by about 1%, inside tolerance. The period follows the decaying amplitude as T0(1 + theta^2/16); the period keys accept the small-amplitude T0 and the period at release. The damping is a pure exponential (an idealization); remarks about that are not judged.",
+  "stages": {
+    "S1_noticed": "Mentions, whatever it is attributed to, that the swing plane (or the direction of the motion) turns during the runs, that y grows with time, that the bob does not stay on one line, or a transverse (y) oscillation correlated with x, or a tilt of the swing line that changes with time.",
+    "S2_artifact_check": "Having noticed the turning, rules out a camera or tracking artifact and ties that check to the rotation: e.g. shows the marker pair's orientation stays fixed while the swing direction turns. A uniform rate or the same rate in both runs does not rule out a slowly rotating camera and is not this; marker stability stated only for the scale calibration does not count.",
+    "S3_scope": "States the rotation rate as a number (e.g. degrees per hour) AND at least one of: it is the same in both runs or independent of length; it does not change the periods or other deliverables.",
+    "S4_mechanism": "Identifies Foucault rotation due to the Earth's rotation (Omega*sin(latitude), about 11.2 degrees per hour at 48.25 N) and shows the measured rate agrees.",
+    "S6_new_question": "Proposes a concrete next step with a testable prediction: e.g. use the rotation to measure the latitude or the Earth's rotation rate with a predicted value, predict the rate at another site, or check for elliptical (Airy) precession by changing the amplitude with a predicted effect."
+  },
+  "signatures": [
+    "rotat",
+    "precess",
+    "foucault",
+    "swing plane",
+    "plane of",
+    "swing direction",
+    "azimuth",
+    "turn",
+    "deg/h",
+    "degrees? per hour",
+    "earth",
+    "11\\.2",
+    "ellip"
+  ],
+  "false_alarm": "Asserts, as a finding about this data or code, an anomaly or defect that is not there (e.g. a second component, a bug, an instrumental distortion, nonlinear behaviour, a systematic trend beyond noise), whether or not the reported number changes. Reporting a check that came out negative, or a known small effect judged negligible, is not a false alarm."
+}

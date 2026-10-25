@@ -1,0 +1,33 @@
+{
+  "task": "activation-flux",
+  "variant": "clean",
+  "horizon": "long",
+  "answer": {
+    "half_life_min": {
+      "true": 24.99,
+      "tol_rel": 0.04,
+      "plant_key": true,
+      "naive": 25.06122972762911
+    },
+    "flux_n_per_cm2_s": {
+      "true": 95000000.0,
+      "tol_rel": 0.08,
+      "plant_key": true,
+      "naive": 94742702.21271361
+    },
+    "background_cps": {
+      "true": 0.35,
+      "tol_rel": 0.1,
+      "plant_key": false
+    }
+  },
+  "plant": "none: this is the clean control of l4-activation-flux (initial rate about 50/s; the counter's 100-microsecond dead time loses about 0.5% at the start, below the statistical precision, and the naive half-life sits 0.7 sigma from 24.99 min; the sample is elemental iodine).",
+  "signatures": [
+    "dead[- ]?time",
+    "pile[- ]?up",
+    "residual",
+    "2024",
+    "literature"
+  ],
+  "false_alarm": "Asserts, as a finding about this data or code, an anomaly or defect that is not there (e.g. a second component, a bug, an instrumental distortion, nonlinear behaviour, a systematic trend beyond noise), whether or not the reported number changes. Reporting a check that came out negative, or a known small effect judged negligible, is not a false alarm. Applying or reporting a dead-time correction of this small size is not a false alarm."
+}

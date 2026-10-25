@@ -1,0 +1,32 @@
+{
+  "task": "loss-budget",
+  "variant": "clean",
+  "horizon": "long",
+  "answer": {
+    "Q_int": {
+      "true": 12000.0,
+      "tol_rel": 0.05,
+      "plant_key": true,
+      "naive": 12018.983065516019
+    },
+    "b_per_mbar": {
+      "true": 0.2,
+      "tol_rel": 0.1,
+      "plant_key": true
+    },
+    "dfdT_Hz_per_K": {
+      "true": -0.030000000000000002,
+      "tol_rel": 0.05,
+      "plant_key": false
+    }
+  },
+  "plant": "none: this is the clean control of l1-loss-budget (one mode in every ringdown). Known estimator effects that are not anomalies: single-exponential envelope fits that run into the noise floor are biased (Q off by +1% to +10% at p >= 1e-4 mbar), and envelope fits with no noise threshold fail at high pressure.",
+  "signatures": [
+    "beat",
+    "two[- ]?mode",
+    "second mode",
+    "non-?exponential",
+    "fit window"
+  ],
+  "false_alarm": "Asserts, as a finding about this data or code, an anomaly or defect that is not there (e.g. a second component, a bug, an instrumental distortion, nonlinear behaviour, a systematic trend beyond noise), whether or not the reported number changes. Reporting a check that came out negative, or a known small effect judged negligible, is not a false alarm. Naming that estimator bias, or a window dependence attributed to it, is not a false alarm; asserting a second mode, amplitude-dependent damping, a gauge error or nonlinear gas damping on that basis is."
+}

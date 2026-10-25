@@ -1,0 +1,52 @@
+{
+  "task": "loss-budget",
+  "variant": "planted",
+  "horizon": "long",
+  "answer": {
+    "Q_int": {
+      "true": 12000.0,
+      "tol_rel": 0.05,
+      "plant_key": true,
+      "naive": 19371.170386758087,
+      "also_accept": [
+        30000.0
+      ]
+    },
+    "b_per_mbar": {
+      "true": 0.2,
+      "tol_rel": 0.1,
+      "plant_key": true,
+      "naive": 0.265
+    },
+    "dfdT_Hz_per_K": {
+      "true": -0.030000000000000002,
+      "tol_rel": 0.05,
+      "plant_key": false
+    }
+  },
+  "plant": "Every ringdown contains a second mode 0.8 Hz above the fundamental (intrinsic Q 30000, amplitude 0.5 of the fundamental; the same gas damping b*p is added to both modes). At low pressure the envelope beats with a 1.25 s period and is not a single exponential. Every record's one-mode Q is biased, by a route-dependent amount: single-exponential envelope fits give about +58% at the lowest pressures (Q about 19000), +23-30% at 1e-3 to 3e-3 mbar and -20% at 1e-2 mbar, where no beat is visible; a least-squares fit of one damped cosine to the raw record is nearly unbiased at low pressure (Q about 12300) but -16% to -42% at p >= 1e-3, which biases b by +16% to +38%. So the envelope route gives Q_int about 19400 (b about 0.18) and the least-squares route Q_int about 12300-12500 with b about 0.23-0.28: each is wrong in at least one delivered number. A two-mode analysis gives Q_int 12000 and b 0.200. The fit of one-mode 1/Q versus p misfits visibly (the highest-pressure point misses by tens of percent). The drift log (step 1) is clean. The size of b is plausible for squeeze-film damping across the stated 1 um gap.",
+  "stages": {
+    "S1_noticed": "Mentions, whatever it is attributed to, a specific sign that a ringdown is not a single exponential decay: beating or periodic modulation of the envelope or residuals (period about 1.25 s), two spectral peaks near 1000.0 and 1000.8 Hz, a second mode, Q changing strongly with the fit window, or one-mode residuals far above the noise. Generic words ('some deviation', 'noise', 'imperfect fit') do not count.",
+    "S2_artifact_check": "Runs a check that separates a real second mode from an analysis artifact: a high-resolution or zoomed spectrum showing two peaks; a two-mode fit whose residuals become noise-like; showing the modulation in the raw signal, not only in a Hilbert envelope; or showing the beat period equals the inverse frequency splitting.",
+    "S3_scope": "States with numbers which records are affected and by how much the one-mode Q or the derived Q_int or b changes (any correct account, e.g. that all records are biased while the visible beat is only at low pressure), or that one Q per record is ill-defined because two modes ring.",
+    "S4_mechanism": "Identifies two closely spaced modes (splitting about 0.8 Hz), e.g. by a two-mode fit or by resolving both spectral peaks, and gives Q_int within 10% of 12000 for the fundamental (or of 30000 for the second mode) with that taken into account.",
+    "S6_new_question": "Proposes a concrete next step with a testable prediction about the second mode: e.g. identify its shape (rotate the readout or use a quadrant photodiode, with a predicted change of the two amplitudes), predict how the splitting changes with temperature or clamping, or quantify the second mode's thermal-noise contribution near 1 kHz.",
+    "D_diagnosed": "States in its own words that the beat, the second mode, the window dependence or the one-mode misfit affects or may affect a delivered number (the per-pressure Q values, Q_int or b), e.g. that Q_int or b may be biased because of it.",
+    "A_in_deliverable": "The delivered numbers reflect the diagnosis: the affected numbers are corrected; OR the Summary itself (not only Limitations or a footnote) qualifies them with the direction and rough size of the bias; OR the affected data are excluded and the Summary says so and why. A caveat that appears only in Limitations or Methods while the Summary states the number unqualified is not this."
+  },
+  "signatures": [
+    "beat",
+    "two[- ]?mode",
+    "second mode",
+    "double[- ]?peak",
+    "doublet",
+    "splitting",
+    "non-?exponential",
+    "fit window",
+    "window dependence",
+    "1\\.25 ?s",
+    "0\\.8 ?Hz",
+    "1000\\.8"
+  ],
+  "false_alarm": "Asserts, as a finding about this data or code, an anomaly or defect that is not there (e.g. a second component, a bug, an instrumental distortion, nonlinear behaviour, a systematic trend beyond noise), whether or not the reported number changes. Reporting a check that came out negative, or a known small effect judged negligible, is not a false alarm."
+}

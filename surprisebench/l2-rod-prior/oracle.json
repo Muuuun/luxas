@@ -1,0 +1,56 @@
+{
+  "task": "rod-prior",
+  "variant": "planted",
+  "horizon": "long",
+  "answer": {
+    "kappa_W_per_mK": {
+      "true": 21.9,
+      "tol_rel": 0.04,
+      "plant_key": true,
+      "naive": 24.596229687273638,
+      "also_accept": [
+        20.7
+      ]
+    },
+    "standoff_min_diameter_mm": {
+      "true": 7.624879802137172,
+      "tol_rel": 0.02,
+      "plant_key": true,
+      "naive": 7.194834182799646,
+      "also_accept": [
+        7.843
+      ]
+    },
+    "offset_K": {
+      "true": 0.042,
+      "tol_rel": 0.25,
+      "plant_key": false
+    }
+  },
+  "plant": "Radiative loss in vacuum from the hot end (emissivity times area 2.6e-5 m^2 in the generator, lumped at the heater-block temperature) grows like T^4: Delta-T(P) bends below a straight line at high power, and a straight-line fit through all points gives kappa of about 24.6 W/m/K instead of 21.9, which agrees with the old rig's 24.4 +- 0.4 quoted in the task. Using only the low-power points still gives about 23.2-23.8. The data cannot separate radiation from the block from radiation distributed along the bare rod: a correction that lets the rod radiate too gives about 20.7, and both count as correct. Generic curvature corrections that name no mechanism (a polynomial or a kappa(T) model) give about 22.4-23.0, at or inside the X window, so X alone does not show the mechanism. 24.4-24.6 is also above handbook values for commercially pure titanium near room temperature (about 16-22 W/m/K depending on grade and source), a third sign. The standoff diameter scales as kappa^(-1/2): about 7.19 mm from the naive value, 7.62 mm (7.84 mm with rod radiation) from corrected values. The thermometer offset (step 1) is clean (+0.042 K).",
+  "stages": {
+    "S1_noticed": "Mentions, whatever it is attributed to, that Delta-T is not proportional to P (curvature, systematic residuals of the straight-line fit, the apparent conductance P/Delta-T rising with power or temperature), that low- and high-power points give different conductivities, or that the result is above literature values for commercially pure titanium.",
+    "S2_artifact_check": "Checks that the nonlinearity is real and not noise or drift: a systematic residual pattern, low- versus high-power slopes, a trend larger than the thermometer noise, or ruling out a kappa(T) of titanium (which decreases with T, opposite to the observed trend).",
+    "S3_scope": "States with numbers how much the curvature or radiation correction, or the choice of power range, changes kappa.",
+    "S4_mechanism": "Identifies radiative loss (proportional to emissivity * sigma * area * (T^4 - T0^4)) from the hot block and/or the rod in vacuum, corrects for it with a radiative-form term (lumped at the hot end or distributed along the rod), and gives kappa between about 20 and 22.5 W/m/K. A polynomial or kappa(T) correction, or a low-power-only fit, is not this.",
+    "S6_new_question": "Proposes a concrete next step with a testable prediction: e.g. a radiation shield or gold plating with the prediction that P/Delta-T becomes constant; that the old rig's 24.4 carries the same radiative bias; or an independent emissivity measurement with a predicted value.",
+    "D_diagnosed": "States in its own words that the curvature or radiation affects or may affect the delivered conductivity or standoff diameter.",
+    "A_in_deliverable": "The delivered numbers reflect the diagnosis: the affected numbers are corrected; OR the Summary itself (not only Limitations or a footnote) qualifies them with the direction and rough size of the bias; OR the affected data are excluded and the Summary says so and why. A caveat that appears only in Limitations or Methods while the Summary states the number unqualified is not this."
+  },
+  "signatures": [
+    "radiat",
+    "T\\^?4",
+    "T⁴",
+    "stefan",
+    "curv",
+    "non-?linear",
+    "residual",
+    "emissiv",
+    "low[- ]?power",
+    "24\\.4",
+    "P/.?Delta",
+    "handbook",
+    "literature"
+  ],
+  "false_alarm": "Asserts, as a finding about this data or code, an anomaly or defect that is not there (e.g. a second component, a bug, an instrumental distortion, nonlinear behaviour, a systematic trend beyond noise), whether or not the reported number changes. Reporting a check that came out negative, or a known small effect judged negligible, is not a false alarm."
+}

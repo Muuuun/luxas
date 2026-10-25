@@ -332,8 +332,17 @@ VARIANTS = {
 }
 
 
+def all_variants():
+    """The short benches here and the long-horizon projects in longproj.py."""
+    import longproj
+    return {**VARIANTS, **longproj.LONG_VARIANTS}
+
+
 def computed_answers(name):
     """(true X, naive X) as the generator defines them."""
+    if name not in VARIANTS:
+        import longproj
+        return longproj.computed_answers(name)
     make, planted, seed = VARIANTS[name]
     if make is make_ringdown:
         t, v = ringdown(planted, seed)
@@ -358,7 +367,7 @@ def computed_answers(name):
 def main():
     if "--check" in sys.argv:
         bad = 0
-        for name in VARIANTS:
+        for name in all_variants():
             true, naive = computed_answers(name)
             okey = json.load(open(os.path.join(ROOT, name, "oracle.json")))
             for k, v in true.items():
@@ -371,8 +380,15 @@ def main():
                 same = want is not None and abs(v - want) <= 0.01 * abs(want)
                 print(f"{'ok ' if same else 'BAD'} {name} {k} naive {v:.6g} (oracle {want})")
                 bad += not same
+        import longproj
+        for label, ok in longproj.extra_checks():
+            print(f"{'ok ' if ok else 'BAD'} {label}")
+            bad += not ok
         sys.exit(1 if bad else 0)
-    for name, (make, planted, seed) in VARIANTS.items():
+    only = [a for a in sys.argv[1:] if not a.startswith("--")]
+    for name, (make, planted, seed) in all_variants().items():
+        if only and name not in only:
+            continue
         out = os.path.join(ROOT, name, "input")
         make(out, planted, seed)
         true, naive = computed_answers(name)

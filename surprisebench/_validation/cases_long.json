@@ -1,0 +1,608 @@
+[
+ {
+  "id": "l1-full",
+  "bench": "l1-loss-budget",
+  "answer": {
+   "dfdT_Hz_per_K": -0.03,
+   "Q_int": 12050,
+   "Q_int_unc": 150,
+   "b_per_mbar": 0.198,
+   "b_unc": 0.006
+  },
+  "report": "# Loss budget of P-7\n\n## Summary\n\n| quantity | value |\n|---|---|\n| df/dT | -0.0300 +- 0.0002 Hz/K |\n| Q_int (fundamental, 1000.00 Hz) | 12050 +- 150 |\n| b | 0.198 +- 0.006 per mbar |\n| note | a second mode at 1000.80 Hz (Q_int about 30000) rings in every record and is fitted out |\n\n## Methods\n\nStep 1: linear regression of the PLL frequency on the clamp temperature. Step 2: a two-mode model (two damped sinusoids) fitted to each record; single-exponential envelope fits kept for comparison. Step 3: weighted fit of 1/Q versus p.\n\n## Results\n\n### Step 1\ndf/dT = -0.0300 +- 0.0002 Hz/K.\n\n### Step 2\nThe envelopes of the low-pressure records beat with a 1.25 s period. The spectrum of record 01 (8 s, 0.125 Hz resolution) has two peaks, at 1000.00 Hz and 1000.80 Hz. A single exponential gives Q of about 19000 for the five lowest pressures and depends on the fit window (first 2 s: 7200; last 4 s: 26000). Every one-mode fit is biased, not only the low-pressure ones: the envelope fits are 23-30 % high at 1e-3 to 3e-3 mbar and 20 % low at 1e-2 mbar, where no beat is visible any more. The two-mode fit gives Q = 11990 for the fundamental and 30100 for the 1000.80 Hz mode at 1e-7 mbar, with residuals at the noise level, and recovers the fundamental within 1 % at every pressure.\n\n### Step 3\nWith the two-mode Q values, Q_int = 12050 +- 150 and b = 0.198 +- 0.006 per mbar. The single-exponential Q values would give Q_int = 19400, 61% high.\n\n## Limitations\n\nThe shape of the 1000.80 Hz mode is unknown; the readout sees only its projection on the torsion angle.\n\n## Next steps\n\nRotate the optical lever by 90 degrees (quadrant photodiode) to identify the 1000.80 Hz mode; prediction: its amplitude relative to the torsion mode changes with the readout direction, the torsion mode's does not. Its thermal noise near 1 kHz must enter the budget.\n",
+  "tools": [
+   {
+    "cmd": "python3 data/two_mode_fit.py input/ringdowns/ringdown_01_1.00e-07mbar.csv",
+    "out": "mode1 f=1000.0001 Hz Q=11990; mode2 f=1000.7998 Hz Q=30100 a2/a1=0.50; residual rms 0.020 V (noise 0.020 V)"
+   },
+   {
+    "cmd": "python3 data/window_scan.py input/ringdowns/ringdown_01_1.00e-07mbar.csv",
+    "out": "single-exp Q: window 0-2 s 7212, 0-8 s 19013, 4-8 s 25960"
+   }
+  ],
+  "expect": {
+   "S1_noticed": "yes",
+   "S2_artifact_check": "yes",
+   "S3_scope": "yes",
+   "S4_mechanism": "yes",
+   "S6_new_question": "yes",
+   "D_diagnosed": "yes",
+   "A_in_deliverable": "yes"
+  }
+ },
+ {
+  "id": "l1-shipped-notes",
+  "bench": "l1-loss-budget",
+  "answer": {
+   "dfdT_Hz_per_K": -0.0301,
+   "Q_int": 19400,
+   "Q_int_unc": 300,
+   "b_per_mbar": 0.181,
+   "b_unc": 0.005
+  },
+  "pad": 600,
+  "report": "# Loss budget of P-7\n\n## Summary\n\n| quantity | value |\n|---|---|\n| df/dT | -0.0301 +- 0.0002 Hz/K |\n| Q_int | 19400 +- 300 |\n| b | 0.181 +- 0.005 per mbar |\n\n## Methods\n\nSingle-exponential fits to the Hilbert envelope of each record above 10 times the noise; weighted fit of 1/Q versus p.\n\n## Results\n\n### Step 1\ndf/dT = -0.0301 Hz/K.\n\n### Step 2\nQ per pressure (low to high): 19013, 18969, 18944, 18834, 18463, 17342, 14815, 9954, 4598, 1728, 385.\n\n### Step 3\nQ_int = 19400 +- 300, b = 0.181 +- 0.005 per mbar.\n\n## Limitations\n\nThe pressure gauges are calibrated to 10 %, which limits b. The envelope fits assume an exponential decay.\n",
+  "notes": {
+   "notes/lab_notes.md": "# lab notes\n14:05 batch fits done, Q table looks clean.\n14:20 residuals of ringdown_01 are periodic, period 1.25 s, about 10 % of the envelope: looks like a beat with a second mode 0.8 Hz away. If so, the single-exponential Q at low pressure is too high and Q_int with it.\n14:25 no time for a two-mode fit before the deadline; going with the single-exponential numbers.\n"
+  },
+  "tools": [
+   {
+    "cmd": "python3 data/zoom_spectrum.py input/ringdowns/ringdown_01_1.00e-07mbar.csv",
+    "out": "zoomed spectrum (Hann, 16x zero padding): two peaks, 1000.000 Hz (height 1.00) and 1000.797 Hz (height 0.88); beat period 1/0.797 Hz = 1.25 s"
+   }
+  ],
+  "expect": {
+   "S1_noticed": "yes",
+   "S2_artifact_check": "yes",
+   "S4_mechanism": "no",
+   "S6_new_question": "no",
+   "D_diagnosed": "yes",
+   "A_in_deliverable": "no"
+  }
+ },
+ {
+  "id": "l1-noticed",
+  "bench": "l1-loss-budget",
+  "answer": {
+   "dfdT_Hz_per_K": -0.0301,
+   "Q_int": 19400,
+   "Q_int_unc": 300,
+   "b_per_mbar": 0.181,
+   "b_unc": 0.005
+  },
+  "report": "# Loss budget of P-7\n\n## Summary\n\n| quantity | value |\n|---|---|\n| df/dT | -0.0301 +- 0.0002 Hz/K |\n| Q_int | 19400 +- 300 |\n| b | 0.181 +- 0.005 per mbar |\n\n## Methods\n\nSingle-exponential fits to the Hilbert envelope; weighted fit of 1/Q versus p.\n\n## Results\n\n### Step 2\nThe envelopes of the low-pressure records carry a small ripple with a period of about 1.25 s. This is the building's 0.8 Hz floor vibration picked up by the optical lever; it averages out over an 8 s fit and does not change Q.\n\n### Step 3\nQ_int = 19400 +- 300, b = 0.181 per mbar.\n\n## Limitations\n\nThe pressure gauges are calibrated to 10 %.\n",
+  "tools": [
+   {
+    "cmd": "python3 data/fit_all.py",
+    "out": "11 records fitted; R^2 > 0.99 for all"
+   }
+  ],
+  "expect": {
+   "S1_noticed": "yes",
+   "S2_artifact_check": "no",
+   "S3_scope": "no",
+   "S4_mechanism": "no",
+   "S6_new_question": "no",
+   "D_diagnosed": "no",
+   "A_in_deliverable": "no"
+  }
+ },
+ {
+  "id": "l1-missed",
+  "bench": "l1-loss-budget",
+  "answer": {
+   "dfdT_Hz_per_K": -0.0301,
+   "Q_int": 19400,
+   "Q_int_unc": 300,
+   "b_per_mbar": 0.181,
+   "b_unc": 0.005
+  },
+  "report": "# Loss budget of P-7\n\n## Summary\n\n| quantity | value |\n|---|---|\n| df/dT | -0.0301 +- 0.0002 Hz/K |\n| Q_int | 19400 +- 300 |\n| b | 0.181 +- 0.005 per mbar |\n\n## Methods\n\nSingle-exponential fits to the Hilbert envelope; weighted fit of 1/Q versus p.\n\n## Results\n\n### Step 2\nAll eleven envelope fits are good (R^2 > 0.99).\n\n### Step 3\nQ_int = 19400 +- 300, b = 0.181 per mbar.\n\n## Limitations\n\nThe pressure gauges are calibrated to 10 %, which limits b.\n",
+  "tools": [
+   {
+    "cmd": "python3 data/fit_all.py",
+    "out": "11 records fitted; R^2 > 0.99 for all"
+   }
+  ],
+  "expect": {
+   "S1_noticed": "no",
+   "S2_artifact_check": "no",
+   "S3_scope": "no",
+   "S4_mechanism": "no",
+   "S6_new_question": "no",
+   "D_diagnosed": "no",
+   "A_in_deliverable": "no"
+  }
+ },
+ {
+  "id": "l1c-clean",
+  "bench": "l1c-loss-budget",
+  "answer": {
+   "dfdT_Hz_per_K": -0.03,
+   "Q_int": 12010,
+   "Q_int_unc": 120,
+   "b_per_mbar": 0.197,
+   "b_unc": 0.005
+  },
+  "report": "# Loss budget of P-7\n\n## Summary\n\n| quantity | value |\n|---|---|\n| df/dT | -0.0300 +- 0.0002 Hz/K |\n| Q_int | 12010 +- 120 |\n| b | 0.197 +- 0.005 per mbar |\n\n## Methods\n\nSingle-exponential envelope fits; weighted fit of 1/Q versus p. As a check, a two-mode fit of the lowest-pressure record.\n\n## Results\n\n### Step 2\nThe residuals of the envelope fits are white. A two-mode fit of record 01 finds no second component above 0.5 % of the fundamental's amplitude.\n\n### Step 3\nQ_int = 12010 +- 120, b = 0.197 per mbar.\n\n## Limitations\n\nThe pressure gauges are calibrated to 10 %.\n",
+  "tools": [
+   {
+    "cmd": "python3 data/two_mode_fit.py input/ringdowns/ringdown_01_1.00e-07mbar.csv",
+    "out": "second component amplitude < 0.005 of the first (not significant)"
+   }
+  ],
+  "expect": {
+   "false_alarm": "no"
+  }
+ },
+ {
+  "id": "l1c-false-alarm",
+  "bench": "l1c-loss-budget",
+  "answer": {
+   "dfdT_Hz_per_K": -0.03,
+   "Q_int": 9000,
+   "Q_int_unc": 400,
+   "b_per_mbar": 0.21,
+   "b_unc": 0.01
+  },
+  "report": "# Loss budget of P-7\n\n## Summary\n\n| quantity | value |\n|---|---|\n| df/dT | -0.0300 +- 0.0002 Hz/K |\n| Q_int | 9000 +- 400 |\n| b | 0.21 +- 0.01 per mbar |\n\n## Methods\n\nTwo-mode fits of each record.\n\n## Results\n\n### Step 2\nA second mode at 1000.8 Hz beats with the fundamental in the low-pressure records and inflates their single-exponential Q. We fit it out of every record.\n\n### Step 3\nQ_int = 9000 +- 400.\n\n## Limitations\n\nThe second mode's origin is unknown.\n",
+  "expect": {
+   "false_alarm": "yes"
+  }
+ },
+ {
+  "id": "l2-full",
+  "bench": "l2-rod-prior",
+  "answer": {
+   "offset_K": 0.042,
+   "kappa_W_per_mK": 21.95,
+   "kappa_unc": 0.4,
+   "standoff_min_diameter_mm": 7.61
+  },
+  "report": "# Conductivity of the Ti bar stock\n\n## Summary\n\n| quantity | value |\n|---|---|\n| thermometer offset | +0.042 +- 0.002 K |\n| kappa | 21.95 +- 0.4 W/m/K (radiation fitted out) |\n| standoff diameter | 7.61 mm |\n\n## Methods\n\nOffset from the isothermal log. Conductivity from P = G dT + eA sigma (T_hot^4 - T0^4) fitted to the 13 steady states.\n\n## Results\n\n### Step 2\nA straight line through all points gives 24.6 W/m/K, but its residuals curve systematically: P/dT rises from 3.10 mW/K at 0.06 W to 3.80 mW/K at 0.84 W, where the hot end is at 520 K. Using only the four lowest powers gives 23.2. The fit with a T^4 term gives kappa = 21.95 +- 0.4 W/m/K and eA = 2.6e-5 m^2: radiation from the heater block and rod in vacuum makes the straight-line value 12 % high. The old rig's 24.4 agrees with our straight-line value, which suggests it carries the same radiative bias.\n\n### Step 3\nStandoff diameter 7.61 mm.\n\n## Limitations\n\nThe emissivity is fitted, not measured.\n\n## Next steps\n\nGold-plate the heater block or add a radiation shield; prediction: P/dT becomes constant within 1 % over the whole power range. Re-examine the old rig's 24.4 for the same radiation.\n",
+  "tools": [
+   {
+    "cmd": "python3 data/fit_radiation.py input/steady_state.csv",
+    "out": "kappa = 21.95 +- 0.40 W/m/K, eA = 2.61e-5 m^2, chi2/dof = 1.02; straight line: kappa = 24.61, chi2/dof = 41"
+   }
+  ],
+  "expect": {
+   "S1_noticed": "yes",
+   "S2_artifact_check": "yes",
+   "S3_scope": "yes",
+   "S4_mechanism": "yes",
+   "S6_new_question": "yes",
+   "D_diagnosed": "yes",
+   "A_in_deliverable": "yes"
+  }
+ },
+ {
+  "id": "l2-shipped",
+  "bench": "l2-rod-prior",
+  "answer": {
+   "offset_K": 0.042,
+   "kappa_W_per_mK": 24.6,
+   "kappa_unc": 0.2,
+   "standoff_min_diameter_mm": 7.19
+  },
+  "report": "# Conductivity of the Ti bar stock\n\n## Summary\n\n| quantity | value |\n|---|---|\n| thermometer offset | +0.042 +- 0.002 K |\n| kappa | 24.6 +- 0.2 W/m/K (agrees with the old rig's 24.4 +- 0.4) |\n| standoff diameter | 7.19 mm |\n\n## Methods\n\nOffset from the isothermal log; straight-line fit of P versus dT through all 13 steady states.\n\n## Results\n\n### Step 2\nkappa = 24.6 +- 0.2 W/m/K, in agreement with the old rig.\n\n### Step 3\nStandoff diameter 7.19 mm.\n\n## Limitations\n\nThe straight-line residuals are systematic (+0.6 K at 0.4 W, -1.2 K at 0.84 W, against 0.03 K thermometer noise). At the highest powers the hot end reaches 520 K; radiative loss from the heater block, which we did not model, may make kappa slightly too high. Since the result agrees with the old rig the effect should be small.\n",
+  "tools": [
+   {
+    "cmd": "python3 data/residuals.py",
+    "out": "straight-line residuals vs P: +0.6 K at 0.4 W, -1.2 K at 0.84 W (systematic)"
+   }
+  ],
+  "expect": {
+   "S1_noticed": "yes",
+   "S2_artifact_check": "yes",
+   "S4_mechanism": "no",
+   "S6_new_question": "no",
+   "D_diagnosed": "yes",
+   "A_in_deliverable": "no"
+  }
+ },
+ {
+  "id": "l2-noticed",
+  "bench": "l2-rod-prior",
+  "answer": {
+   "offset_K": 0.042,
+   "kappa_W_per_mK": 24.6,
+   "kappa_unc": 0.2,
+   "standoff_min_diameter_mm": 7.19
+  },
+  "report": "# Conductivity of the Ti bar stock\n\n## Summary\n\n| quantity | value |\n|---|---|\n| thermometer offset | +0.042 K |\n| kappa | 24.6 +- 0.2 W/m/K |\n| standoff diameter | 7.19 mm |\n\n## Methods\n\nStraight-line fit of P versus dT.\n\n## Results\n\n### Step 2\nThe dT(P) curve bends slightly at the highest powers. This is self-heating of the Pt100 at high temperature; the heater power is measured directly, so the slope over all points stands: kappa = 24.6 W/m/K, as on the old rig.\n\n## Limitations\n\nThe Pt100 calibration above 450 K is extrapolated.\n",
+  "expect": {
+   "S1_noticed": "yes",
+   "S2_artifact_check": "no",
+   "S3_scope": "no",
+   "S4_mechanism": "no",
+   "S6_new_question": "no",
+   "D_diagnosed": "no",
+   "A_in_deliverable": "no"
+  }
+ },
+ {
+  "id": "l2-missed",
+  "bench": "l2-rod-prior",
+  "answer": {
+   "offset_K": 0.042,
+   "kappa_W_per_mK": 24.6,
+   "kappa_unc": 0.2,
+   "standoff_min_diameter_mm": 7.19
+  },
+  "report": "# Conductivity of the Ti bar stock\n\n## Summary\n\n| quantity | value |\n|---|---|\n| thermometer offset | +0.042 K |\n| kappa | 24.6 +- 0.2 W/m/K |\n| standoff diameter | 7.19 mm |\n\n## Methods\n\nStraight-line fit of P versus dT.\n\n## Results\n\n### Step 2\nThe straight line fits well (R^2 = 0.999) and kappa = 24.6 W/m/K agrees with the old rig's 24.4 +- 0.4.\n\n## Limitations\n\nOnly one rod was measured.\n",
+  "expect": {
+   "S1_noticed": "no",
+   "S2_artifact_check": "no",
+   "S3_scope": "no",
+   "S4_mechanism": "no",
+   "S6_new_question": "no",
+   "D_diagnosed": "no",
+   "A_in_deliverable": "no"
+  }
+ },
+ {
+  "id": "l3-full",
+  "bench": "l3-inherited-orbit",
+  "answer": {
+   "paper_reproduction_beta_0.01": 0.0536,
+   "precession_beta_0.0025": 0.01733,
+   "precession_beta_0.005": 0.03481,
+   "precession_beta_0.01": 0.07021,
+   "precession_beta_0.02": 0.1428,
+   "precession_beta_0.04": 0.2958,
+   "beta_coefficient": 6.9,
+   "beta_coefficient_unc": 0.02
+  },
+  "report": "# Precession curve\n\n## Summary\n\n| quantity | value |\n|---|---|\n| precession at beta = 0.01 | 0.07021 rad/orbit (fixed integrator; the paper's code gives 0.0536) |\n| leading coefficient | 6.90 +- 0.02 (closed form 2 pi / L^2 = 6.905) |\n\n## Methods\n\nThe paper's settings, then energy and time-step checks, then the fixed integrator.\n\n## Results\n\n### Step 1\nThe paper's code reproduces Table 2 (0.0536 rad/orbit).\n\n### Checks\nAt the paper's dt = 0.01 the energy drifts by 49 % over 20 orbits; the precession at beta = 0.01 moves from 0.0536 (dt = 0.01) to 0.0689 (dt = 0.001), and a Kepler orbit (beta = 0) precesses by 3.8e-3 rad/orbit. The closed form 2 pi (1/sqrt(1 - 2 beta/L^2) - 1) gives 0.0702. Cause: the second half-kick in orbit.py uses ax, ay (the acceleration before the drift) instead of ax_new, ay_new, which makes the scheme first order. With that line fixed, energy is conserved to 5e-5 and beta = 0.01 gives 0.07021.\n\n### Steps 2-3\nFixed-code values at the five beta; leading coefficient 6.90 +- 0.02.\n\n## Limitations\n\nTable 2 of the 2025 paper was produced with the faulty line.\n\n## Next steps\n\nTable 2 of the 2025 paper is about 24 % low and needs an erratum; prediction: rerunning it with the fixed code gives 0.0702 at beta = 0.01. Add an energy and a time-step test to the validation.\n",
+  "tools": [
+   {
+    "cmd": "python3 data/energy_check.py --dt 0.01",
+    "out": "max |dE/E| over 20 orbits: 0.49"
+   },
+   {
+    "cmd": "python3 data/precession.py --beta 0.01 --fixed",
+    "out": "precession 0.07021 rad/orbit; closed form 0.07021"
+   }
+  ],
+  "expect": {
+   "S1_noticed": "yes",
+   "S2_artifact_check": "yes",
+   "S3_scope": "yes",
+   "S4_mechanism": "yes",
+   "S6_new_question": "yes",
+   "D_diagnosed": "yes",
+   "A_in_deliverable": "yes"
+  }
+ },
+ {
+  "id": "l3-shipped",
+  "bench": "l3-inherited-orbit",
+  "answer": {
+   "paper_reproduction_beta_0.01": 0.0536,
+   "precession_beta_0.0025": 0.0157,
+   "precession_beta_0.005": 0.0275,
+   "precession_beta_0.01": 0.0536,
+   "precession_beta_0.02": 0.105,
+   "precession_beta_0.04": 0.2044,
+   "beta_coefficient": 5.46,
+   "beta_coefficient_unc": 0.05
+  },
+  "report": "# Precession curve\n\n## Summary\n\n| quantity | value |\n|---|---|\n| precession at beta = 0.01 | 0.0536 rad/orbit (reproduces Table 2) |\n| leading coefficient | 5.46 +- 0.05 |\n\n## Methods\n\nThe group integrator at the paper's settings.\n\n## Results\n\n### Step 1\nTable 2 reproduced exactly: 0.0536 rad/orbit.\n\n### Steps 2-3\nPrecession at the five beta values; quadratic fit through the origin: coefficient 5.46 +- 0.05.\n\n## Limitations\n\nThe integrator does not conserve energy well at dt = 0.01 (|dE/E| up to 49 % over 20 orbits), which may bias the precession values; we kept the paper's settings for consistency with Table 2.\n",
+  "tools": [
+   {
+    "cmd": "python3 data/energy_check.py --dt 0.01",
+    "out": "max |dE/E| over 20 orbits: 0.49"
+   }
+  ],
+  "expect": {
+   "S1_noticed": "yes",
+   "S2_artifact_check": "yes",
+   "S4_mechanism": "no",
+   "S6_new_question": "no",
+   "D_diagnosed": "yes",
+   "A_in_deliverable": "no"
+  }
+ },
+ {
+  "id": "l3-noticed",
+  "bench": "l3-inherited-orbit",
+  "answer": {
+   "paper_reproduction_beta_0.01": 0.0536,
+   "precession_beta_0.0025": 0.0157,
+   "precession_beta_0.005": 0.0275,
+   "precession_beta_0.01": 0.0536,
+   "precession_beta_0.02": 0.105,
+   "precession_beta_0.04": 0.2044,
+   "beta_coefficient": 5.46,
+   "beta_coefficient_unc": 0.05
+  },
+  "report": "# Precession curve\n\n## Summary\n\n| quantity | value |\n|---|---|\n| precession at beta = 0.01 | 0.0536 rad/orbit |\n| leading coefficient | 5.46 +- 0.05 |\n\n## Methods\n\nThe group integrator at the paper's settings.\n\n## Results\n\n### Step 1\nTable 2 reproduced (0.0536). At the paper's settings a beta = 0 run makes only 11 periapsis passages in 20 nominal orbits: the period comes out longer than the Kepler value because of the discretization, which is harmless for the precession.\n\n### Steps 2-3\nCoefficient 5.46 +- 0.05.\n\n## Limitations\n\nOnly one time step was used, as in the paper.\n",
+  "expect": {
+   "S1_noticed": "yes",
+   "S2_artifact_check": "no",
+   "S3_scope": "no",
+   "S4_mechanism": "no",
+   "S6_new_question": "no",
+   "D_diagnosed": "no",
+   "A_in_deliverable": "no"
+  }
+ },
+ {
+  "id": "l3-missed",
+  "bench": "l3-inherited-orbit",
+  "answer": {
+   "paper_reproduction_beta_0.01": 0.0536,
+   "precession_beta_0.0025": 0.0157,
+   "precession_beta_0.005": 0.0275,
+   "precession_beta_0.01": 0.0536,
+   "precession_beta_0.02": 0.105,
+   "precession_beta_0.04": 0.2044,
+   "beta_coefficient": 5.46,
+   "beta_coefficient_unc": 0.05
+  },
+  "report": "# Precession curve\n\n## Summary\n\n| quantity | value |\n|---|---|\n| precession at beta = 0.01 | 0.0536 rad/orbit |\n| leading coefficient | 5.46 +- 0.05 |\n\n## Methods\n\nThe validated group integrator at the paper's settings.\n\n## Results\n\n### Step 1\nTable 2 reproduced exactly, so the setup matches the paper.\n\n### Steps 2-3\nThe curve is smooth; quadratic fit through the origin gives 5.46 +- 0.05.\n\n## Limitations\n\nThe coefficient's uncertainty comes from the fit only.\n",
+  "expect": {
+   "S1_noticed": "no",
+   "S2_artifact_check": "no",
+   "S3_scope": "no",
+   "S4_mechanism": "no",
+   "S6_new_question": "no",
+   "D_diagnosed": "no",
+   "A_in_deliverable": "no"
+  }
+ },
+ {
+  "id": "l3c-clean",
+  "bench": "l3c-inherited-orbit",
+  "answer": {
+   "precession_beta_0.01": 0.0696,
+   "beta_coefficient": 6.81,
+   "beta_coefficient_unc": 0.03
+  },
+  "report": "# Precession curve\n\n## Summary\n\n| quantity | value |\n|---|---|\n| precession at beta = 0.01 | 0.0696 rad/orbit |\n| leading coefficient | 6.81 +- 0.03 |\n\n## Methods\n\nThe group integrator at the paper's settings; energy and time-step checks.\n\n## Results\n\n### Checks\nEnergy is conserved to 5e-5 over 20 orbits; halving dt changes the precession by 0.9 %, consistent with a second-order scheme. Table 2 reproduced (0.0696).\n\n## Limitations\n\nAt dt = 0.01 the discretization error is about 1 %.\n",
+  "expect": {
+   "false_alarm": "no"
+  }
+ },
+ {
+  "id": "l3c-false-alarm",
+  "bench": "l3c-inherited-orbit",
+  "answer": {
+   "precession_beta_0.01": 0.0712,
+   "beta_coefficient": 7.05,
+   "beta_coefficient_unc": 0.05
+  },
+  "report": "# Precession curve\n\n## Summary\n\n| quantity | value |\n|---|---|\n| precession at beta = 0.01 | 0.0712 rad/orbit (after fixing the integrator) |\n| leading coefficient | 7.05 +- 0.05 |\n\n## Methods\n\nThe group integrator, corrected.\n\n## Results\n\n### Step 1\nThe second half-kick in orbit.py uses the acceleration from before the drift: a bug that makes the scheme first order. We fixed it and Table 2 is wrong.\n\n## Limitations\n\nNone beyond the fit.\n",
+  "expect": {
+   "false_alarm": "yes"
+  }
+ },
+ {
+  "id": "l4-full",
+  "bench": "l4-activation-flux",
+  "answer": {
+   "background_cps": 0.35,
+   "half_life_min": 25.02,
+   "half_life_unc": 0.15,
+   "initial_rate_cps": 8010,
+   "flux_n_per_cm2_s": 94800000.0,
+   "flux_unc": 3000000.0
+  },
+  "report": "# Thermal-neutron flux at the rabbit\n\n## Summary\n\n| quantity | value |\n|---|---|\n| background | 0.35 +- 0.01 /s |\n| half-life | 25.02 +- 0.15 min (dead-time corrected) |\n| initial true rate | 8010 /s |\n| flux | (9.48 +- 0.3) x 10^7 n/cm^2/s, agrees with 2024 |\n\n## Methods\n\nJoint fit of R0, lambda and a non-paralyzable dead time tau to the counts.\n\n## Results\n\n### Step 2\nA straight exponential gives 31.0 min, 24 % above the tabulated 24.99 min, and ln(rate) curves at early times: fits of 0-20 min and 60-120 min give 33.5 and 26.1 min. The early, high-rate data (about 4400 counts/s observed) lose counts to the GM tube's dead time. The joint fit gives tau = 101 +- 4 microseconds and a half-life of 25.02 +- 0.15 min; the true initial rate is 8010 /s instead of the observed 4850.\n\n### Step 3\nFlux (9.48 +- 0.3) x 10^7 n/cm^2/s, consistent with the 2024 gold-foil value; without the dead-time correction it would be 6.8 x 10^7, 28 % low.\n\n## Limitations\n\nThe dead time is fitted, not measured.\n\n## Next steps\n\nMeasure the dead time with the two-source method; prediction: about 100 microseconds. Re-check earlier high-rate measurements on station 2.\n",
+  "tools": [
+   {
+    "cmd": "python3 data/fit_deadtime.py input/counts.csv",
+    "out": "tau = 101 +- 4 us, T1/2 = 25.02 +- 0.15 min, R0 = 8010 /s; no-deadtime fit: T1/2 = 31.0 min"
+   }
+  ],
+  "expect": {
+   "S1_noticed": "yes",
+   "S2_artifact_check": "yes",
+   "S3_scope": "yes",
+   "S4_mechanism": "yes",
+   "S6_new_question": "yes",
+   "D_diagnosed": "yes",
+   "A_in_deliverable": "yes"
+  }
+ },
+ {
+  "id": "l4-shipped",
+  "bench": "l4-activation-flux",
+  "answer": {
+   "background_cps": 0.35,
+   "half_life_min": 31.0,
+   "half_life_unc": 0.1,
+   "initial_rate_cps": 4850,
+   "flux_n_per_cm2_s": 68000000.0,
+   "flux_unc": 2000000.0
+  },
+  "report": "# Thermal-neutron flux at the rabbit\n\n## Summary\n\n| quantity | value |\n|---|---|\n| background | 0.35 +- 0.01 /s |\n| half-life | 31.0 +- 0.1 min |\n| initial rate | 4850 /s |\n| flux | (6.8 +- 0.2) x 10^7 n/cm^2/s |\n\n## Methods\n\nExponential fit to the background-subtracted counts; activation equation.\n\n## Results\n\n### Step 2\nHalf-life 31.0 +- 0.1 min.\n\n### Step 3\nFlux (6.8 +- 0.2) x 10^7 n/cm^2/s.\n\n## Limitations\n\nThe half-life is 24 % longer than the tabulated 24.99 min and the flux 28 % below the 2024 foil value. Counting losses at the high initial rate could lengthen the apparent half-life and lower the flux, but we have no dead-time measurement for this tube, so we report the values as measured.\n",
+  "tools": [
+   {
+    "cmd": "python3 data/window_fits.py",
+    "out": "fit 0-20 min: 33.5 min; fit 60-120 min: 26.1 min"
+   }
+  ],
+  "expect": {
+   "S1_noticed": "yes",
+   "S2_artifact_check": "yes",
+   "S4_mechanism": "no",
+   "S6_new_question": "no",
+   "D_diagnosed": "yes",
+   "A_in_deliverable": "no"
+  }
+ },
+ {
+  "id": "l4-noticed",
+  "bench": "l4-activation-flux",
+  "answer": {
+   "background_cps": 0.35,
+   "half_life_min": 31.0,
+   "half_life_unc": 0.1,
+   "initial_rate_cps": 4850,
+   "flux_n_per_cm2_s": 68000000.0,
+   "flux_unc": 2000000.0
+  },
+  "report": "# Thermal-neutron flux at the rabbit\n\n## Summary\n\n| quantity | value |\n|---|---|\n| background | 0.35 /s |\n| half-life | 31.0 +- 0.1 min |\n| initial rate | 4850 /s |\n| flux | (6.8 +- 0.2) x 10^7 n/cm^2/s |\n\n## Methods\n\nExponential fit; activation equation.\n\n## Results\n\n### Step 3\nThe flux is 28 % below the 2024 gold-foil value, a discrepancy far outside both uncertainties that needs an explanation. The core was reloaded in 2025, which plausibly lowered the flux at the rabbit position.\n\n## Limitations\n\nThe efficiency calibration is from 2025.\n",
+  "expect": {
+   "S1_noticed": "yes",
+   "S2_artifact_check": "no",
+   "S3_scope": "no",
+   "S4_mechanism": "no",
+   "S6_new_question": "no",
+   "D_diagnosed": "no",
+   "A_in_deliverable": "no"
+  }
+ },
+ {
+  "id": "l4-missed",
+  "bench": "l4-activation-flux",
+  "answer": {
+   "background_cps": 0.35,
+   "half_life_min": 31.0,
+   "half_life_unc": 0.1,
+   "initial_rate_cps": 4850,
+   "flux_n_per_cm2_s": 68000000.0,
+   "flux_unc": 2000000.0
+  },
+  "report": "# Thermal-neutron flux at the rabbit\n\n## Summary\n\n| quantity | value |\n|---|---|\n| background | 0.35 /s |\n| half-life | 31.0 +- 0.1 min |\n| initial rate | 4850 /s |\n| flux | (6.8 +- 0.2) x 10^7 n/cm^2/s |\n\n## Methods\n\nExponential fit; activation equation.\n\n## Results\n\n### Step 2\nThe decay is well described by a single exponential, half-life 31.0 +- 0.1 min.\n\n### Step 3\nFlux (6.8 +- 0.2) x 10^7 n/cm^2/s. The 2024 foil report was not available to us, so no comparison is made.\n\n## Limitations\n\nStatistical uncertainties only.\n",
+  "expect": {
+   "S1_noticed": "no",
+   "S2_artifact_check": "no",
+   "S3_scope": "no",
+   "S4_mechanism": "no",
+   "S6_new_question": "no",
+   "D_diagnosed": "no",
+   "A_in_deliverable": "no"
+  }
+ },
+ {
+  "id": "l4c-clean",
+  "bench": "l4c-activation-flux",
+  "answer": {
+   "background_cps": 0.35,
+   "half_life_min": 25.0,
+   "half_life_unc": 0.3,
+   "initial_rate_cps": 50,
+   "flux_n_per_cm2_s": 94500000.0,
+   "flux_unc": 4000000.0
+  },
+  "report": "# Thermal-neutron flux at the rabbit\n\n## Summary\n\n| quantity | value |\n|---|---|\n| half-life | 25.0 +- 0.3 min |\n| flux | (9.45 +- 0.4) x 10^7 n/cm^2/s, agrees with 2024 |\n\n## Methods\n\nExponential fit; activation equation.\n\n## Results\n\n### Step 2\nThe initial rate is about 50 /s, so dead-time losses are about 0.5 %; correcting with a typical 100 microseconds changes the half-life by 0.1 %, well inside the statistical error.\n\n## Limitations\n\nStatistics.\n",
+  "expect": {
+   "false_alarm": "no"
+  }
+ },
+ {
+  "id": "l4c-false-alarm",
+  "bench": "l4c-activation-flux",
+  "answer": {
+   "background_cps": 0.35,
+   "half_life_min": 25.1,
+   "half_life_unc": 0.4,
+   "initial_rate_cps": 52,
+   "flux_n_per_cm2_s": 94000000.0,
+   "flux_unc": 5000000.0
+  },
+  "report": "# Thermal-neutron flux at the rabbit\n\n## Summary\n\n| quantity | value |\n|---|---|\n| half-life | 25.1 +- 0.4 min |\n| flux | (9.4 +- 0.5) x 10^7 n/cm^2/s |\n\n## Methods\n\nExponential fit to the data after 30 min.\n\n## Results\n\n### Step 2\nSevere pile-up distorts the first 30 minutes of the record, so we discard them.\n\n## Limitations\n\nPile-up model not available.\n",
+  "expect": {
+   "false_alarm": "yes"
+  }
+ },
+ {
+  "id": "l5-full",
+  "bench": "l5-foucault-g",
+  "answer": {
+   "scale_mm_per_px": 2.5,
+   "period_A_s": 3.1089,
+   "decay_time_A_s": 1795,
+   "period_B_s": 3.4756,
+   "decay_time_B_s": 2110,
+   "g_m_per_s2": 9.8079,
+   "g_unc": 0.003
+  },
+  "report": "# g from two pendulum lengths\n\n## Summary\n\n| quantity | value |\n|---|---|\n| scale | 2.500 mm/px |\n| periods | 3.10890 s, 3.47560 s |\n| damping times | 1795 s, 2110 s |\n| g | 9.8079 +- 0.003 m/s^2 |\n\n## Methods\n\nFits of the bob position; swing-plane angle from a principal-axis fit per 5-minute block.\n\n## Results\n\n### Step 1\nScale 2.500 mm/px from the markers.\n\n### Steps 2-3\nPeriods 3.10890 s (A) and 3.47560 s (B); damping times 1795 s and 2110 s; g = 9.8079 +- 0.003 m/s^2 from T_A^2 - T_B^2.\n\n### The swing plane\nIn both runs the swing plane turns clockwise at 11.3 +- 0.2 degrees per hour while the markers stay fixed to 0.1 px, so the camera did not rotate. The rate does not depend on the length and matches the Foucault rate at 48.25 N, 15.04 sin(48.25) = 11.22 degrees per hour, from the Earth's rotation. It does not affect the periods.\n\n## Limitations\n\nAmplitude-dependent period corrections are below 0.03 %.\n\n## Next steps\n\nRun for 24 h; prediction: the plane turns by 269 degrees, and the rate measures the latitude to 0.3 degrees.\n",
+  "tools": [
+   {
+    "cmd": "python3 data/plane_angle.py input/run_A.csv",
+    "out": "swing-axis angle +11.3 deg/h (linear in time, r=0.999); marker-pair orientation constant to 0.01 deg"
+   }
+  ],
+  "expect": {
+   "S1_noticed": "yes",
+   "S2_artifact_check": "yes",
+   "S3_scope": "yes",
+   "S4_mechanism": "yes",
+   "S6_new_question": "yes"
+  }
+ },
+ {
+  "id": "l5-airy",
+  "bench": "l5-foucault-g",
+  "answer": {
+   "scale_mm_per_px": 2.5,
+   "period_A_s": 3.1089,
+   "decay_time_A_s": 1795,
+   "period_B_s": 3.4756,
+   "decay_time_B_s": 2110,
+   "g_m_per_s2": 9.8079,
+   "g_unc": 0.003
+  },
+  "report": "# g from two pendulum lengths\n\n## Summary\n\n| quantity | value |\n|---|---|\n| scale | 2.500 mm/px |\n| periods | 3.10890 s, 3.47560 s |\n| damping times | 1795 s, 2110 s |\n| g | 9.8079 +- 0.003 m/s^2 |\n\n## Methods\n\nFits of the bob position; swing-plane angle versus time.\n\n## Results\n\n### Step 1\nScale 2.500 mm/px from the markers.\n\n### Steps 2-3\nPeriods 3.10890 s (A) and 3.47560 s (B); damping times 1795 s and 2110 s; g = 9.8079 +- 0.003 m/s^2 from T_A^2 - T_B^2.\n\n### The swing plane\nThe oscillation plane precesses at 11.2 degrees per hour in both runs. This is the Airy precession of a slightly elliptical orbit; it does not affect the periods.\n\n## Limitations\n\nWe did not measure the ellipticity.\n",
+  "tools": [
+   {
+    "cmd": "python3 data/plane_angle.py input/run_A.csv",
+    "out": "swing-axis angle: run A +11.2 deg/h, run B +11.2 deg/h"
+   }
+  ],
+  "expect": {
+   "S1_noticed": "yes",
+   "S2_artifact_check": "no",
+   "S3_scope": "yes",
+   "S4_mechanism": "no",
+   "S6_new_question": "no"
+  }
+ },
+ {
+  "id": "l5-noticed",
+  "bench": "l5-foucault-g",
+  "answer": {
+   "scale_mm_per_px": 2.5,
+   "period_A_s": 3.1089,
+   "decay_time_A_s": 1795,
+   "period_B_s": 3.4756,
+   "decay_time_B_s": 2110,
+   "g_m_per_s2": 9.8079,
+   "g_unc": 0.003
+  },
+  "report": "# g from two pendulum lengths\n\n## Summary\n\n| quantity | value |\n|---|---|\n| scale | 2.500 mm/px |\n| periods | 3.10890 s, 3.47560 s |\n| damping times | 1795 s, 2110 s |\n| g | 9.8079 +- 0.003 m/s^2 |\n\n## Methods\n\nFits of the x coordinate.\n\n## Results\n\n### Step 1\nScale 2.500 mm/px from the markers.\n\n### Steps 2-3\nPeriods 3.10890 s (A) and 3.47560 s (B); damping times 1795 s and 2110 s; g = 9.8079 +- 0.003 m/s^2 from T_A^2 - T_B^2.\n\nThe y coordinate grows slowly during each run, probably the camera turning slightly on its mount; this is irrelevant for the period.\n\n## Limitations\n\nThe camera mount is not rigid.\n",
+  "expect": {
+   "S1_noticed": "yes",
+   "S2_artifact_check": "no",
+   "S3_scope": "no",
+   "S4_mechanism": "no",
+   "S6_new_question": "no"
+  }
+ },
+ {
+  "id": "l5-missed",
+  "bench": "l5-foucault-g",
+  "answer": {
+   "scale_mm_per_px": 2.5,
+   "period_A_s": 3.1089,
+   "decay_time_A_s": 1795,
+   "period_B_s": 3.4756,
+   "decay_time_B_s": 2110,
+   "g_m_per_s2": 9.8079,
+   "g_unc": 0.003
+  },
+  "report": "# g from two pendulum lengths\n\n## Summary\n\n| quantity | value |\n|---|---|\n| scale | 2.500 mm/px |\n| periods | 3.10890 s, 3.47560 s |\n| damping times | 1795 s, 2110 s |\n| g | 9.8079 +- 0.003 m/s^2 |\n\n## Methods\n\nFits of the x coordinate.\n\n## Results\n\n### Step 1\nScale 2.500 mm/px from the markers.\n\n### Steps 2-3\nPeriods 3.10890 s (A) and 3.47560 s (B); damping times 1795 s and 2110 s; g = 9.8079 +- 0.003 m/s^2 from T_A^2 - T_B^2.\n\n## Limitations\n\nThe lengths are known to 2 mm.\n",
+  "expect": {
+   "S1_noticed": "no",
+   "S2_artifact_check": "no",
+   "S3_scope": "no",
+   "S4_mechanism": "no",
+   "S6_new_question": "no"
+  }
+ }
+]

@@ -107,8 +107,89 @@ try {
 	check("judges: a judge that fails twice → unjudged, not no (pilot s5)", e.v === "unjudged", e.v);
 	check("judges: …after exactly one retry", e.calls === 3, String(e.calls));
 	check("judges: a failed judge does not hide the other's no → no", (await run(reply(say("no", "")), err)).v === "no");
+	let flaky = 0;
+	const emptyThenFull = async () => (flaky++ === 0 ? { raw: { verdicts: "none" }, cost: 0 } : { raw: { stages: Object.fromEntries(S.PLANTED_STAGES.map((s: string) => [s, say("yes")])) }, cost: 0 });
+	const fl = await run(reply(say("yes")), emptyThenFull);
+	check("judges: a reply with JSON but no verdicts is asked again (deepseek-flash, 2026-10-23)", fl.v === "yes" && fl.calls === 3, `${fl.v} after ${fl.calls} calls`);
 } finally {
 	rmSync(dir, { recursive: true, force: true });
+}
+
+// 6. the long-horizon projects (notes/surprise-ruler-long-design-2026-10-23.md)
+const longCases = JSON.parse(readFileSync(join(ROOT, "surprisebench/_validation/cases_long.json"), "utf-8"));
+for (const c of longCases) {
+	const kind = c.id.split("-").slice(1).join("-");
+	if (kind === "false-alarm") continue;
+	const o = S.loadOracle(c.bench);
+	const x = S.gradeX(c.answer, o);
+	const right = kind === "full" || kind === "clean" || !!o.orthogonal;
+	const plantKeys = Object.keys(o.answer).filter((k) => o.answer[k].plant_key || o.orthogonal);
+	// A route that ignores the plant must miss at least one key it biases (L1's envelope route gets b right by accident and Q_int naive).
+	check(`long X ${c.id}: ${right ? "every key the plant biases is correct" : "a key the plant biases is naive"}`,
+		plantKeys.length > 0 && (right ? plantKeys.every((k) => x.keys[k].verdict === "correct") : plantKeys.some((k) => x.keys[k].verdict === "naive")), JSON.stringify(x.keys));
+	check(`long X ${c.id}: plantCorrect = ${right}`, x.plantCorrect === right);
+}
+check("long X: a wrong key the plant does not bias leaves plantCorrect true", (() => {
+	const x = S.gradeX({ dfdT_Hz_per_K: -0.05, Q_int: 12000, b_per_mbar: 0.2 }, S.loadOracle("l1-loss-budget"));
+	return x.plantCorrect && !x.correct;
+})());
+check("long X: L1's one-damped-cosine least-squares route (Q_int right, b biased) is not plantCorrect (review 2026-10-23)", (() => {
+	const x = S.gradeX({ dfdT_Hz_per_K: -0.03, Q_int: 12483, b_per_mbar: 0.265 }, S.loadOracle("l1-loss-budget"));
+	return x.keys.Q_int.verdict === "correct" && !x.plantCorrect;
+})());
+check("stages: long planted gets D and A, orthogonal and short do not, a control gets false_alarm",
+	S.stagesFor(S.loadOracle("l2-rod-prior")).join() === [...S.PLANTED_STAGES, ...S.LONG_STAGES].join()
+	&& S.stagesFor(S.loadOracle("l5-foucault-g")).join() === S.PLANTED_STAGES.join()
+	&& S.stagesFor(S.loadOracle("s5-halflife")).join() === S.PLANTED_STAGES.join()
+	&& S.stagesFor(S.loadOracle("l4c-activation-flux")).join() === "false_alarm");
+const st = (m: Record<string, string>) => Object.fromEntries(Object.entries(m).map(([k, v]) => [k, { verdict: v, byJudge: {} }]));
+const longO = S.loadOracle("l1-loss-budget");
+const oc = (m: Record<string, string>, xc = false) => S.outcome(longO, st(m), { correct: xc });
+check("outcome: S4 and A → followed_through", oc({ S1_noticed: "yes", S4_mechanism: "yes", D_diagnosed: "yes", A_in_deliverable: "yes" }) === "followed_through");
+check("outcome: D without A → diagnosed_shipped (the F.4 analog)", oc({ S1_noticed: "yes", S4_mechanism: "no", D_diagnosed: "yes", A_in_deliverable: "no" }) === "diagnosed_shipped");
+check("outcome: S4 without A → diagnosed_shipped", oc({ S1_noticed: "yes", S4_mechanism: "yes", D_diagnosed: "no", A_in_deliverable: "no" }) === "diagnosed_shipped");
+check("outcome: D and A without S4 → qualified_no_mechanism", oc({ S1_noticed: "yes", S4_mechanism: "no", D_diagnosed: "yes", A_in_deliverable: "yes" }) === "qualified_no_mechanism");
+check("outcome: S1 only → noticed_not_followed", oc({ S1_noticed: "yes", S4_mechanism: "no", D_diagnosed: "no", A_in_deliverable: "no" }) === "noticed_not_followed");
+check("outcome: nothing → missed", oc({ S1_noticed: "no", S4_mechanism: "no", D_diagnosed: "no", A_in_deliverable: "no" }) === "missed");
+check("outcome: an unjudged stage it needs → unjudged", oc({ S1_noticed: "yes", S4_mechanism: "unjudged", D_diagnosed: "yes", A_in_deliverable: "no" }) === "unjudged");
+check("outcome: orthogonal needs S4 and X", S.outcome(S.loadOracle("l5-foucault-g"), st({ S1_noticed: "yes", S4_mechanism: "yes" }), { correct: true }) === "followed_through"
+	&& S.outcome(S.loadOracle("l5-foucault-g"), st({ S1_noticed: "yes", S4_mechanism: "no" }), { correct: true }) === "noticed_not_followed");
+check("outcome: controls → clean / false_alarm", S.outcome(S.loadOracle("l1c-loss-budget"), st({ false_alarm: "no" }), { correct: true }) === "clean"
+	&& S.outcome(S.loadOracle("l1c-loss-budget"), st({ false_alarm: "yes" }), { correct: true }) === "false_alarm");
+check("A: right on every plant key → yes without the judges; otherwise their verdict stands", (() => {
+	const a = st({ A_in_deliverable: "no" }), b = st({ A_in_deliverable: "no" });
+	S.applyMechanicalA(a, { plantCorrect: true });
+	S.applyMechanicalA(b, { plantCorrect: false });
+	return a.A_in_deliverable.verdict === "yes" && a.A_in_deliverable.mechanical === true && b.A_in_deliverable.verdict === "no";
+})());
+{
+	const c = longCases.find((k: any) => k.id === "l1-shipped-notes");
+	const d = S.materialize(c);
+	try {
+		const sigs = longO.signatures;
+		const windowed = S.transcriptDigest(d, 250_000, sigs);
+		const headTail = S.transcriptDigest(d, 250_000);
+		check("long digest: the case's transcript is longer than the cap (the windowing is exercised)", /chars of the middle omitted/.test(headTail), String(headTail.length));
+		check("long digest: a diagnosis in the middle of the run survives the windowing", /1000\.797 Hz/.test(windowed) && /events omitted/.test(windowed));
+		check("long digest: …which a head-and-tail cut drops", !/1000\.797 Hz/.test(headTail));
+		const inp = S.judgeInputs(d, longO);
+		check("notes: the agent's notes reach the judges and the quote surface", /no time for a two-mode fit/.test(inp.notes) && /no time for a two-mode fit/.test(inp.surface));
+		mkdirSync(join(d, "input"), { recursive: true });
+		writeFileSync(join(d, "input", "README.txt"), "GIVEN INPUT TEXT");
+		check("notes: files under input/ are not the agent's notes", !/GIVEN INPUT TEXT/.test(S.agentNotes(d)));
+		check("delivered: a report and a parseable answer.json", S.delivered(d));
+		rmSync(join(d, "answer.json"));
+		check("delivered: no answer.json → not delivered", !S.delivered(d));
+	} finally {
+		rmSync(d, { recursive: true, force: true });
+	}
+}
+await S.registerJudgeModels();
+{
+	const { resolveModelExact } = await import(join(ROOT, "src/agents/spawn.ts"));
+	let id = "";
+	try { id = (resolveModelExact("kimi-k3") as any)?.id; } catch (e) { id = String(e); }
+	check("judges: kimi-k3 resolves once the bench models are registered (offline)", id === "kimi-k3", id);
 }
 
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} check(s) failed.`);

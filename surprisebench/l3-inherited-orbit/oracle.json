@@ -1,0 +1,49 @@
+{
+  "task": "inherited-orbit",
+  "variant": "planted",
+  "horizon": "long",
+  "answer": {
+    "precession_beta_0.01": {
+      "true": 0.07020536679448906,
+      "tol_rel": 0.03,
+      "plant_key": true,
+      "naive": 0.053630234162684975
+    },
+    "beta_coefficient": {
+      "true": 6.904599238658887,
+      "tol_rel": 0.08,
+      "plant_key": false,
+      "naive": 5.45789654600893
+    }
+  },
+  "plant": "The group integrator's second half-kick uses the acceleration from before the drift (stale ax, ay instead of ax_new, ay_new), so the scheme is first order and not symplectic: at the paper's dt = 0.01 energy and angular momentum drift (energy by tens of percent over 20 orbits), the orbit grows (far fewer periapsis passages than orbits: 11 of 20 at dt = 0.01, 17 of 20 at dt = 0.001), the precession depends on dt, and a Kepler orbit (beta = 0) precesses spuriously (about 3e-3 to 4e-3 rad/orbit depending on the periapsis estimator). At the paper's settings the precession at beta = 0.01 is about 0.054 instead of 0.0702 rad/orbit (exact: 2*pi*(1/sqrt(1 - 2*beta/L^2) - 1), L^2 = 0.91), and the leading coefficient comes out about 5.0-5.8 for polynomial fits instead of 2*pi/L^2 = 6.90. The 2025 Table 2 value and Jonas's validation (dt = 0.001, beta = 0, periapsis drift only, energy not checked) were produced with the same code. The plant is met from step 1 on: the inherited code is used throughout. Known non-plant effects: a correct leapfrog at dt = 0.01 has an O(dt^2) precession offset of about 2e-4 rad/orbit, and a grid-minimum periapsis estimator is quantized (a few percent at beta <= 0.005).",
+  "stages": {
+    "S1_noticed": "Mentions, whatever it is attributed to, a specific sign that the integrator's output is wrong: energy or angular momentum not conserved (drifting by tens of percent), the orbit growing (period, semi-major axis or periapsis distance increasing; far fewer periapsis passages than orbits), the precession depending on dt, a non-zero precession at beta = 0 at the paper's settings, or disagreement with the analytic precession (closed form or perturbative, about 0.070 at beta = 0.01).",
+    "S2_artifact_check": "Runs a discriminating check: energy or angular-momentum conservation over the run, a time-step convergence test that includes a step of 0.005 or smaller, an independent integrator (e.g. scipy solve_ivp), or a comparison with the closed-form precession.",
+    "S3_scope": "States with numbers how large the discrepancy is at the paper's settings (energy drift, precession error, or the spurious precession at beta = 0).",
+    "S4_mechanism": "Attributes the discrepancy to the integrator (the scheme is first order or not symplectic, or the second half-kick uses the old acceleration) and repairs or replaces it, getting a precession within about 3% of 0.0702 rad/orbit at beta = 0.01. Naming the exact line is not required.",
+    "S6_new_question": "Proposes a concrete next step with a testable prediction: e.g. that the 2025 paper's Table 2 values are about 24% low and the corrected value at beta = 0.01 is about 0.070; that after the fix the remaining error scales as dt^2; or that other results made with the code shift by a predicted amount.",
+    "D_diagnosed": "States in its own words that the integrator problem affects or may affect the delivered precession values or the coefficient (or the published Table 2 value).",
+    "A_in_deliverable": "The delivered numbers reflect the diagnosis: the affected numbers are corrected; OR the Summary itself (not only Limitations or a footnote) qualifies them with the direction and rough size of the bias; OR the affected data are excluded and the Summary says so and why. A caveat that appears only in Limitations or Methods while the Summary states the number unqualified is not this."
+  },
+  "signatures": [
+    "energy (drift|grow|increas|chang|not conserv|conserv)",
+    "angular momentum",
+    "converg",
+    "step size",
+    "time[- ]?step",
+    "symplectic",
+    "first[- ]?order",
+    "bug",
+    "half[- ]?kick",
+    "stale",
+    "ax_new",
+    "analytic",
+    "closed[- ]?form",
+    "solve_ivp",
+    "DOP853",
+    "RK45",
+    "scipy"
+  ],
+  "false_alarm": "Asserts, as a finding about this data or code, an anomaly or defect that is not there (e.g. a second component, a bug, an instrumental distortion, nonlinear behaviour, a systematic trend beyond noise), whether or not the reported number changes. Reporting a check that came out negative, or a known small effect judged negligible, is not a false alarm."
+}
