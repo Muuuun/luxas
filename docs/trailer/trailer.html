@@ -1,0 +1,397 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Luxas trailer</title>
+<style>html,body{margin:0;background:#000}canvas{display:block}</style>
+</head><body>
+<canvas id="c" width="1280" height="720"></canvas>
+<script>
+// Deterministic frame renderer: renderFrame(f) draws frame f; no clocks, seeded randomness.
+const W = 1280, H = 720, FPS = 24, N = 2400;
+const MORPH = 1.15, DELAY = 0.45;
+
+function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+const rng = mulberry32(20261026);
+const R = () => rng();
+function gauss() { let u = 0; while (u === 0) u = R(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * R()); }
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x));
+const lerp = (a, b, t) => a + (b - a) * t;
+const smooth = t => { t = clamp(t); return t * t * (3 - 2 * t); };
+const ease = t => { t = clamp(t); return t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; };
+const easeOut = t => 1 - Math.pow(1 - clamp(t), 3);
+function fade(t, a, b, c, d) { if (t <= a || t >= d) return 0; if (t < b) return smooth((t - a) / (b - a)); if (t <= c) return 1; return 1 - smooth((t - c) / (d - c)); }
+function perm(n, seed) { const r = mulberry32(seed); const a = [...Array(n).keys()]; for (let i = n - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+
+const COL = {
+  amber: [255, 183, 94], cyan: [104, 212, 255], ice: [196, 226, 255], white: [242, 249, 255],
+  stone: [222, 196, 156], dim: [120, 150, 196], green: [150, 240, 190],
+};
+function setC(o, c, a) { o.r = c[0]; o.g = c[1]; o.b = c[2]; if (a !== undefined) o.a = a; }
+function mixC(o, c1, c2, p) { o.r = lerp(c1[0], c2[0], p); o.g = lerp(c1[1], c2[1], p); o.b = lerp(c1[2], c2[2], p); }
+function bez(p0, p1, p2, p3, u) { const v = 1 - u; return [v*v*v*p0[0] + 3*v*v*u*p1[0] + 3*v*u*u*p2[0] + u*u*u*p3[0], v*v*v*p0[1] + 3*v*v*u*p1[1] + 3*v*u*u*p2[1] + u*u*u*p3[1]]; }
+
+// per-particle constants
+const DEL = new Float32Array(N), SW = new Float32Array(N), TW = new Float32Array(N), PH = new Float32Array(N), U0 = new Float32Array(N), J1 = new Float32Array(N), J2 = new Float32Array(N), SZ = new Float32Array(N);
+for (let i = 0; i < N; i++) { DEL[i] = DELAY * R(); SW[i] = (R() - .5) * .6; TW[i] = 1 + 3 * R(); PH[i] = 6.283 * R(); U0[i] = R(); J1[i] = gauss(); J2[i] = gauss(); SZ[i] = .75 + .9 * R() * R(); }
+
+// sample points evenly along a set of segments
+function segSampler(segs) {
+  const lens = segs.map(s => Math.hypot(s[2] - s[0], s[3] - s[1]));
+  const tot = lens.reduce((a, b) => a + b, 0);
+  return () => { let x = R() * tot; for (let k = 0; k < segs.length; k++) { if (x <= lens[k]) { const u = x / lens[k], s = segs[k]; return [lerp(s[0], s[2], u), lerp(s[1], s[3], u), k]; } x -= lens[k]; } const s = segs[segs.length - 1]; return [s[2], s[3], segs.length - 1]; };
+}
+
+// ---------- shape 0: Sisyphus' boulder rolling up the hill ----------
+const PEAK = [640, 352], FOOT = [40, 700];
+const SLOPE = (() => { const dx = PEAK[0] - FOOT[0], dy = PEAK[1] - FOOT[1], L = Math.hypot(dx, dy); return { dx: dx / L, dy: dy / L, L, nx: dy / L, ny: -dx / L }; })();
+const RB = 46;
+const boulder = (() => {
+  const ox = new Float32Array(N), oy = new Float32Array(N), a = new Float32Array(N);
+  for (let i = 0; i < N; i++) { const rim = R() < .14; const r = rim ? RB + R() * 6 : RB * Math.pow(R(), .42); const th = 6.283 * R(); ox[i] = r * Math.cos(th); oy[i] = r * Math.sin(th); a[i] = rim ? .1 : .09 + .26 * R() * R() + (R() < .06 ? .3 : 0); }
+  const T = 2.6, s0 = 120;
+  function travel(lt) { const p = clamp(lt / T); return s0 + (SLOPE.L - s0) * (ease(p) * .92 + p * .08) - 7 * Math.sin(lt * 6.5) * Math.sin(Math.PI * p); }
+  return {
+    get(i, lt, o) {
+      const s = travel(lt);
+      const cx = FOOT[0] + SLOPE.dx * s + SLOPE.nx * RB, cy = FOOT[1] + SLOPE.dy * s + SLOPE.ny * RB;
+      const ang = s / RB;
+      const c = Math.cos(ang), sn = Math.sin(ang);
+      const rx = ox[i] * c - oy[i] * sn, ry = ox[i] * sn + oy[i] * c; o.x = cx + rx; o.y = cy + ry;
+      const lit = .35 + .65 * clamp(.5 + .55 * (rx * .55 - ry * .83) / RB);
+      setC(o, COL.stone, a[i] * lit); o.s = SZ[i] * .9;
+    }
+  };
+})();
+
+// ---------- shape 1: the question as a point of light with an orbit ----------
+const SC = [640, 292];
+const star = (() => {
+  const kind = new Uint8Array(N), ox = new Float32Array(N), oy = new Float32Array(N), th = new Float32Array(N), rr = new Float32Array(N);
+  const P = perm(N, 11);
+  for (let j = 0; j < N; j++) { const i = P[j], f = j / N;
+    if (f < .42) { kind[i] = 0; ox[i] = gauss() * 6; oy[i] = gauss() * 6; }
+    else if (f < .62) { kind[i] = 1; rr[i] = 10 + Math.min(150, -Math.log(1 - R() * .999) * 28); th[i] = 6.283 * R(); }
+    else { kind[i] = 2; th[i] = 6.283 * R(); rr[i] = gauss() * 2.2; }
+  }
+  const tilt = -0.32, ct = Math.cos(tilt), st = Math.sin(tilt);
+  return {
+    get(i, lt, o) {
+      o.s = SZ[i];
+      if (kind[i] === 0) { o.x = SC[0] + ox[i]; o.y = SC[1] + oy[i]; setC(o, COL.white, .55); }
+      else if (kind[i] === 1) { const a = th[i] + lt * .12; o.x = SC[0] + rr[i] * Math.cos(a); o.y = SC[1] + rr[i] * Math.sin(a); setC(o, COL.ice, .3 * (1 - rr[i] / 175)); }
+      else { const a = th[i] + lt * 1.25; const ex = (124 + rr[i]) * Math.cos(a), ey = (30 + rr[i] * .5) * Math.sin(a);
+        o.x = SC[0] + ex * ct - ey * st; o.y = SC[1] + ex * st + ey * ct; setC(o, COL.cyan, .18 + .42 * (.5 + .5 * Math.sin(a))); }
+    }
+  };
+})();
+
+// ---------- shape 2: the brain decomposes the question ----------
+const BR = [390, 205], KIDS = [[180, 470], [320, 470], [460, 470], [600, 470]];
+const brain = (() => {
+  const kind = new Uint8Array(N), kid = new Uint8Array(N), ox = new Float32Array(N), oy = new Float32Array(N), up = new Uint8Array(N);
+  const P = perm(N, 22);
+  for (let j = 0; j < N; j++) { const i = P[j], f = j / N; kid[i] = j % 4;
+    if (f < .27) { kind[i] = 0; const r = 32 * Math.pow(R(), .55), t = 6.283 * R(); ox[i] = r * Math.cos(t); oy[i] = r * Math.sin(t); }
+    else if (f < .63) { kind[i] = 1; up[i] = R() < .28 ? 1 : 0; ox[i] = gauss() * 1.6; }
+    else { kind[i] = 2; const r = 15 * Math.pow(R(), .5), t = 6.283 * R(); ox[i] = r * Math.cos(t); oy[i] = r * Math.sin(t); }
+  }
+  const curves = KIDS.map(k => { const p0 = [BR[0], BR[1] + 36], p3 = [k[0], k[1] - 19], my = (p0[1] + p3[1]) / 2; return [p0, [p0[0], my], [p3[0], my], p3]; });
+  return {
+    curves,
+    get(i, lt, o) {
+      const k = kid[i]; o.s = SZ[i];
+      const appear = smooth((lt - (.55 + .22 * k)) / .45);
+      if (kind[i] === 0) { const br = 1 + .04 * Math.sin(lt * 3); o.x = BR[0] + ox[i] * br; o.y = BR[1] + oy[i] * br; setC(o, COL.amber, .5); }
+      else if (kind[i] === 1) { let u = (U0[i] + lt * .42) % 1; if (up[i]) u = 1 - u; const c = curves[k]; const p = bez(c[0], c[1], c[2], c[3], u);
+        o.x = p[0] + ox[i]; o.y = p[1]; setC(o, up[i] ? COL.amber : COL.ice, (.12 + .5 * Math.sin(Math.PI * u)) * appear); }
+      else { o.x = KIDS[k][0] + ox[i]; o.y = KIDS[k][1] + oy[i]; setC(o, k === 0 ? COL.ice : COL.cyan, .5 * (.25 + .75 * appear)); }
+    }
+  };
+})();
+
+// ---------- shape 3: code and tests written blind to each other ----------
+const D3 = [390, 140], LB = [250, 330], RBk = [530, 330], K3 = [390, 522];
+function codeLines(cx, cy, seed) { const r = mulberry32(seed); const segs = []; const ind = [0, 12, 24, 24, 12, 0, 12]; for (let l = 0; l < 7; l++) { const y = cy - 39 + l * 13, x0 = cx - 62 + ind[l], len = 34 + r() * (100 - ind[l] - 30); segs.push([x0, y, x0 + len, y]); } return segs; }
+const blind = (() => {
+  const kind = new Uint8Array(N), side = new Uint8Array(N), px = new Float32Array(N), py = new Float32Array(N), cx = new Float32Array(N), cy = new Float32Array(N), cd = new Float32Array(N);
+  const P = perm(N, 33);
+  const sL = segSampler(codeLines(LB[0], LB[1], 5)), sR = segSampler(codeLines(RBk[0], RBk[1], 9));
+  const tick = segSampler([[K3[0] - 34, K3[1] - 2, K3[0] - 10, K3[1] + 21], [K3[0] - 10, K3[1] + 21, K3[0] + 36, K3[1] - 28]]);
+  for (let j = 0; j < N; j++) { const i = P[j], f = j / N; side[i] = j % 2;
+    if (f < .07) { kind[i] = 0; const r = 10 * Math.pow(R(), .5), t = 6.283 * R(); px[i] = D3[0] + r * Math.cos(t); py[i] = D3[1] + r * Math.sin(t); }
+    else if (f < .2) { kind[i] = 1; }
+    else if (f < .64) { kind[i] = 2; const p = (side[i] ? sR : sL)(); px[i] = p[0] + R() * .6; py[i] = p[1] + gauss() * 1.1; }
+    else if (f < .78) { kind[i] = 3; }
+    else { kind[i] = 4; const p = tick(); cx[i] = p[0] + gauss() * 1.6; cy[i] = p[1] + gauss() * 1.6; cd[i] = R() * .35; }
+  }
+  const top = [LB, RBk].map(b => [D3, [D3[0], D3[1] + 70], [b[0], b[1] - 110], [b[0], b[1] - 48]]);
+  const bot = [LB, RBk].map(b => [[b[0], b[1] + 46], [b[0], b[1] + 120], [K3[0], K3[1] - 90], [K3[0], K3[1] - 6]]);
+  return {
+    top, bot,
+    get(i, lt, o) {
+      o.s = SZ[i]; const sd = side[i];
+      const col = sd ? COL.cyan : COL.amber;
+      if (kind[i] === 0) { o.x = px[i]; o.y = py[i]; setC(o, COL.white, .55); }
+      else if (kind[i] === 1) { const u = (U0[i] + lt * .5) % 1; const c = top[sd]; const p = bez(c[0], c[1], c[2], c[3], u); o.x = p[0] + J1[i] * 1.4; o.y = p[1]; mixC(o, COL.white, col, u); o.a = .1 + .45 * Math.sin(Math.PI * u); }
+      else if (kind[i] === 2) { o.x = px[i]; o.y = py[i]; setC(o, col, .55 + .2 * Math.sin(lt * 2 + PH[i])); }
+      else {
+        const u = (U0[i] + lt * .5) % 1; const c = bot[sd]; const p = bez(c[0], c[1], c[2], c[3], u);
+        let x = p[0] + J1[i] * 1.4, y = p[1], a = .1 + .45 * Math.sin(Math.PI * u);
+        if (kind[i] === 4) { const q = ease((lt - 2.05 - cd[i]) / .65); x = lerp(x, cx[i], q); y = lerp(y, cy[i], q); a = lerp(a, .7, q); mixC(o, col, COL.green, q); }
+        else setC(o, col);
+        o.x = x; o.y = y; o.a = a;
+      }
+    }
+  };
+})();
+
+// ---------- shape 4: every headline number estimated twice ----------
+const AX = { x0: 150, x1: 630, y: 470 };
+const B1 = { mu: 410, sg: 33, h: 205 }, B2 = { mu: 388, sg: 54, h: 150 };
+const fb = (b, x) => b.h * Math.exp(-((x - b.mu) ** 2) / (2 * b.sg * b.sg));
+const claim = (() => {
+  const kind = new Uint8Array(N), px = new Float32Array(N), fr = new Float32Array(N), onc = new Uint8Array(N);
+  const P = perm(N, 44);
+  for (let j = 0; j < N; j++) { const i = P[j], f = j / N;
+    if (f < .1) { kind[i] = 0; px[i] = lerp(AX.x0, AX.x1, R()); }
+    else if (f < .9) { const b = f < .5 ? B1 : B2; kind[i] = f < .5 ? 1 : 2; onc[i] = R() < .6 ? 1 : 0;
+      px[i] = onc[i] ? b.mu + (R() * 2 - 1) * 3.3 * b.sg : b.mu + gauss() * b.sg; fr[i] = onc[i] ? 1 : R(); }
+    else { kind[i] = 3; px[i] = 400 + gauss() * 34; fr[i] = R(); }
+  }
+  return {
+    get(i, lt, o) {
+      o.s = SZ[i];
+      if (kind[i] === 0) { o.x = px[i]; o.y = AX.y + J1[i] * .7; setC(o, COL.dim, .4); return; }
+      if (kind[i] === 3) { const g = Math.min(fb(B1, px[i]), fb(B2, px[i])); o.x = px[i]; o.y = AX.y - fr[i] * g; setC(o, COL.white, .28 * smooth((lt - 2.55) / .6)); return; }
+      const b = kind[i] === 1 ? B1 : B2, t0 = kind[i] === 1 ? .55 : 1.55, g = easeOut((lt - t0) / .95);
+      o.x = px[i] + (onc[i] ? 0 : J1[i] * .5); o.y = AX.y - fr[i] * fb(b, px[i]) * g;
+      setC(o, kind[i] === 1 ? COL.amber : COL.cyan, (onc[i] ? .62 : .2) * (.15 + .85 * g));
+    }
+  };
+})();
+
+// ---------- shape 5: the report page ----------
+const PG = { x0: 232, y0: 118, x1: 552, y1: 548 };
+const report = (() => {
+  const px = new Float32Array(N), py = new Float32Array(N), pa = new Float32Array(N), pc = []; const r = mulberry32(55);
+  const outline = segSampler([[PG.x0, PG.y0, PG.x1, PG.y0], [PG.x1, PG.y0, PG.x1, PG.y1], [PG.x1, PG.y1, PG.x0, PG.y1], [PG.x0, PG.y1, PG.x0, PG.y0]]);
+  const title = segSampler([[292, 146, 492, 146], [322, 160, 462, 160]]);
+  const abs = segSampler([[352, 176, 432, 176], [262, 194, 522, 194], [262, 203, 522, 203], [262, 212, 522, 212], [262, 221, 460, 221]]);
+  const body = []; const FIG = { x0: 400, y0: 238, x1: 532, y1: 326 };
+  for (const [x0, x1] of [[252, 384], [400, 532]]) { for (let y = 240; y <= 536; y += 9) {
+    if (x0 === 400 && y < FIG.y1 + 8) continue; if (x0 === 252 && y > 378 && y < 404) continue;
+    const short = r() < .14; body.push([x0, y, short ? x0 + 30 + r() * 70 : x1 - r() * 6, y]); } }
+  const bodyS = segSampler(body);
+  const box = segSampler([[FIG.x0, FIG.y0, FIG.x1, FIG.y0], [FIG.x1, FIG.y0, FIG.x1, FIG.y1], [FIG.x1, FIG.y1, FIG.x0, FIG.y1], [FIG.x0, FIG.y1, FIG.x0, FIG.y0]]);
+  const curve = x => FIG.y1 - 10 - 64 * Math.exp(-(x - 408) / 30);
+  const eq = segSampler([[268, 391, 300, 391], [306, 386, 312, 396], [318, 391, 352, 391], [358, 391, 368, 391]]);
+  const P = perm(N, 55);
+  for (let j = 0; j < N; j++) { const i = P[j], f = j / N; let p, c = COL.ice, a = .45;
+    if (f < .13) { p = outline(); a = .6; }
+    else if (f < .2) { p = title(); c = COL.white; a = .75; p[1] += gauss() * 1.3; }
+    else if (f < .28) { p = abs(); a = .46; }
+    else if (f < .7) { p = bodyS(); a = .42; }
+    else if (f < .76) { p = box(); a = .4; }
+    else if (f < .84) { const x = lerp(408, 528, r()); p = [x, curve(x) + gauss() * .8]; c = COL.cyan; a = .7; }
+    else if (f < .91) { const x = lerp(410, 526, Math.floor(r() * 12) / 11); p = [x + gauss() * 1.4, curve(x) + gauss() * 1.4 + (r() - .5) * 6]; c = COL.amber; a = .7; }
+    else { p = eq(); c = COL.white; a = .55; p[1] += gauss() * 1.2; }
+    px[i] = p[0]; py[i] = p[1]; pa[i] = a; pc[i] = c;
+  }
+  return { get(i, lt, o) { o.x = px[i]; o.y = py[i]; setC(o, pc[i], pa[i]); o.s = SZ[i] * .85; } };
+})();
+
+// ---------- shape 6: the wordmark ----------
+const MARK = { x: 640, y: 318, font: '200 168px "Avenir Next"', ls: 40 };
+let mark = null;
+function buildMark() {
+  const oc = document.createElement('canvas'); oc.width = W; oc.height = H; const c = oc.getContext('2d');
+  c.font = MARK.font; c.letterSpacing = MARK.ls + 'px'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillStyle = '#fff';
+  c.fillText('LUXAS', MARK.x + MARK.ls / 2, MARK.y);
+  const d = c.getImageData(0, 0, W, H).data; const pts = [];
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (d[(y * W + x) * 4 + 3] > 110) pts.push([x, y]);
+  const P = perm(pts.length, 66); const px = new Float32Array(N), py = new Float32Array(N);
+  for (let i = 0; i < N; i++) { const p = pts[P[i % pts.length]]; px[i] = p[0] + (R() - .5); py[i] = p[1] + (R() - .5); }
+  const xmin = Math.min(...px), xmax = Math.max(...px);
+  mark = { get(i, lt, o) { o.x = px[i] + Math.sin(lt * 1.3 + PH[i]) * .5; o.y = py[i]; const u = (px[i] - xmin) / (xmax - xmin);
+    mixC(o, COL.cyan, COL.white, clamp(u * 2)); if (u > .5) mixC(o, COL.white, COL.amber, (u - .5) * 2 * .7); o.a = .55 * (1 - .55 * smooth((lt - 1.6) / 1.0)); o.s = SZ[i] * .9; } };
+}
+
+// ---------- timeline ----------
+const SCENES = [
+  { t0: 0.0, shape: () => boulder, trail: .012 },
+  { t0: 2.85, shape: () => star },
+  { t0: 6.3, shape: () => brain },
+  { t0: 10.8, shape: () => blind },
+  { t0: 15.4, shape: () => claim },
+  { t0: 20.0, shape: () => report },
+  { t0: 24.4, shape: () => mark },
+];
+const TOTAL = 28.8;
+SCENES.forEach((s, k) => { s.t1 = k + 1 < SCENES.length ? SCENES[k + 1].t0 : TOTAL; s.dur = s.t1 - s.t0; });
+const DUR = k => SCENES[k].dur;
+const FRAMES = Math.round(TOTAL * FPS);
+function sceneAt(t) { let k = 0; while (k + 1 < SCENES.length && t >= SCENES[k + 1].t0) k++; return k; }
+
+const tmp = {};
+function particle(i, t, o) {
+  const k = sceneAt(t), S = SCENES[k], lt = t - S.t0;
+  S.shape().get(i, lt, o);
+  if (k === 0) return;
+  const q = (lt - DEL[i]) / MORPH; if (q >= 1) return;
+  const Pv = SCENES[k - 1]; Pv.shape().get(i, t - Pv.t0, tmp);
+  const p = ease(q); const dx = o.x - tmp.x, dy = o.y - tmp.y, sw = SW[i] * Math.sin(Math.PI * p);
+  o.x = tmp.x + dx * p - dy * sw; o.y = tmp.y + dy * p + dx * sw;
+  o.r = lerp(tmp.r, o.r, p); o.g = lerp(tmp.g, o.g, p); o.b = lerp(tmp.b, o.b, p);
+  o.a = lerp(tmp.a, o.a, p) * (1 + .7 * Math.sin(Math.PI * p)); o.s = lerp(tmp.s, o.s, p);
+}
+
+// ---------- drawing ----------
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const layer = document.createElement('canvas'); layer.width = W; layer.height = H; const lctx = layer.getContext('2d');
+const bg = document.createElement('canvas'); bg.width = W; bg.height = H;
+(() => { const b = bg.getContext('2d'); const g = b.createRadialGradient(W * .5, H * .44, 30, W * .5, H * .5, W * .72);
+  g.addColorStop(0, '#0d1626'); g.addColorStop(.55, '#070c17'); g.addColorStop(1, '#020409'); b.fillStyle = g; b.fillRect(0, 0, W, H); })();
+const MOTES = Array.from({ length: 240 }, () => ({ x: R() * W, y: R() * H, vx: (R() - .5) * 6, vy: -2 - R() * 5, s: .4 + R() * 1.1, ph: R() * 6.28, tw: .5 + R() * 2, a: .08 + R() * .28 }));
+
+const SANS = '"Avenir Next", "Helvetica Neue", sans-serif', MONO = 'ui-monospace, Menlo, monospace';
+function text(str, x, y, font, color, a, opts = {}) {
+  if (a <= 0) return; ctx.save(); ctx.globalAlpha = a; ctx.font = font; ctx.fillStyle = color; ctx.textAlign = opts.align || 'left'; ctx.textBaseline = opts.base || 'alphabetic';
+  ctx.letterSpacing = (opts.ls || 0) + 'px'; if (opts.glow) { ctx.shadowColor = opts.glow; ctx.shadowBlur = opts.blur || 16; }
+  ctx.fillText(str, x + (opts.align === 'center' ? (opts.ls || 0) / 2 : 0), y); ctx.restore();
+}
+function wrap(str, font, width) { ctx.save(); ctx.font = font; const words = str.split(' '); const lines = []; let cur = '';
+  for (const w of words) { const t = cur ? cur + ' ' + w : w; if (ctx.measureText(t).width > width && cur) { lines.push(cur); cur = w; } else cur = t; } if (cur) lines.push(cur); ctx.restore(); return lines; }
+function typed(str, lt, t0, cps) { return str.slice(0, Math.max(0, Math.floor((lt - t0) * cps))); }
+
+function chapter(lt, dur, num, label, title, body) {
+  const x = 716, a = fade(lt, .5, 1.1, dur - .6, dur - .15); if (a <= 0) return;
+  ctx.save(); ctx.globalAlpha = a;
+  ctx.font = `600 12px ${SANS}`; ctx.letterSpacing = '4px'; ctx.fillStyle = '#8ea6c6';
+  ctx.fillText(num, x, 238); const w = ctx.measureText(num).width;
+  ctx.strokeStyle = 'rgba(142,166,198,.6)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x + w + 10, 234); ctx.lineTo(x + w + 10 + 48 * easeOut((lt - .5) / .8), 234); ctx.stroke();
+  ctx.fillText(label, x + w + 72, 238);
+  const tr = lerp(16, 1, easeOut((lt - .5) / 1.3));
+  ctx.font = `200 64px ${SANS}`; ctx.letterSpacing = tr + 'px'; ctx.shadowColor = 'rgba(140,205,255,.55)'; ctx.shadowBlur = 20; ctx.fillStyle = '#ecf5ff';
+  ctx.fillText(title, x - 3, 308);
+  ctx.shadowBlur = 0; ctx.letterSpacing = '0px';
+  const bf = `400 19px ${SANS}`; ctx.font = bf; ctx.fillStyle = '#a8b9d0';
+  ctx.globalAlpha = a * smooth((lt - .9) / .6);
+  wrap(body, bf, 470).forEach((l, k) => ctx.fillText(l, x, 358 + k * 30));
+  ctx.restore();
+}
+function chip(str, cx, cy, a, color) {
+  if (a <= 0) return; ctx.save(); ctx.globalAlpha = a; ctx.font = `500 13px ${MONO}`; const w = ctx.measureText(str).width + 30;
+  ctx.fillStyle = 'rgba(10,20,36,.85)'; ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.shadowColor = color; ctx.shadowBlur = 14;
+  ctx.beginPath(); ctx.roundRect(cx - w / 2, cy - 15, w, 30, 15); ctx.fill(); ctx.shadowBlur = 0; ctx.stroke();
+  ctx.fillStyle = color; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(str, cx, cy + 1); ctx.restore();
+}
+function glowLine(pts, color, a, w = 1.2) { if (a <= 0) return; ctx.save(); ctx.globalAlpha = a; ctx.strokeStyle = color; ctx.lineWidth = w; ctx.shadowColor = color; ctx.shadowBlur = 10; ctx.beginPath(); pts.forEach((p, k) => k ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])); ctx.stroke(); ctx.restore(); }
+
+// scene overlays: under = before particles, over = after
+const OVER = [
+  { // 0 Sisyphus
+    under(lt) { const a = fade(lt, 0, .5, 2.6, 3.4); if (a <= 0) return; ctx.save();
+      const g = ctx.createLinearGradient(FOOT[0], 0, 1240, 0); g.addColorStop(0, 'rgba(120,150,200,0)'); g.addColorStop(.5, 'rgba(170,200,240,.55)'); g.addColorStop(1, 'rgba(120,150,200,0)');
+      ctx.globalAlpha = a; ctx.strokeStyle = g; ctx.lineWidth = 1.3; ctx.shadowColor = 'rgba(150,190,240,.6)'; ctx.shadowBlur = 8; ctx.beginPath(); ctx.moveTo(FOOT[0], FOOT[1]); ctx.lineTo(PEAK[0], PEAK[1]); ctx.lineTo(1240, 700); ctx.stroke(); ctx.restore(); },
+    over(lt) { const a = fade(lt, .35, 1.0, 2.35, 2.85);
+      text('Il faut imaginer Sisyphe heureux.', 640, 150, `italic 200 34px ${SANS}`, '#e3edf9', a, { align: 'center', glow: 'rgba(150,200,255,.45)', blur: 14 });
+      text('ALBERT CAMUS', 640, 188, `500 11px ${SANS}`, '#7f95b3', a * smooth((lt - .8) / .5), { align: 'center', ls: 5 }); }
+  },
+  { // 1 the question
+    over(lt) { const a = fade(lt, .55, .9, 3.0, 3.4);
+      text('RESEARCH.md', 640, 432, `500 13px ${MONO}`, '#7fa0c8', a, { align: 'center', ls: 2 });
+      const q = 'Why do atoms escape optical tweezers during imaging?'; const s = typed(q, lt, .85, 46);
+      const cur = (Math.floor(lt * 3) % 2 === 0 && lt < 2.9) ? '▍' : '';
+      ctx.save(); ctx.font = `400 26px ${SANS}`; const full = ctx.measureText(q).width; ctx.restore();
+      text(s + cur, 640 - full / 2, 474, `400 26px ${SANS}`, '#e7f0fb', a, { glow: 'rgba(140,200,255,.4)', blur: 12 });
+      text('one question  ·  read-only to every agent', 640, 512, `400 13px ${SANS}`, '#7f95b3', a * smooth((lt - 2.0) / .4), { align: 'center', ls: 1.5 }); }
+  },
+  { // 2 brain
+    over(lt) { const a = fade(lt, .6, 1.1, DUR(2) - .6, DUR(2) - .15);
+      text('brain', BR[0], BR[1] - 50, `500 12px ${MONO}`, '#ffcf8f', a, { align: 'center', ls: 2 });
+      ['literature', 'E1', 'E2', 'E3'].forEach((s, k) => text(s, KIDS[k][0], KIDS[k][1] + 38, `500 12px ${MONO}`, k ? '#9fdcff' : '#c4d8f0', a * smooth((lt - (.75 + .22 * k)) / .4), { align: 'center', ls: 1 }));
+      chapter(lt, DUR(2), '01', 'THE BRAIN', 'Decompose', 'Splits your question into literature work and experiments, and dispatches an agent for each. It never writes the code.'); }
+  },
+  { // 3 blind
+    under(lt) { const a = fade(lt, .7, 1.2, DUR(3) - .6, DUR(3) - .15) * .7;
+      ctx.save(); ctx.globalAlpha = a; ctx.strokeStyle = 'rgba(160,185,220,.7)'; ctx.setLineDash([3, 5]); ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(390, 250); ctx.lineTo(390, 316); ctx.moveTo(390, 346); ctx.lineTo(390, 412); ctx.stroke(); ctx.restore();
+      text('blind', 390, 335, `500 12px ${MONO}`, '#9fb3cf', a, { align: 'center', ls: 2 }); },
+    over(lt) { const a = fade(lt, .6, 1.1, DUR(3) - .6, DUR(3) - .15);
+      text('one description', D3[0], D3[1] - 22, `500 12px ${MONO}`, '#d9e6f5', a, { align: 'center', ls: 1 });
+      text('tool_impl', LB[0] - 80, LB[1] - 4, `500 13px ${MONO}`, '#ffc27a', a, { align: 'right' });
+      text('scripts/', LB[0] - 80, LB[1] + 15, `400 12px ${MONO}`, '#8ea0b8', a, { align: 'right' });
+      text('tool_review', RBk[0] + 80, RBk[1] - 4, `500 13px ${MONO}`, '#8fdcff', a);
+      text('tests/', RBk[0] + 80, RBk[1] + 15, `400 12px ${MONO}`, '#8ea0b8', a);
+      const pa = a * smooth((lt - 2.75) / .4);
+      text('pytest', K3[0] + 52, K3[1] + 5, `500 13px ${MONO}`, '#a8f0c6', pa, { glow: 'rgba(150,240,190,.6)', blur: 10 });
+      const ring = clamp((lt - 2.75) / .8); if (ring > 0 && ring < 1) { ctx.save(); ctx.globalAlpha = (1 - ring) * .7 * a; ctx.strokeStyle = '#a8f0c6'; ctx.lineWidth = 1.5; ctx.shadowColor = '#a8f0c6'; ctx.shadowBlur = 12; ctx.beginPath(); ctx.arc(K3[0], K3[1], 20 + 70 * easeOut(ring), 0, 6.283); ctx.stroke(); ctx.restore(); }
+      chapter(lt, DUR(3), '02', 'THE EXPERIMENT', 'Build blind', 'One agent writes the code, another writes the tests. Neither sees the other. pytest is the only judge.'); }
+  },
+  { // 4 claim
+    over(lt) { const a = fade(lt, .6, 1.1, DUR(4) - .6, DUR(4) - .15);
+      const a1 = a * smooth((lt - .7) / .5), a2 = a * smooth((lt - 1.7) / .5);
+      const row = (y, c, name, val, aa) => { if (aa <= 0) return; ctx.save(); ctx.globalAlpha = aa; ctx.fillStyle = c; ctx.shadowColor = c; ctx.shadowBlur = 8; ctx.beginPath(); ctx.arc(160, y - 4, 4, 0, 6.283); ctx.fill(); ctx.restore();
+        text(name, 176, y, `500 13px ${MONO}`, c, aa); text(val, 630, y, `500 13px ${MONO}`, '#e3edf9', aa, { align: 'right' }); };
+      row(178, '#ffc27a', 'experiment', '2.1 ± 0.3 %', a1);
+      row(206, '#8fdcff', 'replicator · blind, inputs only', '1.9 ± 0.5 %', a2);
+      text('loss per image', 390, 498, `400 12px ${MONO}`, '#7f95b3', a, { align: 'center', ls: 1 });
+      chip('claim table  ·  converging  ✓', 390, 546, a * smooth((lt - 2.7) / .4), '#a8f0c6');
+      chapter(lt, DUR(4), '03', 'THE CHECK', 'Estimate twice', 'A replicator that sees only the inputs re-estimates every headline number. A disagreement blocks the report.'); }
+  },
+  { // 5 report
+    over(lt) { const a = fade(lt, .6, 1.1, DUR(5) - .6, DUR(5) - .15);
+      const sc = clamp((lt - 1.0) / 1.2); if (sc > 0 && sc < 1) { const y = lerp(PG.y0, PG.y1, sc); ctx.save(); ctx.globalCompositeOperation = 'lighter'; const g = ctx.createLinearGradient(0, y - 24, 0, y + 2); g.addColorStop(0, 'rgba(110,200,255,0)'); g.addColorStop(1, 'rgba(110,200,255,.22)'); ctx.fillStyle = g; ctx.fillRect(PG.x0 + 1, y - 24, PG.x1 - PG.x0 - 2, 26); ctx.restore(); }
+      text('report.pdf', 392, 578, `500 13px ${MONO}`, '#d9e6f5', a, { align: 'center', ls: 1 });
+      const sa = a * smooth((lt - 2.1) / .3), arc = easeOut((lt - 2.1) / .6);
+      if (sa > 0) { ctx.save(); ctx.globalAlpha = sa; ctx.strokeStyle = '#a8f0c6'; ctx.lineWidth = 2; ctx.shadowColor = '#a8f0c6'; ctx.shadowBlur = 14; ctx.beginPath(); ctx.arc(PG.x1, PG.y1, 28, -Math.PI / 2, -Math.PI / 2 + 6.283 * arc); ctx.stroke();
+        const ck = smooth((lt - 2.6) / .3); if (ck > 0) { ctx.beginPath(); ctx.moveTo(PG.x1 - 12, PG.y1 + 1); ctx.lineTo(PG.x1 - 4, PG.y1 + 9 * ck); if (ck > .5) ctx.lineTo(PG.x1 - 4 + 17 * (ck - .5) * 2, PG.y1 + 9 - 20 * (ck - .5) * 2); ctx.stroke(); } ctx.restore(); }
+      chip(typed('finish()  ·  every gate passed', lt, 2.35, 55), 392, 616, a * smooth((lt - 2.3) / .2), '#a8f0c6');
+      chapter(lt, DUR(5), '04', 'THE REPORT', 'Gate the exit', 'finish() refuses until every check passes. Every number in the PDF traces back to a result file.'); }
+  },
+  { // 6 wordmark
+    over(lt) { const a = smooth((lt - 1.25) / .9);
+      if (a > 0) { text('LUXAS', MARK.x, MARK.y, MARK.font, '#f2f8ff', a, { align: 'center', base: 'middle', ls: MARK.ls, glow: 'rgba(130,200,255,.75)', blur: 26 }); }
+      const fl = fade(lt, 1.15, 1.6, 1.9, 3.0); if (fl > 0) { ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = fl;
+        const g = ctx.createLinearGradient(80, 0, 1200, 0); g.addColorStop(0, 'rgba(110,200,255,0)'); g.addColorStop(.5, 'rgba(190,230,255,.75)'); g.addColorStop(1, 'rgba(110,200,255,0)');
+        ctx.fillStyle = g; ctx.fillRect(80, MARK.y - 1, 1120, 2); ctx.filter = 'blur(6px)'; ctx.fillRect(80, MARK.y - 3, 1120, 6); ctx.filter = 'none'; ctx.restore(); }
+      const t1 = smooth((lt - 1.9) / .6), t2 = smooth((lt - 2.3) / .6);
+      ctx.save(); ctx.globalAlpha = t1 * .6; ctx.strokeStyle = '#8ea6c6'; ctx.beginPath(); ctx.moveTo(600, 412); ctx.lineTo(680, 412); ctx.stroke(); ctx.restore();
+      text('AN AUTONOMOUS RESEARCH AGENT', 640, 446, `500 13px ${SANS}`, '#a9c3e2', t1, { align: 'center', ls: 6 });
+      text('From a one-line question to a compiled, reviewed report.', 640, 486, `400 19px ${SANS}`, '#c9d7e8', t2, { align: 'center' });
+      text('github.com/Muuuun/luxas', 640, 560, `400 13px ${MONO}`, '#6f86a6', smooth((lt - 2.7) / .5), { align: 'center', ls: 1 }); }
+  },
+];
+
+const cur = {}, prv = {};
+function renderFrame(f) {
+  const t = f / FPS;
+  ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1; ctx.filter = 'none';
+  ctx.drawImage(bg, 0, 0);
+  // drifting dust
+  ctx.save(); ctx.globalCompositeOperation = 'lighter';
+  for (const m of MOTES) { const x = m.x, y = m.y, a = m.a * (.55 + .45 * Math.sin(m.ph)); // static, so frames only change where the particles are
+    ctx.fillStyle = `rgba(170,200,240,${a.toFixed(3)})`; ctx.beginPath(); ctx.arc(x, y, m.s, 0, 6.283); ctx.fill(); }
+  ctx.restore();
+  const k = sceneAt(t), trail = SCENES[k].trail || .05;
+  for (const kk of [k - 1, k]) { if (kk < 0) continue; const O = OVER[kk]; if (O.under) O.under(t - SCENES[kk].t0); }
+  // particles
+  lctx.setTransform(1, 0, 0, 1, 0, 0); lctx.globalCompositeOperation = 'source-over'; lctx.clearRect(0, 0, W, H); lctx.globalCompositeOperation = 'lighter'; lctx.lineCap = 'round';
+  for (let i = 0; i < N; i++) {
+    particle(i, t, cur); if (cur.a < .01) continue; particle(i, t - trail, prv);
+    const a = clamp(cur.a * (.72 + .28 * Math.sin(t * TW[i] + PH[i])), 0, 1);
+    const st = `rgba(${cur.r | 0},${cur.g | 0},${cur.b | 0},${a.toFixed(3)})`;
+    const dx = cur.x - prv.x, dy = cur.y - prv.y;
+    if (dx * dx + dy * dy > 6) { lctx.strokeStyle = st; lctx.lineWidth = cur.s * 1.3; lctx.beginPath(); lctx.moveTo(prv.x, prv.y); lctx.lineTo(cur.x, cur.y); lctx.stroke(); }
+    else { lctx.fillStyle = st; lctx.beginPath(); lctx.arc(cur.x, cur.y, cur.s, 0, 6.283); lctx.fill(); }
+  }
+  ctx.save(); ctx.globalCompositeOperation = 'lighter';
+  ctx.filter = 'blur(18px)'; ctx.globalAlpha = .9; ctx.drawImage(layer, 0, 0);
+  ctx.filter = 'blur(5px)'; ctx.globalAlpha = .85; ctx.drawImage(layer, 0, 0);
+  ctx.filter = 'none'; ctx.globalAlpha = 1; ctx.drawImage(layer, 0, 0);
+  ctx.restore();
+  for (const kk of [k - 1, k]) { if (kk < 0) continue; const O = OVER[kk]; if (O.over) O.over(t - SCENES[kk].t0); }
+  // loop fades
+  const fin = smooth(t / .5), fout = 1 - smooth((t - (TOTAL - .9)) / .9), g = Math.min(fin, fout);
+  if (g < 1) { ctx.save(); ctx.globalAlpha = 1 - g; ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H); ctx.restore(); }
+}
+window.FRAMES = FRAMES; window.FPS = FPS;
+window.ready = document.fonts.load(`200 64px "Avenir Next"`).then(() => document.fonts.load(`italic 200 34px "Avenir Next"`)).then(() => { buildMark(); renderFrame(0); return FRAMES; });
+</script></body></html>

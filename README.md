@@ -13,6 +13,10 @@
 
 </div>
 
+<p align="center">
+  <img src="docs/assets/trailer.webp" width="100%" alt="Animated introduction. Under Camus's line 'Il faut imaginer Sisyphe heureux', a boulder rolls up a hill and turns into a point of light: the question in RESEARCH.md. The brain splits it into literature work and experiments E1 to E3. From one description, tool_impl writes the code and tool_review writes the tests, blind to each other, and pytest passes. An experiment's number, 2.1 ± 0.3 %, and a replicator's blind estimate from the inputs alone, 1.9 ± 0.5 %, overlap and the claim table reads converging. A report page compiles and finish() passes every gate. The particles form the LUXAS wordmark: an autonomous research agent, from a one-line question to a compiled, reviewed report.">
+</p>
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/pipeline-dark.svg">
   <img alt="Luxas pipeline. RESEARCH.md goes to the brain, which dispatches literature, experiment, verification and report agents. finish() gates release report.pdf. Every piece of state is a file." src="docs/assets/pipeline-light.svg">
@@ -74,7 +78,7 @@ Every sub-agent gets its own tmux window, so you can watch a run live. You can a
 
 ## How it works
 
-The diagram at the top is the whole system. Five rules hold it together:
+The pipeline diagram near the top is the whole system. Five rules hold it together:
 
 - **The brain never writes code or tests.** `experiment` designs the tools; `tool_impl` writes the code and `tool_review` writes the tests from the same description, blind to each other. Pytest is the only judge. This closed the failure where an implementation redefined a field so that its own test passed.
 - **Every headline number is a claim.** Results declare quantities with σ and inputs. A `replicator` that sees only the inputs estimates each one blind; the claim table marks rows converging or disputed, and a disputed row blocks `finish()` until an independent route settles it.
