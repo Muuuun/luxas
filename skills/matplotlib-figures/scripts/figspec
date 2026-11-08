@@ -463,11 +463,13 @@ def _lim(ax, panel, ys):
 
 def _plain_log_ticks(ax):
     """A log axis spanning < 2.2 decades reads as numbers (40, 60, 100), not 4×10¹ — Ba run 2026-08-30."""
-    from matplotlib.ticker import ScalarFormatter, LogLocator, NullFormatter
+    from matplotlib.ticker import FuncFormatter, LogLocator, NullFormatter
     for axis, lim in ((ax.xaxis, ax.get_xlim()), (ax.yaxis, ax.get_ylim())):
         if axis.get_scale() != "log" or min(lim) <= 0: continue
         if np.log10(max(lim) / min(lim)) < 2.2:
-            fmt = ScalarFormatter(); fmt.set_scientific(False)
+            # each tick printed on its own: ScalarFormatter picks one decimal count for the axis, and a tick at 0.8
+            # on a 0.8–26 axis printed as "1" beside the real 1 (Dy fig3b, 2026-11-08)
+            fmt = FuncFormatter(lambda v, _: np.format_float_positional(v, precision=4, unique=True, fractional=False, trim="-"))
             axis.set_major_formatter(fmt); axis.set_minor_formatter(NullFormatter())
             axis.set_major_locator(LogLocator(base=10, subs=(1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0), numticks=12))
 
@@ -628,8 +630,9 @@ def _direct_labels(ax, ends, panel):
     fig = ax.figure; fig.canvas.draw()
     items = []
     for (x, y, lab, c, g) in ends:
-        xd = ax.transAxes.inverted().transform(ax.transData.transform((x, y)))[0]
-        items.append({"x": x, "y": y, "lab": lab, "c": c, "g": g, "margin": xd > 0.97, "header": False})
+        d = ax.transData.transform((x, y)); xa = ax.transAxes.inverted().transform(d)[0]
+        items.append({"x": x, "y": y, "lab": lab, "c": c, "g": g, "margin": xa > 0.97, "header": False, "xa": xa, "yd": d[1]})
+    minsep = 11 * fig.dpi / 72
     # group headers among margin labels
     by_g = {}
     for it in items:
@@ -642,23 +645,58 @@ def _direct_labels(ax, ends, panel):
                 top = max(its, key=lambda it: it["y"])
                 items.append({"x": top["x"], "y": top["y"], "lab": _tex(g), "c": top["c"], "g": g, "margin": True, "header": True})
                 break
-    margin = [it for it in items if it["margin"]]
-    minsep = 11 * fig.dpi / 72
-    for it in margin:
-        it["yd"] = ax.transData.transform((it["x"], it["y"]))[1] + (minsep if it["header"] else 0)
-    margin.sort(key=lambda it: it["yd"])
-    for k in range(1, len(margin)):
-        if margin[k]["yd"] - margin[k - 1]["yd"] < minsep: margin[k]["yd"] = margin[k - 1]["yd"] + minsep
-    for it in margin:
-        yd = ax.transData.inverted().transform((0, it["yd"]))[1]
-        ax.text(1.01, yd, it["lab"], transform=transforms.blended_transform_factory(ax.transAxes, ax.transData),
-                ha="left", va="center", fontsize=PT["label"], color=_text_color(it["c"]), clip_on=False)
+    stack = _stack(ax, items, minsep)
+    r = fig.canvas.get_renderer()
     for it in items:
         if it["margin"]: continue
         anchor = ax.transData.transform((it["x"], it["y"]))
         t = place_text(ax, _tex(it["lab"]), anchor, [(6, 6), (6, -8), (-6, 6), (-6, -8), (10, 0), (0, 10), (0, -12)], fontsize=PT["label"], color=_text_color(it["c"]))
         if t is None:
-            ax.text(1.01, it["y"], it["lab"], transform=transforms.blended_transform_factory(ax.transAxes, ax.transData), ha="left", va="center", fontsize=PT["label"], color=_text_color(it["c"]), clip_on=False)
+            t = ax.text(1.01, it["y"], it["lab"], transform=transforms.blended_transform_factory(ax.transAxes, ax.transData), ha="left", va="center", fontsize=PT["label"], color=_text_color(it["c"]), clip_on=False)
+        bb = t.get_window_extent(r); it["t"], it["ty"] = t, 0.5 * (bb.y0 + bb.y1)
+    # In-panel labels are placed one at a time, so the labels of two ends closer than two text lines can come out
+    # in swapped order (Dy fig3b, 2026-11-08: "29 tones" above the 23-tone curve). Near the right edge such a pair
+    # moves to the margin stack, which keeps the curves' order; elsewhere the figure is not done.
+    inner = [it for it in items if not it["margin"]]
+    moved = False
+    for a in inner:
+        for b in inner:
+            if a["yd"] > b["yd"] and a["yd"] - b["yd"] < 2 * minsep and abs(a["xa"] - b["xa"]) < 0.15 and a["ty"] < b["ty"]:
+                if min(a["xa"], b["xa"]) > 0.75: a["margin"] = b["margin"] = moved = True
+                else: _err(f"labels {a['lab']!r} and {b['lab']!r} came out in swapped order (their curves end {(a['yd'] - b['yd']) * 72 / fig.dpi:.0f} pt apart) — "
+                           "end the curves at the right edge (xlim) so the labels stack in the margin, or label the pair once")
+    if moved:
+        for it in inner:
+            if it["margin"]: it["t"].remove()
+        for t in stack: t.remove()
+        _stack(ax, items, minsep)
+
+
+def _stack(ax, items, minsep):
+    """Draw the margin labels beside the right spine in their curves' order (`_spread`); returns the texts."""
+    margin = [it for it in items if it["margin"]]
+    for it in margin:
+        it["ym"] = ax.transData.transform((it["x"], it["y"]))[1] + (minsep if it["header"] else 0)
+    margin.sort(key=lambda it: it["ym"])
+    out = []
+    for it, yd in zip(margin, _spread([it["ym"] for it in margin], minsep)):
+        y = ax.transData.inverted().transform((0, yd))[1]
+        out.append(ax.text(1.01, y, it["lab"], transform=transforms.blended_transform_factory(ax.transAxes, ax.transData),
+                           ha="left", va="center", fontsize=PT["label"], color=_text_color(it["c"]), clip_on=False))
+    return out
+
+
+def _spread(ys, sep):
+    """Positions for labels wanted at the sorted heights `ys`: at least `sep` apart, in the same order, each run
+    of crowded labels centred on where its members want to be. Pushing only upward (the old rule) shoved the top
+    label of a pair into the refline label above it ("1 % target")."""
+    blocks = []                                   # [sum over members of (y - k*sep), member count]
+    for y in ys:
+        blocks.append([y, 1])
+        while len(blocks) > 1 and blocks[-2][0] / blocks[-2][1] + blocks[-2][1] * sep > blocks[-1][0] / blocks[-1][1]:
+            (s1, n1), (s2, n2) = blocks[-2], blocks[-1]
+            blocks[-2:] = [[s1 + s2 - n1 * n2 * sep, n1 + n2]]
+    return [s / n + k * sep for s, n in blocks for k in range(n)]
 
 
 def _tag(ax, panel):

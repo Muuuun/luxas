@@ -266,5 +266,32 @@ print("PROBE", fills, max(r, g, b) - min(r, g, b) < 12)
   check("v5: ordered series labels do not claim identities", Object.keys(key2.identities).every((k) => !/^N = /.test(k)), JSON.stringify(key2));
 }
 
+// Dy fig3b (2026-11-08): two pumping curves end 0.57 % and 0.51 % apart inside the panel. The in-panel labels were
+// placed one at a time and came out swapped ("29 tones" above the 23-tone curve); the log axis printed its 0.8
+// tick as "1" next to the real 1 (ScalarFormatter picks one decimal count for the whole axis).
+{
+  const t = [1, 2, 5, 10, 20];
+  const tones: Record<string, number[]> = { "17 tones": [37.69, 12.91, 2.341, 2.098, 2.075], "23 tones": [36.78, 11.55, 0.8073, 0.5709, 0.5701], "29 tones": [36.74, 11.49, 0.7442, 0.5079, 0.5075] };
+  const spec = { out: join(out, "tones"), width: "double", layout: "row", panels: [
+    { label: "a", xlabel: "x", ylabel: "y", series: [{ x: [1, 2, 3], y: [1, 2, 3], label: "one" }, { x: [1, 2, 3], y: [3, 2, 1], label: "two" }] },
+    { label: "b", xlabel: "Pumping time (ms)", ylabel: "Initialisation error (%)", xscale: "log", yscale: "log", xlim: [0.8, 26], ylim: [0.3, 40], ordered: true,
+      reflines: [{ axis: "y", value: 1, label: "1 % target" }], highlight: [{ series: 0, at: 10, label: "stalls at {y:.1f} %" }],
+      series: Object.entries(tones).map(([label, y]) => ({ x: t, y, label })) }] };
+  writeFileSync(join(out, "tones.json"), JSON.stringify(spec));
+  const probe = spawnSync("python3", ["-c", `
+import json, sys; sys.argv=['x']
+exec(open('${FIGSPEC}').read().split('if __name__')[0])
+spec = json.load(open('${join(out, "tones.json")}')); validate(spec); render(_resolve(spec), spec['out'])
+ax = LAST_FIG.axes[1]; r = LAST_FIG.canvas.get_renderer()
+y = {t.get_text(): (lambda b: (b.y0 + b.y1) / 2)(t.get_window_extent(r)) for t in ax.texts if t.get_text() in ('17 tones', '23 tones', '29 tones')}
+ticks = [l.get_text() for l in ax.get_xticklabels() if l.get_text() and ax.get_xlim()[0] <= l.get_position()[0] <= ax.get_xlim()[1]]
+print("PROBE", json.dumps({"order": sorted(y, key=y.get, reverse=True), "ticks": ticks, "errors": FINDINGS['errors']}))
+`], { env: { ...process.env, FIGSPEC_STYLE: "skills/venue-specific/figstyles/nature-science.mplstyle" }, encoding: "utf-8" });
+  const p = JSON.parse((probe.stdout.split("\n").filter((l) => l.startsWith("PROBE")).pop() ?? "PROBE {}").slice(6));
+  check("labels of curves ending close together keep the curves' order (17 above 23 above 29 tones)", JSON.stringify(p.order) === JSON.stringify(["17 tones", "23 tones", "29 tones"]), JSON.stringify(p) + probe.stderr.slice(-300));
+  check("a log axis prints each tick as its own number (0.8, not a second '1')", Array.isArray(p.ticks) && p.ticks.includes("0.8") && new Set(p.ticks).size === p.ticks.length, JSON.stringify(p.ticks));
+  check("the pair moved to the margin renders with no errors", Array.isArray(p.errors) && p.errors.length === 0, JSON.stringify(p.errors));
+}
+
 if (fails) { console.log(`\n${fails} failure(s) (renders in ${out})`); process.exit(1); }
 console.log("\nall figspec checks passed — strict grammar, v4 vocabulary, sidecar for the compile gate, v5 colour key");
