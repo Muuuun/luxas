@@ -2,36 +2,23 @@
 
 Used when domain detection fails or the project doesn't fit one of the six mined Nature domains. Conservative, publication-safe, colorblind-friendly. Lifted from defaults that hold across most science venues; **prefer a domain-specific guide if one applies** (`physics.md`, `biology.md`, `chemistry.md`, `earth.md`, `ml.md`, `policy.md`).
 
-> **Adoption rule when this fallback is in use**: be conservative — preserve project conventions where they already exist; do not aggressively rewrite plot script hex codes / markers to match this guide. (Domain-specific guides invert the rule: when `physics.md` etc. is in use, the guide IS the ground truth and plot scripts must conform.)
+> **Colour is not this guide's to set.** The palette, the drive colours by wavelength and the report's colour key live in `skills/figure/scripts/colorkey.py` and `report/figures/colorkey.json` (figures v5; rules and measurements in `skills/figure/references/figure_types.md`). This guide, and any domain guide that replaces it, describes typography, markers and composition only.
 
 ## Visual voice
 
 Restrained, technical, colorblind-safe. Plain white background, no decorative ornament. The figure should feel "made by a careful scientist", not styled.
 
-## Palette
+## Colour (summary of figure_types.md)
 
-Okabe-Ito (8 hues, designed for colorblind safety). Use these in order for categorical data:
-
-| Role | Hex | Name |
-|---|---|---|
-| Primary | `#0072B2` | blue |
-| Secondary | `#D55E00` | vermillion |
-| Tertiary | `#009E73` | green |
-| Quaternary | `#CC79A7` | reddish-purple |
-| Reference / muted | `#F0E442` | yellow |
-| Sky-blue accent | `#56B4E9` | sky-blue |
-| Orange accent | `#E69F00` | orange |
-| Neutral | `#000000` | black |
-
-For grey reference: `#999999`. Two-color working pair: blue + vermillion.
-
-## Color conventions
-
-- Categorical data → distinct hues from the palette in the order above.
-- Sequential data → `viridis` (preferred, perceptually uniform) or `cividis` (colorblind-safe).
-- Diverging data → `RdBu_r` centered at zero.
-- Marker color matched to its line color. Reference / null lines in grey `#999999` dashed.
-- Transparency for overlapping scatter or CI bands: `alpha = 0.2–0.3`.
+- **One colour key per report.** An identity keeps one hue family in every figure.
+- **Schematics.** Levels, labels, text and decays are black. A drive or beam takes its wavelength colour. An object takes a colour only when it names an identity.
+- **Data figures.**
+  - Text is black.
+  - Each panel has at most two hue families plus grey. The binary pair is blue against red, or blue against orange.
+  - Theory and references are grey; a model line is black and dashed.
+  - An ordered sweep uses one family, light to dark.
+- **Colormaps.** For one sign, white to one family, or viridis / cividis. For a signed quantity, blue–white–red centred on zero. Never jet or rainbow.
+- **Bands.** Only for uncertainty or a region. Use the family's light tint.
 
 ## Markers
 

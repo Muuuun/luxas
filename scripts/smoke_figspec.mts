@@ -123,7 +123,7 @@ spec = json.load(open('${join(out, "diverging.json")}')); validate(spec); render
 qm = [c for c in LAST_FIG.axes[0].collections if hasattr(c, 'get_clim')][0]
 print(qm.get_clim(), qm.get_cmap().name)
 `], { env, encoding: "utf-8" });
-  check("diverging heatmap: RdBu_r centred on zero with symmetric limits", /\(-0\.9, 0\.9\) RdBu_r/.test(probe.stdout.trim()), probe.stdout + probe.stderr.slice(-300));
+  check("diverging heatmap: the palette's lx_bluered by default, centred on zero with symmetric limits", /\(-0\.9, 0\.9\) lx_bluered/.test(probe.stdout.trim()), probe.stdout + probe.stderr.slice(-300));
 }
 // text contrast (WCAG 4.5) and red–green confusability helpers
 {
@@ -174,9 +174,9 @@ for b in p.get_text('dict')['blocks']:
         for sp in l['spans']:
             t = sp['text'].strip()
             if t: out[t] = max(out.get(t, 0), round(sp['size'], 1))
-print(out.get('(a)'), max(v for k, v in out.items() if k not in ('(a)', '(b)')))
+print(out.get('a'), max(v for k, v in out.items() if k not in ('a', 'b')), '(a)' in out)
 `], { encoding: "utf-8" });
-  check("Nature style: panel letters 8 pt, all other text ≤ 7 pt", r.status === 0 && /^8\.0 7\.0/.test(sizes.stdout.trim()), sizes.stdout + (r.stderr || "").slice(-200));
+  check("Nature style: panel letters 8 pt bold without parentheses (\"a\"), all other text ≤ 7 pt", r.status === 0 && /^8\.0 7\.0 False/.test(sizes.stdout.trim()), sizes.stdout + (r.stderr || "").slice(-200));
   const s = JSON.parse(JSON.stringify(base)); s.out = join(out, "w15"); s.width = "1.5";
   writeFileSync(join(out, "w15.json"), JSON.stringify(s));
   const r2 = spawnSync("python3", [FIGSPEC, join(out, "w15.json")], { env, encoding: "utf-8" });
@@ -220,5 +220,51 @@ print(out.get('(a)'), max(v for k, v in out.items() if k not in ('(a)', '(b)')))
   check(`stacked column height capped (${Number(pdfH).toFixed(1)} in ≤ 6.6)`, Number(pdfH) <= 6.6, pdfH);
 }
 
+// figures v5 — one colour per identity across the report (report/figures/colorkey.json). In the Luxas corpus the
+// median figure draws 99% of its colour in colours its paper's other figures also use; the v4 renderer coloured
+// groups by first appearance inside ONE figure, so a species changed colour from figure to figure.
+{
+  const proj = mkdtempSync(join(tmpdir(), "figspec-proj-"));
+  const figs = join(proj, "report", "figures");
+  const mkSpec = (stem: string, groups: string[], ordered = false) => ({
+    out: join(figs, stem), panels: [{ xlabel: "x", ylabel: "y", ordered: ordered || undefined,
+      series: groups.map((g, i) => ({ x: [0, 1, 2, 3], y: [i, i + 1, i + 0.5, i + 2], label: ordered ? `N = ${20 * (i + 1)}` : `${g} data`, group: ordered ? undefined : g })) }] });
+  const probe = (stem: string, spec: any) => {
+    writeFileSync(join(proj, stem + ".json"), JSON.stringify(spec));
+    const r = spawnSync("python3", ["-c", `
+import json, sys, matplotlib; sys.argv=['x']
+exec(open('${FIGSPEC}').read().split('if __name__')[0])
+spec = json.load(open('${join(proj, stem + ".json")}')); validate(spec); render(_resolve(spec), spec['out'])
+print("PROBE", json.dumps([matplotlib.colors.to_hex(l.get_color()).upper() for l in LAST_FIG.axes[0].get_lines() if l.get_label() and not l.get_label().startswith('_')]))
+`], { env, encoding: "utf-8", cwd: process.cwd() });
+    const line = (r.stdout.split("\n").filter((l) => l.startsWith("PROBE")).pop() ?? "PROBE []").slice(6);
+    return { cols: JSON.parse(line) as string[], err: r.stderr.slice(-300) };
+  };
+  const a = probe("a", mkSpec("fig2", ["Dy", "Er"]));
+  const b = probe("b", mkSpec("fig3", ["Er"]));
+  const key = existsSync(join(figs, "colorkey.json")) ? JSON.parse(readFileSync(join(figs, "colorkey.json"), "utf-8")) : {};
+  check("v5: groups claim families in report/figures/colorkey.json (Dy blue, Er red)", key.identities?.Dy === "blue" && key.identities?.Er === "red", JSON.stringify(key) + a.err);
+  check("v5: Er keeps its colour in a figure where it is the only group (v4 gave it the first hue)", a.cols[1] === "#CA5852" && b.cols[0] === "#CA5852", JSON.stringify([a.cols, b.cols]) + b.err);
+  check("v5: palette colours even though the project's mplstyle still carries Okabe-Ito", a.cols[0] === "#3B7CAE" && !a.cols.some((c) => ["#0072B2", "#D55E00"].includes(c)), JSON.stringify(a.cols));
+  const o = probe("o", mkSpec("fig4", ["s1", "s2", "s3", "s4"], true));
+  const lum = (h: string) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16)).reduce((s, v) => s + v, 0);
+  check("v5: an ordered sweep is one hue from light to dark", o.cols.length === 4 && o.cols.every((c, i) => i === 0 || lum(c) < lum(o.cols[i - 1])), JSON.stringify(o.cols) + o.err);
+  // an envelope of unnamed references is grey: v5's first cut gave it colors[0], i.e. the first identity's blue
+  const env9 = JSON.parse(readFileSync("fixtures/figspec/fig9.figspec.json", "utf-8").replaceAll("OUT/", figs + "/"));
+  writeFileSync(join(proj, "env9.json"), JSON.stringify(env9));
+  const pe = spawnSync("python3", ["-c", `
+import json, sys, matplotlib; sys.argv=['x']
+exec(open('${FIGSPEC}').read().split('if __name__')[0])
+spec = json.load(open('${join(proj, "env9.json")}')); validate(spec); render(_resolve(spec), spec['out'])
+from matplotlib.collections import PolyCollection
+fills = [matplotlib.colors.to_hex(c.get_facecolor()[0][:3]) for c in LAST_FIG.axes[0].collections if isinstance(c, PolyCollection)]
+r, g, b = [int(fills[0][i:i + 2], 16) for i in (1, 3, 5)] if fills else (0, 0, 255)
+print("PROBE", fills, max(r, g, b) - min(r, g, b) < 12)
+`], { env, encoding: "utf-8" });
+  check("v5: an envelope with no group is grey, not the first identity's hue", /PROBE .* True$/.test(pe.stdout.trim()), pe.stdout + pe.stderr.slice(-300));
+  const key2 = JSON.parse(readFileSync(join(figs, "colorkey.json"), "utf-8"));
+  check("v5: ordered series labels do not claim identities", Object.keys(key2.identities).every((k) => !/^N = /.test(k)), JSON.stringify(key2));
+}
+
 if (fails) { console.log(`\n${fails} failure(s) (renders in ${out})`); process.exit(1); }
-console.log("\nall figspec checks passed — strict grammar, v4 vocabulary, sidecar for the compile gate");
+console.log("\nall figspec checks passed — strict grammar, v4 vocabulary, sidecar for the compile gate, v5 colour key");

@@ -7,7 +7,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { figureLintIssues, includeWidthInches, formatFigureLint } from "../src/tools/report.ts";
+import { figureLintIssues, includeWidthInches, formatFigureLint, figureWarningsBlock } from "../src/tools/report.ts";
 
 let fails = 0;
 function check(name: string, ok: boolean, detail = "") {
@@ -55,6 +55,12 @@ check("collision figure fails (extension-less include resolved to .pdf)", issues
 check("sidecar budget error (legend over data) merged into the gate", issues.some((i) => i.file.includes("legend") && i.errors.some((e) => /legend covers/.test(e))));
 check("missing file is not this gate's job", !issues.some((i) => i.file.includes("missing")));
 check("message names files and the reproduce command", /bad\.pdf[\s\S]*figlint-pdf/.test(formatFigureLint(issues)));
+// figures v5: warnings (off-palette colour) are non-blocking but reach the agent after a successful compile
+const wb = figureWarningsBlock(issues);
+check("default matplotlib blue (tab10) is an off-palette warning, not an error", issues.some((i) => i.file.includes("clean") && !i.errors.length && i.warnings.some((w) => /off-palette colour: .*#1F77B4/.test(w))), JSON.stringify(issues.find((i) => i.file.includes("clean"))));
+check("the warnings block lists the file and the off-palette warning", /figure lint warnings \(non-blocking\)[\s\S]*figures\/clean\.pdf[\s\S]*off-palette/.test(wb), wb.slice(0, 300));
+check("compile_latex appends the warnings block to its success output", /figWarnBlock = figureWarningsBlock\(figIssues\)/.test(readFileSync("src/tools/report.ts", "utf-8")) && /integrityBlock \+ figWarnBlock \+ footer/.test(readFileSync("src/tools/report.ts", "utf-8")));
+check("no warnings → empty block", figureWarningsBlock([{ file: "x.pdf", errors: [], warnings: [] }]) === "");
 process.env.LUXAS_FIGLINT_GATE = "0";
 check("LUXAS_FIGLINT_GATE=0 disables", figureLintIssues(dir, "report.tex").length === 0);
 delete process.env.LUXAS_FIGLINT_GATE;

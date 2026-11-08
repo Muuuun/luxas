@@ -13,17 +13,20 @@ error vs distance). Design rules embodied:
 import matplotlib.pyplot as plt
 import numpy as np
 from pathlib import Path
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "figure" / "scripts"))
+import colorkey  # noqa: E402  palette + report colour key (figures v5): draw with its hex values (colorkey.PALETTE / BLUE / GREYS)
 
 for st in ("report/figstyle.mplstyle",):
     if Path(st).exists(): plt.style.use(st)
 
-ACCENT, CONTEXT, INK, MUTED = "#0F6BB2", "#9C9490", "#222222", "#7A7570"
+ACCENT, CONTEXT, INK, MUTED = colorkey.tint("blue", "m"), colorkey.grey("g5"), colorkey.grey("ink"), colorkey.GREY
 th = np.linspace(0, 90, 400)                       # angle theta (deg)
 p2_bare = 0.248 * np.exp(-((th - 0) / 28) ** 2) + 0.02   # illustrative shapes
 p2_dressed = 0.05 * np.exp(-((th - 0) / 45) ** 2) + 0.008
 
 fig, ax = plt.subplots(figsize=(5.2, 3.4))
-ax.axvspan(0, 25, color="#F4F1EE", zorder=0)
+ax.axvspan(0, 25, color=colorkey.tint("blue", "p"), zorder=0)
 ax.text(12.5, 0.4, "weak-blockade\nregime", ha="center", fontsize=8.5, color=MUTED)
 
 ax.plot(th, p2_bare, color=ACCENT, lw=2)

@@ -41,6 +41,10 @@ of shipped figures and the dataviz form/color method.
 
 ## Palette
 
-Accent `#0F6BB2` · context grey `#9C9490` · ink `#222222` · muted `#7A7570`
-· band fill `#F4F1EE` · grid `#EFEDEA`. Venue figstyles may override hues;
-the accent+grey emphasis structure survives any palette.
+Accent = the identity's family from the report colour key (blue `#3B7CAE` for the
+first identity) · context grey `#868686` · ink `#2C2C2C` · muted `#6E6E6E` ·
+band fill = the family's pale tint (`#E4ECF6` for blue) · grid `#EFEDEA`. All from
+`skills/figure/scripts/colorkey.py` (figures v5); read colours through the key
+(`colorkey.PALETTE[family]["m"]`, or the hex itself), with the family an identity
+gets read from the report key (`colorkey.load_for(out).family(identity)`). The accent+grey
+emphasis structure is unchanged.

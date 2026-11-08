@@ -7,9 +7,16 @@ The author lists levels (label, energy, column) and transitions (from, to, kind)
 the generator owns everything the Ba run's five audit rounds nudged by hand:
 a compressed energy axis (sqrt-compressed gaps with a floor, break marks where
 the compression is large — the Rydberg gap no longer makes a page-tall figure),
-column layout, label slots, arrow slots, colours by group, straight arrows for
-coherent drives and wavy arrows for decays (the convention the hand-drawn
-diagram inverted), the wavelength set inline on its own arrow, no key box.
+column layout, label slots, arrow slots, straight arrows for coherent drives and
+wavy arrows for decays (the convention the hand-drawn diagram inverted), the
+wavelength set inline on its own arrow, no key box.
+
+Colour (figures v5, measured on 208 level diagrams of the Luxas corpus): levels and
+their labels are black (83% of diagrams); a drive arrow takes its colour from the
+wavelength in its label (colorkey.beam: UV purple … 626 nm red-orange … >1 µm dark
+red); decays are thin black wavy arrows. A level or a non-optical drive (RF, MW) is
+coloured only through `identity`, which reads the report's colour key
+(report/figures/colorkey.json), so the colour is the one the data figures use.
 
 Exit 0: written and figlint-pdf clean at the print width. Exit 2: spec error,
 compile failure, or lint errors (listed) — the figure is not done.
@@ -17,16 +24,21 @@ compile failure, or lint errors (listed) — the figure is not done.
 import difflib, json, math, os, re as _re, shutil, subprocess, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import colorkey  # noqa: E402  (the palette and the report's colour key, shared with figspec)
 FIGLINT = os.path.join(HERE, "..", "..", "matplotlib-figures", "scripts", "figlint-pdf")
-PALETTE = ["0072B2", "D55E00", "009E73", "CC79A7", "E69F00", "56B4E9", "882255"]   # Okabe-Ito order, no yellow
 KINDS = {"drive", "qubit", "decay", "dashed"}
 KEYS = {
     "spec": {"out", "width", "unit", "columns", "levels", "transitions", "limit", "height_in"},
-    "level": {"id", "label", "energy", "column", "group", "tag"},
-    "transition": {"from", "to", "kind", "label", "group"},
+    "level": {"id", "label", "energy", "column", "identity", "tag"},
+    "transition": {"from", "to", "kind", "label", "identity"},
     "limit": {"label", "energy", "column"},
 }
-REDIRECT = {"wavelength": "label", "color": "group", "colour": "group", "type": "kind", "style": "kind", "key": "nothing — there is no key box; a level's group colours it and its tag names it",
+_NO_GROUP = ("identity, and only when the colour names something the report's data figures also show (a species, spin up, "
+             "a qubit state); otherwise nothing — levels are black and a drive is coloured from the wavelength in its label")
+REDIRECT = {"wavelength": "label (write the wavelength in it, e.g. \"626 nm\": the arrow is coloured from it)",
+            "color": _NO_GROUP, "colour": _NO_GROUP, "group": _NO_GROUP, "type": "kind", "style": "kind",
+            "key": "nothing — there is no key box; a level's tag names its role",
             "legend": "nothing — no legend; use tag on a level", "y": "energy", "x": "column", "name": "label", "arrows": "transitions", "states": "levels"}
 W_IN = {"single": 3.4, "double": 7.0}
 
@@ -112,7 +124,8 @@ def text_cm(s, pt=8):
     return 0.155 * n * pt / 8 + 0.1
 
 
-def build(spec):
+def build(spec, key=None):
+    key = key or colorkey.Key()
     width_req = spec.get("width", "single")
     levels = spec["levels"]; trans = spec.get("transitions", []); limit = spec.get("limit")
     ncol = max(l["column"] for l in levels) + 1
@@ -135,11 +148,19 @@ def build(spec):
         else: raise SpecError(f"diagram needs {W_cm / 2.54:.1f} in of width for {ncol} columns of labels — fewer columns, shorter labels, or drop tags")
     H_cm = float(spec.get("height_in", 3.0 if width == "single" else 3.4)) * 2.54
     fs = r"\footnotesize"
-    groups = {}
-    for l in levels:
-        if l.get("group") and l["group"] not in groups: groups[l["group"]] = len(groups)
-    for t in trans:
-        if t.get("group") and t["group"] not in groups: groups[t["group"]] = len(groups)
+    # Colours: black levels and labels; a level / non-optical drive with an identity takes the key's colour;
+    # an optical drive takes the colour of the wavelength in its label; anything else is black.
+    cols = {}
+    def cname(hexc):
+        if hexc not in cols: cols[hexc] = f"c{len(cols)}"
+        return cols[hexc]
+    def level_col(l):
+        return cname(key.color(l["identity"], "m")) if l.get("identity") else "lvl"   # a line: the mid tint
+    def trans_col(t):
+        if t["kind"] == "decay": return "lvl"
+        if t.get("identity"): return cname(key.color(t["identity"], "m"))
+        nm = colorkey.wavelength_nm(t.get("label", ""))
+        return cname(colorkey.beam(nm)) if nm else "lvl"
     energies = [l["energy"] for l in levels] + ([limit["energy"]] if limit else [])
     labeled = {l["energy"]: 0.55 for l in levels if l["label"] or l.get("tag")}
     if limit: labeled[limit["energy"]] = 0.45
@@ -153,13 +174,13 @@ def build(spec):
     A(r"\usepackage[T1]{fontenc}\usepackage{helvet}\renewcommand{\familydefault}{\sfdefault}")
     A(r"\usepackage{sansmath}\sansmath")
     A(r"\usetikzlibrary{arrows.meta,decorations.pathmorphing,calc}")
-    for g, i in groups.items(): A(f"\\definecolor{{g{i}}}{{HTML}}{{{PALETTE[i % len(PALETTE)]}}}")
-    A(r"\definecolor{lvl}{HTML}{222222}\definecolor{dec}{HTML}{8a8a8a}")
+    COLDEFS = len(out); A("")   # filled in once every colour is known
+    A(r"\definecolor{lvl}{HTML}{000000}\definecolor{dec}{HTML}{8a8a8a}")
     A(r"\begin{document}")
     A(r"\begin{tikzpicture}[x=1cm,y=1cm, font=" + fs + ", >={Stealth[length=4pt]},")
     A(r"  level/.style={line width=1.4pt}, drive/.style={line width=0.9pt,->}, qubit/.style={line width=0.9pt,<->},")
     A(r"  dashedtr/.style={line width=0.8pt,->,densely dashed},")
-    A(r"  decay/.style={line width=0.6pt,->,decorate,decoration={snake,amplitude=0.7pt,segment length=3pt,post length=3pt}},")
+    A(r"  decay/.style={line width=0.5pt,->,decorate,decoration={snake,amplitude=0.7pt,segment length=3pt,post length=3pt}},")
     A(r"  wl/.style={fill=white,inner sep=1pt,font=\scriptsize}]")
     # energy axis with break marks (positions are compressed, so no ticks — the breaks say so)
     xa = axis_w - 0.45
@@ -176,10 +197,10 @@ def build(spec):
         A(f"  \\node[anchor=south,text=dec,font=\\scriptsize] at ({X(c) + line / 2:.2f},{top + 0.3:.2f}) {{{head}}};")
     for l in levels:
         c = l["column"]; x0 = X(c); y = Y(l["energy"])
-        col = f"g{groups[l['group']]}" if l.get("group") in groups else "lvl"
+        col = level_col(l)
         A(f"  \\draw[level,{col}] ({x0:.2f},{y:.2f}) -- ({x0 + line:.2f},{y:.2f});")
         if l["label"] or l.get("tag"):
-            A(f"  \\node[anchor=east,inner sep=1pt,text={col}] at ({x0 - 0.08:.2f},{y:.2f}) {{{full_label(l)}}};")
+            A(f"  \\node[anchor=east,inner sep=1pt,text=lvl] at ({x0 - 0.08:.2f},{y:.2f}) {{{full_label(l)}}};")   # labels stay black (88% of diagrams)
     if limit:
         c = limit.get("column", ncol - 1); x0 = X(c); y = Y(limit["energy"])
         A(f"  \\draw[dec,densely dashed,line width=0.6pt] ({x0 - 0.15:.2f},{y:.2f}) -- ({x0 + line + 0.15:.2f},{y:.2f});")
@@ -191,11 +212,12 @@ def build(spec):
         a, b = by_id[t["from"]], by_id[t["to"]]
         ya, yb = Y(a["energy"]), Y(b["energy"])
         style = {"drive": "drive", "qubit": "qubit", "decay": "decay", "dashed": "dashedtr"}[t["kind"]]
-        col = f"g{groups[t['group']]}" if t.get("group") in groups else ("dec" if t["kind"] == "decay" else "lvl")
+        col = trans_col(t)
+        tcol = col if key.drive_labels == "arrow" else "lvl"
         # arrows fanning out of one level stagger their inline labels along the arrow so they never stack
         k = fan.get(t["from"], 0); fan[t["from"]] = k + 1
         pos = [0.5, 0.32, 0.68, 0.2, 0.8][k % 5]
-        lab = f" node[wl,pos={pos},{{ROT}},text={col}] {{{t['label']}}}" if t.get("label") else ""
+        lab = f" node[wl,pos={pos},{{ROT}},text={tcol}] {{{t['label']}}}" if t.get("label") else ""
         if a["column"] == b["column"]:
             c = a["column"]; kk = slot_used.get(c, 0); slot_used[c] = kk + 1
             x = X(c) + 0.22 + (kk % 2) * 0.45
@@ -214,6 +236,7 @@ def build(spec):
             A(f"  \\draw[{style},{col}] ({xa_:.2f},{ya:.2f}) -- ({xb_:.2f},{ya:.2f}) -- ({xb_:.2f},{yb - 0.07 if up else yb + 0.07:.2f}){lab.replace('{ROT}', 'rotate=90').replace(f'pos={pos}', f'pos={0.5 + pos / 2:.2f}')};")
     A(r"\end{tikzpicture}")
     A(r"\end{document}")
+    out[COLDEFS] = "".join(f"\\definecolor{{{n}}}{{HTML}}{{{h[1:]}}}" for h, n in cols.items())
     return "\n".join(out) + "\n", round(W_cm / 2.54, 2), width
 
 
@@ -228,8 +251,8 @@ def main(argv):
     for f in argv[1:]:
         try:
             spec = validate(json.load(open(f)))
-            tex, width_in, width = build(spec)
-        except (OSError, json.JSONDecodeError, SpecError) as e:
+            tex, width_in, width = build(spec, colorkey.load_for(spec["out"]))
+        except (OSError, json.JSONDecodeError, SpecError, ValueError) as e:
             print(f"levelspec ERROR: {f}: {e}", file=sys.stderr); rc = 2; continue
         out = spec["out"]; os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
         with open(out + ".tex", "w") as fh: fh.write(tex)

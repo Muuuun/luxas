@@ -20,6 +20,9 @@ Design rules embodied (delete none of them when adapting):
 import matplotlib.pyplot as plt
 import numpy as np
 from pathlib import Path
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "figure" / "scripts"))
+import colorkey  # noqa: E402  palette + report colour key (figures v5): draw with its hex values (colorkey.PALETTE / BLUE / GREYS)
 
 for st in ("report/figstyle.mplstyle",):  # project style first, when present
     if Path(st).exists(): plt.style.use(st)
@@ -32,7 +35,7 @@ DATA = [
     ("Levine 2019 (Rb)",   400, 0.050,  False),
     ("Ma 2022 (Rb)",      5600, 0.150,  False),
 ]
-ACCENT, CONTEXT, INK, MUTED = "#0F6BB2", "#9C9490", "#222222", "#7A7570"
+ACCENT, CONTEXT, INK, MUTED = colorkey.tint("blue", "m"), colorkey.grey("g5"), colorkey.grey("ink"), colorkey.GREY
 
 rows = sorted(((n, t * e, t, e, s) for n, t, e, s in DATA), key=lambda r: r[1])
 fig, (ax, ax2) = plt.subplots(1, 2, figsize=(9.2, 3.4), width_ratios=[1.15, 1])

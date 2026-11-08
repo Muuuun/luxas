@@ -24,6 +24,6 @@ To refresh these guides (e.g. expand sample size or re-mine with a tweaked schem
 
 ## How they're used
 
-PI (in `<figure_finalize_loop>` of `src/agents/definitions/reviewer.md`) detects the project's domain at the start of the figure-finalize loop and copies the matching guide into `report/figures/style_guide.md` if it doesn't already exist. Illustrator workers then read `report/figures/style_guide.md` as the authoritative project style — same read path as before, no template variable changes.
+PI (in `<figure_finalize_loop>` of `src/agents/definitions/reviewer.md`) detects the project's domain at the start of the figure-finalize loop and copies the matching guide into `report/figures/style_guide.md` if it doesn't already exist. Illustrator workers then read `report/figures/style_guide.md` for the field's typography, markers and composition. **Not for colour**: the palette, drive colours and the report's colour key are `skills/figure/scripts/colorkey.py` + `report/figures/colorkey.json` (figures v5, measured in `skills/figure/references/figure_types.md`); hex codes in these guides are what the mined papers happened to use, and are never applied.
 
 If the project already has figures with established conventions, the seed step blends: project consistency wins where it conflicts with the Nature norm, but the Nature guide informs gaps.

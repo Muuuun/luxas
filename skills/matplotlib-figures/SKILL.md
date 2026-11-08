@@ -24,7 +24,7 @@ All generated figures MUST be publication-quality: load a venue-matched style, s
 
 ### Step 1 — Set up the figure style (once per project)
 
-When you have determined the target venue, copy BOTH the matching matplotlib style template AND the domain style guide to your project (half-upgrading only the mplstyle recreates the figstyle/guide palette divergence). Your brain prompt supplies the venue-specific directory as `{{VENUE_SPECIFIC_DIR}}`:
+When you have determined the target venue, copy the matching matplotlib style template (typography: fonts, sizes, ticks; every venue carries the same colour cycle) and the domain style guide (the field's voice; its hex codes are never applied — colour is the report's colour key). Your brain prompt supplies the venue-specific directory as `{{VENUE_SPECIFIC_DIR}}`:
 
 ```bash
 cp {{VENUE_SPECIFIC_DIR}}figstyles/<style>.mplstyle report/figstyle.mplstyle
@@ -98,6 +98,6 @@ Every ERROR must be fixed before the figure is used. Exit 2 = errors; do not `||
 - **Never** use the default matplotlib style — always load `figstyle.mplstyle`.
 - **Format**: PDF (vector) for line plots and diagrams; PNG only for raster data (heatmaps, images).
 - **Width**: single-column for most figures; override `figsize` for double-column only when the figure genuinely needs it.
-- **Colors**: the palette comes from the style file's `axes.prop_cycle`, pre-aligned to `skills/figure/style_guides/<domain>.md` — don't override it. Red/green adjacent series: differentiate by marker/linestyle too.
+- **Colors** (figures v5): one palette (`skills/figure/scripts/colorkey.py`, the same cycle in every venue mplstyle) and one colour per identity across the report (`report/figures/colorkey.json`, which figspec and levelspec claim and read). A hand-written script draws with the palette's hex values directly (`colorkey.BLUE`, `colorkey.PALETTE["red"]["d"]`, `colorkey.BEAM["red_orange"]`, or `#3B7CAE` copied from `skills/figure/references/palettes.md`); which family an identity gets is the key's (`colorkey.load_for("report/figures/<name>.pdf").family("<identity>")`). A hex outside the palette is not used. Text black; at most two hue families per panel plus grey. Rules by figure type and position: `skills/figure/references/figure_types.md`.
 - **Tables**: render tabular data with LaTeX `\begin{tabular}`, NOT as matplotlib table images.
 - **Fallback**: if `text.usetex` fails (LaTeX not installed), set `text.usetex=False` in the style file.

@@ -72,6 +72,16 @@ export function figureLintIssues(dir: string, texfile: string): FigureLintIssue[
   return out;
 }
 
+/** Non-blocking figure lint findings, listed after a compile that passed the layout gate. "" when none. */
+export function figureWarningsBlock(issues: FigureLintIssue[]): string {
+  const withWarn = issues.filter((i) => i.warnings.length > 0);
+  if (withWarn.length === 0) return "";
+  const lines = ["", "", "── figure lint warnings (non-blocking) ──"];
+  for (const i of withWarn) { lines.push(`  ${i.file}`); for (const w of i.warnings) lines.push(`    warn  ${w}`); }
+  lines.push("An off-palette colour means the figure does not use the report's palette (skills/figure/scripts/colorkey.py) — redraw it from the palette and the colour key so it matches the other figures.");
+  return lines.join("\n") + "\n";
+}
+
 export function formatFigureLint(issues: FigureLintIssue[]): string {
   const bad = issues.filter((i) => i.errors.length);
   const lines = ["✗ Figure layout check failed — these figures ship unreadable as rendered (text collisions, clipped or sub-5 pt text at print width, legend/inset over data):", ""];
@@ -363,7 +373,10 @@ export function createReportTools(projectDir: string) {
               : "") + "\n";
         }
       }
-      const text = header + promotedNote + problemsBlock + outputs.join("\n\n") + integrityBlock + footer;
+      // Figure lint warnings (off-palette colours, a tall figure, dense text) do not block; they are listed after a
+      // successful compile so the warning has a reader — before v5 they were printed only next to an ERROR.
+      const figWarnBlock = figureWarningsBlock(figIssues);
+      const text = header + promotedNote + problemsBlock + outputs.join("\n\n") + integrityBlock + figWarnBlock + footer;
       return { content: [{ type: "text" as const, text }], details: { success } };
     },
   };

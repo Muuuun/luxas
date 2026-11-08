@@ -9,7 +9,7 @@ import { execSync } from "node:child_process";
 
 const LUXAS_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const GENERAL_MPLSTYLE = join(LUXAS_ROOT, "skills", "venue-specific", "figstyles", "general.mplstyle");
-export const STYLE_TRUTH_HEADER = "> **Style truth is `report/figstyle.mplstyle`** (palette = `axes.prop_cycle`, tick direction, font sizes, spines). The prose below describes the venue's visual voice; any hex codes or tick conventions it names are illustrative and must NOT be applied over the mplstyle.\n\n";
+export const STYLE_TRUTH_HEADER = "> **Colour truth is `skills/figure/scripts/colorkey.py` + `report/figures/colorkey.json`** (one palette; one colour per identity across the report; schematics black with drives by wavelength — `skills/figure/references/figure_types.md`). **Typography truth is `report/figstyle.mplstyle`** (tick direction, font sizes, spines). The prose below describes the field's visual voice; any hex codes or tick conventions it names are illustrative and must NOT be applied.\n\n";
 const DEFAULT_STYLE_GUIDE = join(LUXAS_ROOT, "skills", "figure", "style_guides", "_default.md");
 
 function makeScaffold(title: string): string {

@@ -27,11 +27,26 @@ import matplotlib.pyplot as plt
 from matplotlib import transforms
 
 STYLE = os.environ.get("FIGSPEC_STYLE", "report/figstyle.mplstyle")
+# __file__ is absent when a gate exec()s this source; the repo-relative path then resolves from the cwd (the repo root)
+_HERE = os.path.dirname(os.path.abspath(globals().get("__file__", "skills/matplotlib-figures/scripts/figspec")))
+sys.path.insert(0, os.path.join(_HERE, "..", "..", "figure", "scripts"))
+import colorkey  # noqa: E402  palette + the report's colour key (report/figures/colorkey.json), shared with levelspec
+# figures v5: a hue family per identity (group, else the series label), claimed in the report's colour key the
+# first time any figure names it, so an identity keeps its colour across every figure of the report. Tints:
+# line m, marker edge d, band/envelope l, direct label d. The mplstyle cycle is the same list (colorkey.mids()).
+TINT = {}                  # mid hex -> {"d": …, "l": …, "p": …}, filled from colorkey
+for _f in colorkey.ORDER:
+    TINT[colorkey.tint(_f, "m").lower()] = {t: colorkey.tint(_f, t) for t in "dlp"}
 W = {"single": 3.4, "1.5": 4.72, "double": 7.0}   # Nature: 89 mm, 120 mm, 183 mm
 # Nature methodology (Points of View / Points of Significance, Wong & Krzywinski 2010–13), figures v4.1:
 SEQUENTIAL_CMAPS = {"viridis", "cividis", "inferno", "magma", "plasma", "Greys", "Blues", "Greens", "Oranges", "Purples", "Reds",
                     "YlGnBu", "YlOrRd", "BuPu", "GnBu", "PuBu", "OrRd", "PuRd", "BuGn"}
 DIVERGING_CMAPS = {"RdBu_r", "RdBu", "coolwarm", "PuOr", "PuOr_r", "BrBG", "BrBG_r", "PiYG", "PiYG_r", "RdYlBu_r", "seismic", "bwr"}
+# figures v5: colormaps made from the palette (registered in _register_palette_cmaps): "lx_<family>" runs white →
+# the family's light, mid and dark tints; "lx_bluered" is the palette's blue dark → white → red dark, the
+# default for a signed quantity, so a heatmap speaks the report's colours.
+SEQUENTIAL_CMAPS |= {"lx_blue", "lx_red", "lx_orange", "lx_green", "lx_plum", "lx_sand"}
+DIVERGING_CMAPS |= {"lx_bluered"}
 BANNED_CMAPS = {"jet", "rainbow", "gist_rainbow", "hsv", "turbo", "nipy_spectral", "gist_ncar", "prism", "Spectral", "Spectral_r", "gnuplot", "gnuplot2"}
 SIGMA_KINDS = {"sd": "s.d.", "sem": "s.e.m.", "ci95": "95% CI", "ci68": "68% CI", "range": "range"}
 MIN_CONTRAST = 4.5         # WCAG AA, Nature research figure guide: text contrast > 4.5
@@ -63,7 +78,7 @@ class SpecError(Exception):
 KEYS = {
     "spec": {"out", "width", "layout", "sharex", "sharey", "ncols", "panels", "points_note", "sigma_note"},
     "panel": {"label", "type", "xlabel", "ylabel", "zlabel", "xscale", "yscale", "xlim", "ylim", "zlim", "tag",
-              "series", "bands", "reflines", "highlight", "points_note", "sigma_note",
+              "series", "bands", "reflines", "highlight", "points_note", "sigma_note", "ordered",
               "x", "y", "z", "cmap", "contours", "diverging", "center", "zero", "clockwise", "thetalim", "rlabel_deg"},
     "series": {"x", "y", "label", "role", "sigma", "sigma_kind", "ylo", "yhi", "linestyle", "band", "group", "markers", "fill",
                "points_note", "sigma_note"},
@@ -167,6 +182,8 @@ def validate(spec):
                 raise SpecError(f"{pp}.{lim}: [lo, hi]")
         if "tag" in p and not isinstance(p["tag"], str):
             raise SpecError(f"{pp}.tag: a short string (\"T = 4 K\")")
+        if "ordered" in p and not isinstance(p["ordered"], bool):
+            raise SpecError(f"{pp}.ordered: true when the series are one parameter swept in order (N = 20, 40, 60 …): one hue, light to dark")
         if p.get("highlight") is not None and not isinstance(p["highlight"], list): p["highlight"] = [p["highlight"]]
         if kind == "heatmap":
             for k in ("x", "y", "z"):
@@ -177,7 +194,7 @@ def validate(spec):
                 raise SpecError(f"{pp}.cmap: {cm!r} is banned — a rainbow map has no perceptual order (Wong 2010); use a sequential map ({', '.join(sorted(SEQUENTIAL_CMAPS)[:6])}, …) or \"diverging\": true for a signed quantity")
             if p.get("diverging"):
                 if cm is not None and cm not in DIVERGING_CMAPS:
-                    raise SpecError(f"{pp}.cmap: {cm!r} is not a diverging map — with diverging: true use one of {', '.join(sorted(DIVERGING_CMAPS))} (default RdBu_r, centred on `center`, default 0)")
+                    raise SpecError(f"{pp}.cmap: {cm!r} is not a diverging map — with diverging: true use one of {', '.join(sorted(DIVERGING_CMAPS))} (default lx_bluered — the palette's blue → white → red — centred on `center`, default 0)")
             elif cm is not None and cm not in SEQUENTIAL_CMAPS:
                 if cm in DIVERGING_CMAPS:
                     raise SpecError(f"{pp}.cmap: {cm!r} is a diverging map — say \"diverging\": true (and \"center\" if zero is not the meaningful value) so the map is centred; a diverging map on an unsigned quantity misleads")
@@ -366,7 +383,11 @@ def _contrast(c, bg="white"):
     return (max(a, b) + 0.05) / (min(a, b) + 0.05)
 def _text_color(c):
     """A label set in its series colour must still read as text: WCAG AA contrast ≥ 4.5 on white
-    (Okabe-Ito yellow is 1.4). Darken along the same hue until it passes."""
+    (Okabe-Ito yellow is 1.4). A palette colour uses its family's dark tint; anything else is darkened
+    along the same hue until it passes."""
+    tt = TINT.get(matplotlib.colors.to_hex(c).lower())
+    if tt: return tt["d"]
+    if matplotlib.colors.to_hex(c).lower() in RAMP_TEXT: return RAMP_TEXT[matplotlib.colors.to_hex(c).lower()]
     rgb = _rgb(c)
     for _ in range(40):
         if _contrast(rgb) >= MIN_CONTRAST: break
@@ -504,20 +525,35 @@ def _reflines(ax, panel):
             if r.get("label"): panel.setdefault("_late", []).append(("xref", r))
 
 
+def _tone(c, t):
+    """The family tint `t` (d, l, p) of a palette mid colour; None for colours outside the palette."""
+    tt = TINT.get(matplotlib.colors.to_hex(c).lower())
+    return tt[t] if tt else None
+
+
 def _series(ax, panel, colors, groups):
-    """Draw the series. Colour: by `group` (one hue per group, first-appearance order across the figure, variants
-    by line style within the group), else by series index; `reference` role is grey. Markers only for sparse
-    measured data, never for a computed curve."""
+    """Draw the series. Colour: by identity — `group`, else the series label — from the report's colour key
+    (one family per identity across the whole report, variants by line style within a group), else by series
+    index; an `ordered` panel draws its data series as one family from light to dark; `reference` role is grey.
+    Markers only for sparse measured data, never for a computed curve."""
     ends = []
     ci = 0; ls_by_group = {}; drawn = []
+    ramp = None
+    if panel.get("ordered"):
+        data_s = [s for s in panel["series"] if s.get("role", "data") == "data"]
+        first = next((s.get("group") for s in data_s if s.get("group")), None)
+        fam = KEY.family(first) if first else colorkey.ORDER[0]
+        ramp = _ramp(fam, len(data_s))
     for s in panel["series"]:
         x = np.asarray(s["x"], float); y = np.asarray(s.get("y", []), float)
         if panel.get("type") == "polar": x = np.deg2rad(x)
         role = s.get("role", "data")
         if role == "envelope":
             ylo, yhi = np.asarray(s["ylo"], float), np.asarray(s["yhi"], float)
-            c = colors[groups[s["group"]] % len(colors)] if s.get("group") in groups else colors[0]
-            ax.fill_between(x, ylo, yhi, color=c, alpha=0.18, lw=0, zorder=1, label=s.get("label", ""))
+            # an envelope of a group takes the group's light tint; an envelope of unnamed references is grey —
+            # colors[0] here gave it the first identity's hue (fig9: "Rb, Cs, Yb" drawn in Ba's blue)
+            c = groups[s["group"]] if s.get("group") in groups else GREY
+            ax.fill_between(x, ylo, yhi, color=_tone(c, "l") or LIGHT, alpha=0.45 if _tone(c, "l") else 0.35, lw=0, zorder=1, label=s.get("label", ""))
             panel.setdefault("_late", []).append(("envelope", (x, ylo, yhi, s.get("label", ""), c)))
             continue
         if role == "model":
@@ -528,10 +564,14 @@ def _series(ax, panel, colors, groups):
             c = GREY; lw = 0.9; z = 2
             k = ls_by_group.get("__ref__", 0); ls_by_group["__ref__"] = k + 1
             ls_ = list(LINESTYLES.values())[k % 4]
+        elif ramp is not None:
+            c = ramp[ci % len(ramp)]; lw = 1.4; z = 3; ls_ = "-"; ci += 1
         elif s.get("group") in groups:
-            c = colors[groups[s["group"]] % len(colors)]; lw = 1.4; z = 3
+            c = groups[s["group"]]; lw = 1.4; z = 3
             k = ls_by_group.get(s["group"], 0); ls_by_group[s["group"]] = k + 1
             ls_ = list(LINESTYLES.values())[k % 4]
+        elif s.get("label"):
+            c = KEY.color(s["label"], "m"); lw = 1.4; z = 3; ls_ = "-"
         else:
             c = colors[ci % len(colors)]; lw = 1.4; z = 3
             # More series than palette entries: a colour may repeat only with a different line style
@@ -546,7 +586,7 @@ def _series(ax, panel, colors, groups):
             if pls == ls_ and _confusable(c, pc):
                 used = {l for _, l, _ in drawn}
                 ls_ = next((l for l in LINESTYLES.values() if l not in used and l != pls), LINESTYLES["dotted"])
-                _warn(f"panel {panel.get('label', 'a')}: \"{s.get('label', '?')}\" and \"{plab}\" are the same to a red–green colour-blind reader — drawn with a different line style; better: a palette without red beside green (report/figstyle.mplstyle)")
+                _warn(f"panel {panel.get('label', 'a')}: \"{s.get('label', '?')}\" and \"{plab}\" are the same to a red–green colour-blind reader — drawn with a different line style; better: at most two hue families per panel (blue with red or orange), the rest grey references")
                 break
         drawn.append((c, ls_, s.get("label", "?")))
         want_mk = s.get("markers")
@@ -554,7 +594,7 @@ def _series(ax, panel, colors, groups):
         mk = "o" if want_mk else None
         # Marker hierarchy (Krzywinski & Wong, Plotting symbols 2013; Nature physics practice): primary data
         # filled, references / literature points open circles.
-        mstyle = dict(mfc="white", mec=c, mew=0.9) if role == "reference" else dict(mec="white", mew=0.6)
+        mstyle = dict(mfc="white", mec=c, mew=0.9) if role == "reference" else dict(mec=_tone(c, "d") or "white", mew=0.6)
         if len(x) == 1:   # a single point: marker only, larger, so it reads as a datum
             ax.plot(x, y, marker="o", ls="none", ms=5.5, color=c, zorder=z + 0.5, label=s.get("label", ""), **mstyle)
         else:
@@ -562,7 +602,7 @@ def _series(ax, panel, colors, groups):
         if s.get("sigma") is not None:
             sg = np.asarray(s["sigma"], float); kind = SIGMA_KINDS[s["sigma_kind"]]
             if s.get("band") or len(x) > MAX_MARKERS:
-                ax.fill_between(x, y - sg, y + sg, color=c, alpha=0.22, lw=0, zorder=2)
+                ax.fill_between(x, y - sg, y + sg, color=_tone(c, "l") or c, alpha=0.55 if _tone(c, "l") else 0.22, lw=0, zorder=2)
                 FINDINGS["caption"].append(f"shaded band, {'±1 ' if s['sigma_kind'] in ('sd', 'sem') else ''}{kind} ({s.get('label', '')})")
             else:
                 ax.errorbar(x, y, yerr=sg, fmt="none", ecolor=c, elinewidth=0.8, capsize=2, zorder=z)
@@ -665,7 +705,7 @@ def _heatmap(ax, p, fig):
         if p.get("zlim"): vmin, vmax = p["zlim"]
         else:
             half = float(np.nanmax(np.abs(z - c0))); vmin, vmax = c0 - half, c0 + half
-        cmap = p.get("cmap", "RdBu_r")
+        cmap = p.get("cmap", "lx_bluered")
     else:
         vmin, vmax = p.get("zlim", [np.nanmin(z), np.nanmax(z)]); cmap = p.get("cmap", "viridis")
     m = ax.pcolormesh(x, y, z.T, cmap=cmap, vmin=vmin, vmax=vmax, shading="nearest", rasterized=True)
@@ -704,13 +744,46 @@ def _polar(ax, p, colors):
     if len(p["series"]) > 1: ax.legend(loc="lower left", bbox_to_anchor=(1.0, 0.0), fontsize=PT["small"])
 
 
+KEY = colorkey.Key()       # replaced per render by the report's key
+
+
+def _register_palette_cmaps():
+    from matplotlib.colors import LinearSegmentedColormap
+    for fam in colorkey.ORDER:
+        if f"lx_{fam}" in matplotlib.colormaps: continue
+        P = colorkey.PALETTE[fam]
+        matplotlib.colormaps.register(LinearSegmentedColormap.from_list(f"lx_{fam}", ["#FBFBFB", P["l"], P["m"], P["d"]]))
+    if "lx_bluered" not in matplotlib.colormaps:
+        B, R = colorkey.PALETTE["blue"], colorkey.PALETTE["red"]
+        matplotlib.colormaps.register(LinearSegmentedColormap.from_list("lx_bluered", [B["d"], B["m"], B["l"], "#F7F7F7", R["l"], R["m"], R["d"]]))
+
+
+_register_palette_cmaps()
+
+
 def _groups(spec):
-    """Colour groups in first-appearance order across the whole figure, so "Ba" is the same hue in every panel."""
+    """Group -> colour from the report's colour key, so "Ba" is the same hue in every panel and every figure."""
     g = {}
     for p in spec["panels"]:
         for s in p.get("series", []):
-            if s.get("group") and s["group"] not in g: g[s["group"]] = len(g)
+            if s.get("group") and s["group"] not in g: g[s["group"]] = KEY.color(s["group"], "m")
     return g
+
+
+def _ramp(fam, n):
+    """An ordered sweep: one family from its light tint to its dark tint (n colours)."""
+    P = colorkey.PALETTE[fam]
+    if n <= 3:   # exact palette tints: m, d / l, m, d
+        cols = {1: [P["m"]], 2: [P["m"], P["d"]], 3: [P["l"], P["m"], P["d"]]}[max(n, 1)]
+    else:        # longer sweeps: along the family's l → m → d path (figlint-pdf accepts that path as palette)
+        stops = [matplotlib.colors.to_rgb(P[t]) for t in ("l", "m", "d")]
+        cm = matplotlib.colors.LinearSegmentedColormap.from_list("ramp", stops)
+        cols = [matplotlib.colors.to_hex(cm(v)).upper() for v in np.linspace(0.0, 1.0, n)]
+    for c in cols: RAMP_TEXT[c.lower()] = P["d"]   # a sweep member's direct label is the family's dark tint
+    return cols
+
+
+RAMP_TEXT = {}
 
 
 def _figsize(spec, n, layout):
@@ -724,13 +797,26 @@ def _figsize(spec, n, layout):
     return w, h
 
 
+PANEL_FMT = "({})"
+
+
+def _plabel(lab):
+    """Panel letter in the venue's form: Nature/Science "a" (bold, no parentheses), APS and others "(a)"."""
+    return PANEL_FMT.format(lab)
+
+
 def render(spec, out):
-    global LAST_FIG
+    global LAST_FIG, KEY, PANEL_FMT
     plt.style.use(STYLE)
+    KEY = colorkey.load_for(out)
+    try:   # the venue names itself on the first line of the copied mplstyle (skills/venue-specific/figstyles/<venue>.mplstyle)
+        with open(STYLE) as fh: first = fh.readline().lower()
+    except OSError: first = ""
+    PANEL_FMT = "{}" if first.startswith("# nature") else "({})"
     base = float(plt.rcParams["font.size"])
     # Nature: text 5–7 pt, panel letters 8 pt bold. Other venues keep their larger sizes.
     PT["label"], PT["small"], PT["panel"] = min(8, base), min(7, base), min(10, base + 1)
-    colors = [c["color"] for c in plt.rcParams["axes.prop_cycle"]]
+    colors = colorkey.mids()   # not the project's mplstyle cycle: a pre-v5 project copy still carries Okabe-Ito
     panels = spec["panels"]; n = len(panels)
     layout = spec.get("layout", "row" if n > 1 else "single")
     w, h = _figsize(spec, n, layout)
@@ -763,11 +849,11 @@ def render(spec, out):
         if p.get("type") == "heatmap":
             _heatmap(ax, p, fig); ends_by_panel.append([])
             ax.set_xlabel(_tex(p.get("xlabel", ""))); ax.set_ylabel(_tex(p.get("ylabel", "")))
-            if n > 1: ax.text(-0.18 if layout != "column" else -0.16, 1.02, f"({p['label']})", transform=ax.transAxes, fontsize=PT["panel"], fontweight="bold", va="bottom")
+            if n > 1: ax.text(-0.18 if layout != "column" else -0.16, 1.02, _plabel(p['label']), transform=ax.transAxes, fontsize=PT["panel"], fontweight="bold", va="bottom")
             continue
         if p.get("type") == "polar":
             _polar(ax, p, colors); ends_by_panel.append([])
-            if n > 1: ax.text(-0.28, 1.08, f"({p['label']})", transform=ax.transAxes, fontsize=PT["panel"], fontweight="bold", va="bottom")
+            if n > 1: ax.text(-0.28, 1.08, _plabel(p['label']), transform=ax.transAxes, fontsize=PT["panel"], fontweight="bold", va="bottom")
             continue
         n_data = sum(1 for s in p["series"] if s.get("role", "data") == "data")
         if n_data > WARN_SERIES: _warn(f"panel {p.get('label', 'a')}: {n_data} foreground series on one axes — a reader separates four; make the rest references or a second panel")
@@ -777,7 +863,7 @@ def render(spec, out):
         ends_by_panel.append(_series(ax, p, colors, groups))
         _clip_check(ax, p)
         ax.set_xlabel(_tex(p.get("xlabel", ""))); ax.set_ylabel(_tex(p.get("ylabel", "")))
-        if n > 1: ax.text(-0.18 if layout == "row" else -0.16, 1.02, f"({p['label']})", transform=ax.transAxes, fontsize=PT["panel"], fontweight="bold", va="bottom")
+        if n > 1: ax.text(-0.18 if layout == "row" else -0.16, 1.02, _plabel(p['label']), transform=ax.transAxes, fontsize=PT["panel"], fontweight="bold", va="bottom")
     # Tick hygiene: one set of tick labels per shared axis, one axis title, no offset multipliers
     # (a 1e-7 in the corner is a unit the axis title should carry).
     if share_y and all(xy):

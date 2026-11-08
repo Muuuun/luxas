@@ -13,11 +13,14 @@ integer counts, numbers duplicating the colormap). Design rules embodied:
 import matplotlib.pyplot as plt
 import numpy as np
 from pathlib import Path
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "figure" / "scripts"))
+import colorkey  # noqa: E402  palette + report colour key (figures v5): draw with its hex values (colorkey.PALETTE / BLUE / GREYS)
 
 for st in ("report/figstyle.mplstyle",):
     if Path(st).exists(): plt.style.use(st)
 
-ACCENT, INK, MUTED = "#0F6BB2", "#222222", "#7A7570"
+ACCENT, INK, MUTED = colorkey.tint("blue", "m"), colorkey.grey("ink"), colorkey.GREY
 rows = ["open-system bath", "vibronic transfer", "interface transfer",
         "conical intersection", "polaron hopping", "energy derivative"]
 cols = ["noise-as-resource", "digital sim", "Trotter boson", "VQE NACV",

@@ -78,6 +78,21 @@ check("dead zone: a clean figure has none", !(JSON.parse(clean.stdout).errors ??
 const tall = JSON.parse(lint("tall.pdf", ["--width", "5.2"]).stdout || "{}");
 check("page-tall: prints > 6.5 in at 5.2 in wide is an ERROR", (tall.errors ?? []).some((e: string) => /prints \d+\.\d in tall .* whole-page float/.test(e)), JSON.stringify(tall.errors));
 check("page-tall: the same PDF at 3.4 in is only a WARN", !(JSON.parse(lint("tall.pdf", ["--width", "3.4"]).stdout).errors ?? []).some((e: string) => /prints/.test(e)));
+// figures v5: one palette — an off-palette colour is a WARN (any producer: TikZ, hand-written matplotlib)
+execFileSync("python3", ["-c", `
+import matplotlib; matplotlib.use("Agg")
+import matplotlib.pyplot as plt, numpy as np
+x = np.linspace(0, 1, 20)
+for name, cols in (("okabe.pdf", ["#0072B2", "#D55E00"]), ("palette.pdf", ["#3B7CAE", "#CA5852"])):
+    fig, ax = plt.subplots(figsize=(3.4, 2.4))
+    for i, c in enumerate(cols): ax.plot(x, x * (i + 1), color=c, lw=1.4)
+    ax.fill_between(x, x * 0.9, x * 1.1, color=cols[0], alpha=0.25, lw=0)
+    ax.set_xlabel("x"); ax.set_ylabel("y"); fig.tight_layout(); fig.savefig("${dir}/" + name)
+`]);
+const ok1 = JSON.parse(lint("okabe.pdf", ["--width", "3.4"]).stdout || "{}");
+check("off-palette: Okabe-Ito blue/vermillion are a WARN naming the hex", (ok1.warnings ?? []).some((w: string) => /off-palette colour: .*#(0072B2|D55E00)/.test(w)) && (ok1.errors ?? []).length === 0, JSON.stringify(ok1.warnings));
+const ok2 = JSON.parse(lint("palette.pdf", ["--width", "3.4"]).stdout || "{}");
+check("off-palette: palette colours (and their alpha blends) pass", !(ok2.warnings ?? []).some((w: string) => /off-palette/.test(w)), JSON.stringify(ok2.warnings));
 const missing = spawnSync("python3", ["skills/matplotlib-figures/scripts/figlint-pdf", join(dir, "nope.pdf"), "--json"], { encoding: "utf-8" });
 check("unreadable file: exit 3 with JSON", missing.status === 3 && /unreadable/.test(missing.stdout));
 if (fails) { console.log(`\n${fails} FAILED`); process.exit(1); }

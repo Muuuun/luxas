@@ -24,7 +24,7 @@ reads — an exit-2 figure cannot be compiled into the report until the spec is 
     "xlim": [lo, hi], "ylim": [lo, hi],
     "series": [ { "x": REF, "y": REF, "label": "computed",
                   "role": "data" | "model" | "envelope" | "reference",
-                  "group": "Ba",                            // one hue per group; variants within a group differ by line style
+                  "group": "Ba",                            // an identity: one hue family per group across the whole report (colour key); variants differ by line style
                   "linestyle": "solid|dashed|dotted|dashdot",   // "--" / ":" / "-." accepted
                   "markers": false,                         // default: markers iff ≤ 16 points and not a computed curve
                   "sigma": REF, "sigma_kind": "sd" | "sem" | "ci95" | "ci68" | "range",   // sigma_kind is REQUIRED with sigma
@@ -62,14 +62,22 @@ inferable from the curves is not finished; the auditor's CLAIM line checks for t
 ## Nature methodology the renderer enforces (figures v4.1, 2026-09-05)
 
 From Nature's artwork guide and the *Points of View* columns (Wong, Krzywinski, 2010–13):
-- **Colour is categorical and colour-blind safe.** The palette is `report/figstyle.mplstyle`; a prose style
-  guide never overrides it. Two hues a deuteranope cannot separate on one axes (tab10 red/green) are
-  drawn with different line styles and a warning names the pair.
-- **Text contrast.** A label set in its series colour is darkened until it reads at WCAG 4.5 on white
-  (Okabe-Ito yellow becomes olive as text; the line keeps its colour).
+- **Colour is an identity, kept across the report** (figures v5, `skills/figure/references/figure_types.md`).
+  A series' colour comes from its `group`, else its label, through the report's colour key
+  `report/figures/colorkey.json`: the first figure that names "Ba" claims a family (blue, then red, orange,
+  green, plum, sand) and every later figure draws "Ba" in it. The palette is `skills/figure/scripts/colorkey.py`;
+  the project's mplstyle cycle is not read for colour. At most two families per panel (any third is confusable
+  for a red–green colour-blind reader with one of blue/red); a third series is a `reference` (grey) or a
+  `group` variant. Red–green-confusable pairs still get a second line style automatically.
+- **Ordered sweeps.** `"ordered": true` on a panel draws its data series as one family from light to dark
+  (N = 20, 40, 60 …): an ordered parameter is not a set of identities, so its labels claim nothing in the key.
+- **Tints.** Line = the family's mid tint; data markers filled mid with a dark edge; σ bands and envelopes in the
+  light tint; a direct label in the dark tint (contrast ≥ 7 on white). Axis text is black.
 - **Quantity to colour.** `cmap` must be sequential (viridis, cividis, inferno, magma, plasma, Blues, …);
   rainbow maps (jet, turbo, hsv, Spectral, …) are refused. A signed quantity says `"diverging": true`
-  (`"center"` if the meaningful zero is not 0): RdBu_r, limits symmetric about the centre.
+  (`"center"` if the meaningful zero is not 0): `lx_bluered` (the palette's blue → white → red), limits symmetric
+  about the centre. Palette sequential maps: `lx_blue`, `lx_red`, `lx_orange`, `lx_green`, `lx_plum`, `lx_sand`
+  (white → the family's dark tint) — use the family of the identity the heatmap is about.
 - **Error bars say what they are.** `sigma` requires `sigma_kind`; the renderer prints
   `caption must state: error bars, ±1 s.d. (label)` and stores it in the sidecar — the caption must echo it.
 - **Fixed scales across panels.** A row/grid whose panels share the y quantity shares the y axis (union
@@ -97,7 +105,7 @@ diagrams are `levelspec` (`skills/figure/scripts/levelspec`, grammar in
 ## Forms beyond y(x) (figures v3.1)
 
 - **Uncertainty**: `"sigma": REF` on a series draws ±1σ error bars (≤ 16 points) or a 1σ band (dense, or `"band": true`). REF may be `{"expr": "0.03*y"}` — `y` is the series' own y. The σ of a headline quantity comes from `results.json computed.quantities[].sigma`; a headline figure without it is incomplete.
-- **Heatmap + contour** (`"type": "heatmap"`): `"x": REF, "y": REF` (grid axes), `"z": {"csv": path, "cols": [...]}` (one column per y value, rows along x) or a 2-D list; `"contours": [0.99]` draws the level(s) that carry the claim; `"zlabel"`, `"zlim"`, `"cmap"` (sequential, default viridis), `"diverging": true` + `"center"` for a signed quantity (RdBu_r, symmetric); `"highlight": {"x": .., "y": .., "label": ..}`. Use it whenever the result is a function of two controls (F(R, Ω), not an envelope of curves). A grid coarser than ~12 × 12 is warned — it reads as a table.
+- **Heatmap + contour** (`"type": "heatmap"`): `"x": REF, "y": REF` (grid axes), `"z": {"csv": path, "cols": [...]}` (one column per y value, rows along x) or a 2-D list; `"contours": [0.99]` draws the level(s) that carry the claim; `"zlabel"`, `"zlim"`, `"cmap"` (sequential, default viridis; palette maps `lx_<family>`), `"diverging": true` + `"center"` for a signed quantity (`lx_bluered`, symmetric); `"highlight": {"x": .., "y": .., "label": ..}`. Use it whenever the result is a function of two controls (F(R, Ω), not an envelope of curves). A grid coarser than ~12 × 12 is warned — it reads as a table.
 - **Polar** (`"type": "polar"`): series `x` in degrees, `y` the radius; `"zero": "N"` puts 0° at the top (quantization axis; θ then opens clockwise toward +x unless `"clockwise": false`), `"thetalim": [0, 90]`; reflines with `"axis": "theta"`. For anisotropies C₆(θ).
 - **Composite**: `"layout": "grid", "ncols": 2` with panels of mixed type — a Nature-style Fig. 1 is schematic (TikZ, separate) + polar + comparison in one grid.
 

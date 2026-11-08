@@ -1,0 +1,210 @@
+# Visual tally of level-diagram schematics. levels: K=black/grey lines, M=black plus some coloured, C=mostly coloured; why=reason colour is on levels; drives: C=coloured arrows, K=black, -=none; dlabel: drive label colour K/C/mix; text: other labels K/C
+src	id	levels	why	drives	dlabel	text	note
+nature	s41567-023-01959-y_F1b	K	-	C	C	K	Bloch EIT; grey band behind ground states; dashed grey shifted level
+nature	s41586-026-10124-3_F2a	K	-	C	K	K	hydrogen; irrelevant hyperfine levels grey; decay black dashed wavy
+nature	s41586-023-06481-y_F1a	K	-	C	K	K	Lukin 2023 inset; wavy decays green/grey; green rounded inset frame
+nature	s41586-023-06438-1_F1b	K	-	C	C	K	Thompson Yb; Omega_RF orange matches RF data panel orange; Omega_UV purple matches UV data purple
+nature	s41586-023-06516-4_F1a	K	-	C	K	K	Endres erasure; grey boxes group subspaces
+nature	s41586-024-07913-z_F1a	K	-	C	K	K	Kaufman clock; drive labels black
+nature	s41586-026-11122-1_F1b,d	K	-	C	K	K	Th clock; levels thin black
+nature	s41586-023-06360-6_F1a	K	-	C	K	K	Kaufman squeezing; dashed virtual
+nature	s41567-020-0903-z_F1a	K	-	C	C	K	Endres; pale magenta box = qubit subspace (identity matches atom colour in b)
+nature	s41586-025-09596-6_F1a	K	-	C	K	K	3000-qubit inset, black rounded frame
+nature	s41586-022-04603-6_F1b	K	-	C	C	K	Saffman; wavelength labels in arrow colour
+nature	s41586-024-07492-z_F1c	K	-	C	K	K	NaCs molecules; dashed virtual
+nature	s41586-022-04592-6_F1a	K	-	C	K	K	Lukin 2022 Nature version: labels black. arXiv 2112.03923 same panel had coloured labels + green frame + blue CZ text -> editors made them black
+nature	s41586-021-04349-7_F1c	K	-	C	K	K	Ye redshift: red/blue sideband arrows = red/blue peaks in data panel d
+nature	s41586-021-03585-1_F1a	C	identity	K	K	K	Browaeys: level colours = spin up/down = atom colours in images
+arxiv	1009.2962_f1	M	identity(parity)	C	C	K	Dy level table; red = odd parity
+arxiv	1907.05754_f1	M	identity(parity)	C	C	K	Dy
+arxiv	2104.14389_f1	K	-	C	C	K	Dy pairs
+arxiv	2105.00738_f1	C	-	C	K	K	Er; pale orange level lines (true exception)
+arxiv	2108.04258_f1	K	-	-	-	K	cartoon
+arxiv	2108.04790_f2	K	-	C	C	C	term labels coloured
+arxiv	2110.08380_f1	K	-	K	K	K	inset
+arxiv	2112.03923_f1	K	-	C	C	C	arXiv version of Lukin 2022 (labels coloured)
+arxiv	2112.03923_f5	K	-	C	C	K	other mF grey
+arxiv	2112.06732_f10	K	-	C	K	K	Yb, 556 green
+arxiv	2112.06732_f1	K	-	C	C	K	399 blue / 556 green by wavelength
+arxiv	2112.06732_f3	K	-	C	K	K
+arxiv	2112.06732_f5	K	-	C	K	K
+arxiv	2112.06799_f1	K	-	C	C	K
+arxiv	2112.06799_f4	K	-	K	K	K
+arxiv	2112.06799_f6	K	-	-	-	K	inset
+arxiv	2201.04083_f1	K	-	C	C	mix	m/o/g letters coloured = qubit identity used in panel b
+arxiv	2201.04083_f3	K	-	C	C	K
+arxiv	2201.04083_f5	K	-	C	C	K
+arxiv	2301.13363_f1	K	-	C	K	K
+arxiv	2301.13363_f5	K	-	K	K	K	pale blue background box
+arxiv	2304.05420_f5	K	-	C	C	K
+arxiv	2304.05420_f6	K	-	C	K	K
+arxiv	2304.05420_f7	K	-	C	C	K
+arxiv	2305.05493_f1	K	-	C	C	K
+arxiv	2305.05493_f5	K	-	C	C	K	by wavelength
+arxiv	2307.04689_f4	K	-	C	K	K	Dy 421 violet / 626 red
+arxiv	2312.14846_f1	K	-	K	K	K
+arxiv	2401.10325_f3	K	-	C	C	K
+arxiv	2403.12021_f7	K	-	C	C	K	pink qubit-manifold box
+arxiv	2404.10480_f1	K	-	C	C	K	Dy 421 violet / 626 red-orange
+arxiv	2406.01482_f1	C	identity(series)	-	-	K
+arxiv	2406.01482_f2	K	-	-	-	K
+arxiv	2410.22216_f5	C	identity(mJ)	C	K	K
+arxiv	2411.08502_f2	K	-	C	C	K
+arxiv	2411.11708_f1	K	-	C	K	K
+arxiv	2411.11708_f5	C	-	C	K	K	levels take colour of addressing laser; orange qubit box
+arxiv	2502.17310_f2	K	-	C	C	K	Dy, arrows by wavelength 421 blue..833 dark red
+arxiv	2505.03456_f3	K	-	C	K	K	other levels grey
+arxiv	2507.11487_f1	K	-	C	K	K
+arxiv	2507.11487_f3	C	identity(series)	-	-	K
+arxiv	2511.11975_f3	K	-	K	K	K	DyO MO diagram
+arxiv	2601.16328_f1	K	-	C	K	K
+arxiv	2602.19824_f1	K	-	C	K	K
+arxiv	2603.15561_f1e	K	-	C	K	K
+arxiv	2604.07283_f1	K	-	C	K	K	Dy
+arxiv	2604.07283_f4b	K	-	C	K	K	boxes coloured = trace identity
+arxiv	2604.07283_f5	K	-	C	K	K
+arxiv	2604.11000_f2	M	identity(detuning)	C	C	K
+arxiv	2605.09715_f1	M	identity(mI)	C	K	K	171Yb nuclear ladder, mI levels rainbow, 3P1 black, grey boxes
+arxiv	1209.4069_f1	K	-	C	K	K	CaF molecule
+arxiv	1210.2483_f1	K	-	C	C	K	Sr; drive labels in arrow colour
+arxiv	1211.4537_f1	K	-	K	K	K	grey dashed
+arxiv	1305.5598_f1	K	-	C	C	K
+arxiv	1401.2191_f1	K	-	C	K	K	level ladder plot
+arxiv	1403.1761_f1	K	-	C	C	K
+arxiv	1403.2792_f1	C	identity(g/e atoms)	K	K	mix	level + (g)/(e) labels red/blue = atom colours
+arxiv	1405.7804_f1	M	identity(curves)	C	C	mix
+arxiv	1410.3388_f1	M	identity(curves)	K	K	K	highlighted sublevels coloured
+arxiv	1412.4925_f1	K	-	C	K	K	green wavy decay
+arxiv	1504.02864_f1	C	identity(spin)	C	K	K
+arxiv	1506.08853_f6	K	-	C	K	K
+arxiv	1605.00259_f1	M	identity(atom)	K	K	mix
+arxiv	1605.08891_f1	K	-	K	K	K
+arxiv	1610.02284_f1	K	-	C	C	K	Dy 626 red / 421 blue
+arxiv	1802.10424_f2	K	-	C	C	K	black wavy decay
+arxiv	1806.00169_f1	K	-	C	C	K
+arxiv	1808.01067_f1	M	-	C	K	C	molecule; state labels teal/purple
+arxiv	1809.00471_f1	K	-	K	K	K	atoms red/blue
+arxiv	1810.00536_f4	K	-	C	C	K	Yb; arrows by wavelength 399 purple/556 green/578 amber/649-770 red
+arxiv	1810.10517_f1	K	-	C	K	K
+arxiv	1904.04178_f3	K	-	C	C	mix	ion qubit types labelled in colour
+arxiv	1904.04178_f4	K	-	K	K	K
+arxiv	1912.08754_f2	K	-	C	C	K
+arxiv	1912.10350_f1	M	identity(g/e curves)	K	K	mix	Sr; red g / blue e = polarizability curves in b
+arxiv	2001.04455_f1	K	-	C	C	K	arXiv of Endres 2020, same as Nature version
+arxiv	2001.06352_f12	K	-	C	K	K
+arxiv	2001.06352_f1	K	-	C	K	K
+arxiv	2001.06352_f2	K	-	C	K	K
+arxiv	2004.13626_f1	K	-	C	K	K
+arxiv	2008.06147_f2-f6	M	identity(parity)	C	K	K	12 element diagrams in one paper, counted once; odd parity dark red
+arxiv	2009.13633_f14-15	K	-	K	K	K	Th nuclear decay schemes, all black
+arxiv	2012.12589_f1	K	-	C	K	K
+arxiv	2103.12744_f1	K	-	K	K	K	circular Rydberg; dots coloured
+arxiv	2202.13849_f1	K	-	C	C	K
+arxiv	2204.07995_f2	K	-	C	K	K	Sr; arrows by wavelength
+arxiv	2205.07738_f1	K	-	K	K	K
+arxiv	2210.06879_f1	K	-	C	C	K
+arxiv	2212.10159_f15	K	-	C	K	K
+arxiv	2302.03276_f1,f6	K	-	C	K	K
+arxiv	2303.08053_f6	K	-	C	C	K
+arxiv	2303.17470_f1	C	identity(atom dots)	K	K	K	level lines dark red like the atoms
+arxiv	2305.02322_f3	K	-	C	K	K	molecule
+arxiv	2305.02926_f1,f10	K	-	C	K	K	grey bands group manifolds
+arxiv	2305.03406_f1,f5,f6	K	-	C	mix	K	arXiv of Endres erasure
+arxiv	2305.15200_f1,f10	K	-	C	C	K
+arxiv	2305.19266_f1	M	identity(o/m/g qubit)	C	C	mix
+arxiv	2305.20084_f1,f4,f10	K	-	C	K	mix	1S0 blue / 3P0 red labels = curve colours
+arxiv	2306.02991_f1	K	-	K	K	K	molecule
+arxiv	2308.07672_f1	K	-	C	K	K	ion
+arxiv	2311.11726_f5	K	-	C	C	K
+arxiv	2401.04075_f1,f6	K	-	C	C	K	grey bands
+arxiv	2401.10679_f1	K	-	C	C	K	Sr; by wavelength
+arxiv	2401.16177_f5	K	-	C	K	K
+arxiv	2402.04994_f2	K	-	C	C	K
+arxiv	2402.11056_f5	K	-	C	C	K
+arxiv	2406.07779_f1	K	-	C	K	K
+arxiv	2406.12497_f1	K	-	C	C	mix	Th nucleus
+arxiv	2407.04901_f1	K	-	K	K	K
+arxiv	2408.08288_f1	K	-	C	C	K
+arxiv	2408.16274_f1	K	-	C	C	K	pale coloured background regions
+arxiv	2409.08915_f1	K	-	C	K	mix	superconducting coupler, not AMO
+arxiv	2410.02876_f1	K	-	C	K	K	Ti
+arxiv	2410.21424_f1	K	-	K	K	K
+arxiv	2410.23430_f1,f2,f5,f10,f11	K	-	C	K	K	Sr; by wavelength; navy wavy decay
+arxiv	2411.04664_f1	K	-	C	mix	mix	blue dashed qubit-subspace box
+arxiv	2411.12727_f1	K	-	C	C	K	Ca+ ion; by wavelength
+arxiv	2412.09780_f7	M	identity(qubit box)	C	C	K	qubit levels green inside pale green box
+arxiv	2412.14163_f1,f6	K	-	C	K	mix	term labels coloured = polarizability curve colours
+arxiv	2501.05217_f1	M	identity(isomer)	C	K	mix	Os nuclear levels
+arxiv	2501.05544_f1	M	identity(parity)	C	C	K	Ti levels, odd parity dark red
+arxiv	2501.05935_f1	K	-	C	C	K
+arxiv	2503.13838_f1	K	-	K	K	K	molecule
+arxiv	2503.15034_f1	M	identity(S/P/S')	K	K	mix	Rydberg levels coloured, used again in b,c
+arxiv	2506.09031_f1	K	-	C	K	K	black wavy decay
+arxiv	2506.09936_f1	K	-	C	K	K
+arxiv	2506.15633_f1,f8,f9	K	-	C	C	K	f9: pale coloured boxes per manifold
+arxiv	2506.23820_f5	K	-	K	K	K
+arxiv	2507.01180_f1	K	-	C	K	K	Th nuclear quadrupole levels
+arxiv	2507.01720_f2	K	-	C	K	K
+arxiv	2508.00446_f3	K	-	K	K	K	grey box
+arxiv	2511.22214_f1	M	identity	C	C	K	small
+arxiv	2512.05037_f4	M	identity(Rydberg red)	C	C	mix
+arxiv	2512.20609_f1	K	-	C	C	K
+arxiv	2512.22767_f1	K	-	C	K	K
+arxiv	2601.06763_f13	K	-	C	C	K	He; grey boxes
+arxiv	2601.06763_f14,f2,f7	K	-	C	C	K	grey boxes; one pale purple band = qubit manifold
+arxiv	2601.16257_f6	K	-	C	C	K	Rb/Cs, by wavelength
+arxiv	2602.02251_f1	K	-	K	K	K	spin colour on atoms only
+arxiv	2602.05959_f4	K	-	C	K	K
+arxiv	2602.14323_f6	K	-	C	C	K
+arxiv	2603.00282_f2	M	identity(parity)	C	C	K	Ti hfs, odd parity red
+arxiv	2603.04596_f1	K	-	C	C	K
+arxiv	2603.13492_f1	C	identity(species)	C	K	K	Rb teal / Cs navy level lines = species colour
+arxiv	2604.16274_f1,f9	K	-	C	C	mix	F labels green
+arxiv	2604.16640_f2	K	-	C	K	K
+arxiv	2605.07802_f2,f7	C	-	C	C	K	Th+; all levels teal (true exception)
+arxiv	2605.10924_f1	C	identity(species)	C	C	K	Cs blue / Na orange levels and boxes = species colour in data
+arxiv	2605.19245_f1	K	-	C	K	K
+arxiv	2605.21276_f3,f6	K	-	C	C	K	by wavelength
+arxiv	2606.00748_f1	K	-	C	K	K	green dashed decays
+arxiv	2606.04997_f1	K	-	C	C	mix	Th clock link; Th levels pink = identity
+arxiv	2606.05060_f6	K	-	K	K	K	grey boxes
+arxiv	2606.08453_f5,f6	C	identity(subspace boxes)	C	K	mix	qubit manifolds in pale coloured boxes, levels tinted
+arxiv	2606.26600_f4	C	identity(parity)	-	-	C	nuclear Nilsson levels, parity red/blue
+arxiv	2607.11282_f1,f2	K	-	C	C	K	labels in arrow colour
+arxiv	2607.21554_f6	M	identity(m/o/g)	C	C	mix
+arxiv	858d6e9d_f1,f2	K	-	C	K	K
+paper	02630f66_p5_f4	K	-	C	C	K	Rb, labels in arrow colour
+arxiv	0712.3438_f1	K	-	C	K	K
+arxiv	1011.2978_f23	C	identity(clock states red, same as pulse colour)	C	C	K
+arxiv	1211.2673_f1	K	-	-	-	K
+arxiv	1706.01650_f2	K	-	C	K	K
+arxiv	1809.03987_f1	K	-	C	K	K	2P1/2 grey (unused)
+arxiv	1901.10499_f1	K	-	C	C	mix
+arxiv	2102.04471_f7	C	identity(NV branches)	C	K	K	solid-state, levels coloured by branch
+arxiv	2106.03754_f1	K	-	C	C	K
+arxiv	2112.14589_f1	K	-	C	C	K
+arxiv	2208.14907_f1,f4	K	-	C	K	K	ion
+arxiv	2301.04668_f1,f4	K	-	C	K	K
+arxiv	2401.18056_f2,f6	K	-	C	K	K	Ca+ ion
+arxiv	2410.24047_f1	K	-	C	C	mix
+arxiv	2509.09464_f13	K	-	C	C	K	SiV
+paper	0114e7bd62f8_p2_f1	K	-	K	K	K	Rb, all black
+paper	16bd17d280ac_p2_f1	K	-	C	K	K	PRA 2020
+paper	23052de2ba70_p1_f1	K	-	-	-	K
+paper	2e5ba731f5b4_p1_f1	K	-	C	K	K	EIT; one red coupling arrow
+paper	5ba69269d473_p2_f1	K	-	C	C	mix	clock transition red label
+paper	64dd6755dede_p1_f1	K	-	K	K	K
+paper	6ab82e39f3ad_p2_f1	K	-	C	K	K
+paper	7245e0179488_p2_f1	K	-	K	K	K	Opt. Lett. 2009, all black
+paper	99caeecac999_p1_f1	K	-	C	C	K	Sr lattice clock
+paper	9e5343c70e1d_p2_f1	K	-	C	K	K	ApJS Sc II, orange dotted transitions
+paper	a16a38424b00_p3_f3	K	-	K	K	K
+paper	a6b7022f3ac6_p25-p28	K	-	C	C	K	Rb Rydberg array SI, labels in arrow colour
+paper	b03096a51a6f_p7_f1	K	-	K	K	K	Ca+ all black/dashed
+paper	b302605e49f6_p3,p6	K	-	C	C	K	J Phys B 2012; one green level = identity? (Ra 7s6d 3D2 green line)
+paper	ba8a00b82089_p31_f33	K	-	-	-	K	orange balls
+paper	ba8a00b82089_p32,p38,p40	K	-	C	K	K	grey label boxes
+paper	bb78de1bb0dc_p1_f1	K	-	K	K	K	Ba I, all black
+paper	e6137516dd49_p5_f3	K	-	C	C	K	PRA 2010 EIT inset
+paper	f27b53fedda3_p2_f1	K	-	C	K	K	purple UV / orange 780
+paper	fae50b775870_p2_f1	K	-	K	K	K

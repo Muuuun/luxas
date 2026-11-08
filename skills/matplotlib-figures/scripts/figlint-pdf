@@ -13,6 +13,10 @@ checks what the reader will actually see at print size.
   ERROR dead zone   ≥ 15 % of the height (or 20 % of the width) is an empty
                     interior band — a legend pushed off the axes (figures v4)
   ERROR page-tall   at --width the figure prints > 6.5 in tall (WARN > 5.5)
+  WARN  off-palette a vector stroke, fill or text colour that is not a palette colour
+                    (colorkey.py: hue-family tints, greys, drive colours by
+                    wavelength, or one of those blended with white) — figures v5: one palette per
+                    report; a figure with > 40 distinct colours (a vector colormap) is not checked
 
 Usage: figlint-pdf FILE.pdf [--width 3.4] [--min-pt 5] [--max-spans 40] [--json]
 Exit: 0 clean/warnings, 2 on any ERROR, 3 if the file cannot be read.
@@ -34,6 +38,69 @@ def overlaps(a, b):
 def is_ticklike(text):
     t = text.strip().replace("−", "-").replace("×", "x")
     return bool(t) and all(c in "0123456789.-+x^e " for c in t) or t in ("0", "10", "10^", "π")
+
+
+def _lab(rgb):
+    lin = [v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4 for v in rgb]
+    M = ((0.4124, 0.3576, 0.1805), (0.2126, 0.7152, 0.0722), (0.0193, 0.1192, 0.9505))
+    xyz = [sum(m * v for m, v in zip(row, lin)) / w for row, w in zip(M, (0.95047, 1.0, 1.08883))]
+    f = [c ** (1 / 3) if c > 0.008856 else 7.787 * c + 16 / 116 for c in xyz]
+    return (116 * f[1] - 16, 500 * (f[0] - f[1]), 200 * (f[1] - f[2]))
+
+
+_PAL = None
+
+
+def _palette_labs():
+    """Lab of every palette colour and of its blends with white (alpha fills, anti-aliasing)."""
+    global _PAL
+    if _PAL is None:
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "figure", "scripts"))
+        import colorkey
+        hexes = set(colorkey.HEX.values()) | {h for _, h in colorkey.BEAMS} | {colorkey.GREY, colorkey.BLACK}
+        _PAL = []
+        for h in hexes:
+            rgb = [int(h[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+            for k in range(10):
+                t = k / 10
+                _PAL.append(_lab([c * (1 - t) + t for c in rgb]))
+        # an ordered sweep runs along a family's light → mid → dark path (figspec "ordered": true)
+        for tints in colorkey.PALETTE.values():
+            for a, b in (("l", "m"), ("m", "d")):
+                ra = [int(tints[a][i:i + 2], 16) / 255 for i in (1, 3, 5)]
+                rb = [int(tints[b][i:i + 2], 16) / 255 for i in (1, 3, 5)]
+                for k in range(1, 20):
+                    t = k / 20
+                    _PAL.append(_lab([x * (1 - t) + y * t for x, y in zip(ra, rb)]))
+    return _PAL
+
+
+def palette_offenders(page, tol=4.0):
+    """Chromatic vector colours (strokes, fills, text) farther than `tol` (CIE76) from every palette colour."""
+    seen = {}
+    def add(rgb, what):
+        if rgb is None: return
+        rgb = tuple(float(v) for v in rgb[:3])
+        L, A, B = _lab(rgb)
+        if (A * A + B * B) ** 0.5 < 8: return          # black, white, greys: always fine
+        h = "#%02X%02X%02X" % tuple(int(round(255 * v)) for v in rgb)
+        seen.setdefault(h, [0, (L, A, B), what])[0] += 1
+    for d in page.get_drawings():
+        add(d.get("color"), "stroke"); add(d.get("fill"), "fill")
+    for b in page.get_text("dict")["blocks"]:
+        for l in b.get("lines", []):
+            for s in l["spans"]:
+                c = s.get("color", 0)
+                add((((c >> 16) & 255) / 255, ((c >> 8) & 255) / 255, (c & 255) / 255), "text")
+    if len(seen) > 40:
+        return None          # a vector colormap or a photo-like vector: not a palette question
+    pal = _palette_labs()
+    out = []
+    for h, (n, lab, what) in seen.items():
+        dmin = min(((lab[0] - p[0]) ** 2 + (lab[1] - p[1]) ** 2 + (lab[2] - p[2]) ** 2) ** 0.5 for p in pal)
+        if dmin > tol:
+            out.append((n, h, what, dmin))
+    return sorted(out, reverse=True)
 
 
 def lint_pdf(path, width_in=None, min_pt=5.0, max_spans=40):
@@ -251,6 +318,14 @@ def lint_pdf(path, width_in=None, min_pt=5.0, max_spans=40):
             warnings.append(f"prints {print_h:.1f} in tall at {width_in:.2f} in wide (aspect {aspect:.2f}) — most of a page; consider a row layout")
     if len(lines_out) > max_spans:
         warnings.append(f"dense text: {len(lines_out)} text lines on one figure (> {max_spans}) — split panels or drop annotations")
+    try:
+        off = palette_offenders(page)
+        if off:
+            listed = ", ".join(f"{h} ({what}, ×{n})" for n, h, what, _ in off[:5]) + (f", +{len(off) - 5} more" if len(off) > 5 else "")
+            warnings.append(f"off-palette colour: {listed} — draw with the palette (skills/figure/scripts/colorkey.py: "
+                            f"PALETTE tints for identities, BEAM / beam(nm) for drives, greys; the identity's family from report/figures/colorkey.json)")
+    except Exception as ex:
+        warnings.append(f"palette check skipped: {ex}")
     return errors, warnings, {"lines": len(lines_out), "spans": n_spans, "scale": scale, "page_w_in": crop.width / 72.0}
 
 

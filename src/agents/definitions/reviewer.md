@@ -103,7 +103,7 @@ Each `\includegraphics[...]{figures/NAME.pdf}` inside `report/report.tex` → ca
 
 **P2. Upgrade `report/figures/style_guide.md` if it's missing OR still the stock default** (one-off; `init_report` seeds the generic `_default` guide at project init, so "exists" alone doesn't mean brain did the domain upgrade — check the first line: `# Default Figure Style Guide` means stock. Skip only when a domain guide is already in place, or when P0's DOMAIN is `_default` — no-venue projects intentionally keep the generic guide):
 
-The base style for this project is the Nature domain guide at `skills/figure/style_guides/<DOMAIN>.md` where `<DOMAIN>` is the label from P0. These are ~1k-word prose guides distilled from real Nature papers in the domain (palette with hex, marker conventions, typography, signature moves, etc.) — they are **the** ground truth for what figures should look like.
+The base style for this project is the Nature domain guide at `skills/figure/style_guides/<DOMAIN>.md` where `<DOMAIN>` is the label from P0. These are ~1k-word prose guides distilled from real Nature papers in the domain (marker conventions, typography, signature moves) — the ground truth for the field's voice, **not for colour**: colour is the report's colour key (`report/figures/colorkey.json`, palette `skills/figure/scripts/colorkey.py`; schematics black with drives by wavelength, one colour per identity across figures — `skills/figure/references/figure_types.md`). The hex codes in a guide are never applied.
 
 Two cases:
 
@@ -111,7 +111,7 @@ Two cases:
 
 ```bash
 DOMAIN=$(cat notes/figure_domain.txt)
-{ printf '%s\n\n' '> **Style truth is `report/figstyle.mplstyle`** (palette = `axes.prop_cycle`, tick direction, font sizes, spines). The prose below describes the venue'"'"'s visual voice; any hex codes or tick conventions it names are illustrative and must NOT be applied over the mplstyle. (figures v2, 2026-08-28: two style sources cost eight audit spawns of palette ping-pong.)'; cat "$LUXAS_ROOT/skills/figure/style_guides/${DOMAIN}.md"; } > report/figures/style_guide.md
+{ printf '%s\n\n' '> **Colour truth is `skills/figure/scripts/colorkey.py` + `report/figures/colorkey.json`** (one palette; one colour per identity across the report). **Typography truth is `report/figstyle.mplstyle`**. The prose below describes the field'"'"'s visual voice; any hex codes or tick conventions it names are illustrative and must NOT be applied. (figures v2, 2026-08-28: two style sources cost eight audit spawns of palette ping-pong; v5, 2026-11-07: colour by identity, measured.)'; cat "$LUXAS_ROOT/skills/figure/style_guides/${DOMAIN}.md"; } > report/figures/style_guide.md
 ```
 
 (`$LUXAS_ROOT` is the path to the Sisyphus install; if undefined, fall back to `$(npm prefix -g)/lib/node_modules/luxas` or wherever the running CLI lives — bash detection: `dirname $(dirname $(which luxas 2>/dev/null || echo $0))` works in most setups.)

@@ -40,8 +40,10 @@ Lint: python3 $LUXAS_ROOT/skills/matplotlib-figures/scripts/figlint-pdf <pdf> --
       findings; `compile_latex` refuses any figure with an ERROR from either.
 Sources (what a fix edits — name it in every FIX): a data figure is
   data/experiments/<E>/figures/<name>.figspec.json (renderer: figspec — strict grammar, no legend,
-  direct labels, one hue per `group`, a `tag` per panel, ≤ 5 series); an energy-level diagram is
-  <name>.levelspec.json (generator: levelspec); any other schematic is report/figures/<name>.tex.
+  direct labels, one hue per `group` taken from the report's colour key, a `tag` per panel, ≤ 5 series); an
+  energy-level diagram is <name>.levelspec.json (generator: levelspec — black levels, drives coloured by the
+  wavelength in their label, `identity` for a coloured level); any other schematic is report/figures/<name>.tex.
+Colour key: report/figures/colorkey.json (identity → hue family, shared by every figure of the report).
   A missing plot_*.py is NOT a defect and must never be requested.
 Output: reviews/figure_audit.{{SPAWN_ID}}.md
 </environment>
@@ -70,9 +72,15 @@ For each canonical figure, in order:
    - CLUTTER: count series and annotations; name the ones that do not carry the claim.
    - SCHEMATIC (TikZ only): labels that float away from what they label; arrows that point at
      nothing; convention errors you can see (a wavy arrow for a laser drive, a straight one for a decay).
+   - COLOUR KEY (across figures, figures v5): the same identity in two colours, or two identities in one
+     colour, across the canonical figures — compare with report/figures/colorkey.json; in a schematic, a
+     coloured level or label with no identity behind it (real level diagrams are black: 83% of 208), a
+     drive whose colour contradicts its wavelength (626 nm drawn blue). The fix names the knob: the same
+     `group` / `identity` string, or dropping the colour.
 3. Classify every finding:
    BLOCKING = CLAIM no, DATA impossible/inconsistent, an illegible label, occlusion of data, a
-   panel condition missing, a lint ERROR the sidecar/compile gate would not already catch.
+   panel condition missing, a lint ERROR the sidecar/compile gate would not already catch, one identity in
+   two colours across figures (the reader matches colours between figures).
    COSMETIC = everything else (spacing, a label that could sit better, colour preference).
 4. FIXES: at most 3 per figure, BLOCKING ones first, each design-level and naming the source
    knob — "panel (b) has no condition: add `\"tag\": \"T = 300 K\"`", "seven series: keep Ba

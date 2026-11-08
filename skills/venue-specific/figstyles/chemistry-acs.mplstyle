@@ -39,12 +39,11 @@ legend.fontsize      : 6
 legend.frameon       : False
 legend.handlelength  : 1.2
 
-# Chemistry-corpus palette from skills/figure/style_guides/chemistry.md
-# (navy/cobalt = reference, brick = experimental, forest = control,
-# amber = Fe/annotation, magenta = headline condition, slate = neutral).
-# Brick+forest is a deuteranopia pair: when red/green series sit adjacent,
-# differentiate by marker/linestyle too, never hue alone.
-axes.prop_cycle      : cycler('color', ['2B6CBF', 'C0392B', '27AE60', 'E67E22', 'D63F8C', '5F6368'])
+# figures v5 (2026-11-07): the palette is skills/figure/scripts/colorkey.py — the same six hue families in
+# every venue, so a figspec figure, a levelspec diagram and a raw matplotlib plot in one report agree.
+# Mid tints in claim order (blue, red, orange, green, plum, sand); an identity keeps its family across the
+# report via report/figures/colorkey.json. Do not edit this line by hand: smoke_colorkey pins it.
+axes.prop_cycle      : cycler('color', ['3B7CAE', 'CA5852', 'D17B3A', '497E50', '8A6194', 'AD8B55'])
 
 grid.linewidth       : 0.3
 grid.alpha           : 0.4

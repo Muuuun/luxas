@@ -41,10 +41,11 @@ legend.fontsize      : 8
 legend.frameon       : False
 legend.handlelength  : 1.5
 
-# ML-corpus palette from skills/figure/style_guides/ml.md (teal = "our
-# method", crimson/amber = competing baseline, navy = reference, purple =
-# theory, grey = classical baseline).
-axes.prop_cycle      : cycler('color', ['2E8B7A', 'B22222', 'E8A020', '1F4E8C', '5B4EA0', 'A8A8A8'])
+# figures v5 (2026-11-07): the palette is skills/figure/scripts/colorkey.py — the same six hue families in
+# every venue, so a figspec figure, a levelspec diagram and a raw matplotlib plot in one report agree.
+# Mid tints in claim order (blue, red, orange, green, plum, sand); an identity keeps its family across the
+# report via report/figures/colorkey.json. Do not edit this line by hand: smoke_colorkey pins it.
+axes.prop_cycle      : cycler('color', ['3B7CAE', 'CA5852', 'D17B3A', '497E50', '8A6194', 'AD8B55'])
 
 grid.linewidth       : 0.3
 grid.alpha           : 0.4

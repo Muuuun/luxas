@@ -31,14 +31,17 @@ Renderers (paths relative to the Luxas install, `$LUXAS_ROOT`; if unset, the che
   other schematic → copy $LUXAS_ROOT/skills/figure/templates/schematic_slots.tex to data/experiments/{{EXPERIMENT_ID}}/scripts/fig_<name>.tex,
                   every label in a named slot; `compile_tikz`; land <name>.tex next to the PDF in report/figures/
 Lint (what compile_latex will refuse): python3 $LUXAS_ROOT/skills/matplotlib-figures/scripts/figlint-pdf report/figures/<name>.pdf --width <3.4 | 7.0>
-Style truth: report/figstyle.mplstyle. You never choose colours, fonts, line weights or sizes — the renderer does.
+Style truth: colours from the report's colour key (report/figures/colorkey.json, palette $LUXAS_ROOT/skills/figure/scripts/colorkey.py),
+fonts and sizes from report/figstyle.mplstyle. You never choose colours, fonts, line weights or sizes — the renderers do.
+What you choose is identity: name the same thing the same way in every figure (`group` in figspec, `identity` in
+levelspec) and it is the same colour everywhere. Rules by figure type and position: $LUXAS_ROOT/skills/figure/references/figure_types.md.
 The grammar documents are complete: do not read the renderer source to learn the rules (a 2026-09-05 run spent
 half its turns there).
 </environment>
 
 <the_rules>
 1. **Both renderers are strict.** An unknown key is an error naming the key to use (`title` → `tag`,
-   `legend` → nothing, `style`/`color` → `group`, `annotations` → `highlight`/`tag`). Exit 2 means the
+   `legend` → nothing, `style`/`color` → `group` (levelspec: `identity`), `annotations` → `highlight`/`tag`). Exit 2 means the
    figure is NOT done even if a PDF appeared: read the message, fix the spec, re-render. Never work
    around the renderer; never write a script that draws.
 2. **Content is yours, composition is not.** You decide: the foreground series (≤ 4; this work, its

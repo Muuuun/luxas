@@ -23,7 +23,10 @@ and how to spot rendering bugs.
 <environment>
 Working directory: {{PROJECT_DIR}}
 Canonical figures live in: report/figures/       (referenced by \includegraphics in report/report.tex)
-Shared style guide (if present): report/figures/style_guide.md
+Colour key: report/figures/colorkey.json (identity → hue family, shared by every figure; palette and drive
+  colours by wavelength in $LUXAS_ROOT/skills/figure/scripts/colorkey.py; rules by figure type and position in
+  $LUXAS_ROOT/skills/figure/references/figure_types.md)
+Shared style guide (if present): report/figures/style_guide.md (the field's voice: typography, markers — never colour)
 Raster assets (for hybrid pipeline): report/figures/assets/
 
 Experiments are organized per-experiment under data/experiments/<EXPERIMENT_ID>/:
@@ -68,12 +71,14 @@ HARD RULES — violations invalidate your output:
    physics-bearing arrow directions / kets / labels — leave alone unless PI
    explicitly asks.
 5. **Aesthetics are the renderer's for spec figures.** A figspec / levelspec
-   figure takes palette, fonts, line weights, sizes and label placement from
-   `report/figstyle.mplstyle` and the renderer — never restyle one, never ask
-   for a colour. Only a hand-written TikZ schematic (`.tex`) may be aligned to
-   the mplstyle's palette and font family (the prose in `style_guide.md` is
-   venue flavour, not a target — figures v2 burned eight spawns flipping
-   palettes between two style sources).
+   figure takes colour from the report's colour key and fonts, line weights,
+   sizes and label placement from `report/figstyle.mplstyle` and the renderer —
+   never restyle one, never ask for a colour. A hand-written figure (TikZ `.tex`,
+   a plot script, a Blender scene) takes its colours from the same key and the
+   palette block of `skills/figure/templates/base.tex`: identity colours from
+   `colorkey.json`, drive/beam colours by wavelength, levels and text black (the
+   prose in `style_guide.md` is the field's voice, not a colour source — figures
+   v2 burned eight spawns flipping palettes between two style sources).
 6. **Text rendering is your responsibility.** Every LaTeX symbol in a figure
    must be rendered by TikZ (`\ket{r}`, `F_{C_4}`, `\SI{6.4}{\micro\meter}`).
    Never let Nano Banana render text — it misspells everything.
@@ -93,9 +98,9 @@ canonical figures yourself via `grep -E '\\includegraphics' report/report.tex`.
 
 Steps:
 1. Confirm the canonical list from the task (or enumerate as above).
-2. Read `report/figures/style_guide.md` if it exists (this is your ground
-   truth for palette/fonts/line weights). If absent, establish a de-facto
-   style from the canonical figures themselves.
+2. Read `report/figures/colorkey.json` (colour truth) and
+   `report/figures/style_guide.md` if it exists (fonts, markers, line weights).
+   If the guide is absent, establish typography from the canonical figures.
 3. For EACH canonical figure, resolve its source (order above). For a
    figspec / levelspec figure, items 1–3, 6, 7, 10, 11 and 13 are `[N/A]`
    (renderer-owned) — only 4, 5, 8, 9 and 12 apply. Walk the checklist below in
@@ -108,11 +113,11 @@ Steps:
    source (grep / read — no vision). Items tagged `[vision]` require the
    Read tool on the PNG.
 
-   1. `[script]` **Palette hex codes** in the plot script match the
-      `axes.prop_cycle` of `report/figstyle.mplstyle` (the single style
-      truth). Hex codes quoted in `style_guide.md` prose are venue flavour,
-      not a target — never restyle a figure from the mplstyle palette to
-      them (figures v2, 2026-08-28).
+   1. `[script]` **Colours come from the colour key**: each identity drawn in
+      its `colorkey.json` family (the same as in every other figure), drives in
+      their wavelength colour, levels/text black; no literal hex outside the
+      palette (`skills/figure/references/palettes.md`). Hex codes quoted in
+      `style_guide.md` prose are never a target (figures v2, 2026-08-28; v5).
    2. `[script]` **Font size hierarchy**: axis labels ≥ tick labels ≥
       annotations, each within the guide's bracket.
    3. `[script]` **Line weights**: connectors ≥ 0.75 pt; primary data
@@ -138,10 +143,9 @@ Steps:
        suggest wrapping the string in `\textbf{…}` instead.
    11. `[script]` **Raster embed DPI** ≥150 for any `imshow` / imported
        PNG — else the figure looks soft at print size.
-   12. `[vision]` **Colorblind safety**: primary palette distinguishable
-       to deutan / protan (spot-check — guide's own palettes are
-       pre-audited, so this mainly catches regressions in custom
-       overrides).
+   12. `[vision]` **Colorblind safety**: at most two hue families per panel
+       plus grey (any third is confusable with blue or red for a deutan /
+       protan reader); a necessary third differs by line style or marker.
    13. `[script]` **Annotation numbers must be computed, not typed**: any
        numeric text drawn on the figure (a marked minimum, a threshold,
        an improvement factor) must be an f-string of the same variable
@@ -172,6 +176,7 @@ Steps:
 status: all-clear        # or: <N>-issues
 audited_at: <ISO-8601 UTC, e.g. 2026-04-17T00:12:34Z>
 style_guide_md5: <md5 of report/figures/style_guide.md>
+colorkey_md5: <md5 of report/figures/colorkey.json, if it exists>
 canonical_figures:
   report/figures/NAME.pdf: <md5>
   report/figures/NAME.png: <md5>
@@ -208,6 +213,7 @@ md5() {
   else md5 -q "$1"; fi
 }
 md5 report/figures/style_guide.md
+md5 report/figures/colorkey.json
 md5 report/figures/<NAME>.pdf
 # ... and so on for every canonical figure (pdf + png) and every plot_*.py
 # listed in the brief.
@@ -251,9 +257,9 @@ Steps:
    ```
    (a) Open the plot script your brief names.
    (b) Read it. Authoritative for data semantics only (rule 4).
-   (c) Read style_guide.md. Diff aesthetics (hex / markers / weights /
-       fonts) across all figure blocks in this script and rewrite to
-       match (rule 5). If the style diff is empty AND the brief lists no
+   (c) Read colorkey.json and style_guide.md. Diff colours against the key
+       (rule 5) and markers / weights / fonts against the guide across all
+       figure blocks in this script, and rewrite to match. If the style diff is empty AND the brief lists no
        patches for any figure, STOP — no rerun needed. Otherwise rerun
        once; regenerating already-clean figures alongside fixed ones is
        free (same `python3` invocation).
@@ -284,8 +290,8 @@ Steps:
        `python3 $LUXAS_ROOT/skills/figure/scripts/levelspec <spec>` / `compile_tikz` for a `.tex`
        (legacy only: `python3 data/experiments/<EXPERIMENT_ID>/scripts/plot_<topic>.py`). Exit 2 from a
        renderer means it refused something — read the message and fix the spec; never work around it.
-   (f) Read each updated PNG and check (i) matches style_guide.md
-       aesthetic, (ii) reflects brief patches. If all pass, STOP.
+   (f) Read each updated PNG and check (i) colours match the key and the
+       typography matches style_guide.md, (ii) reflects brief patches. If all pass, STOP.
        Iterate ≤3 times.
    ```
 
@@ -322,7 +328,8 @@ upgrades it to a Nature-mined domain guide (`skills/figure/style_guides/<domain>
 once the venue is known; the PI's finalize loop backstops the upgrade if brain
 forgot. If the file is somehow missing entirely (legacy project), copy
 `skills/figure/style_guides/_default.md` into place, then proceed. Do NOT
-invent a style from scratch; the vendored guides are the ground truth.
+invent a style from scratch; the vendored guides are the ground truth for
+typography and composition, and `colorkey.py` / `colorkey.json` for colour.
 </task_dispatch>
 
 <tools_summary>

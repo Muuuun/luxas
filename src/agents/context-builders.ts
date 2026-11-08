@@ -820,6 +820,9 @@ function buildFigureConvergenceBlock(projectDir: string): string {
           else if (cur !== expected) drift.push(`${rel}: changed`);
         };
         if (fm.style_guide_md5) check("report/figures/style_guide.md", fm.style_guide_md5);
+        // figures v5: the report's colour key decides every figure's colours; a key edited after the audit
+        // (a family reassigned, an identity renamed) leaves the audited figures off-key
+        if (fm.colorkey_md5) check("report/figures/colorkey.json", fm.colorkey_md5);
         for (const [rel, h] of Object.entries(fm.canonical_figures ?? {})) check(rel, h);
         for (const [rel, h] of Object.entries(fm.plot_scripts ?? {})) check(rel, h);
         illustratorOK = drift.length === 0;

@@ -2,38 +2,55 @@
 % For a diagram with more than ~4 levels use the generator instead:
 %   python3 $LUXAS_ROOT/skills/figure/scripts/levelspec <name>.levelspec.json
 % (compressed energy axis, straight drives / wavy decays, labels in slots, no key box).
+%
+% Convention (figures v5, 208 level diagrams of the Luxas corpus): level lines, state labels and text are
+% BLACK (83% / 88% of diagrams). A laser drive takes the colour of its wavelength (beam* below); its label is
+% the same colour or black. A decay is a thin black wavy arrow. A level is coloured only when the colour names
+% an identity the data figures also use (spin up/down, a species) — take it from report/figures/colorkey.json.
 \documentclass[border=4pt]{standalone}
 \usepackage{tikz}
 \usepackage{amsmath}
 \usepackage{braket}
 \usetikzlibrary{arrows.meta,decorations.pathmorphing}
 
-\definecolor{atomC}{HTML}{0072B2}
-\definecolor{ionC}{HTML}{D55E00}
+% Luxas palette (figures v5) — generated from skills/figure/scripts/colorkey.py; keep in sync with it.
+% Schematics: levels, state labels and text are BLACK. Colour goes on drive arrows by wavelength (beam*),
+% and on an object only when it names an identity the report's data figures also use (lx<Family>, the
+% family recorded for it in report/figures/colorkey.json). Tints: D dark (text), plain mid (lines),
+% L light (fills), P pale (areas).
+\definecolor{lxBlue}{HTML}{3B7CAE}\definecolor{lxBlueD}{HTML}{174F75}\definecolor{lxBlueL}{HTML}{A3C1E2}\definecolor{lxBlueP}{HTML}{E4ECF6}
+\definecolor{lxRed}{HTML}{CA5852}\definecolor{lxRedD}{HTML}{892F2D}\definecolor{lxRedL}{HTML}{ECACA4}\definecolor{lxRedP}{HTML}{FCE6E3}
+\definecolor{lxOrange}{HTML}{D17B3A}\definecolor{lxOrangeD}{HTML}{804619}\definecolor{lxOrangeL}{HTML}{F5C19F}\definecolor{lxOrangeP}{HTML}{FFEADD}
+\definecolor{lxGreen}{HTML}{497E50}\definecolor{lxGreenD}{HTML}{2B5731}\definecolor{lxGreenL}{HTML}{A7CAA9}\definecolor{lxGreenP}{HTML}{E5F1E6}
+\definecolor{lxPlum}{HTML}{8A6194}\definecolor{lxPlumD}{HTML}{62396D}\definecolor{lxPlumL}{HTML}{CAB1CF}\definecolor{lxPlumP}{HTML}{F1E8F2}
+\definecolor{lxSand}{HTML}{AD8B55}\definecolor{lxSandD}{HTML}{6A5124}\definecolor{lxSandL}{HTML}{EACDA5}\definecolor{lxSandP}{HTML}{FBEFE0}
+% drive colours by wavelength: beamUV <380 nm, beamViolet 380-440, beamBlue 440-495, beamGreen 495-570, beamAmber 570-605, beamOrange 605-660, beamRed 660-760, beamDeepRed 760-1000, beamIR >1 um
+\definecolor{beamUV}{HTML}{7B3FA0}\definecolor{beamViolet}{HTML}{4E4BC0}\definecolor{beamBlue}{HTML}{2F6FC0}\definecolor{beamGreen}{HTML}{2E8B47}\definecolor{beamAmber}{HTML}{B07C00}\definecolor{beamOrange}{HTML}{E0561F}\definecolor{beamRed}{HTML}{C8302B}\definecolor{beamDeepRed}{HTML}{A3262A}\definecolor{beamIR}{HTML}{7A1F1F}
+\definecolor{labelGray}{HTML}{6E6E6E}
 
 \begin{document}
 \begin{tikzpicture}[font=\sffamily]
 
-  % Ground + Rydberg pair (atom)
-  \draw[atomC, very thick] (0,0)    -- (2.0, 0)    node[right,font=\small]{$\ket{g}$};
-  \draw[atomC, very thick] (0,2.5)  -- (2.0, 2.5)  node[right,font=\small]{$\ket{r}\ (n\!\sim\!60)$};
+  % Ground + Rydberg (single-photon UV excitation, 297 nm → beamUV)
+  \draw[black, very thick] (0,0)    -- (2.0, 0)    node[right,font=\small]{$\ket{g}$};
+  \draw[black, very thick] (0,2.5)  -- (2.0, 2.5)  node[right,font=\small]{$\ket{r}\ (n\!\sim\!60)$};
   % Laser drive: a STRAIGHT arrow. Convention: straight = coherent drive (laser,
   % microwave), wavy (snake) = spontaneous emission / decay. The Ba run
   % (2026-08-30) drew every laser wavy because this template did.
-  \draw[atomC, thick, -{Stealth[length=6pt]}] (1.0, 0.1) -- (1.0, 2.4);
-  % Decay back to the ground state: wavy, thin, grey.
-  \draw[gray, thin, decorate, decoration={snake, amplitude=1.0pt, segment length=4pt, post length=4pt},
+  \draw[beamUV, thick, -{Stealth[length=6pt]}] (1.0, 0.1) -- (1.0, 2.4);
+  \node[beamUV, font=\small] at (0.45, 1.25) {297 nm};
+  % Decay back to the ground state: wavy, thin, black.
+  \draw[black, thin, decorate, decoration={snake, amplitude=1.0pt, segment length=4pt, post length=4pt},
         -{Stealth[length=4pt]}] (1.6, 2.4) -- (1.6, 0.1);
-  \node[atomC, font=\small\itshape] at (0.55, 1.25) {$\Omega_R$};
-  \node[atomC, font=\small\bfseries] at (1.0, -0.5) {Atom};
+  \node[font=\small\bfseries] at (1.0, -0.5) {Atom};
 
-  % Zeeman stretched (ion)
+  % Zeeman qubit driven by RF: no wavelength colour, so the arrow takes the qubit's identity colour
   \begin{scope}[xshift=5cm]
-    \draw[ionC, very thick] (0,  0.6) -- (2.0, 0.6) node[right,font=\small]{$\ket{\uparrow}$};
-    \draw[ionC, very thick] (0, -0.6) -- (2.0,-0.6) node[right,font=\small]{$\ket{\downarrow}$};
-    \draw[ionC, thick, {Stealth[length=5pt]}-{Stealth[length=5pt]}] (1.0, 0.52) -- (1.0, -0.52);
-    \node[ionC, font=\small\itshape] at (0.55, 0) {$\omega_Z$};
-    \node[ionC, font=\small\bfseries] at (1.0, -1.1) {Ion (stretched)};
+    \draw[black, very thick] (0,  0.6) -- (2.0, 0.6) node[right,font=\small]{$\ket{\uparrow}$};
+    \draw[black, very thick] (0, -0.6) -- (2.0,-0.6) node[right,font=\small]{$\ket{\downarrow}$};
+    \draw[lxBlue, thick, {Stealth[length=5pt]}-{Stealth[length=5pt]}] (1.0, 0.52) -- (1.0, -0.52);
+    \node[lxBlue, font=\small\itshape] at (0.55, 0) {$\omega_Z$};
+    \node[font=\small\bfseries] at (1.0, -1.1) {Ion (stretched)};
   \end{scope}
 
 \end{tikzpicture}

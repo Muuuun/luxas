@@ -86,6 +86,7 @@ const MANIFEST: Record<string, GateSpec> = {
 	smoke_experiment_paths: { kind: "assert" },
 	smoke_figlint: { kind: "assert", timeoutMs: 180_000 },
 	smoke_figstyle_scaffold: { kind: "assert" },
+	smoke_colorkey: { kind: "assert" },   // figures v5: one palette (colorkey.py) in every mplstyle and template, the report colour key
 	smoke_file_context_cache: { kind: "assert" },
 	smoke_finish_gate: { kind: "assert" },
 	smoke_illustrator_per_spawn: { kind: "assert" },

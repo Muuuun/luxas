@@ -78,6 +78,21 @@ try {
   const block3 = builder!(tmp);
   check("convergence block flags missing illustrator notes",
     /none|missing|figure_convergence/.test(block3));
+
+  console.log("\n5. figures v5: a colour key edited after the audit makes the figures stale");
+  mkdirSync(join(tmp, "report", "figures"), { recursive: true });
+  const keyPath = join(tmp, "report", "figures", "colorkey.json");
+  writeFileSync(keyPath, JSON.stringify({ version: 1, identities: { Dy: "blue" } }) + "\n");
+  const { createHash } = await import("node:crypto");
+  const { readFileSync } = await import("node:fs");
+  const md5 = (f: string) => createHash("md5").update(readFileSync(f)).digest("hex");
+  const notes = join(reviewsDir, "illustrator_notes.illustrator-key.md");
+  writeFileSync(notes, `---\nstatus: all-clear\naudited_at: 2025-01-01T00:00:00Z\ncolorkey_md5: ${md5(keyPath)}\n---\n# audited\n`);
+  const fresh = builder!(tmp);
+  check("unchanged colour key: no drift reported for it", !/colorkey\.json: changed/.test(fresh), fresh.slice(0, 400));
+  writeFileSync(keyPath, JSON.stringify({ version: 1, identities: { Dy: "red" } }) + "\n");
+  const stale = builder!(tmp);
+  check("colour key changed after the audit: convergence is stale and names colorkey.json", /colorkey\.json: changed/.test(stale), stale.slice(0, 600));
 } finally {
   try { rmSync(tmp, { recursive: true, force: true }); } catch {}
 }
